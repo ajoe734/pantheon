@@ -6,8 +6,7 @@
     "status": 200,
     "startMs": 7,
     "endMs": 39,
-    "durationMs": 32,
-    "kind": "document"
+    "durationMs": 32
   },
   {
     "method": "GET",
@@ -16,8 +15,7 @@
     "status": 200,
     "startMs": 61,
     "endMs": 69,
-    "durationMs": 8,
-    "kind": "asset"
+    "durationMs": 8
   },
   {
     "method": "GET",
@@ -26,8 +24,7 @@
     "status": 200,
     "startMs": 57,
     "endMs": 117,
-    "durationMs": 60,
-    "kind": "asset"
+    "durationMs": 60
   },
   {
     "method": "GET",
@@ -36,8 +33,7 @@
     "status": 200,
     "startMs": 187,
     "endMs": 223,
-    "durationMs": 36,
-    "kind": "asset"
+    "durationMs": 36
   },
   {
     "method": "GET",
@@ -46,8 +42,7 @@
     "status": 200,
     "startMs": 187,
     "endMs": 224,
-    "durationMs": 37,
-    "kind": "asset"
+    "durationMs": 37
   },
   {
     "method": "GET",
@@ -56,8 +51,7 @@
     "status": 200,
     "startMs": 187,
     "endMs": 224,
-    "durationMs": 37,
-    "kind": "asset"
+    "durationMs": 37
   },
   {
     "method": "GET",
@@ -66,8 +60,7 @@
     "status": 200,
     "startMs": 187,
     "endMs": 224,
-    "durationMs": 37,
-    "kind": "asset"
+    "durationMs": 37
   },
   {
     "method": "GET",
@@ -76,8 +69,7 @@
     "status": 200,
     "startMs": 186,
     "endMs": 230,
-    "durationMs": 44,
-    "kind": "asset"
+    "durationMs": 44
   },
   {
     "method": "GET",
@@ -86,8 +78,7 @@
     "status": 200,
     "startMs": 188,
     "endMs": 230,
-    "durationMs": 42,
-    "kind": "asset"
+    "durationMs": 42
   },
   {
     "method": "GET",
@@ -96,8 +87,7 @@
     "status": 200,
     "startMs": 188,
     "endMs": 231,
-    "durationMs": 43,
-    "kind": "asset"
+    "durationMs": 43
   },
   {
     "method": "GET",
@@ -106,8 +96,7 @@
     "status": 200,
     "startMs": 188,
     "endMs": 231,
-    "durationMs": 43,
-    "kind": "asset"
+    "durationMs": 43
   },
   {
     "method": "GET",
@@ -116,8 +105,7 @@
     "status": 200,
     "startMs": 198,
     "endMs": 231,
-    "durationMs": 33,
-    "kind": "asset"
+    "durationMs": 33
   },
   {
     "method": "GET",
@@ -126,8 +114,7 @@
     "status": 200,
     "startMs": 198,
     "endMs": 231,
-    "durationMs": 33,
-    "kind": "asset"
+    "durationMs": 33
   },
   {
     "method": "GET",
@@ -136,8 +123,7 @@
     "status": 200,
     "startMs": 188,
     "endMs": 231,
-    "durationMs": 43,
-    "kind": "asset"
+    "durationMs": 43
   },
   {
     "method": "GET",
@@ -146,8 +132,7 @@
     "status": 200,
     "startMs": 188,
     "endMs": 231,
-    "durationMs": 43,
-    "kind": "asset"
+    "durationMs": 43
   },
   {
     "method": "GET",
@@ -156,8 +141,7 @@
     "status": 200,
     "startMs": 188,
     "endMs": 232,
-    "durationMs": 44,
-    "kind": "asset"
+    "durationMs": 44
   },
   {
     "method": "GET",
@@ -166,8 +150,7 @@
     "status": 200,
     "startMs": 198,
     "endMs": 236,
-    "durationMs": 38,
-    "kind": "asset"
+    "durationMs": 38
   },
   {
     "method": "GET",
@@ -176,8 +159,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 236,
-    "durationMs": 37,
-    "kind": "asset"
+    "durationMs": 37
   },
   {
     "method": "GET",
@@ -186,8 +168,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 236,
-    "durationMs": 37,
-    "kind": "asset"
+    "durationMs": 37
   },
   {
     "method": "GET",
@@ -196,8 +177,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 236,
-    "durationMs": 37,
-    "kind": "asset"
+    "durationMs": 37
   },
   {
     "method": "GET",
@@ -206,8 +186,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 238,
-    "durationMs": 39,
-    "kind": "asset"
+    "durationMs": 39
   },
   {
     "method": "GET",
@@ -216,8 +195,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 238,
-    "durationMs": 39,
-    "kind": "asset"
+    "durationMs": 39
   },
   {
     "method": "GET",
@@ -226,8 +204,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 238,
-    "durationMs": 39,
-    "kind": "asset"
+    "durationMs": 39
   },
   {
     "method": "GET",
@@ -236,8 +213,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 238,
-    "durationMs": 39,
-    "kind": "asset"
+    "durationMs": 39
   },
   {
     "method": "GET",
@@ -246,8 +222,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 238,
-    "durationMs": 39,
-    "kind": "asset"
+    "durationMs": 39
   },
   {
     "method": "GET",
@@ -256,8 +231,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 239,
-    "durationMs": 40,
-    "kind": "asset"
+    "durationMs": 40
   },
   {
     "method": "GET",
@@ -266,8 +240,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 239,
-    "durationMs": 40,
-    "kind": "asset"
+    "durationMs": 40
   },
   {
     "method": "GET",
@@ -276,8 +249,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 239,
-    "durationMs": 40,
-    "kind": "asset"
+    "durationMs": 40
   },
   {
     "method": "GET",
@@ -286,8 +258,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 245,
-    "durationMs": 46,
-    "kind": "asset"
+    "durationMs": 46
   },
   {
     "method": "GET",
@@ -296,8 +267,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 245,
-    "durationMs": 45,
-    "kind": "asset"
+    "durationMs": 45
   },
   {
     "method": "GET",
@@ -306,8 +276,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 245,
-    "durationMs": 45,
-    "kind": "asset"
+    "durationMs": 45
   },
   {
     "method": "GET",
@@ -316,8 +285,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 245,
-    "durationMs": 45,
-    "kind": "asset"
+    "durationMs": 45
   },
   {
     "method": "GET",
@@ -326,8 +294,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 245,
-    "durationMs": 45,
-    "kind": "asset"
+    "durationMs": 45
   },
   {
     "method": "GET",
@@ -336,8 +303,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 245,
-    "durationMs": 45,
-    "kind": "asset"
+    "durationMs": 45
   },
   {
     "method": "GET",
@@ -346,8 +312,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 245,
-    "durationMs": 45,
-    "kind": "asset"
+    "durationMs": 45
   },
   {
     "method": "GET",
@@ -356,8 +321,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 246,
-    "durationMs": 46,
-    "kind": "asset"
+    "durationMs": 46
   },
   {
     "method": "GET",
@@ -366,8 +330,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 246,
-    "durationMs": 46,
-    "kind": "asset"
+    "durationMs": 46
   },
   {
     "method": "GET",
@@ -376,8 +339,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 246,
-    "durationMs": 46,
-    "kind": "asset"
+    "durationMs": 46
   },
   {
     "method": "GET",
@@ -386,8 +348,7 @@
     "status": 200,
     "startMs": 199,
     "endMs": 246,
-    "durationMs": 47,
-    "kind": "asset"
+    "durationMs": 47
   },
   {
     "method": "GET",
@@ -396,8 +357,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 246,
-    "durationMs": 46,
-    "kind": "asset"
+    "durationMs": 46
   },
   {
     "method": "GET",
@@ -406,8 +366,7 @@
     "status": 200,
     "startMs": 198,
     "endMs": 248,
-    "durationMs": 50,
-    "kind": "asset"
+    "durationMs": 50
   },
   {
     "method": "GET",
@@ -416,8 +375,7 @@
     "status": 200,
     "startMs": 200,
     "endMs": 249,
-    "durationMs": 49,
-    "kind": "asset"
+    "durationMs": 49
   },
   {
     "method": "GET",
@@ -426,8 +384,7 @@
     "status": 200,
     "startMs": 300,
     "endMs": 308,
-    "durationMs": 8,
-    "kind": "asset"
+    "durationMs": 8
   },
   {
     "method": "GET",
@@ -436,8 +393,7 @@
     "status": 200,
     "startMs": 300,
     "endMs": 311,
-    "durationMs": 11,
-    "kind": "asset"
+    "durationMs": 11
   },
   {
     "method": "GET",
@@ -446,8 +402,7 @@
     "status": 200,
     "startMs": 301,
     "endMs": 312,
-    "durationMs": 11,
-    "kind": "asset"
+    "durationMs": 11
   },
   {
     "method": "GET",
@@ -456,8 +411,7 @@
     "status": 200,
     "startMs": 301,
     "endMs": 314,
-    "durationMs": 13,
-    "kind": "asset"
+    "durationMs": 13
   },
   {
     "method": "GET",
@@ -466,8 +420,7 @@
     "status": 200,
     "startMs": 300,
     "endMs": 314,
-    "durationMs": 14,
-    "kind": "asset"
+    "durationMs": 14
   },
   {
     "method": "GET",
@@ -476,8 +429,7 @@
     "status": 200,
     "startMs": 301,
     "endMs": 314,
-    "durationMs": 13,
-    "kind": "asset"
+    "durationMs": 13
   },
   {
     "method": "GET",
@@ -486,8 +438,7 @@
     "status": 200,
     "startMs": 300,
     "endMs": 314,
-    "durationMs": 14,
-    "kind": "asset"
+    "durationMs": 14
   },
   {
     "method": "GET",
@@ -496,8 +447,7 @@
     "status": 200,
     "startMs": 301,
     "endMs": 314,
-    "durationMs": 13,
-    "kind": "asset"
+    "durationMs": 13
   },
   {
     "method": "GET",
@@ -506,8 +456,7 @@
     "status": 200,
     "startMs": 300,
     "endMs": 314,
-    "durationMs": 14,
-    "kind": "asset"
+    "durationMs": 14
   },
   {
     "method": "GET",
@@ -516,8 +465,7 @@
     "status": 200,
     "startMs": 345,
     "endMs": 362,
-    "durationMs": 17,
-    "kind": "asset"
+    "durationMs": 17
   },
   {
     "method": "GET",
@@ -526,8 +474,7 @@
     "status": 200,
     "startMs": 345,
     "endMs": 368,
-    "durationMs": 23,
-    "kind": "asset"
+    "durationMs": 23
   },
   {
     "method": "GET",
@@ -536,8 +483,7 @@
     "status": 200,
     "startMs": 344,
     "endMs": 369,
-    "durationMs": 25,
-    "kind": "asset"
+    "durationMs": 25
   },
   {
     "method": "GET",
@@ -546,8 +492,7 @@
     "status": 200,
     "startMs": 346,
     "endMs": 369,
-    "durationMs": 23,
-    "kind": "asset"
+    "durationMs": 23
   },
   {
     "method": "GET",
@@ -556,8 +501,7 @@
     "status": 200,
     "startMs": 345,
     "endMs": 369,
-    "durationMs": 24,
-    "kind": "asset"
+    "durationMs": 24
   },
   {
     "method": "GET",
@@ -566,8 +510,7 @@
     "status": 200,
     "startMs": 345,
     "endMs": 369,
-    "durationMs": 24,
-    "kind": "asset"
+    "durationMs": 24
   },
   {
     "method": "GET",
@@ -576,8 +519,7 @@
     "status": 200,
     "startMs": 346,
     "endMs": 369,
-    "durationMs": 23,
-    "kind": "asset"
+    "durationMs": 23
   },
   {
     "method": "GET",
@@ -586,8 +528,7 @@
     "status": 200,
     "startMs": 346,
     "endMs": 369,
-    "durationMs": 23,
-    "kind": "asset"
+    "durationMs": 23
   },
   {
     "method": "GET",
@@ -596,8 +537,7 @@
     "status": 200,
     "startMs": 346,
     "endMs": 369,
-    "durationMs": 23,
-    "kind": "asset"
+    "durationMs": 23
   },
   {
     "method": "GET",
@@ -606,8 +546,7 @@
     "status": 200,
     "startMs": 345,
     "endMs": 369,
-    "durationMs": 24,
-    "kind": "asset"
+    "durationMs": 24
   },
   {
     "method": "GET",
@@ -616,8 +555,7 @@
     "status": 200,
     "startMs": 346,
     "endMs": 371,
-    "durationMs": 25,
-    "kind": "asset"
+    "durationMs": 25
   },
   {
     "method": "GET",
@@ -626,8 +564,7 @@
     "status": 200,
     "startMs": 345,
     "endMs": 371,
-    "durationMs": 26,
-    "kind": "asset"
+    "durationMs": 26
   },
   {
     "method": "GET",
@@ -637,8 +574,7 @@
     "startMs": 535,
     "endMs": null,
     "durationMs": null,
-    "note": "realtime SSE stream; excluded from readiness milestones",
-    "kind": "sse"
+    "note": "realtime SSE stream; excluded from readiness milestones"
   },
   {
     "method": "GET",
@@ -647,8 +583,7 @@
     "status": 200,
     "startMs": 404,
     "endMs": 537,
-    "durationMs": 133,
-    "kind": "non_primary_bff"
+    "durationMs": 133
   },
   {
     "method": "GET",
@@ -657,8 +592,7 @@
     "status": 200,
     "startMs": 404,
     "endMs": 538,
-    "durationMs": 134,
-    "kind": "other"
+    "durationMs": 134
   },
   {
     "method": "GET",
@@ -667,8 +601,7 @@
     "status": 200,
     "startMs": 406,
     "endMs": 538,
-    "durationMs": 132,
-    "kind": "primary"
+    "durationMs": 132
   },
   {
     "method": "GET",
@@ -677,7 +610,6 @@
     "status": 200,
     "startMs": 404,
     "endMs": 545,
-    "durationMs": 141,
-    "kind": "non_primary_bff"
+    "durationMs": 141
   }
 ]

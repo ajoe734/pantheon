@@ -77,9 +77,40 @@ and the parent task has reviewer-approved closeout evidence.
 archive. `MGMT-LOAD-007` archived the parent-gate closeout at
 `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/MGMT-LOAD-007-closeout-2026-07-01.md`.
 
-The load release gate is merged and fail-closed. The current
-`release-load-gate-2026-07-01.json` is `result.pass:false` because its
-route-timing, request-waterfall, and BFF-fanout inputs are still the
-`MGMT-LOAD-001` pre-fix hosted baseline. A fresh hosted route-load plus
-BFF-fanout run against the merged dev FE/BFF pair is required before
-`MGMT-GAP-010` or `MGMT-GAP-006` can claim production-green load acceptance.
+The load release gate is merged and fail-closed. As of that closeout,
+`release-load-gate-2026-07-01.json` was `result.pass:false` because its
+route-timing, request-waterfall, and BFF-fanout inputs were still the
+`MGMT-LOAD-001` pre-fix hosted baseline.
+
+## 2026-07-01 MGMT-GAP-010 Production-Green Rerun
+
+`MGMT-GAP-010` re-ran the hosted route-load and BFF-fanout probes against the
+merged dev FE/BFF pair (commit `cbd833c49edc3a2006b0caeda0234c8eeaf44fac`,
+the same commit `execute-plans` PR #138 deployed) and regenerated the
+release load gate. This surfaced one remaining gap:
+`probe-bff-fanout-concurrency.mjs` never requested
+`/bff/management/shell-summary`, so the gate's `/bff/management/shell-summary`
+fanout budget check was permanently `missing` (not just failing) —
+`result.pass` can only be `true` when every check is `pass`/`skip`/`warn`, so
+the gate could never turn green without fixing the probe itself.
+
+`execute-plans` PR https://github.com/ajoe734/execute-plans/pull/139 adds
+`/bff/management/shell-summary` to the probe's route list (auto-merge
+enabled). After that fix, a fresh hosted rerun produced:
+
+- `route-timing-2026-07-01-postfix.json` / `request-waterfall-2026-07-01-postfix.json`
+  / `route-load-baseline-2026-07-01-postfix.md`: first row/empty-state
+  visible at 609 ms (budget 2500 ms), 2 non-primary BFF startup requests
+  (`/bff/me`, `/bff/management/shell-summary`), 0 duplicate `/bff/jobs`
+  requests.
+- `bff-fanout-baseline-2026-07-01-postfix.json` / `.md`: `/health` p95
+  134 ms, `/bff/management/evidence` p95 78 ms, `/bff/management/shell-summary`
+  p95 78 ms — all under budget.
+- `release-load-gate-2026-07-01.json` / `.md` (regenerated in place):
+  **`result.pass: true`**, `overall: pass`, zero failures, zero missing
+  checks.
+
+`MGMT-GAP-010` is now production-green on the load/release-gate detector.
+See
+`docs/04/pantheon_management_console_load_gap_2026-07-01/archive/MGMT-GAP-010-production-green-closeout-2026-07-01.md`
+for the full evidence index and residual risks.
