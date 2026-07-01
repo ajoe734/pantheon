@@ -15,7 +15,7 @@ not by route-render impressions.
 | `MGMT-GAP-003` | BFF DTO contracts | Claude2 | Codex | Done | Pantheon PR #2649, dev BFF deploy, OpenAPI/curl evidence |
 | `MGMT-GAP-004` | command truth | Codex | Claude2 | Todo | all in-scope CTAs return command/audit receipt or disabled state |
 | `MGMT-GAP-005` | studios/capabilities | Gemini | Claude | Todo | runner-backed traces/jobs or nav demotion/disable evidence |
-| `MGMT-GAP-008` | detail render honesty | Claude | Codex | Todo | live-id detail probe with no undefined/blank/NaN/seed-id leak |
+| `MGMT-GAP-008` | detail render honesty | Claude | Codex2 | Done | execute-plans PR #133/#135, deployed FE commit `47b8f418`, dev FE-BFF integration gate run 28515196527 |
 | `MGMT-GAP-009` | session/RBAC contract | Claude2 | Codex | Todo | `/bff/me` and management reads agree for documented token/tenant |
 | `MGMT-GAP-010` | load/release gate | Gemini2 | Codex | Todo | bundle budget, route-ready probe, shell request-count evidence |
 | `MGMT-GAP-006` | acceptance harness | Gemini2 | Codex | Waiting | hosted strict-live harness covering all remaining gap detectors |
@@ -29,7 +29,7 @@ MGMT-GAP-002: done after MGMT-GAP-003
 MGMT-GAP-003: done
 MGMT-GAP-004: unblocked by MGMT-GAP-002, MGMT-GAP-003
 MGMT-GAP-005: unblocked by MGMT-GAP-003
-MGMT-GAP-008: unblocked by MGMT-GAP-002, MGMT-GAP-003
+MGMT-GAP-008: done
 MGMT-GAP-009: unblocked by MGMT-GAP-003
 MGMT-GAP-010: unblocked by MGMT-GAP-001, MGMT-GAP-002
 MGMT-GAP-006: waits for MGMT-GAP-004, MGMT-GAP-005, MGMT-GAP-008,
