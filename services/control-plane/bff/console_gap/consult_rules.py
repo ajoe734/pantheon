@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import APIRouter, Header, Query
 
 from ._envelope import _gov_list_envelope
+from .contracts import ManagementRecordsEnvelope
 
 _DATASET = "consult_rules"
 _SURFACE_KEY = "consult_rules"
@@ -18,7 +19,10 @@ def create_consult_rules_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    @router.get("/bff/management/consult-rules")
+    @router.get(
+        "/bff/management/consult-rules",
+        response_model=ManagementRecordsEnvelope,
+    )
     def bff_management_consult_rules(
         page_token: Optional[str] = Query(default=None),
         page_size: int = Query(default=50, ge=1, le=200),

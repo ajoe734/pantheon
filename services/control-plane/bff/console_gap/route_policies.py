@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import APIRouter, Header, Query
 
 from ._envelope import _gov_list_envelope
+from .contracts import ManagementRecordsEnvelope
 
 _DATASET = "route_policies"
 _SURFACE_KEY = "route_policies"
@@ -18,7 +19,10 @@ def create_route_policies_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    @router.get("/bff/route-policies")
+    @router.get(
+        "/bff/route-policies",
+        response_model=ManagementRecordsEnvelope,
+    )
     def bff_route_policies(
         page_token: Optional[str] = Query(default=None),
         page_size: int = Query(default=50, ge=1, le=200),

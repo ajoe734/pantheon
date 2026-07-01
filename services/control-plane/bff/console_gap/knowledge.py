@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Header, HTTPException, Query
 
+from .contracts import ManagementRecordsEnvelope
+
 
 ExtractIdentity = Callable[[Optional[str]], Any]
 RequireReadRole = Callable[[Any], None]
@@ -42,7 +44,11 @@ def create_knowledge_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/bff", tags=["knowledge"])
 
-    @router.get("/knowledge", operation_id="get_bff_knowledge_inbox")
+    @router.get(
+        "/knowledge",
+        operation_id="get_bff_knowledge_inbox",
+        response_model=ManagementRecordsEnvelope,
+    )
     async def get_knowledge_inbox(
         item_type: Optional[str] = Query(default=None),
         page_token: Optional[str] = None,
@@ -72,15 +78,18 @@ def create_knowledge_router(
             for surface in surfaces.values()
             if surface.get("status") != "unavailable" or surface.get("source") != "missing"
         ]
+        knowledge_inbox_surface = _knowledge_inbox_surface(
+            snapshot_at=snapshot_at,
+            available=bool(available_sources),
+            degraded=any(surface.get("status") != "ok" for surface in surfaces.values()),
+        )
 
         meta = {
             "snapshot_at": snapshot_at,
+            "status": knowledge_inbox_surface["status"],
+            "source": knowledge_inbox_surface["source"],
             "surfaces": {
-                "knowledge_inbox": _knowledge_inbox_surface(
-                    snapshot_at=snapshot_at,
-                    available=bool(available_sources),
-                    degraded=any(surface.get("status") != "ok" for surface in surfaces.values()),
-                ),
+                "knowledge_inbox": knowledge_inbox_surface,
                 **surfaces,
             },
             "composition": {
@@ -96,6 +105,7 @@ def create_knowledge_router(
                 "next_page_token": next_page_token,
                 "total": total,
                 "page_size": page_size,
+                "returned": len(page_items),
                 "has_more": next_page_token is not None,
             },
             "meta": meta,
