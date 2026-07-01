@@ -37,3 +37,7 @@ Result:
   `services.telemetry.test_ingest_shock_absorption`: 75 tests, OK.
 - `services/telemetry/smoke_test_ingest.py`: all 4 smoke checks passed.
 
+## Publication Note
+
+The closeout evidence PR is a task-scoped follow-up after PR #2410. It does
+not change telemetry runtime behavior or database migration semantics.
