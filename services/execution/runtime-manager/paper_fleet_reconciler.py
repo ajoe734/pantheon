@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parents[2]
@@ -220,14 +220,17 @@ class PaperFleetReconciler:
 
     def reconcile_once(self) -> Dict[str, Any]:
         """Run one reconcile cycle. Returns a snapshot of the fleet state."""
-        bindings = self._fetch_active_paper_bindings()
+        fleet = self._fetch_fleet_state()
+        # fleet is None when the fetch failed — must not evict existing workers
+        # in that case, since we have no reliable picture of desired state.
+        bindings = fleet[0] if fleet is not None else None
+        excluded_ids = fleet[1] if fleet is not None else set()
+
         runtime_summaries = (
             self._fetch_runtime_summaries()
             if bindings is not None
             else None
         )
-        # bindings is None when the fetch failed — we must not evict existing workers
-        # in that case, since we have no reliable picture of desired state.
 
         with self._lock:
             # Poll live processes for exit — always run, even on fetch failure
@@ -290,10 +293,19 @@ class PaperFleetReconciler:
                                 self._max_restarts,
                             )
 
-                # Stop workers for bindings that are no longer active
+                # Stop workers for excluded bindings (paused/retired) first,
+                # then any remaining workers no longer in the desired fleet.
                 for binding_id in list(self._workers):
-                    if binding_id not in desired:
-                        self._terminate_worker(binding_id, reason="binding no longer active")
+                    if binding_id in excluded_ids:
+                        self._terminate_worker(
+                            binding_id,
+                            reason="binding excluded from fleet (paused or retired)",
+                        )
+                    elif binding_id not in desired:
+                        self._terminate_worker(
+                            binding_id,
+                            reason="binding no longer in fleet desired state",
+                        )
 
                 self._last_error = None
 
@@ -502,11 +514,31 @@ class PaperFleetReconciler:
         os.replace(tmp_path, path)
 
     @staticmethod
+    def _monitoring_session_staleness_marker(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        staleness = session.get("staleness")
+        if not isinstance(staleness, dict):
+            return None
+        marker = dict(staleness)
+        status = str(marker.get("status") or "").strip().lower()
+        reason = str(marker.get("reason") or "").strip()
+        if status == "stale" or reason:
+            marker.setdefault("status", "stale")
+            return marker
+        return None
+
+    @staticmethod
     def _monitoring_session_open(session: Dict[str, Any]) -> bool:
         if session.get("ended_at") not in (None, ""):
             return False
         status = str(session.get("status") or "").strip().lower()
-        return status not in {"ended", "stale", "failed"}
+        if status in {"ended", "stale", "failed"}:
+            return False
+        if PaperFleetReconciler._monitoring_session_staleness_marker(session) is not None:
+            return False
+        explicit = session.get("active")
+        if explicit is not None:
+            return bool(explicit)
+        return True
 
     def _open_monitoring_session(
         self,
@@ -517,10 +549,18 @@ class PaperFleetReconciler:
         binding_id = str(binding.get("binding_id") or "")
         now = _iso_now()
         for session_id, session in list(self._monitoring_sessions.items()):
-            if (
-                str(session.get("binding_id") or session.get("runtime_binding_id") or "") == binding_id
-                and self._monitoring_session_open(session)
-            ):
+            if str(session.get("binding_id") or session.get("runtime_binding_id") or "") != binding_id:
+                continue
+            staleness = self._monitoring_session_staleness_marker(session)
+            if staleness is not None and session.get("ended_at") in (None, ""):
+                self._end_monitoring_session(
+                    session_id,
+                    reason=str(staleness.get("reason") or "stale_monitoring_session"),
+                    ended_at=now,
+                    staleness=staleness,
+                    force=True,
+                )
+            elif self._monitoring_session_open(session):
                 self._end_monitoring_session(
                     session_id,
                     reason="superseded_by_restart",
@@ -556,15 +596,21 @@ class PaperFleetReconciler:
         ended_at: Optional[str] = None,
         staleness: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
+        force: bool = False,
     ) -> None:
         if not session_id:
             return
         session = self._monitoring_sessions.get(session_id)
-        if not session or not self._monitoring_session_open(session):
+        if not session:
+            return
+        if session.get("ended_at") not in (None, ""):
+            return
+        if not force and not self._monitoring_session_open(session):
             return
         session["ended_at"] = ended_at or _iso_now()
         session["status"] = "ended"
         session["ended_reason"] = reason
+        session["terminal_reason"] = reason
         if staleness is not None:
             session["staleness"] = dict(staleness)
         if error:
@@ -613,12 +659,24 @@ class PaperFleetReconciler:
         self,
         summaries: Optional[Dict[str, Dict[str, Any]]],
     ) -> None:
-        if summaries is None:
-            return
+        may_derive_staleness = summaries is not None
+        summaries = summaries or {}
         now = datetime.now(timezone.utc)
         stale_binding_ids: List[str] = []
         changed = False
         for session_id, session in list(self._monitoring_sessions.items()):
+            existing_staleness = self._monitoring_session_staleness_marker(session)
+            if existing_staleness is not None and session.get("ended_at") in (None, ""):
+                self._end_monitoring_session(
+                    session_id,
+                    reason=str(existing_staleness.get("reason") or "stale_monitoring_session"),
+                    staleness=existing_staleness,
+                    force=True,
+                )
+                binding_id = str(session.get("binding_id") or session.get("runtime_binding_id") or "")
+                if binding_id:
+                    stale_binding_ids.append(binding_id)
+                continue
             if not self._monitoring_session_open(session):
                 continue
             runtime_id = str(session.get("runtime_id") or "")
@@ -632,6 +690,8 @@ class PaperFleetReconciler:
                     entry.last_heartbeat_at = str(summary.get("last_heartbeat_at"))
                     entry.heartbeat_status = str(session["heartbeat_status"])
                 changed = True
+            if not may_derive_staleness:
+                continue
             staleness = self._monitoring_staleness(session, summary, now=now)
             if staleness is None:
                 continue
@@ -683,41 +743,70 @@ class PaperFleetReconciler:
     # Runtime-manager polling
     # ------------------------------------------------------------------
 
-    def _fetch_active_paper_bindings(self) -> Optional[List[Dict[str, Any]]]:
-        """Return the active paper bindings, or None if the fetch failed.
+    def _fetch_fleet_state(
+        self,
+    ) -> Optional[Tuple[List[Dict[str, Any]], Set[str]]]:
+        """Fetch the canonical fleet desired state from the runtime-manager.
 
-        Callers must treat None as "unknown desired state" and must not modify
-        the running fleet (no starts, no stops) when None is returned.
-        An empty list means the runtime-manager is reachable but has no active
-        paper bindings; in that case the fleet should be wound down normally.
+        Calls the LOOP-AUTO-RT-001 stable endpoint:
+            GET /api/runtime-fleet/desired-state?stage=paper&include_excluded=true
+
+        Returns
+        -------
+        (desired_bindings, excluded_binding_ids) on success:
+            desired_bindings    — list of active paper RuntimeBinding dicts the
+                                  reconciler must run exactly one worker for
+            excluded_binding_ids — set of binding_ids that must be stopped
+                                  (paused, retired, failed, or draining)
+        None when the runtime-manager is unreachable or returns an error —
+        callers must treat None as "unknown desired state" and must not modify
+        the running fleet (no starts, no stops).
         """
         if not self._url:
-            return []
+            return ([], set())
         try:
-            import urllib.error
             import urllib.request
 
             headers: Dict[str, str] = {"Accept": "application/json"}
             if self._token:
                 headers["Authorization"] = f"Bearer {self._token}"
             req = urllib.request.Request(
-                f"{self._url}/api/runtime-bindings",
+                f"{self._url}/api/runtime-fleet/desired-state"
+                "?stage=paper&include_excluded=true",
                 headers=headers,
                 method="GET",
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             bindings = payload.get("bindings", []) if isinstance(payload, dict) else []
-            return [
-                b for b in bindings
-                if b.get("deployment_mode") == "paper"
-                and b.get("status") == "active"
-            ]
+            excluded = payload.get("excluded", []) if isinstance(payload, dict) else []
+            excluded_ids: Set[str] = {
+                str(e["binding_id"])
+                for e in excluded
+                if isinstance(e, dict) and e.get("binding_id")
+            }
+            return (bindings, excluded_ids)
         except Exception as exc:  # noqa: BLE001
             with self._lock:
-                self._last_error = f"binding fetch failed: {type(exc).__name__}: {exc}"
-            log.warning("could not fetch bindings from runtime-manager: %s", exc)
+                self._last_error = (
+                    f"fleet desired state fetch failed: {type(exc).__name__}: {exc}"
+                )
+            log.warning(
+                "could not fetch fleet desired state from runtime-manager: %s", exc
+            )
             return None
+
+    def _fetch_active_paper_bindings(self) -> Optional[List[Dict[str, Any]]]:
+        """Return the active paper bindings, or None if the fetch failed.
+
+        Deprecated: use _fetch_fleet_state() to get both desired and excluded
+        bindings from the canonical LOOP-AUTO-RT-001 endpoint.  This method is
+        retained for subclasses and tests that override it directly.
+        """
+        result = self._fetch_fleet_state()
+        if result is None:
+            return None
+        return result[0]
 
     # ------------------------------------------------------------------
     # State snapshot

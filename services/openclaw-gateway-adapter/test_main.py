@@ -448,15 +448,15 @@ class TestCapabilities(unittest.TestCase):
                 json={
                     "reason": "expired",
                     "captureTimeoutSeconds": 3,
-                    "mode": "kernel_debug",
+                    "mode": "user",
                     "operator_role": "operator",
-                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                    "confirmed": True,
                 },
                 headers={
                     "X-Operator-Id": "op-1",
                     "X-Trace-Id": "trace-reauth-1",
                     "X-Operator-Role": "operator",
-                    "X-Assistant-Mode": "kernel_debug",
+                    "X-Assistant-Mode": "user",
                 },
             )
 
@@ -488,9 +488,9 @@ class TestCapabilities(unittest.TestCase):
                 "/api/openclaw-adapter/assistant/providers/codex/reauth",
                 json={
                     "reason": "expired",
-                    "mode": "kernel_debug",
+                    "mode": "user",
                     "operator_role": "operator",
-                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                    "confirmed": True,
                 },
                 headers={"X-Operator-Id": "op-1", "X-Operator-Role": "operator"},
             )
@@ -529,6 +529,182 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["data"]["status"], "completed")
         status.assert_called_once_with("codex_reauth_1")
+
+    def test_assistant_claude_reauth_starts_auth_login_flow(self):
+        fake_payload = {
+            "reauth_session_id": "claude_reauth_1",
+            "provider": "claude",
+            "status": "pending",
+            "verification_uri": "https://console.anthropic.com/login",
+            "user_code": "WXYZ-1234",
+            "credential_exchange": {
+                "bff_handles_credentials": False,
+                "frontend_handles_credentials": False,
+            },
+        }
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(
+                allowed_tools=[adapter_main.ASSISTANT_PROVIDER_REAUTH_TOOL_NAME]
+            ),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-claude-reauth-1",
+        )
+        with patch.object(
+            adapter_main._CLAUDE_PROVIDER,
+            "start_device_reauth",
+            return_value=fake_payload,
+        ) as start, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/claude/reauth",
+                json={
+                    "reason": "expired",
+                    "captureTimeoutSeconds": 3,
+                    "mode": "user",
+                    "operator_role": "operator",
+                    "confirmed": True,
+                },
+                headers={
+                    "X-Operator-Id": "op-1",
+                    "X-Trace-Id": "trace-claude-reauth-1",
+                    "X-Operator-Role": "operator",
+                    "X-Assistant-Mode": "user",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 202)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"]["provider"], "claude")
+        self.assertEqual(body["data"]["verification_uri"], "https://console.anthropic.com/login")
+        start.assert_called_once_with(
+            operator_id="op-1",
+            trace_id="trace-claude-reauth-1",
+            reason="expired",
+            capture_timeout_seconds=3,
+            poll_interval_seconds=None,
+            max_wait_seconds=None,
+        )
+
+    def test_assistant_claude_reauth_status_returns_session(self):
+        with patch.object(
+            adapter_main._CLAUDE_PROVIDER,
+            "reauth_status",
+            return_value={
+                "reauth_session_id": "claude_reauth_1",
+                "provider": "claude",
+                "status": "completed",
+                "readiness": {"ready": True},
+            },
+        ) as status:
+            resp = client.get(
+                "/api/openclaw-adapter/assistant/providers/claude/reauth/claude_reauth_1",
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["data"]["status"], "completed")
+        status.assert_called_once_with("claude_reauth_1")
+
+    def test_assistant_claude_reauth_code_defaults_to_user_mode(self):
+        fake_payload = {
+            "reauth_session_id": "claude_reauth_1",
+            "provider": "claude",
+            "status": "code_submitted",
+            "code_submitted_at": "2026-07-01T00:00:00Z",
+        }
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(
+                allowed_tools=[adapter_main.ASSISTANT_PROVIDER_REAUTH_TOOL_NAME]
+            ),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-claude-code-1",
+        )
+        with patch.object(
+            adapter_main._CLAUDE_PROVIDER,
+            "submit_reauth_code",
+            return_value=fake_payload,
+        ) as submit, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/claude/reauth/claude_reauth_1/code",
+                json={"provider": "claude", "code": "claude-oauth-code-123", "confirmed": True},
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-claude-code-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["data"]["status"], "code_submitted")
+        submit.assert_called_once_with(
+            "claude_reauth_1",
+            code="claude-oauth-code-123",
+            operator_id="op-1",
+        )
+        entries = bridge._audit.read()  # noqa: SLF001 - test asserts route admission audit.
+        self.assertEqual(entries[0]["request_type"], "assistant_provider_reauth_code")
+        self.assertEqual(entries[0]["mode"], "user")
+
+    def test_assistant_provider_registration_requires_bridge_allowlist(self):
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(allowed_tools=[]),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+        )
+        with patch.object(adapter_main._PROVIDER_REGISTRY, "register") as register, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers",
+                json={
+                    "provider": "gemini_cli",
+                    "providerName": "Gemini CLI",
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                },
+                headers={"X-Operator-Id": "op-1", "X-Operator-Role": "operator"},
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error_code"], "BRIDGE_SKILL_DENIED")
+        register.assert_not_called()
+
+    def test_assistant_provider_registration_writes_metadata_only(self):
+        fake_payload = {
+            "provider": "gemini_cli",
+            "provider_name": "Gemini CLI",
+            "runtime": "external_llm",
+            "ready": False,
+            "status": "registered",
+            "reauth_supported": False,
+        }
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(
+                allowed_tools=[adapter_main.ASSISTANT_PROVIDER_REGISTER_TOOL_NAME]
+            ),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-register-1",
+        )
+        with patch.object(
+            adapter_main._PROVIDER_REGISTRY,
+            "register",
+            return_value=fake_payload,
+        ) as register, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers",
+                json={
+                    "provider": "gemini_cli",
+                    "providerName": "Gemini CLI",
+                    "model": "gemini-2.5-pro",
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                },
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-register-1"},
+            )
+
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()["data"]["provider"], "gemini_cli")
+        register.assert_called_once()
+        args, kwargs = register.call_args
+        self.assertEqual(args[0]["provider"], "gemini_cli")
+        self.assertEqual(args[0]["model"], "gemini-2.5-pro")
+        self.assertEqual(kwargs["operator_id"], "op-1")
+        self.assertEqual(kwargs["trace_id"], "trace-register-1")
 
     def test_assistant_codex_invoke_passes_through_runtime(self):
         fake_result = types.SimpleNamespace(

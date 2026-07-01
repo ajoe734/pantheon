@@ -67,7 +67,7 @@ def _make_binding(
 class _InstrumentedReconciler:
     """
     Wrap PaperFleetReconciler with:
-    - injected fake binding list
+    - injected fake binding list and excluded set
     - spawns replaced by _FakeProcess factories
     """
 
@@ -76,11 +76,12 @@ class _InstrumentedReconciler:
 
         self.spawned: List[Dict[str, Any]] = []
         self._fake_bindings: List[Dict[str, Any]] = []
+        self._fake_excluded_ids: set = set()
         self._next_pid = 100
 
         class _TestReconciler(PaperFleetReconciler):
-            def _fetch_active_paper_bindings(inner_self) -> List[Dict[str, Any]]:
-                return list(self._fake_bindings)
+            def _fetch_fleet_state(inner_self):
+                return (list(self._fake_bindings), set(self._fake_excluded_ids))
 
             def _spawn(inner_self, binding_id: str, port: int, env: Any) -> _FakeProcess:
                 pid = self._next_pid
@@ -93,6 +94,9 @@ class _InstrumentedReconciler:
 
     def set_bindings(self, bindings: List[Dict[str, Any]]) -> None:
         self._fake_bindings = bindings
+
+    def set_excluded(self, binding_ids: set) -> None:
+        self._fake_excluded_ids = set(binding_ids)
 
 
 class TestPaperFleetReconcilerBasic(unittest.TestCase):
@@ -308,31 +312,20 @@ class TestPaperFleetReconcilerSnapshot(unittest.TestCase):
 
 class TestPaperFleetReconcilerFiltersPaperOnly(unittest.TestCase):
     def test_non_paper_bindings_are_ignored(self) -> None:
-        wrapper = _InstrumentedReconciler(worker_base_port=9700, poll_interval_seconds=999)
-        # The fake fetch returns only bindings we set; the filter is applied in the real
-        # _fetch_active_paper_bindings HTTP response handler. Here we verify that
-        # canary/live bindings supplied directly to _fake_bindings are not started.
-        # We bypass the filter by supplying non-paper bindings and checking they're skipped.
-
-        # Override the fake fetch to return mixed modes
-        wrapper._fake_bindings = [
-            _make_binding("b-canary", deployment_mode="canary"),
-            _make_binding("b-live", deployment_mode="live"),
-            _make_binding("b-paper", deployment_mode="paper"),
-        ]
-
-        # The reconciler's reconcile_once does NOT itself filter by mode —
-        # _fetch_active_paper_bindings does. So we test the fetch filter directly.
+        # The fleet desired-state endpoint already scopes to paper (stage=paper).
+        # Verify that the reconciler only starts workers for bindings returned in
+        # the desired list — non-paper bindings in the excluded list are stopped,
+        # not started.
         from paper_fleet_reconciler import PaperFleetReconciler
 
         class _TestFetch(PaperFleetReconciler):
-            def _fetch_active_paper_bindings(self) -> list:
-                raw = [
-                    _make_binding("b-canary", deployment_mode="canary"),
-                    _make_binding("b-live", deployment_mode="live"),
-                    _make_binding("b-paper", deployment_mode="paper"),
-                ]
-                return [b for b in raw if b.get("deployment_mode") == "paper" and b.get("status") == "active"]
+            def _fetch_fleet_state(self):
+                # Simulate the runtime-manager returning only the paper binding
+                # in the desired list (canary/live filtered out by the endpoint).
+                return (
+                    [_make_binding("b-paper", deployment_mode="paper")],
+                    set(),
+                )
 
             def _spawn(self, binding_id, port, env):  # noqa: ANN001
                 proc = _FakeProcess()
@@ -355,12 +348,14 @@ class TestPaperFleetReconcilerDegradedFetch(unittest.TestCase):
         pid_counter = [300]
 
         class _R(PaperFleetReconciler):
-            def _fetch_active_paper_bindings(inner_self):
+            def _fetch_fleet_state(inner_self):
                 if state["fail"]:
                     with inner_self._lock:
-                        inner_self._last_error = "binding fetch failed: URLError: simulated"
+                        inner_self._last_error = (
+                            "fleet desired state fetch failed: URLError: simulated"
+                        )
                     return None
-                return list(state["bindings"])
+                return (list(state["bindings"]), set())
 
             def _spawn(inner_self, binding_id, port, env):
                 pid = pid_counter[0]; pid_counter[0] += 1
@@ -395,7 +390,7 @@ class TestPaperFleetReconcilerDegradedFetch(unittest.TestCase):
         state["fail"] = True
         snap = recon.reconcile_once()
         self.assertIsNotNone(snap["last_error"])
-        self.assertIn("binding fetch failed", snap["last_error"])
+        self.assertIn("fetch failed", snap["last_error"])
 
 
 class TestPaperFleetReconcilerRestartBackoff(unittest.TestCase):
@@ -464,11 +459,14 @@ class TestPaperFleetReconcilerSignalQueueIsolation(unittest.TestCase):
         captured_envs: dict[str, str] = {}
 
         class _R(PaperFleetReconciler):
-            def _fetch_active_paper_bindings(self):
-                return [
-                    _make_binding("b-iso-a", runtime_id="rt-a"),
-                    _make_binding("b-iso-b", runtime_id="rt-b"),
-                ]
+            def _fetch_fleet_state(self):
+                return (
+                    [
+                        _make_binding("b-iso-a", runtime_id="rt-a"),
+                        _make_binding("b-iso-b", runtime_id="rt-b"),
+                    ],
+                    set(),
+                )
 
             def _spawn(self, binding_id, port, env):
                 captured_envs[binding_id] = env.get("PANTHEON_SIGNAL_QUEUE_KEY", "")
@@ -511,8 +509,8 @@ class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
         spawned: List[Dict[str, Any]] = []
 
         class _R(PaperFleetReconciler):
-            def _fetch_active_paper_bindings(self):
-                return [_make_binding("b-stale-001", runtime_id="rt-stale-001")]
+            def _fetch_fleet_state(self):
+                return ([_make_binding("b-stale-001", runtime_id="rt-stale-001")], set())
 
             def _fetch_runtime_summaries(self):
                 return {
@@ -587,8 +585,8 @@ class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
             spawned: List[Dict[str, Any]] = []
 
             class _R(PaperFleetReconciler):
-                def _fetch_active_paper_bindings(self):
-                    return [_make_binding("b-zombie-001", runtime_id="rt-zombie-001")]
+                def _fetch_fleet_state(self):
+                    return ([_make_binding("b-zombie-001", runtime_id="rt-zombie-001")], set())
 
                 def _fetch_runtime_summaries(self):
                     return {
@@ -628,6 +626,284 @@ class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
                 if session["session_id"] == "prmon-old"
             )
             self.assertIsNotNone(persisted_old["ended_at"])
+
+    def test_staleness_marker_does_not_count_as_live_session_on_restart(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        with tempfile.TemporaryDirectory() as td:
+            store_path = Path(td) / "paper_runtime_monitoring_sessions.json"
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "monitoring_sessions": [
+                            {
+                                "session_id": "prmon-stale-marker",
+                                "id": "prmon-stale-marker",
+                                "session_type": "paper_runtime_monitoring",
+                                "binding_id": "b-marker-001",
+                                "runtime_binding_id": "b-marker-001",
+                                "runtime_id": "rt-marker-001",
+                                "deployment_stage": "paper",
+                                "status": "running",
+                                "active": True,
+                                "started_at": "2026-06-09T00:00:00Z",
+                                "ended_at": None,
+                                "last_heartbeat_at": "2026-06-09T00:00:00Z",
+                                "staleness": {
+                                    "status": "stale",
+                                    "reason": "stale_heartbeat",
+                                    "last_known_at": "2026-06-09T00:00:00Z",
+                                    "age_seconds": 600,
+                                    "threshold_seconds": 90,
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            spawned: List[Dict[str, Any]] = []
+
+            class _R(PaperFleetReconciler):
+                def _fetch_fleet_state(self):
+                    return ([_make_binding("b-marker-001", runtime_id="rt-marker-001")], set())
+
+                def _fetch_runtime_summaries(self):
+                    return None
+
+                def _spawn(self, binding_id, port, env):  # noqa: ANN001
+                    proc = _FakeProcess(pid=900 + len(spawned))
+                    spawned.append({"binding_id": binding_id, "proc": proc})
+                    return proc
+
+            recon = _R(
+                worker_base_port=9990,
+                poll_interval_seconds=999,
+                monitoring_session_store_path=str(store_path),
+                monitoring_heartbeat_stale_after_seconds=90,
+                drain_timeout_seconds=1,
+            )
+
+            snap = recon.reconcile_once()
+
+            old = next(
+                session
+                for session in snap["monitoring_sessions"]
+                if session["session_id"] == "prmon-stale-marker"
+            )
+            active = [session for session in snap["monitoring_sessions"] if session.get("active")]
+            self.assertEqual(len(spawned), 1)
+            self.assertFalse(old["active"])
+            self.assertEqual(old["ended_reason"], "stale_heartbeat")
+            self.assertEqual(old["terminal_reason"], "stale_heartbeat")
+            self.assertIsNotNone(old["ended_at"])
+            self.assertEqual(len(active), 1)
+            self.assertNotEqual(active[0]["session_id"], "prmon-stale-marker")
+
+
+class TestPaperFleetReconcilerExcludedBindings(unittest.TestCase):
+    """Excluded bindings (paused/retired) must stop their workers immediately."""
+
+    def _make_wrapper(self) -> "_InstrumentedReconciler":
+        return _InstrumentedReconciler(
+            worker_base_port=9010,
+            poll_interval_seconds=999,
+            max_restarts=3,
+            restart_backoff_seconds=0,
+            drain_timeout_seconds=1,
+        )
+
+    def test_paused_binding_stops_worker(self) -> None:
+        wrapper = self._make_wrapper()
+        wrapper.set_bindings([_make_binding("b-pause")])
+        wrapper.recon.reconcile_once()
+        self.assertEqual(wrapper.recon.snapshot()["worker_count"], 1)
+
+        # Binding transitions to paused: removed from desired, added to excluded
+        wrapper.set_bindings([])
+        wrapper.set_excluded({"b-pause"})
+        snap = wrapper.recon.reconcile_once()
+
+        self.assertEqual(snap["worker_count"], 0)
+        proc = wrapper.spawned[0]["proc"]
+        self.assertTrue(proc.terminated or proc.killed)
+
+    def test_retired_binding_stops_worker(self) -> None:
+        wrapper = self._make_wrapper()
+        wrapper.set_bindings([_make_binding("b-retire")])
+        wrapper.recon.reconcile_once()
+
+        wrapper.set_bindings([])
+        wrapper.set_excluded({"b-retire"})
+        snap = wrapper.recon.reconcile_once()
+
+        self.assertEqual(snap["worker_count"], 0)
+        proc = wrapper.spawned[0]["proc"]
+        self.assertTrue(proc.terminated or proc.killed)
+
+    def test_excluded_binding_not_restarted_when_dead(self) -> None:
+        wrapper = self._make_wrapper()
+        wrapper.set_bindings([_make_binding("b-excl")])
+        wrapper.recon.reconcile_once()
+
+        # Kill the worker process
+        wrapper.spawned[0]["proc"]._returncode = 1
+
+        # Now exclude the binding (simulates paused/retired)
+        wrapper.set_bindings([])
+        wrapper.set_excluded({"b-excl"})
+        snap = wrapper.recon.reconcile_once()
+
+        # Worker should be gone, not restarted
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(len(wrapper.spawned), 1, "excluded dead binding must not spawn a replacement")
+
+    def test_desired_and_excluded_disjoint(self) -> None:
+        """Two bindings: one desired (active), one excluded (paused). Only active gets a worker."""
+        wrapper = self._make_wrapper()
+        # Start with both bindings active
+        wrapper.set_bindings([_make_binding("b-keep"), _make_binding("b-pause")])
+        wrapper.recon.reconcile_once()
+        self.assertEqual(wrapper.recon.snapshot()["worker_count"], 2)
+
+        # b-pause moves to excluded (paused), b-keep stays desired
+        wrapper.set_bindings([_make_binding("b-keep")])
+        wrapper.set_excluded({"b-pause"})
+        snap = wrapper.recon.reconcile_once()
+
+        self.assertEqual(snap["worker_count"], 1)
+        self.assertEqual(snap["workers"][0]["binding_id"], "b-keep")
+
+    def test_fetch_failure_preserves_excluded_worker(self) -> None:
+        """When fleet state fetch returns None, workers for excluded bindings are preserved."""
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        spawned = []
+
+        class _R(PaperFleetReconciler):
+            def __init__(inner_self, **kw):
+                super().__init__(**kw)
+                inner_self._should_fail = False
+
+            def _fetch_fleet_state(inner_self):
+                if inner_self._should_fail:
+                    with inner_self._lock:
+                        inner_self._last_error = "fleet desired state fetch failed: URLError: simulated"
+                    return None
+                return ([_make_binding("b-excl-safe")], set())
+
+            def _spawn(inner_self, binding_id, port, env):
+                proc = _FakeProcess(pid=500 + len(spawned))
+                spawned.append({"binding_id": binding_id, "proc": proc})
+                return proc
+
+        recon = _R(
+            worker_base_port=9050,
+            poll_interval_seconds=999,
+            drain_timeout_seconds=1,
+        )
+        recon.reconcile_once()
+        self.assertEqual(recon.snapshot()["worker_count"], 1)
+
+        recon._should_fail = True
+        recon.reconcile_once()
+
+        snap = recon.snapshot()
+        self.assertEqual(snap["worker_count"], 1, "fetch failure must not stop running workers")
+
+
+class TestPaperFleetReconcilerAcceptanceCriteria(unittest.TestCase):
+    """Explicit coverage of the LOOP-AUTO-RT-002 acceptance criteria."""
+
+    def test_stack_restart_recreates_workers_for_all_active_bindings(self) -> None:
+        """AC-1: fresh reconciler with N active bindings starts N workers."""
+        wrapper = _InstrumentedReconciler(
+            worker_base_port=9060,
+            poll_interval_seconds=999,
+            drain_timeout_seconds=1,
+        )
+        wrapper.set_bindings([
+            _make_binding("b-ac1-a", runtime_id="rt-a"),
+            _make_binding("b-ac1-b", runtime_id="rt-b"),
+            _make_binding("b-ac1-c", runtime_id="rt-c"),
+        ])
+        snap = wrapper.recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 3)
+        self.assertEqual(snap["running_count"], 3)
+        started_ids = {s["binding_id"] for s in wrapper.spawned}
+        self.assertEqual(started_ids, {"b-ac1-a", "b-ac1-b", "b-ac1-c"})
+
+    def test_killing_one_worker_restarts_only_that_worker(self) -> None:
+        """AC-2: killing worker for b-kill restarts only that one; b-ok is untouched."""
+        wrapper = _InstrumentedReconciler(
+            worker_base_port=9070,
+            poll_interval_seconds=999,
+            max_restarts=3,
+            restart_backoff_seconds=0,
+            drain_timeout_seconds=1,
+        )
+        wrapper.set_bindings([
+            _make_binding("b-ok"),
+            _make_binding("b-kill", runtime_id="rt-kill"),
+        ])
+        wrapper.recon.reconcile_once()
+        self.assertEqual(len(wrapper.spawned), 2)
+
+        # Simulate kill -9 (SIGKILL, exit 137) on one worker
+        kill_spawn = next(s for s in wrapper.spawned if s["binding_id"] == "b-kill")
+        kill_spawn["proc"]._returncode = 137
+
+        # First reconcile detects the dead worker; second reconcile restarts it
+        wrapper.recon.reconcile_once()
+        wrapper.recon.reconcile_once()
+
+        self.assertEqual(len(wrapper.spawned), 3, "exactly one restart spawned")
+        restarted = wrapper.spawned[2]
+        self.assertEqual(restarted["binding_id"], "b-kill")
+        # b-ok was never touched
+        ok_spawn = next(s for s in wrapper.spawned if s["binding_id"] == "b-ok")
+        self.assertFalse(ok_spawn["proc"].terminated)
+        self.assertFalse(ok_spawn["proc"].killed)
+
+    def test_paused_binding_stops_its_worker(self) -> None:
+        """AC-3: when a binding transitions to paused, its worker is stopped."""
+        wrapper = _InstrumentedReconciler(
+            worker_base_port=9080,
+            poll_interval_seconds=999,
+            drain_timeout_seconds=1,
+        )
+        wrapper.set_bindings([_make_binding("b-ac3")])
+        wrapper.recon.reconcile_once()
+        self.assertEqual(wrapper.recon.snapshot()["worker_count"], 1)
+
+        # Simulate pause: binding removed from desired list and added to excluded set
+        wrapper.set_bindings([])
+        wrapper.set_excluded({"b-ac3"})
+        snap = wrapper.recon.reconcile_once()
+
+        self.assertEqual(snap["worker_count"], 0)
+        proc = wrapper.spawned[0]["proc"]
+        self.assertTrue(proc.terminated or proc.killed, "paused binding must stop its worker")
+
+    def test_retired_binding_stops_its_worker(self) -> None:
+        """AC-3 (retire path): retired binding → worker stopped."""
+        wrapper = _InstrumentedReconciler(
+            worker_base_port=9090,
+            poll_interval_seconds=999,
+            drain_timeout_seconds=1,
+        )
+        wrapper.set_bindings([_make_binding("b-ac3-retire")])
+        wrapper.recon.reconcile_once()
+
+        # Simulate retire: binding disappears from desired, appears in excluded
+        wrapper.set_bindings([])
+        wrapper.set_excluded({"b-ac3-retire"})
+        snap = wrapper.recon.reconcile_once()
+
+        self.assertEqual(snap["worker_count"], 0)
+        proc = wrapper.spawned[0]["proc"]
+        self.assertTrue(proc.terminated or proc.killed, "retired binding must stop its worker")
 
 
 if __name__ == "__main__":

@@ -24,8 +24,8 @@ describe("TradingDeskLayout", () => {
     render(<TradingDeskLayout activeTab="trading-room" onTabChange={onTabChange} />);
     const tabBar = screen.getByTestId("trading-desk-tab-bar");
     const tabs = Array.from(tabBar.querySelectorAll("button"));
-    const workshopTab = tabs.find((t) => t.textContent?.includes("Strategy Workshop"));
-    if (!workshopTab) throw new Error("Strategy Workshop tab not found");
+    const workshopTab = tabs.find((t) => t.textContent?.includes("策略工坊"));
+    if (!workshopTab) throw new Error("策略工坊 tab not found");
     fireEvent.click(workshopTab);
     expect(onTabChange).toHaveBeenCalledWith("strategy-workshop");
   });
@@ -35,8 +35,8 @@ describe("TradingDeskLayout", () => {
     render(<TradingDeskLayout activeTab="trading-room" onTabChange={onTabChange} />);
     const tabBar = screen.getByTestId("trading-desk-tab-bar");
     const tabs = Array.from(tabBar.querySelectorAll("button"));
-    const perfTab = tabs.find((t) => t.textContent?.includes("Performance"));
-    if (!perfTab) throw new Error("Performance tab not found");
+    const perfTab = tabs.find((t) => t.textContent?.includes("策略執行與績效"));
+    if (!perfTab) throw new Error("策略執行與績效 tab not found");
     fireEvent.click(perfTab);
     expect(onTabChange).toHaveBeenCalledWith("strategy-performance");
   });
@@ -74,7 +74,7 @@ describe("TradingDeskLayout", () => {
     const tabBar = screen.getByTestId("trading-desk-tab-bar");
     const activeEl = tabBar.querySelector('[aria-current="page"]');
     expect(activeEl).not.toBeNull();
-    expect(activeEl?.textContent).toContain("Strategy Workshop");
+    expect(activeEl?.textContent).toContain("策略工坊");
   });
 
   it("marks active tab with aria-current=page (trading-room)", () => {
@@ -82,7 +82,7 @@ describe("TradingDeskLayout", () => {
     const tabBar = screen.getByTestId("trading-desk-tab-bar");
     const activeEl = tabBar.querySelector('[aria-current="page"]');
     expect(activeEl).not.toBeNull();
-    expect(activeEl?.textContent).toContain("Trading Room");
+    expect(activeEl?.textContent).toContain("交易操盤室");
   });
 
   it("renders the full shell container", () => {

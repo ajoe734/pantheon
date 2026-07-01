@@ -583,8 +583,10 @@ def default_state() -> dict[str, Any]:
 
 
 def load_state() -> dict[str, Any]:
-    if not STATUS_FILE.exists() or STATUS_FILE.read_text(encoding="utf-8").strip() == "":
+    if not STATUS_FILE.exists():
         return default_state()
+    if STATUS_FILE.read_text(encoding="utf-8").strip() == "":
+        raise SystemExit(f"Refusing to initialize from empty status file: {STATUS_FILE}")
     state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)

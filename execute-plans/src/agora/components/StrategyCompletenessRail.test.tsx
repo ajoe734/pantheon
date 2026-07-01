@@ -73,6 +73,26 @@ const mockNextQuestionCard: WorkshopCard = {
   created_at: "2026-06-22T00:00:00Z",
 };
 
+const v10Completeness: StrategyCompleteness = {
+  spec_version: "1.0",
+  completeness_id: "comp-v10",
+  strategy_ref: "winner-branch",
+  assessed_by_persona_id: "persona-a",
+  overall_grade: "mostly_complete",
+  dimensions: [
+    { dimension: "hypothesis", grade: "complete", gaps: [], required_actions: [] },
+    { dimension: "data_dependencies", grade: "partial", gaps: ["分點遷移與反向流證據薄弱"], required_actions: [] },
+    { dimension: "market_scope", grade: "complete", gaps: [], required_actions: [] },
+    { dimension: "evaluation_plan", grade: "complete", gaps: [], required_actions: [] },
+    { dimension: "risk_constraints", grade: "partial", gaps: ["成本、流動性與容量需補樣本外壓力測試"], required_actions: [] },
+    { dimension: "execution_profile", grade: "missing", gaps: ["進場與持有週期尚缺"], required_actions: [] },
+    { dimension: "governance", grade: "partial", gaps: [], required_actions: [] },
+  ],
+  blockers: ["若使用公告後才可見資料，不能宣稱為事前訊號。"],
+  research_ready: true,
+  assessed_at: "2026-06-22T00:00:00Z",
+} as unknown as StrategyCompleteness;
+
 describe("StrategyCompletenessRail", () => {
   it("renders the rail container", () => {
     render(
@@ -155,6 +175,22 @@ describe("StrategyCompletenessRail", () => {
       "What is the entry signal definition?"
     );
     expect(screen.getByTestId("next-question-score")).toBeDefined();
+  });
+
+  it("renders the V10 12 strategy blocks with derived states", () => {
+    render(
+      <StrategyCompletenessRail
+        completeness={v10Completeness}
+        readiness={mockReadiness}
+        nextQuestion={null}
+      />
+    );
+
+    expect(screen.getByTestId("v10-strategy-blocks")).toBeDefined();
+    expect(screen.getByTestId("v10-strategy-block-market_scope-state").textContent).toBe("已確認");
+    expect(screen.getByTestId("v10-strategy-block-migration_reverse_flow-state").textContent).toBe("薄弱");
+    expect(screen.getByTestId("v10-strategy-block-entry_holding-state").textContent).toBe("尚缺");
+    expect(screen.getByTestId("v10-strategy-block-event_lead-state").textContent).toBe("衝突");
   });
 
   it("does not render next question section when card is not next_question type", () => {

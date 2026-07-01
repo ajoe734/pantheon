@@ -129,10 +129,12 @@ def _assert_no_unrestricted_crawler() -> None:
     for entry in entries:
         fetch = entry.get("fetch_policy") or {}
         mode = fetch.get("mode")
-        if mode not in {None, "static_records", "external_feed"}:
+        if mode not in {None, "static_records", "external_feed", "provider_owned_adapter"}:
             raise RuntimeError(f"unexpected source fetch mode enabled: {entry}")
         if mode == "external_feed" and int(fetch.get("allowed_url_prefix_count") or 0) < 1:
             raise RuntimeError(f"external_feed lacks allowed_url_prefix guard: {entry}")
+        if mode == "provider_owned_adapter" and not str(fetch.get("adapter") or "").strip():
+            raise RuntimeError(f"provider_owned_adapter lacks explicit adapter guard: {entry}")
     print("ok  source registry has no unrestricted crawler mode")
 
 
@@ -215,7 +217,25 @@ def main() -> int:
         feed_server.shutdown()
         feed_server.server_close()
     feed_run_id = feed_run["run"]["ingest_run_id"]
+    refresh_summary = feed_run.get("source_search_refresh") or {}
+    refresh_service = refresh_summary.get("search_service") or {}
+    if (
+        refresh_summary.get("status") != "refreshed"
+        or refresh_service.get("materialized_matches_completion") is not True
+        or not refresh_service.get("pipeline_run_id")
+    ):
+        raise RuntimeError(f"source-ingest did not observe search refresh/materialization truth: {feed_run}")
     print("ok  guarded external_feed fetched through allowed_url_prefixes")
+
+    status, completion_truth = _request_json("GET", f"{SEARCH_URL}/api/search/index/source-completions/{feed_run_id}")
+    truth = completion_truth.get("truth") or {}
+    if (
+        status != 200
+        or truth.get("index_refreshed") is not True
+        or truth.get("materialized_matches_completion") is not True
+    ):
+        raise RuntimeError(f"search did not replay source-completion truth: {status} {completion_truth}")
+    print("ok  search replayed source-completion refresh/materialization truth")
 
     status, pipeline_runs = _request_json("GET", f"{SEARCH_URL}/api/search/index/pipeline-runs?limit=20")
     if status != 200 or not any(run.get("trigger_ref") == feed_run_id for run in pipeline_runs.get("runs", [])):

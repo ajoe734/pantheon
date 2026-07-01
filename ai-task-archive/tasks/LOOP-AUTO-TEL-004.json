@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-TEL-004",
+  "archived_at": "2026-06-27T15:10:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-TEL-004",
+    "title": "Classify drift reports into incidents with dedupe",
+    "summary_zh": "把 drift report threshold breach 自動轉成 IncidentCase create/update，並依 binding/runtime/incident cluster 去重。",
+    "phase": "Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-TEL-002",
+      "LOOP-AUTO-TEL-003"
+    ],
+    "artifacts": [
+      "services/reconciliation-drift",
+      "services/incidents",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Threshold breach opens or updates one incident",
+      "Duplicate reconciliation does not duplicate incidents",
+      "Incident links telemetry event ids binding id runtime id and reconciliation ids"
+    ],
+    "next": "Finalized DriftReport incident classification after PR #2446 and review-evidence PR #2448 merged; focused pytest 89 passed.",
+    "last_update": "2026-06-27T15:10:12Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "telemetry_reconciliation"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "DriftReport"
+    ],
+    "actual_state_sources": [
+      "IncidentCase"
+    ],
+    "wave_id": "Wave 4 Telemetry Reconciliation Incident",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex review approved DriftReport incident classification: PR #2446 merged at b22b464c; review evidence PR #2448 merged at eff1f7ae; focused pytest 89 passed."
+    ],
+    "review_file": ".orchestrator/reviews/LOOP-AUTO-TEL-004-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T15:10:12Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-tel-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-TEL-004",
+      "git_clean_required": false,
+      "commit": "8618bacc49dcd4856ef29ccb2f4246a8b0a3d2b0",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-AUTO-TEL-004",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-TEL-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6b57af097e3104bff7a83568c61df2c107dc325f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-TEL-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned LOOP-AUTO-TEL-004 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-27T12:37:01Z",
+      "resolved_at": "2026-06-27T12:37:03Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-TEL-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned LOOP-AUTO-TEL-004 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-27T12:37:03Z",
+      "resolved_at": "2026-06-27T14:47:16Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-TEL-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-27T14:47:16Z",
+      "resolved_at": "2026-06-27T14:47:25Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-TEL-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "PR #2446 merged into dev at b22b464c23b8baf5f3db983cb61500214b8b4263. Please review/approve drift-report incident classification; owner will run done after review_approved.",
+      "status": "done",
+      "created_at": "2026-06-27T14:59:03Z",
+      "resolved_at": "2026-06-27T15:06:13Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-TEL-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: DriftReport incident classification creates/updates one deduped IncidentCase and preserves telemetry/reconciliation/runtime evidence. Owner Codex2 may finalize after board state is corrected.",
+      "status": "done",
+      "created_at": "2026-06-27T15:06:13Z",
+      "resolved_at": "2026-06-27T15:10:13Z"
+    }
+  ],
+  "blockers": []
+}

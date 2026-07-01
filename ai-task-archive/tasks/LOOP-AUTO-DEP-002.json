@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-DEP-002",
+  "archived_at": "2026-06-27T14:22:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-DEP-002",
+    "title": "Add runtime-manager dispatch adapter",
+    "summary_zh": "新增 idempotent plan-to-binding adapter，讓 deployment saga 能安全呼叫 runtime-manager 建立或驗證 RuntimeBinding。",
+    "phase": "Global Loop Autopilot / Wave 3 Deployment Saga",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-DEP-001",
+      "LOOP-AUTO-RT-001"
+    ],
+    "artifacts": [
+      "services/deployment",
+      "services/runtime-manager",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Approved immutable plan dispatch creates or verifies one binding",
+      "Duplicate dispatch does not duplicate bindings",
+      "Runtime-manager failures return retryable or terminal saga state"
+    ],
+    "next": "Owner finalized: PR #2424 merged into dev at de4207c7; idempotent plan-to-binding dispatch adapter delivered; 36 adapter tests + 92 deployment suite tests passed; CI Gate green; evidence in docs/deployment/evidence/loop-auto-dep-002/README.md",
+    "last_update": "2026-06-27T14:22:14Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "promotion_deployment",
+      "capital_pool_execution"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "approved DeploymentPlan"
+    ],
+    "actual_state_sources": [
+      "RuntimeBinding",
+      "deployment saga state"
+    ],
+    "wave_id": "Wave 3 Deployment Saga",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex re-review approved: PR #2424 is merged into dev at de4207c7e5db426a5d78e5b51bd8a4e51486e42a; single-runtime conflict classification now returns terminal_error; local verification passed python3 -m pytest services/deployment/test_runtime_manager_dispatch_adapter.py -q (36 passed) and python3 -m pytest services/deployment/ -q (92 passed); GitHub Branch CI Gate checks passed."
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-dep-002/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T14:22:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-dep-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-DEP-002",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-DEP-002",
+      "ahead": 22,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d2a02f08bb3b821b2dbb6f0753c5c83ba226aa98",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-DEP-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Adapter complete. 34 tests pass (90 total, no regressions). PR #2424 open with auto-merge. Please review runtime_manager_dispatch_adapter.py and evidence README.",
+      "status": "done",
+      "created_at": "2026-06-27T13:47:35Z",
+      "resolved_at": "2026-06-27T13:54:19Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-DEP-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review changes requested on PR #2424: local RuntimeBindingError single-runtime conflicts are classified retryable_error instead of terminal_error; add terminal classification and regression test. PR comment: https://github.com/ajoe734/pantheon/pull/2424#issuecomment-4818118749",
+      "status": "done",
+      "created_at": "2026-06-27T13:54:19Z",
+      "resolved_at": "2026-06-27T13:54:19Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-DEP-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "PR #2424 merged into dev after addressing review comment. Changes: added 'single-runtime rule violation' and 'retire the existing binding' to _TERMINAL_KEYWORDS so local-mode RuntimeBindingError single-runtime conflicts classify as terminal_error. Added 2 regression tests (36 total pass). Requesting formal review_approved to close out.",
+      "status": "done",
+      "created_at": "2026-06-27T14:03:46Z",
+      "resolved_at": "2026-06-27T14:16:06Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-DEP-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Codex approved LOOP-AUTO-DEP-002 after re-review. PR #2424 merged into dev at de4207c7; single-runtime conflict fix present; local adapter tests 36 passed and deployment suite 92 passed; Branch CI Gate checks green. Owner Claude2 should run closeout finalization before done.",
+      "status": "done",
+      "created_at": "2026-06-27T14:16:06Z",
+      "resolved_at": "2026-06-27T14:22:15Z"
+    }
+  ],
+  "blockers": []
+}

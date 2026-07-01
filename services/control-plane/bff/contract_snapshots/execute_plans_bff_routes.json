@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "snapshot_date": "2026-05-08",
+    "snapshot_date": "2026-06-28",
     "owner_task": "BFF-LUV-GAP-001",
     "source_repo": "/home/lupin/code/execute-plans",
     "source_scope": [
@@ -11,7 +11,7 @@
       "execute-plans/src/**",
       "execute-plans/README.md"
     ],
-    "audited_active_endpoint_references": 169,
+    "audited_active_endpoint_references": 175,
     "status_values": [
       "implemented",
       "implemented_by_alias",
@@ -1327,6 +1327,54 @@
       "family": "execute-plans-cutover-smoke",
       "status": "deferred_with_task",
       "task_id": "BFF-LUV-GAP-012"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/assistant/control-mode",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/assistant/providers",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/assistant/provider/reauth/{id}",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/providers",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/control-mode/activate",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/control-mode/deactivate",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/provider/reauth",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/provider/reauth/{id}/code",
+      "family": "unknown",
+      "status": "implemented"
     }
   ]
 }

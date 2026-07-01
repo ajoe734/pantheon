@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-SRC-005",
+  "archived_at": "2026-06-27T15:42:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-SRC-005",
+    "title": "Connect source completion to search index refresh truth",
+    "summary_zh": "把 source run completion 與 search index refresh/materialization 串成可觀測路徑，避免 search scheduler optional profile 造成假活性。",
+    "phase": "Global Loop Autopilot / Wave 1 Source Persona Search",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-SRC-003"
+    ],
+    "artifacts": [
+      "services/search",
+      "services/source_ingestion",
+      "docker-compose.yml",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Completed source records trigger or verify search refresh",
+      "Search materialization has supervised scheduler or event-driven path",
+      "BFF can report source-to-search freshness truth"
+    ],
+    "next": "Owner finalized approved source-to-search refresh truth task after PR #2454 merged into dev.",
+    "last_update": "2026-06-27T15:42:05Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "source_ingestion",
+      "strategy_distillation"
+    ],
+    "current_maturity": "scheduled",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "completed SourceRecord"
+    ],
+    "actual_state_sources": [
+      "search index refresh status",
+      "search materialization records"
+    ],
+    "wave_id": "Wave 1 Source Persona Search",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Review approved by Codex; owner Codex2 should finalize via task PR after state lifecycle is aligned."
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-src-005/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T15:42:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-src-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-SRC-005",
+      "git_clean_required": false,
+      "commit": "410140a86228d0df2ea09a2253b20a5fd03a8229",
+      "commit_subject": "LOOP-AUTO-SRC-005: finalize source-search closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task closeout evidence and review-approved task brief alignment.",
+        "Not changing": "source/search runtime behavior, BFF route contracts, scheduler tick semantics, connector policy, durable repository backends, approval gates, or live-capital behavior.",
+        "Composes with": "source/search implementation commits 4868347d and 251aec2e plus origin/dev merge bb42d7eb.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "LOOP-AUTO-SRC-005",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m py_compile services/search/main.py services/source_ingestion/main.py scripts/smoke_source_search_bounded.py; python3 -m pytest services/search/tests/test_search_refresh.py services/search/test_index_pipeline.py services/source_ingestion/test_service.py services/search/tests/test_service_activation_contract.py services/source_ingestion/test_compose_activation.py -q (52 passed in 16.84s); git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-SRC-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5db9e49bb8ff83d8523633f3c1003046ffbda94b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-SRC-005",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Copilot becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-27T15:13:41Z",
+      "resolved_at": "2026-06-27T15:14:01Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-SRC-005",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Ready for review: source completion now posts to search source-completions endpoint, search refreshes/materializes and replays source-to-search truth, source-ingest records SearchIndexRefreshObserved and returns source_search_refresh, compose/smoke/evidence updated. Commits after rebase: 4868347d, 251aec2e. Verification: py_compile passed; focused pytest 52 passed; git diff --check passed; bounded compose smoke passed with alternate host ports after default 15432 was occupied.",
+      "status": "done",
+      "created_at": "2026-06-27T15:28:52Z",
+      "resolved_at": "2026-06-27T15:29:42Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-SRC-005",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: You have exceeded your monthly quota (Request ID: 8DF2:E40DE:2233C4A:28CDF6D:6A3FEC4A)",
+      "status": "done",
+      "created_at": "2026-06-27T15:29:42Z",
+      "resolved_at": "2026-06-27T15:34:51Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-SRC-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved by Codex; owner Codex2 should finalize via task PR after state lifecycle is aligned.",
+      "status": "done",
+      "created_at": "2026-06-27T15:34:51Z",
+      "resolved_at": "2026-06-27T15:37:26Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-SRC-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved by Codex; owner Codex2 finalizing via task PR.",
+      "status": "done",
+      "created_at": "2026-06-27T15:37:33Z",
+      "resolved_at": "2026-06-27T15:42:06Z"
+    }
+  ],
+  "blockers": []
+}

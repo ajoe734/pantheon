@@ -1020,6 +1020,8 @@ class PaperRuntimeService:
         self._consumer = SignalConsumer(
             store_client=self._store,
             binding_id=self._identity.binding_id or None,
+            runtime_id=self._identity.runtime_id or None,
+            capital_pool_id=self._identity.capital_pool_id or None,
         )
         self._poll_interval_seconds = poll_interval_seconds or _as_float(
             os.getenv("PANTHEON_RUNTIME_POLL_INTERVAL_SECONDS"),

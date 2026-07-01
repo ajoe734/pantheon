@@ -9,6 +9,7 @@ handoff record has the canonical no_order_route_proof for its schema.
 """
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict, List, Optional
 
 
@@ -23,6 +24,10 @@ class TradingRoomStore:
         self._handoffs_by_intent: Dict[str, List[str]] = {}
         self._trader_decisions: Dict[str, List[Dict[str, Any]]] = {}
         self._idempotency_keys: Dict[str, bool] = {}
+        self._workspace_proposals: Dict[str, Dict[str, Any]] = {}
+        self._workspaces: Dict[str, Dict[str, Any]] = {}
+        self._widget_revision_proposals: Dict[str, Dict[str, Any]] = {}
+        self._workspace_versions: Dict[str, List[Dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
     # Decision events
@@ -194,6 +199,177 @@ class TradingRoomStore:
             return True
         self._idempotency_keys[composite] = True
         return False
+
+    # ------------------------------------------------------------------
+    # Trading Room workspace proposals and workspaces
+    # ------------------------------------------------------------------
+
+    def upsert_workspace_proposal(
+        self,
+        proposal: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+        generation_meta: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        proposal_id = str(proposal["proposalId"])
+        existing = self._workspace_proposals.get(proposal_id) or {}
+        if generation_meta is None:
+            generation_meta = existing.get("generation_meta") or {}
+        self._workspace_proposals[proposal_id] = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "proposal": copy.deepcopy(proposal),
+            "generation_meta": copy.deepcopy(generation_meta),
+        }
+        return copy.deepcopy(proposal)
+
+    def get_workspace_proposal_record(self, proposal_id: str) -> Optional[Dict[str, Any]]:
+        record = self._workspace_proposals.get(proposal_id)
+        return copy.deepcopy(record) if record is not None else None
+
+    def get_workspace_proposal_generation_meta(self, proposal_id: str) -> Dict[str, Any]:
+        record = self._workspace_proposals.get(proposal_id) or {}
+        return copy.deepcopy(record.get("generation_meta") or {})
+
+    def upsert_workspace(
+        self,
+        workspace: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        workspace_id = str(workspace["id"])
+        self._workspaces[workspace_id] = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "workspace": copy.deepcopy(workspace),
+        }
+        return copy.deepcopy(workspace)
+
+    def get_workspace_record(self, workspace_id: str) -> Optional[Dict[str, Any]]:
+        record = self._workspaces.get(workspace_id)
+        return copy.deepcopy(record) if record is not None else None
+
+    # ------------------------------------------------------------------
+    # Widget revision proposals
+    # ------------------------------------------------------------------
+
+    def upsert_widget_revision_proposal(
+        self,
+        proposal: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        proposal_id = str(proposal["id"])
+        self._widget_revision_proposals[proposal_id] = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "proposal": copy.deepcopy(proposal),
+        }
+        return copy.deepcopy(proposal)
+
+    def get_widget_revision_proposal_record(
+        self,
+        proposal_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        record = self._widget_revision_proposals.get(proposal_id)
+        return copy.deepcopy(record) if record is not None else None
+
+    # ------------------------------------------------------------------
+    # Workspace versions and change log
+    # ------------------------------------------------------------------
+
+    def record_workspace_version(
+        self,
+        workspace: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+        created_at: str,
+        change_summary: str,
+        generated_by: Optional[str] = None,
+        changed_by: Optional[str] = None,
+        reason: Optional[str] = None,
+        affected_views: Optional[List[str]] = None,
+        affected_widgets: Optional[List[str]] = None,
+        effect_evaluation: Optional[str] = None,
+        source_revision_proposal_id: Optional[str] = None,
+        rollback_of_version_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        workspace_id = str(workspace["id"])
+        versions = self._workspace_versions.setdefault(workspace_id, [])
+        dashboard_version = int(workspace.get("dashboardVersion") or 0)
+        for version in versions:
+            if int(version.get("dashboardVersion") or 0) == dashboard_version:
+                return copy.deepcopy(version)
+
+        previous_version_id = versions[-1]["id"] if versions else None
+        version_id = f"trdv_{workspace_id}_v{dashboard_version}"
+        record = {
+            "id": version_id,
+            "userId": workspace["userId"],
+            "strategyId": workspace["strategyId"],
+            "strategyVersion": workspace["strategyVersion"],
+            "dashboardVersion": dashboard_version,
+            "generatedBy": generated_by or workspace.get("generatedBy") or "user_modified",
+            "previousVersionId": previous_version_id,
+            "changeSummary": change_summary,
+            "views": copy.deepcopy(workspace.get("views") or []),
+            "createdAt": created_at,
+            "status": "active",
+            "changeLog": {
+                "changedAt": created_at,
+                "changedBy": changed_by or generated_by or workspace.get("generatedBy") or "user_modified",
+                "reason": reason or change_summary,
+                "affectedViews": list(affected_views or []),
+                "affectedWidgets": list(affected_widgets or []),
+                "effectEvaluation": effect_evaluation or "not_evaluated",
+                "rollbackAvailable": True,
+                "sourceRevisionProposalId": source_revision_proposal_id,
+                "rollbackOfVersionId": rollback_of_version_id,
+            },
+        }
+        for prior in versions:
+            if prior.get("status") == "active":
+                prior["status"] = "superseded"
+                prior.setdefault("changeLog", {})["rollbackAvailable"] = True
+        versions.append(record)
+        return copy.deepcopy(record)
+
+    def list_workspace_version_records(
+        self,
+        workspace_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> List[Dict[str, Any]]:
+        workspace_record = self._workspaces.get(workspace_id)
+        if (
+            workspace_record is None
+            or str(workspace_record.get("tenant_id") or "") != tenant_id
+            or str(workspace_record.get("user_id") or "") != user_id
+        ):
+            return []
+        return copy.deepcopy(self._workspace_versions.get(workspace_id, []))
+
+    def get_workspace_version_record(
+        self,
+        workspace_id: str,
+        version_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        for version in self.list_workspace_version_records(
+            workspace_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        ):
+            if str(version.get("id") or "") == version_id:
+                return version
+        return None
 
 
 def make_trading_room_store() -> TradingRoomStore:

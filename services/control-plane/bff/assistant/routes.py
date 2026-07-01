@@ -74,12 +74,15 @@ ExtractIdentity = Callable[[Optional[str]], Any]
 RequireReadRole = Callable[[Any], None]
 BffErrorFactory = Callable[..., HTTPException]
 ProviderReadiness = Callable[[], Dict[str, Any]]
+ProviderList = Callable[[bool], Dict[str, Any]]
 OpenClawToolPolicy = Callable[[], Dict[str, Any]]
 OpenClawEffectiveTools = Callable[[str], Dict[str, Any]]
 AuthorizeAssistantSkill = Callable[[str, Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 PrepareRepairWorktree = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
+ProviderRegister = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 ProviderReauth = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 ProviderReauthStatus = Callable[[str, str, str], Dict[str, Any]]
+ProviderReauthCode = Callable[[str, str, str, str, Optional[str]], Dict[str, Any]]
 
 ASSISTANT_SA_SD_GENERATE_SKILL_ID = "assistant.sa_sd.generate"
 
@@ -110,12 +113,15 @@ def create_assistant_router(
     dev_docs_repo_root: Optional[str] = None,
     bridge_key_store: Optional[Dict[str, bytes]] = None,
     provider_readiness: Optional[ProviderReadiness] = None,
+    provider_list: Optional[ProviderList] = None,
     openclaw_tool_policy: Optional[OpenClawToolPolicy] = None,
     openclaw_effective_tools: Optional[OpenClawEffectiveTools] = None,
     authorize_assistant_skill: Optional[AuthorizeAssistantSkill] = None,
     prepare_repair_worktree: Optional[PrepareRepairWorktree] = None,
+    provider_register: Optional[ProviderRegister] = None,
     provider_reauth: Optional[ProviderReauth] = None,
     provider_reauth_status: Optional[ProviderReauthStatus] = None,
+    provider_reauth_code: Optional[ProviderReauthCode] = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/bff/assistant", tags=["assistant"])
 
@@ -439,6 +445,78 @@ def create_assistant_router(
         )
         return {"data": status.model_dump(mode="json", by_alias=True)}
 
+    @router.get("/providers")
+    async def list_assistant_providers(
+        auth_probe: bool = False,
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Return assistant provider readiness for Management auth surfaces."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        if provider_list is not None:
+            listed = provider_list(auth_probe)
+            if isinstance(listed, dict) and isinstance(listed.get("data"), list):
+                return listed
+            if isinstance(listed, list):
+                return {"status": "ok", "data": listed}
+            return {"status": "ok", "data": [listed]}
+        if provider_readiness is None:
+            _raise_error(
+                bff_error,
+                503,
+                ErrorCode.PRECONDITION_FAILED,
+                "Assistant provider readiness is not configured",
+                "OpenClaw adapter provider readiness is not configured for this BFF.",
+                field="openclaw_adapter",
+            )
+        return {"status": "ok", "data": [provider_readiness()]}
+
+    @router.post("/providers", status_code=201)
+    async def register_assistant_provider(
+        payload: dict = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Register assistant provider metadata through the OpenClaw adapter."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        control_status = _require_active_control_mode(
+            identity,
+            _control_mode_store,
+            bff_error=bff_error,
+        )
+        _require_provider_registration_control(control_status, bff_error=bff_error)
+        if provider_register is None:
+            _raise_error(
+                bff_error,
+                503,
+                ErrorCode.PRECONDITION_FAILED,
+                "Assistant provider registration is not configured",
+                "OpenClaw adapter provider registration is not configured for this BFF.",
+                field="openclaw_adapter",
+            )
+
+        request_payload = dict(payload or {})
+        request_payload["mode"] = str(control_status.get("mode") or "")
+        request_payload["operator_role"] = _operator_role_from_identity(identity)
+        request_payload["confirmed"] = True
+        request_payload["control_mode"] = {
+            "active": True,
+            "mode": control_status.get("mode"),
+            "activation_id": control_status.get("activation_id") or control_status.get("activationId"),
+        }
+        trace_id = str(request_payload.get("traceId") or request_payload.get("trace_id") or "").strip() or None
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        registered = provider_register(request_payload, actor_id, trace_id)
+        if isinstance(registered, dict) and isinstance(registered.get("data"), dict):
+            return {
+                "data": registered["data"],
+                "meta": {
+                    "openclawAdapterStatus": registered.get("status"),
+                    "openclaw_adapter_status": registered.get("status"),
+                },
+            }
+        return {"data": registered}
+
     # ------------------------------------------------------------------
     # SA/SD generation and signed dev task packet bridge
     # ------------------------------------------------------------------
@@ -498,18 +576,13 @@ def create_assistant_router(
     ) -> dict[str, Any]:
         """Start a provider device-auth reauth flow through the OpenClaw adapter.
 
-        BFF gates operator authorization and active control mode, but it never
-        receives or forwards provider credentials.  The adapter returns only
-        browser-safe device flow fields.
+        BFF gates operator authorization, but it does not enter assistant kernel
+        control mode and never receives or forwards provider credentials.  The
+        adapter returns only browser-safe device flow fields.
         """
         identity = extract_identity(authorization)
         require_read_role(identity)
-        control_status = _require_active_control_mode(
-            identity,
-            _control_mode_store,
-            bff_error=bff_error,
-        )
-        _require_provider_reauth_control(control_status, bff_error=bff_error)
+        _require_provider_reauth_operator(identity, bff_error=bff_error)
         if provider_reauth is None:
             _raise_error(
                 bff_error,
@@ -523,13 +596,13 @@ def create_assistant_router(
         request_payload = dict(payload or {})
         provider = str(request_payload.get("provider") or "codex").strip().lower() or "codex"
         request_payload["provider"] = provider
-        request_payload["mode"] = str(control_status.get("mode") or "")
+        request_payload["mode"] = AssistantMode.USER.value
         request_payload["operator_role"] = _operator_role_from_identity(identity)
         request_payload["confirmed"] = True
         request_payload["control_mode"] = {
-            "active": True,
-            "mode": control_status.get("mode"),
-            "activation_id": control_status.get("activation_id") or control_status.get("activationId"),
+            "active": False,
+            "mode": AssistantMode.USER.value,
+            "activation_id": None,
         }
         trace_id = str(request_payload.get("traceId") or request_payload.get("trace_id") or "").strip() or None
         actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
@@ -537,7 +610,7 @@ def create_assistant_router(
         if isinstance(started, dict) and isinstance(started.get("data"), dict):
             safe_data = _sanitize_provider_reauth_payload(
                 started["data"],
-                mode=str(control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
+                mode=AssistantMode.USER.value,
                 bff_error=bff_error,
             )
             return {
@@ -549,7 +622,7 @@ def create_assistant_router(
             }
         safe_started = _sanitize_provider_reauth_payload(
             started,
-            mode=str(control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
+            mode=AssistantMode.USER.value,
             bff_error=bff_error,
         )
         return {"data": safe_started}
@@ -562,7 +635,7 @@ def create_assistant_router(
     ) -> dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        _require_active_control_mode(identity, _control_mode_store, bff_error=bff_error)
+        _require_provider_reauth_operator(identity, bff_error=bff_error)
         if provider_reauth_status is None:
             _raise_error(
                 bff_error,
@@ -577,7 +650,7 @@ def create_assistant_router(
         if isinstance(status, dict) and isinstance(status.get("data"), dict):
             safe_data = _sanitize_provider_reauth_payload(
                 status["data"],
-                mode=AssistantMode.KERNEL_DEBUG.value,
+                mode=AssistantMode.USER.value,
                 bff_error=bff_error,
             )
             return {
@@ -590,7 +663,69 @@ def create_assistant_router(
         return {
             "data": _sanitize_provider_reauth_payload(
                 status,
-                mode=AssistantMode.KERNEL_DEBUG.value,
+                mode=AssistantMode.USER.value,
+                bff_error=bff_error,
+            )
+        }
+
+    @router.post("/provider/reauth/{session_id}/code")
+    async def submit_assistant_provider_reauth_code(
+        session_id: str,
+        payload: dict = Body(default_factory=dict),
+        provider: str = "claude",
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        _require_provider_reauth_operator(identity, bff_error=bff_error)
+        if provider_reauth_code is None:
+            _raise_error(
+                bff_error,
+                503,
+                ErrorCode.PRECONDITION_FAILED,
+                "Assistant provider reauth code submission is not configured",
+                "OpenClaw adapter provider reauth code submission is not configured for this BFF.",
+                field="openclaw_adapter",
+            )
+
+        request_payload = dict(payload or {})
+        requested_provider = str(request_payload.get("provider") or provider or "claude").strip().lower() or "claude"
+        code = str(
+            request_payload.get("code")
+            or request_payload.get("authorizationCode")
+            or request_payload.get("authorization_code")
+            or ""
+        ).strip()
+        if not code:
+            _raise_error(
+                bff_error,
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Assistant provider reauth requires an authorization code",
+                "The authorization code field is required.",
+                field="authorization_code",
+            )
+
+        trace_id = str(request_payload.get("traceId") or request_payload.get("trace_id") or "").strip() or None
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        submitted = provider_reauth_code(requested_provider, session_id, code, actor_id, trace_id)
+        if isinstance(submitted, dict) and isinstance(submitted.get("data"), dict):
+            safe_data = _sanitize_provider_reauth_payload(
+                submitted["data"],
+                mode=AssistantMode.USER.value,
+                bff_error=bff_error,
+            )
+            return {
+                "data": safe_data,
+                "meta": {
+                    "openclawAdapterStatus": submitted.get("status"),
+                    "openclaw_adapter_status": submitted.get("status"),
+                },
+            }
+        return {
+            "data": _sanitize_provider_reauth_payload(
+                submitted,
+                mode=AssistantMode.USER.value,
                 bff_error=bff_error,
             )
         }
@@ -1206,7 +1341,33 @@ def _sanitize_provider_reauth_payload(
         )
 
 
-def _require_provider_reauth_control(
+def _require_provider_reauth_operator(
+    identity: Any,
+    *,
+    bff_error: Optional[BffErrorFactory],
+) -> None:
+    if not actor_has_control_role(identity):
+        _raise_error(
+            bff_error,
+            403,
+            ErrorCode.FORBIDDEN,
+            "Assistant provider reauth requires operator or admin role",
+            "Actor does not hold a role allowed to reauthenticate assistant providers",
+            field="roles",
+            required_roles=sorted(CONTROL_MODE_ROLES),
+        )
+    if not getattr(identity, "mfa_verified", False):
+        _raise_error(
+            bff_error,
+            403,
+            ErrorCode.AUTH_REQUIRED,
+            "Assistant provider reauth requires MFA",
+            "Actor must complete MFA before reauthenticating assistant providers",
+            field="mfa",
+        )
+
+
+def _require_provider_registration_control(
     control_status: Dict[str, Any],
     *,
     bff_error: Optional[BffErrorFactory],
@@ -1219,8 +1380,8 @@ def _require_provider_reauth_control(
             bff_error,
             409,
             ErrorCode.PRECONDITION_FAILED,
-            "Assistant provider reauth requires active kernel_debug or kernel_repair control mode",
-            "Activate assistant control mode in kernel_debug or kernel_repair before starting provider reauth",
+            "Assistant provider registration requires active kernel_debug or kernel_repair control mode",
+            "Activate assistant control mode in kernel_debug or kernel_repair before registering provider metadata",
             field="control_mode",
             reason="kernel_debug_or_repair_required",
             mode=mode or None,
@@ -1230,8 +1391,8 @@ def _require_provider_reauth_control(
             bff_error,
             403,
             ErrorCode.FORBIDDEN,
-            "Assistant provider reauth requires assistant.kernel.debug or assistant.kernel.repair capability",
-            "The active control-mode activation does not include a provider reauth-capable kernel capability",
+            "Assistant provider registration requires assistant.kernel.debug or assistant.kernel.repair capability",
+            "The active control-mode activation does not include a provider-registration-capable kernel capability",
             field="capabilities",
             required_capability="assistant.kernel.debug",
             alternate_capability="assistant.kernel.repair",

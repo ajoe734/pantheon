@@ -37,7 +37,7 @@ DEFAULT_OUTPUT = "support/evidence/BFF-CONSOL-011-sse-replay-smoke.json"
 DEFAULT_CHANNEL = "approval"
 DEFAULT_COOKIE_NAME = "pantheon_session"
 STRICT_LIVE_SOAK_MIN_SECONDS = 75.0
-STRICT_LIVE_SOAK_MIN_HEARTBEATS = 1
+STRICT_LIVE_SOAK_MIN_HEARTBEATS = 2
 STRICT_LIVE_MIN_RECONNECT_ATTEMPTS = 5
 SSE_HEADER_KEYS = (
     "Content-Type",
@@ -50,6 +50,19 @@ SSE_HEADER_KEYS = (
     "X-SSE-Resync-Routes",
     "X-BFF-Session-Kind",
 )
+
+
+def strict_live_evidence_run() -> dict[str, str]:
+    return {
+        "github_environment": os.environ.get("PANTHEON_LIVE_EVIDENCE_ENVIRONMENT", "").strip(),
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", "").strip(),
+        "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "").strip(),
+        "github_workflow": os.environ.get("GITHUB_WORKFLOW", "").strip(),
+        "github_job": os.environ.get("GITHUB_JOB", "").strip(),
+        "repository": os.environ.get("GITHUB_REPOSITORY", "").strip(),
+        "ref": (os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", "")).strip(),
+        "sha": os.environ.get("GITHUB_SHA", "").strip(),
+    }
 
 
 @dataclass(frozen=True)
@@ -807,7 +820,7 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Optional long-running SSE soak duration. Use >=35s to observe server heartbeat.",
     )
-    parser.add_argument("--soak-min-heartbeats", type=int, default=1)
+    parser.add_argument("--soak-min-heartbeats", type=int, default=2)
     parser.add_argument(
         "--reconnect-attempts",
         type=int,
@@ -1013,6 +1026,7 @@ def main() -> int:
         "task_id": TASK_ID,
         "generated_at": generated_at,
         "target_url": base_url,
+        "strict_live_evidence_run": strict_live_evidence_run(),
         "channel": args.channel,
         "auth_source": auth_source,
         "strict_live_evidence": args.strict_live_evidence,
@@ -1039,8 +1053,8 @@ def main() -> int:
         "commands": [
             "PANTHEON_BFF_SMOKE_BEARER_TOKEN=<redacted> "
             "scripts/probe_bff_sse_stream.py --base-url <bff-url> "
-            "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 1 "
-            "--reconnect-attempts 5"
+            "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 2 "
+            "--reconnect-attempts 7"
         ],
         "publish": published_events,
         "open_transcripts": {
