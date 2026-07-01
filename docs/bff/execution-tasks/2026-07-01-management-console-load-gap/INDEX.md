@@ -70,3 +70,16 @@ Every `MGMT-LOAD-*` task must record:
 
 `MGMT-GAP-010` is not complete until `MGMT-LOAD-007` archives the final proof
 and the parent task has reviewer-approved closeout evidence.
+
+## 2026-07-01 Closeout Snapshot
+
+`MGMT-LOAD-001` through `MGMT-LOAD-006` are terminal `done` in the live task
+archive. `MGMT-LOAD-007` archived the parent-gate closeout at
+`docs/04/pantheon_management_console_load_gap_2026-07-01/archive/MGMT-LOAD-007-closeout-2026-07-01.md`.
+
+The load release gate is merged and fail-closed. The current
+`release-load-gate-2026-07-01.json` is `result.pass:false` because its
+route-timing, request-waterfall, and BFF-fanout inputs are still the
+`MGMT-LOAD-001` pre-fix hosted baseline. A fresh hosted route-load plus
+BFF-fanout run against the merged dev FE/BFF pair is required before
+`MGMT-GAP-010` or `MGMT-GAP-006` can claim production-green load acceptance.

@@ -90,3 +90,22 @@ must not treat that manifest as production-acceptance evidence until a fresh
 hosted probe run (`npm run probe:route-load && npm run probe:bff:fanout` in
 `execute-plans`, then re-run `scripts/aggregate-release-gate.mjs`) reports
 `pass: true`.
+
+## MGMT-LOAD-007 Handoff
+
+Final load-gap parent closeout:
+`docs/04/pantheon_management_console_load_gap_2026-07-01/archive/MGMT-LOAD-007-closeout-2026-07-01.md`.
+
+The current exact load-gate artifact set to consume is:
+
+- `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-load-gate-2026-07-01.json`
+- `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-load-gate-2026-07-01.md`
+- `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-route-timing-2026-07-01.json`
+- `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-request-waterfall-2026-07-01.json`
+- `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-bff-fanout-2026-07-01.json`
+- `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-bundle-2026-07-01.json`
+
+Acceptance rule: require `release-load-gate-*.json.result.pass == true`.
+Presence of the files is not enough. The 2026-07-01 files above are useful
+negative evidence and path fixtures, but they are not production-acceptance
+evidence because the manifest is `pass:false`.
