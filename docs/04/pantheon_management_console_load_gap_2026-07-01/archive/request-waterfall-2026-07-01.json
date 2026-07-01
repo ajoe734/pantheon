@@ -1,0 +1,102 @@
+[
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/management/evidence",
+    "path": "/management/evidence",
+    "status": 200,
+    "startMs": 35,
+    "endMs": 124,
+    "durationMs": 89
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DfsF2g9b.css",
+    "path": "/assets/index-DfsF2g9b.css",
+    "status": 200,
+    "startMs": 145,
+    "endMs": 158,
+    "durationMs": 13
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-ANtvIHEF.js",
+    "path": "/assets/index-ANtvIHEF.js",
+    "status": 200,
+    "startMs": 144,
+    "endMs": 1354,
+    "durationMs": 1210
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream?lastEventId=MR1OPSBG-3",
+    "path": "/bff/events/stream",
+    "status": null,
+    "startMs": 4226,
+    "endMs": null,
+    "durationMs": null,
+    "note": "realtime SSE stream; excluded from readiness milestones"
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/health",
+    "path": "/health",
+    "status": 200,
+    "startMs": 3716,
+    "endMs": 4410,
+    "durationMs": 694
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/me",
+    "path": "/bff/me",
+    "status": 200,
+    "startMs": 3715,
+    "endMs": 4468,
+    "durationMs": 753
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/management/evidence",
+    "path": "/bff/management/evidence",
+    "status": 200,
+    "startMs": 3717,
+    "endMs": 4483,
+    "durationMs": 766
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/approvals",
+    "path": "/bff/approvals",
+    "status": 200,
+    "startMs": 3715,
+    "endMs": 4485,
+    "durationMs": 770
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/alerts",
+    "path": "/bff/alerts",
+    "status": 200,
+    "startMs": 3715,
+    "endMs": 4486,
+    "durationMs": 771
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/jobs",
+    "path": "/bff/jobs",
+    "status": 200,
+    "startMs": 3718,
+    "endMs": 4486,
+    "durationMs": 768
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/jobs",
+    "path": "/bff/jobs",
+    "status": 200,
+    "startMs": 3715,
+    "endMs": 4500,
+    "durationMs": 785
+  }
+]
