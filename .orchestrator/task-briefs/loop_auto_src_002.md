@@ -15,6 +15,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Current Codex Handoff Notes
 
 - Re-dispatch reason: `owned_ready_dispatch`.
+- Current PR: https://github.com/ajoe734/pantheon/pull/2671
 - Branch: `task/LOOP-AUTO-SRC-002`, fast-forwarded to `origin/dev` at `5160b79b2` before validation.
 - Scope: no reconciler code changes in this run; existing dev implementation still provides the store-level `SourceProvisioningReconciler`, API route, idempotent connector/schedule writes, duplicate-tick no-op behavior, and missing connector/schedule repair.
 - Verification:

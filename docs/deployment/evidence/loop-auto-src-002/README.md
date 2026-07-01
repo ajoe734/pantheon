@@ -63,6 +63,8 @@ Fresh Codex revalidation after fast-forwarding `task/LOOP-AUTO-SRC-002` to
 `origin/dev` at `5160b79b2`:
 `54 passed in 14.37s`.
 
+Codex revalidation PR: https://github.com/ajoe734/pantheon/pull/2671
+
 ## Maturity Boundary
 
 This task does not raise `source_ingestion` maturity above `api-only`.
