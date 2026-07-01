@@ -14659,6 +14659,331 @@ async def list_operator_alerts(
     return _build_operator_alerts_payload(snapshot_at)
 
 
+_SHELL_SUMMARY_COUNT_CACHE: Dict[str, Any] = {}
+_SHELL_PENDING_APPROVAL_STATES = {"pending", "in_review", "proposed", "under_review", "reviewed"}
+_SHELL_ACTIVE_INCIDENT_STATUSES = {"open", "in_progress"}
+_SHELL_ACTIVE_JOB_STATUSES = {"running", "in_progress", "queued"}
+
+
+def _shell_summary_count_ttl_seconds() -> float:
+    try:
+        return max(0.0, float(os.getenv("PANTHEON_BFF_SHELL_SUMMARY_COUNT_TTL_SECONDS", "5")))
+    except (TypeError, ValueError):
+        return 5.0
+
+
+def _shell_count_unavailable_surface(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    message: str,
+) -> Dict[str, Any]:
+    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at)
+    surface["status"] = "unavailable"
+    surface["message"] = message
+    surface.setdefault(
+        "staleness",
+        {"served_from": "unverifiable", "last_known_at": snapshot_at},
+    )
+    return surface
+
+
+def _shell_count_freshness(
+    *,
+    computed_at: str,
+    ttl_seconds: float,
+    cache_status: str,
+) -> Dict[str, Any]:
+    return {
+        "computed_at": computed_at,
+        "ttl_seconds": ttl_seconds,
+        "cache": cache_status,
+    }
+
+
+def _attach_shell_count_freshness(
+    surface: Dict[str, Any],
+    *,
+    computed_at: str,
+    ttl_seconds: float,
+    cache_status: str,
+) -> Dict[str, Any]:
+    decorated = dict(surface)
+    decorated["freshness"] = _shell_count_freshness(
+        computed_at=computed_at,
+        ttl_seconds=ttl_seconds,
+        cache_status=cache_status,
+    )
+    return decorated
+
+
+def _shell_summary_pending_approvals_count(snapshot_at: str) -> tuple[int, Dict[str, Any]]:
+    surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    if surface.get("status") == "unavailable":
+        return 0, surface
+    try:
+        items = read_store.list_approval_queue_items()
+    except Exception:
+        return 0, _shell_count_unavailable_surface(
+            "approval_queue_items",
+            snapshot_at=snapshot_at,
+            message="Approval count source failed.",
+        )
+    pending = [
+        item for item in items
+        if str(item.get("decision_state") or "").strip().lower() in _SHELL_PENDING_APPROVAL_STATES
+    ]
+    return len(pending), surface
+
+
+def _shell_summary_running_jobs_count(snapshot_at: str) -> tuple[int, Dict[str, Any]]:
+    try:
+        jobs = _list_bff_jobs()
+    except Exception:
+        return 0, _shell_count_unavailable_surface(
+            "jobs",
+            snapshot_at=snapshot_at,
+            message="Job count source failed.",
+        )
+    surface_source = "bff_overlay" if _GOV_BFF_JOB_OVERLAY else None
+    surface = _dataset_surface_status(
+        "jobs",
+        snapshot_at=snapshot_at,
+        source=surface_source,
+    )
+    running = [
+        job for job in jobs
+        if str(job.get("status") or "").strip().lower() in _SHELL_ACTIVE_JOB_STATUSES
+    ]
+    return len(running), surface
+
+
+def _shell_summary_open_alerts_count(snapshot_at: str) -> tuple[int, Dict[str, Any]]:
+    source_surfaces: Dict[str, Dict[str, Any]] = {}
+    count = 0
+
+    incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    source_surfaces["incidents"] = incident_surface
+    if incident_surface.get("status") != "unavailable":
+        try:
+            for incident in read_store.list_incidents():
+                incident_status = str(incident.get("status") or "").strip().lower()
+                if incident_status not in _SHELL_ACTIVE_INCIDENT_STATUSES:
+                    continue
+                incident_id = str(incident.get("incident_id") or incident.get("id") or "").strip()
+                if f"alert-incident-{incident_id}" not in _ACKNOWLEDGED_ALERTS:
+                    count += 1
+        except Exception:
+            source_surfaces["incidents"] = _shell_count_unavailable_surface(
+                "incidents",
+                snapshot_at=snapshot_at,
+                message="Incident alert count source failed.",
+            )
+
+    review_surface = _dataset_surface_status("governance_review_queue_items", snapshot_at=snapshot_at)
+    source_surfaces["governance_review_queue"] = review_surface
+    if review_surface.get("status") != "unavailable":
+        try:
+            for item in read_store.list_governance_review_queue_items():
+                status = str(item.get("status") or "").strip().lower()
+                if status not in {"pending", "in_review", "escalated"}:
+                    continue
+                item_id = str(item.get("item_id") or "").strip()
+                if f"alert-governance-review-{item_id}" not in _ACKNOWLEDGED_ALERTS:
+                    count += 1
+        except Exception:
+            source_surfaces["governance_review_queue"] = _shell_count_unavailable_surface(
+                "governance_review_queue_items",
+                snapshot_at=snapshot_at,
+                message="Governance review alert count source failed.",
+            )
+
+    approval_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    source_surfaces["approval_queue"] = approval_surface
+    if approval_surface.get("status") != "unavailable":
+        try:
+            for item in read_store.list_approval_queue_items():
+                state = str(item.get("decision_state") or "").strip().lower()
+                if state not in {"pending", "in_review"}:
+                    continue
+                decision_id = str(item.get("decision_id") or "").strip()
+                if f"alert-approval-{decision_id}" not in _ACKNOWLEDGED_ALERTS:
+                    count += 1
+        except Exception:
+            source_surfaces["approval_queue"] = _shell_count_unavailable_surface(
+                "approval_queue_items",
+                snapshot_at=snapshot_at,
+                message="Approval alert count source failed.",
+            )
+
+    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
+    source_surfaces["kill_switch"] = kill_switch_surface
+    if kill_switch_surface.get("status") != "unavailable":
+        try:
+            kill_switch = read_store.get_kill_switch_status()
+            safe_mode_status = str(kill_switch.get("safe_mode_status") or "").strip().lower()
+            kill_switch_status = str(kill_switch.get("status") or "").strip().lower()
+            safe_mode_active = safe_mode_status not in {"", "off", "released", "none", "null"}
+            if (
+                kill_switch.get("active")
+                or kill_switch_status in {"triggered", "cooling_down"}
+                or safe_mode_active
+            ) and "alert-kill-switch-state" not in _ACKNOWLEDGED_ALERTS:
+                count += 1
+        except Exception:
+            source_surfaces["kill_switch"] = _shell_count_unavailable_surface(
+                "kill_switch",
+                snapshot_at=snapshot_at,
+                message="Kill-switch alert count source failed.",
+            )
+
+    surface = _aggregate_group_surface(
+        "open_alerts",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Shell alert count unavailable.",
+        degraded_message="Shell alert count is degraded.",
+    )
+    surface["source"] = "bff_cheap_count"
+    surface["source_surfaces"] = {
+        key: {"status": value.get("status"), "source": value.get("source")}
+        for key, value in source_surfaces.items()
+    }
+    surface["note"] = "Cheap shell count avoids full alert feed aggregation."
+    return count, surface
+
+
+def _build_shell_summary_counts() -> Dict[str, Any]:
+    ttl_seconds = _shell_summary_count_ttl_seconds()
+    now = time.monotonic()
+    cache_key = {
+        "read_store_id": id(read_store),
+        "read_surface_state": _read_surface_state(),
+    }
+    cached = _SHELL_SUMMARY_COUNT_CACHE
+    if (
+        cached.get("expires_at", 0.0) > now
+        and cached.get("cache_key") == cache_key
+        and cached.get("counts")
+        and cached.get("surfaces")
+    ):
+        snapshot_at = str(cached["snapshot_at"])
+        return {
+            "counts": dict(cached["counts"]),
+            "surfaces": {
+                key: _attach_shell_count_freshness(
+                    surface,
+                    computed_at=snapshot_at,
+                    ttl_seconds=ttl_seconds,
+                    cache_status="hit",
+                )
+                for key, surface in json.loads(json.dumps(cached["surfaces"])).items()
+            },
+            "snapshot_at": snapshot_at,
+        }
+
+    snapshot_at = utc_now()
+    pending_approvals, approvals_surface = _shell_summary_pending_approvals_count(snapshot_at)
+    open_alerts, alerts_surface = _shell_summary_open_alerts_count(snapshot_at)
+    running_jobs, jobs_surface = _shell_summary_running_jobs_count(snapshot_at)
+    source_surfaces = {
+        "pending_approvals": approvals_surface,
+        "open_alerts": alerts_surface,
+        "running_jobs": jobs_surface,
+    }
+    shell_surface = _aggregate_group_surface(
+        "shell_summary",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Shell summary count sources unavailable.",
+        degraded_message="Shell summary count sources are degraded.",
+    )
+    shell_surface["source"] = "bff_composed"
+    surfaces = {
+        "shell_summary": shell_surface,
+        **source_surfaces,
+    }
+    counts = {
+        "pending_approvals": pending_approvals,
+        "open_alerts": open_alerts,
+        "running_jobs": running_jobs,
+    }
+    _SHELL_SUMMARY_COUNT_CACHE.clear()
+    _SHELL_SUMMARY_COUNT_CACHE.update(
+        {
+            "expires_at": now + ttl_seconds,
+            "cache_key": cache_key,
+            "snapshot_at": snapshot_at,
+            "counts": counts,
+            "surfaces": json.loads(json.dumps(surfaces)),
+        }
+    )
+    return {
+        "counts": counts,
+        "surfaces": {
+            key: _attach_shell_count_freshness(
+                surface,
+                computed_at=snapshot_at,
+                ttl_seconds=ttl_seconds,
+                cache_status="miss",
+            )
+            for key, surface in surfaces.items()
+        },
+        "snapshot_at": snapshot_at,
+    }
+
+
+def _shell_summary_session(identity: OperatorIdentity, *, checked_at: str) -> Dict[str, Any]:
+    user = _bff_me_user_payload(identity)
+    session = _bff_me_session_payload(identity, checked_at=checked_at)
+    session_state = _sem_session_state(identity)
+    return {
+        "operator_id": user["operator_id"],
+        "operatorId": user["operator_id"],
+        "display_label": user["display_name"],
+        "displayLabel": user["display_name"],
+        "roles": list(user["roles"]),
+        "session_kind": session.get("session_kind"),
+        "sessionKind": session.get("session_kind"),
+        "state": str(session_state.get("state") or "active"),
+        "fresh": session.get("fresh"),
+        "mfa_verified": user["mfa_verified"],
+    }
+
+
+@app.get("/bff/management/shell-summary")
+async def bff_management_shell_summary(
+    authorization: Optional[str] = Header(default=None),
+    pantheon_session: Optional[str] = Cookie(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+):
+    """Cheap management shell summary for first-mount badges and session chrome."""
+    identity = _extract_identity(
+        authorization,
+        mfa_token=x_mfa_token,
+        session_cookie=pantheon_session,
+    )
+    _require_read_role(identity)
+    _raise_if_session_logged_out(identity)
+    count_payload = _build_shell_summary_counts()
+    checked_at = utc_now()
+    return {
+        "data": {
+            "counts": count_payload["counts"],
+            "session": _shell_summary_session(identity, checked_at=checked_at),
+            "transport": {
+                "bff_status": "ok",
+                "service": "operator-bff",
+                "api_version": app.version,
+            },
+        },
+        "meta": {
+            "snapshot_at": count_payload["snapshot_at"],
+            "surfaces": count_payload["surfaces"],
+        },
+    }
+
+
 @app.get("/api/v1/operator/home")
 async def get_operator_home(
     authorization: Optional[str] = Header(default=None),
@@ -43752,109 +44077,6 @@ async def bff_get_experiment_artifacts(
         "data": artifacts,
         "meta": _read_surface_meta("experiments", "experiment_artifacts", snapshot_at=snapshot_at),
     }
-
-
-# -- Jobs --------------------------------------------------------------------
-
-@app.get("/bff/jobs")
-async def bff_list_jobs(
-    status: Optional[str] = None,
-    job_type: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job list."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    jobs = read_store.list_jobs_bff(status=status, job_type=job_type)
-    total = len(jobs)
-    page_items, next_page_token = _page_slice(jobs, page_token, page_size)
-    return {
-        "data": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta("jobs", "job_list", snapshot_at=snapshot_at, total=total),
-    }
-
-
-@app.get("/bff/jobs/{job_id}")
-async def bff_get_job(
-    job_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job detail."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    job = read_store.get_job_bff(job_id)
-    if not job:
-        surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at)
-        _raise_if_read_surface_unavailable(surface, label="Job")
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    return {
-        "data": job,
-        "meta": _read_surface_meta("jobs", "job_detail", snapshot_at=snapshot_at),
-    }
-
-
-@app.get("/bff/jobs/{job_id}/logs")
-async def bff_get_job_logs(
-    job_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job logs."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    job = read_store.get_job_bff(job_id)
-    if not job:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    logs = read_store.get_job_logs_bff(job_id)
-    return {
-        "data": logs,
-        "meta": _read_surface_meta("jobs", "job_logs", snapshot_at=snapshot_at),
-    }
-
-
-@app.post("/bff/jobs/{job_id}/actions/{action_id}", status_code=202)
-async def bff_job_action(
-    job_id: str,
-    action_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: job action."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    job = read_store.get_job_bff(job_id)
-    if not job:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    return _evol_exp_bff_action_command(
-        entity_type=ObjectType.JOB,
-        entity_id=job_id,
-        action_id=action_id,
-        resolved_key=resolved_key,
-        identity=identity,
-        payload=payload,
-        command_type=CommandType.JOB_ACTION,
-    )
 
 
 # -- Events list -------------------------------------------------------------
