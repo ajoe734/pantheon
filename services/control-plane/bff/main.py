@@ -524,6 +524,42 @@ async def _management_rejects_agora_scope(request: Request, call_next):
         },
     )
 
+
+def _bff_session_contract_exempt(path: str) -> bool:
+    return path in {"/bff/auth/dev-login", "/bff/auth/refresh", "/bff/logout"}
+
+
+@app.middleware("http")
+async def _bff_session_rbac_contract(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or not path.startswith("/bff/") or _bff_session_contract_exempt(path):
+        return await call_next(request)
+
+    authorization = request.headers.get("authorization")
+    pantheon_session = request.cookies.get("pantheon_session")
+    if not authorization and not pantheon_session:
+        return await call_next(request)
+
+    try:
+        identity = _extract_identity(
+            authorization,
+            mfa_token=request.headers.get("x-mfa-token"),
+            session_cookie=pantheon_session,
+        )
+        _require_read_role(identity)
+        _raise_if_session_logged_out(identity)
+        requested_tenant = _first_nonblank(
+            request.headers.get("x-tenant-id"),
+            request.headers.get("x-pantheon-tenant"),
+        )
+        if requested_tenant:
+            _bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
+    except HTTPException as exc:
+        return _pack_d_http_exception_response(request, exc)
+
+    return await call_next(request)
+
+
 # --------------------------------------------------------------------------- #
 # Storage
 # --------------------------------------------------------------------------- #
@@ -951,7 +987,7 @@ def _dev_login_ttl_seconds() -> int:
 
 
 def _dev_login_roles() -> List[str]:
-    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer"]
+    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer", "approver"]
     return sorted(set(role for role in roles if role in _READ_ROLES or role in _WRITE_ROLES))
 
 
@@ -996,7 +1032,7 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
         os.getenv("PANTHEON_BFF_TENANT_ID"),
         os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
         os.getenv("PANTHEON_TENANT_ID"),
-        "pantheon-dev",
+        "tenant-dev",
     )
     allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
     mfa_verified = _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
