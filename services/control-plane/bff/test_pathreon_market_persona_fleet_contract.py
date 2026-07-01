@@ -137,6 +137,52 @@ def test_persona_catalog_and_health_expose_market_fields() -> None:
         assert row["metrics"]["violation_count"] == 0
 
 
+def test_management_persona_fleet_hydrates_live_persona_market_context() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        for persona_id, name in (
+            ("persona-20260528-04688755", "Crypto-Alt-Hunter"),
+            ("persona-20260528-5937dea1", "TW-Index-Arbitrage"),
+            ("persona-20260528-597cbad2", "US-Macro-Hedger"),
+        ):
+            store.create_persona(
+                persona_id=persona_id,
+                name=name,
+                actor_id="pantheon-dev-browser",
+                created_at="2026-05-28T00:00:00Z",
+                lifecycle_state="deployed",
+                metadata={},
+            )
+        with _client_with_store(store) as client:
+            response = client.get("/bff/management/persona-fleet?page_size=50", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    rows = {item["persona_id"]: item for item in response.json()["items"]}
+    crypto = rows["persona-20260528-04688755"]
+    assert crypto["name"] == "Crypto-Alt-Hunter"
+    assert crypto["owner"] == "pantheon-dev-browser"
+    assert crypto["data_source_status"]["state"] == "datasource_smoke_ok"
+    assert crypto["data_source_status"]["provider_statuses"]["kraken"] == "datasource_smoke_ok"
+    assert crypto["data_sources"][0]["provider_key"] == "kraken"
+    assert crypto["current_research_projects"][0]["project_id"] == "research-crypto-paper-001"
+    assert crypto["research_status"]["frameworks"] == ["vectorbt", "statsmodels", "finrl-rllib"]
+    assert crypto["current_work"] == "paper broker sandbox readback and funding-rate stress review"
+    assert crypto["perf_delta"] > 0
+
+    tw = rows["persona-20260528-5937dea1"]
+    assert tw["data_source_status"]["provider_statuses"]["shioaji"] == "read_ok"
+    assert tw["current_research_projects"][0]["project_id"] == "MGMT-QLIB-006"
+    assert tw["research_status"]["stage"] == "management_review_linked"
+
+    us = rows["persona-20260528-597cbad2"]
+    assert us["data_source_status"]["provider_statuses"]["ibkr"] == "read_ok"
+    assert us["current_research_projects"][0]["project_id"] == "research-us-paper-001"
+    assert us["current_work"] == "paper observation and OOS cost review"
+
+
 def test_persona_league_filters_and_requires_governance_for_rank_actions() -> None:
     with _fleet_client() as client:
         all_rows = client.get("/bff/persona-league", headers=HEADERS)
@@ -159,9 +205,9 @@ def test_persona_league_filters_and_requires_governance_for_rank_actions() -> No
     assert detail.json()["data"]["recommendation"] == "prepare_canary_packet"
 
 
-def test_management_fleet_composes_personas_ooda_capital_runtime_and_human_gate() -> None:
+def test_management_persona_fleet_composes_personas_ooda_capital_runtime_and_human_gate() -> None:
     with _fleet_client() as client:
-        response = client.get("/bff/management/fleet", headers=HEADERS)
+        response = client.get("/bff/management/persona-fleet", headers=HEADERS)
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -239,7 +285,7 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     }
 
 
-def test_management_fleet_keeps_market_personas_with_live_dev_overlay_only() -> None:
+def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_only() -> None:
     with tempfile.TemporaryDirectory() as td:
         store = ReadSurfaceStore(
             str(Path(td) / "read_surfaces.json"),
@@ -261,7 +307,7 @@ def test_management_fleet_keeps_market_personas_with_live_dev_overlay_only() -> 
         }
 
         with _client_with_store(store) as client:
-            response = client.get("/bff/management/fleet", headers=HEADERS)
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS)
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]

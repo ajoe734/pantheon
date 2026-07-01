@@ -51247,6 +51247,114 @@ def _overlay_live_finmind_health(data_source_status, data_sources):
     return dss, srcs
 
 
+_PERSONA_FLEET_CONTEXT_METADATA_KEYS = (
+    "market_scope",
+    "asset_classes",
+    "current_work",
+    "ooda_stage",
+    "deployment_stage",
+    "league_score",
+    "recommended_governance_action",
+    "governance_required",
+    "risk_flags",
+    "performance",
+    "data_source_status",
+    "data_sources",
+    "data_source_refs",
+    "research_status",
+    "research_refs",
+    "current_research_projects",
+)
+
+
+def _persona_fleet_context_missing(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return False
+
+
+def _persona_fleet_market_key(persona: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[str]:
+    for value in (
+        metadata.get("market"),
+        persona.get("market"),
+        persona.get("market_scope"),
+        metadata.get("market_scope"),
+    ):
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            normalized = str(candidate or "").strip().upper()
+            if normalized in {"US", "TW", "CRYPTO"}:
+                return normalized
+
+    asset_classes = {
+        str(value or "").strip().lower()
+        for value in (metadata.get("asset_classes") or persona.get("asset_classes") or [])
+    }
+    if "crypto" in asset_classes:
+        return "CRYPTO"
+
+    broker_adapter = str(metadata.get("broker_adapter") or persona.get("broker_adapter") or "").lower()
+    if "shioaji" in broker_adapter:
+        return "TW"
+    if "kraken" in broker_adapter or "crypto" in broker_adapter:
+        return "CRYPTO"
+    if "ibkr" in broker_adapter:
+        return "US"
+
+    name = str(persona.get("name") or persona.get("persona_name") or persona.get("id") or "").upper()
+    if name.startswith("CRYPTO") or "BTC" in name:
+        return "CRYPTO"
+    if name.startswith("TW") or "TAIWAN" in name:
+        return "TW"
+    if name.startswith("US") or "U.S." in name or "UNITED STATES" in name:
+        return "US"
+    return None
+
+
+def _persona_fleet_context_defaults_by_market() -> Dict[str, Dict[str, Any]]:
+    defaults: Dict[str, Dict[str, Any]] = {}
+    for candidate in read_store.list_personas(include_market_persona_defaults=True):
+        if not isinstance(candidate, dict):
+            continue
+        metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+        if not (
+            isinstance(metadata.get("data_source_status"), dict)
+            and metadata.get("data_source_status")
+            and isinstance(metadata.get("current_research_projects"), list)
+            and metadata.get("current_research_projects")
+        ):
+            continue
+        market = _persona_fleet_market_key(candidate, metadata)
+        if market and market not in defaults:
+            defaults[market] = {
+                "persona": json.loads(json.dumps(candidate)),
+                "metadata": json.loads(json.dumps(metadata)),
+            }
+    return defaults
+
+
+def _persona_fleet_context_overlay(
+    persona: Dict[str, Any],
+    metadata: Dict[str, Any],
+    defaults_by_market: Dict[str, Dict[str, Any]],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    market = _persona_fleet_market_key(persona, metadata)
+    default_context = defaults_by_market.get(market or "")
+    if not default_context:
+        return metadata, {}
+
+    default_metadata = default_context.get("metadata") if isinstance(default_context.get("metadata"), dict) else {}
+    context_metadata = json.loads(json.dumps(metadata))
+    for key in _PERSONA_FLEET_CONTEXT_METADATA_KEYS:
+        if _persona_fleet_context_missing(context_metadata.get(key)) and not _persona_fleet_context_missing(default_metadata.get(key)):
+            context_metadata[key] = json.loads(json.dumps(default_metadata[key]))
+    return context_metadata, default_context.get("persona") if isinstance(default_context.get("persona"), dict) else {}
+
+
 def _build_persona_health_items(
     snapshot_at: str,
     *,
@@ -51258,6 +51366,11 @@ def _build_persona_health_items(
             include_market_persona_defaults=include_market_persona_defaults,
         )
     }
+    context_defaults = (
+        _persona_fleet_context_defaults_by_market()
+        if include_market_persona_defaults
+        else {}
+    )
     items: List[Dict[str, Any]] = []
     for persona in read_store.list_personas(
         include_market_persona_defaults=include_market_persona_defaults,
@@ -51266,6 +51379,11 @@ def _build_persona_health_items(
         if not persona_id:
             continue
         metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        context_metadata, context_persona = _persona_fleet_context_overlay(
+            persona,
+            metadata,
+            context_defaults,
+        )
         league_entry = league_by_persona.get(persona_id, {})
         league_metrics = (
             league_entry.get("metrics")
@@ -51273,8 +51391,8 @@ def _build_persona_health_items(
             else {}
         )
         performance = (
-            metadata.get("performance")
-            if isinstance(metadata.get("performance"), dict)
+            context_metadata.get("performance")
+            if isinstance(context_metadata.get("performance"), dict)
             else {}
         )
         metrics = {**performance, **league_metrics}
@@ -51302,33 +51420,34 @@ def _build_persona_health_items(
             or runtime.get("deployment_stage")
             or runtime.get("deployment_mode")
             or metadata.get("deployment_stage")
+            or context_metadata.get("deployment_stage")
             or "none"
         )
         market_scope = list(
             league_entry.get("market_scope")
-            or metadata.get("market_scope")
+            or context_metadata.get("market_scope")
             or []
         )
-        asset_classes = list(metadata.get("asset_classes") or [])
-        risk_flags = list(league_entry.get("risk_flags") or metadata.get("risk_flags") or [])
+        asset_classes = list(context_metadata.get("asset_classes") or [])
+        risk_flags = list(league_entry.get("risk_flags") or context_metadata.get("risk_flags") or [])
         lifecycle_state = str(persona.get("lifecycle_state") or persona.get("status") or "unknown")
         health = _persona_health_status(
             lifecycle_state=lifecycle_state,
             league_entry=league_entry,
             risk_flags=risk_flags,
         )
-        score = _as_float(league_entry.get("league_score") or metadata.get("league_score"), 75.0)
+        score = _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), 75.0)
         routed = _routed_strategies_for_persona(persona_id)
         open_findings = len(risk_flags) + int(metrics.get("violation_count") or 0)
         drill_target = runtime_id or persona_id
         governance_required = bool(
             league_entry.get("governance_required")
             if "governance_required" in league_entry
-            else metadata.get("governance_required", True)
+            else context_metadata.get("governance_required", True)
         )
         recommendation = (
             league_entry.get("recommendation")
-            or metadata.get("recommended_governance_action")
+            or context_metadata.get("recommended_governance_action")
             or ""
         )
         persona_status = str(
@@ -51338,13 +51457,13 @@ def _build_persona_health_items(
             or lifecycle_state
         )
         data_source_status = (
-            metadata.get("data_source_status")
-            if isinstance(metadata.get("data_source_status"), dict)
+            context_metadata.get("data_source_status")
+            if isinstance(context_metadata.get("data_source_status"), dict)
             else {}
         )
         data_sources = (
-            metadata.get("data_sources")
-            if isinstance(metadata.get("data_sources"), list)
+            context_metadata.get("data_sources")
+            if isinstance(context_metadata.get("data_sources"), list)
             else []
         )
         required_data_sources = (
@@ -51352,29 +51471,31 @@ def _build_persona_health_items(
             if isinstance(persona.get("required_data_sources"), list)
             else []
         )
+        if not required_data_sources and isinstance(context_persona.get("required_data_sources"), list):
+            required_data_sources = context_persona.get("required_data_sources") or []
         data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
             data_source_status,
             data_sources,
             required_data_sources=required_data_sources,
         )
         data_source_refs = (
-            metadata.get("data_source_refs")
-            if isinstance(metadata.get("data_source_refs"), list)
+            context_metadata.get("data_source_refs")
+            if isinstance(context_metadata.get("data_source_refs"), list)
             else []
         )
         research_status = (
-            metadata.get("research_status")
-            if isinstance(metadata.get("research_status"), dict)
+            context_metadata.get("research_status")
+            if isinstance(context_metadata.get("research_status"), dict)
             else {}
         )
         research_refs = (
-            metadata.get("research_refs")
-            if isinstance(metadata.get("research_refs"), list)
+            context_metadata.get("research_refs")
+            if isinstance(context_metadata.get("research_refs"), list)
             else []
         )
         current_research_projects = (
-            metadata.get("current_research_projects")
-            if isinstance(metadata.get("current_research_projects"), list)
+            context_metadata.get("current_research_projects")
+            if isinstance(context_metadata.get("current_research_projects"), list)
             else []
         )
         human_needed = governance_required and str(recommendation).strip().lower() not in {
@@ -51388,7 +51509,7 @@ def _build_persona_health_items(
             or persona.get("last_active_at")
             or snapshot_at
         )
-        ooda_stage = league_entry.get("ooda_stage") or metadata.get("ooda_stage")
+        ooda_stage = league_entry.get("ooda_stage") or context_metadata.get("ooda_stage")
         item = {
             "id": persona_id,
             "persona_id": persona_id,
@@ -51416,8 +51537,8 @@ def _build_persona_health_items(
             "last_mutation": str(updated_at)[:10],
             "lastMutation": str(updated_at)[:10],
             "state": persona_status,
-            "current_work": metadata.get("current_work"),
-            "currentWork": metadata.get("current_work"),
+            "current_work": context_metadata.get("current_work"),
+            "currentWork": context_metadata.get("current_work"),
             "routed_strategies": routed,
             "routedStrategies": routed,
             "open_findings": open_findings,
