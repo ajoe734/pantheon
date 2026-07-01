@@ -12,6 +12,7 @@
 | Archive evidence | `archive/live-audit-2026-06-30.md` |
 | Re-audit addendum | `archive/full-reaudit-addendum-2026-07-01.md` |
 | Execution packet | `docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md` |
+| Dispatch tracking | `docs/bff/execution-tasks/2026-06-30-management-console-production-gap/DISPATCH_TRACKING.md` |
 
 ## 1. Purpose
 
@@ -90,6 +91,9 @@ literal path under this orchestration repository.
 | G4 | P1 | Studios and capability depth | Formula Studio says mock backtest; Skill Sandbox says mock execute; Tools/MCP/Skills lists are often empty/degraded with create CTA | Studios become real backtest/skill-runner flows, or are demoted from first-level nav until backend runner exists | `MGMT-GAP-005` |
 | G5 | P1 | IA over-expansion | 58 first-level management nav entries, including loops subpages, studios, governance subpages, and empty registries | Nav is cockpit-first and task-clustered; non-production surfaces are secondary, gated, or hidden | `MGMT-GAP-001` + `MGMT-GAP-006` |
 | G6 | P1 | Production proof | No single hosted-management probe asserts all visible nav pages use intended BFF endpoints and do not silently mock | Release gate includes management route/endpoint/mock/CTA coverage and deployed-host evidence | `MGMT-GAP-006` + `MGMT-GAP-007` |
+| G7 | P0 | Detail render honesty | 2026-07-01 live-id probes show `status.undefined`, `risk.undefined`, blank h1/owner/update fields, and `NaN%` | Detail pages normalize DTOs, aliases canonicalize, and empty registries fail honestly without seed-id leakage | `MGMT-GAP-008` |
+| G8 | P0 | Session/RBAC contract | Same dev operator token can read management data while `/bff/me` returns 403 | `/bff/me`, tenant, roles, and management reads share one documented fail-closed contract | `MGMT-GAP-009` |
+| G9 | P1 | Load/release gate | Management bundle and shell fanout can distort hosted readiness; localhost/network-idle probes are weak evidence | Bundle budgets, route-ready markers, endpoint timing, and shell request counts are part of release proof | `MGMT-GAP-010` |
 
 ## 4. Development Principles
 
@@ -179,6 +183,24 @@ Production gate:
 
 - route-level browser probe captures intended endpoint calls on hosted FE.
 
+### Batch 2.5 - Detail Honesty And Session Contract
+
+Owner fleet: frontend detail integration + BFF session/RBAC.
+
+Deliverables:
+
+- live-id detail pages no longer render `status.undefined`, `risk.undefined`,
+  blank h1/owner/update fields, or `NaN%`;
+- old detail aliases redirect or share one canonical DTO mapper;
+- empty Tools/MCP/Skills registries show explicit live-empty/not-found states;
+- `/bff/me`, tenant, roles, and management data reads agree for the documented
+  dev/integration-gate token path.
+
+Production gate:
+
+- hosted authenticated probe proves detail render honesty and session/RBAC
+  consistency with archived JSON/Markdown evidence.
+
 ### Batch 3 - Command Truth and Deep Operations
 
 Owner fleet: BFF/control-plane + frontend integration.
@@ -220,8 +242,12 @@ Deliverables:
 
 - management route manifest includes visible routes, hidden aliases, expected
   canonical final paths, and intended BFF endpoints;
+- management load gate records bundle sizes, route-ready time, endpoint timing,
+  and shell request counts;
 - Playwright hosted probe asserts no console CORS failures, no seed fallback
   claims, no mock-only success for write CTAs, and no stale legacy route render;
+- the hosted probe also fails on `undefined`, `NaN`, blank critical detail
+  fields, session/RBAC mismatch, and unavailable-as-success states;
 - release gate records FE commit, BFF health, OpenAPI endpoint presence, and
   route evidence.
 
@@ -237,8 +263,11 @@ Production gate:
 | 1 | `MGMT-GAP-001` | Codex2 | Claude | Frontend IA/route cleanup |
 | 2 | `MGMT-GAP-002` | Claude | Codex | Frontend canonical read wiring |
 | 2 | `MGMT-GAP-003` | Claude2 | Codex | BFF management DTO contract hardening |
+| 2.5 | `MGMT-GAP-008` | Claude | Codex | Detail DTO/render honesty and empty registry truth |
+| 2.5 | `MGMT-GAP-009` | Claude2 | Codex | Session `/bff/me` and RBAC contract consistency |
 | 3 | `MGMT-GAP-004` | Codex | Claude2 | Command receipt and write truth |
 | 4 | `MGMT-GAP-005` | Gemini | Claude | Runtime-backed studios and capability runner |
+| 5 | `MGMT-GAP-010` | Gemini2 | Codex | Management load and release gate performance |
 | 5 | `MGMT-GAP-006` | Gemini2 | Codex | Hosted production acceptance harness |
 | 5 | `MGMT-GAP-007` | Codex | Claude | Oversight closeout, archive proof, production gate tracking |
 
