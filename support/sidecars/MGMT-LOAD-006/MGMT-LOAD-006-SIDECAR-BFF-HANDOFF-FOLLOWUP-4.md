@@ -20,13 +20,14 @@ the earlier sidecars:
 - Follow-Up 2 defines pass/fail thresholds and request classification;
 - Follow-Up 3 defines the manifest, dependency ledger, failure codes, and
   `MGMT-LOAD-007` handoff;
-- this Follow-Up 4 identifies the live dependency caveat and the minimum
+- this Follow-Up 4 identifies the live dependency/review caveat and the minimum
   absorption sequence before the parent release gate may claim pass.
 
 The key risk here is premature parent closure: `MGMT-LOAD-006` can implement a
-gate skeleton while the frontend shell-fanout slice is still in flight, or
-while hosted BFF fanout evidence remains deferred. That state is useful as an
-implementation checkpoint, but it is not release evidence.
+gate skeleton while the frontend shell-fanout slice is merged but still waiting
+for review approval/owner closeout, or while hosted BFF fanout evidence remains
+deferred. That state is useful as an implementation checkpoint, but it is not
+release evidence.
 
 ## Sources Read
 
@@ -38,7 +39,7 @@ implementation checkpoint, but it is not release evidence.
 | `.orchestrator/skills/task-closeout-finalization.md` | Closeout requirement after reviewer approval and PR merge. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | Confirmed this sidecar is active and `in_progress`, not `review_approved`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-006` | Confirmed parent is still active and has been reassigned in L0 state to Claude. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-001/002/003/004/005` | Dependency state snapshot; `MGMT-LOAD-003` remains `in_progress`. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-001/002/003/004/005` | Dependency state snapshot; after merging latest `origin/dev`, `MGMT-LOAD-003` is in `review`. |
 | `docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md` | Original root-cause map and target release-gate behavior. |
 | `docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md` | Fleet order, global acceptance, and `MGMT-LOAD-006`/`007` handoff expectations. |
 | `docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-003-fe-shell-fanout.md` | Frontend shell-fanout acceptance that must still be represented in the parent gate. |
@@ -61,14 +62,15 @@ Current status snapshot from `AI_NAME=Codex ./scripts/ai-status.sh show`:
 |---|---|---|
 | `MGMT-LOAD-001` | `done` | Baseline route-load and BFF fanout evidence exists. |
 | `MGMT-LOAD-002` | `done` | `shell-summary` and canonical `/bff/jobs` are merged. |
-| `MGMT-LOAD-003` | `in_progress`; FE PR #136 reported open with green integration gate in status text. | Parent gate must treat FE shell-fanout proof as pending unless reviewer-approved final evidence or supersession is recorded. |
+| `MGMT-LOAD-003` | `review`; execute-plans PR #136 and Pantheon artifact PR #2696 are merged per status text, but reviewer approval/owner closeout is still pending. | Parent gate must treat FE shell-fanout proof as pending until reviewer-approved final evidence or supersession is recorded. |
 | `MGMT-LOAD-004` | `done` | Route splitting and hosted route-load precedent exist. |
 | `MGMT-LOAD-005` | `done` | Local read-isolation proof exists; hosted post-merge BFF fanout remains deferred. |
 | `MGMT-LOAD-006` | active parent, L0 owner currently Claude | Parent gate implementation and release artifact are not yet release proof by themselves. |
 
 This sidecar does not change the dependency graph. It flags that the parent
 owner/reviewer should reject a green parent result if `MGMT-LOAD-003` evidence
-is missing and no explicit reviewer-approved deferral or supersession exists.
+is not reviewer-approved/done and no explicit reviewer-approved deferral or
+supersession exists.
 
 ## Absorption Sequence For Parent Owner
 
@@ -126,7 +128,7 @@ result should remain non-pass unless the reviewer writes a bounded exception.
 ## Frontend Handoff Focus
 
 For the execute-plans side, the parent gate should prove the operator journey
-after the shell-fanout work lands:
+after the shell-fanout work is reviewed, closed, and deployed:
 
 | Frontend surface | Parent gate expectation |
 |---|---|
