@@ -360,7 +360,9 @@ def test_bff_events_stream_matches_lovable_shell_schema_without_auth() -> None:
 def test_cors_allow_headers_include_lovable_bff_client_headers() -> None:
     assert "Accept-Language" in bff_main._CORS_ALLOW_HEADERS
     assert "X-BFF-Api-Version" in bff_main._CORS_ALLOW_HEADERS
+    assert "X-Locale" in bff_main._CORS_ALLOW_HEADERS
     assert "X-Request-Id" in bff_main._CORS_ALLOW_HEADERS
+    assert "X-Tenant-Id" in bff_main._CORS_ALLOW_HEADERS
 
 
 def test_internal_publish_infers_approval_and_ask_channels() -> None:

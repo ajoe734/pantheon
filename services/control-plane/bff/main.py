@@ -384,9 +384,11 @@ _CORS_ALLOW_HEADERS = [
     "X-Correlation-Id",
     "X-Dry-Run",
     "X-Idempotency-Key",
+    "X-Locale",
     "X-MFA-Token",
     "X-Request-Id",
     "X-Refresh-Token",
+    "X-Tenant-Id",
     "X-Trace-Id",
 ]
 _CORS_EXPOSE_HEADERS = [
