@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Management load baseline and route-ready probes
-- Status: in_progress
+- Status: review_approved
 - Owner: Claude
-- Reviewer: Codex
-- Next: Delivery confirmed merged on both sides — execute-plans PR #130 (commit 7cd6060) and pantheon PR #2661 (commit 4ba70598) are both ancestors of their respective `dev` branches. Probe avoids `networkidle` (uses heading/API milestones) and fanout probe covers /health, /bff/management/evidence, /bff/alerts, /bff/approvals, /bff/jobs. Handed off to Codex for review.
+- Reviewer: Codex2
+- Next: Review approved by Codex2: route-load baseline and BFF fanout probes meet acceptance; owner Claude should finalize closeout to done.
 
 ## Summary
 建立 /management/evidence hosted browser route-load baseline 與 BFF fanout baseline；readiness 改用 heading/row/API milestone，不用 networkidle 判定 SSE 頁面就緒。
