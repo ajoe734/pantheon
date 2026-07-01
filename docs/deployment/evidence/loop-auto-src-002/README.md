@@ -1,9 +1,11 @@
 # Evidence: LOOP-AUTO-SRC-002 - Source Provisioning Reconciler
 
 Task: `LOOP-AUTO-SRC-002`
-Owner: Codex2
-Reviewer: Claude
-Date: 2026-06-27
+Owner: Codex
+Reviewer: Copilot
+Date: 2026-07-01
+
+Historical implementation owner/reviewer: Codex2 / Claude.
 
 ## Delivered Surface
 
@@ -56,6 +58,10 @@ Result: `54 passed in 39.75s`.
 
 Closeout revalidation after refreshing with `origin/dev` at `438d5d93`:
 `54 passed in 19.77s`.
+
+Fresh Codex revalidation after fast-forwarding `task/LOOP-AUTO-SRC-002` to
+`origin/dev` at `5160b79b2`:
+`54 passed in 14.37s`.
 
 ## Maturity Boundary
 
