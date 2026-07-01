@@ -137,7 +137,7 @@ When `MGMT-LOAD-007` closes or defers the parent gate, it should hand
 | Request waterfall | `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-request-waterfall-2026-07-01.json` |
 | Bundle evidence | `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-bundle-2026-07-01.json` |
 | BFF fanout | `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-bff-fanout-2026-07-01.json` |
-| Baseline route-load reference | `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-load-baseline-2026-07-01.md` and `.json` |
+| Baseline route-load reference | `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-load-baseline-2026-07-01.md` and `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-timing-2026-07-01.json` |
 | Baseline BFF fanout reference | `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-baseline-2026-07-01.md` and `.json` |
 | Local BFF before/after reference | `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-local-before-after-2026-07-01.md` and `.json` |
 | Hosted route-split reference | `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/mgmt-load-004-route-load-hosted-2026-07-01.md` |
