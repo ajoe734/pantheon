@@ -6,6 +6,9 @@ Batch: 5
 Fleet lane: frontend performance gate
 Depends on: `MGMT-GAP-001`, `MGMT-GAP-002`
 
+Execution packet:
+`docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md`
+
 ## Problem
 
 The full re-audit found production readiness can be distorted by page-load
@@ -28,6 +31,10 @@ Implement the follow-up from
 - make hosted probes use deterministic route-ready markers instead of
   `network-idle`;
 - add bundle/load regression thresholds to the management release gate.
+
+`MGMT-GAP-010` is the umbrella gate. Production execution is split into
+`MGMT-LOAD-001` through `MGMT-LOAD-007`; the parent task closes only after
+`MGMT-LOAD-007` archives reviewer-approved closeout evidence.
 
 ## Non-Scope
 
