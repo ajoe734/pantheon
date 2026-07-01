@@ -183,4 +183,3 @@ Codex should review this sidecar as support-only material:
   ownership boundaries;
 - confirm the sidecar is handed to the assigned reviewer and does not mark the
   parent task as done.
-
