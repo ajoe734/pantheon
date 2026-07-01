@@ -37,7 +37,7 @@ release evidence.
 | `.orchestrator/task-briefs/mgmt_load_006_sidecar_bff_handoff_followup_4.md` | Task-scoped assignment and support-only scope. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Anchor/commit boundary for task-scoped support artifacts. |
 | `.orchestrator/skills/task-closeout-finalization.md` | Closeout requirement after reviewer approval and PR merge. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | Confirmed this sidecar is active and `in_progress`, not `review_approved`. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | Initial preparation confirmed this sidecar was active and `in_progress`; owner closeout below records the later `review_approved` state. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-006` | Confirmed parent is still active and has been reassigned in L0 state to Claude. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-001/002/003/004/005` | Dependency state snapshot; after merging latest `origin/dev`, `MGMT-LOAD-003` is in `review`. |
 | `docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md` | Original root-cause map and target release-gate behavior. |
@@ -185,6 +185,26 @@ Claude should review this follow-up as a support-only handoff:
   `MGMT-LOAD-006` pass/closeout claims;
 - confirm `MGMT-LOAD-007` receives exact artifact expectations and residual
   ownership boundaries.
+
+## Owner Closeout Addendum
+
+Codex completed owner finalization after Claude review approval. Central status
+records that the review approved PR #2703 with this scope:
+
+- the diff was limited to the task brief and this support packet;
+- no canonical truth, runtime implementation, CI config, route registry, or
+  frontend code changed;
+- the `MGMT-LOAD-003` dependency caveat is a parent-gate risk marker only, not
+  a dependency-graph edit;
+- required PR checks passed before merge.
+
+Closeout verification added by Codex:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4
+gh pr view 2703 --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,url,title,statusCheckRollup
+git diff --check
+```
 
 ## Handoff
 
