@@ -1,0 +1,226 @@
+"""MGMT-LOAD-005 contract tests for BFF read concurrency isolation.
+
+Verifies that slow, synchronous management read aggregation (Evidence,
+alerts, approvals, jobs) cannot block the asyncio event loop and delay
+unrelated routes such as /health, and that a read exceeding its timeout
+budget returns an explicit degraded envelope instead of hanging.
+"""
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from typing import Iterator
+
+from fastapi.testclient import TestClient
+
+os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
+sys.path.insert(0, os.path.dirname(__file__))
+
+import main as bff_main  # noqa: E402
+from read_store import ReadSurfaceStore  # noqa: E402
+
+
+HEADERS = {"Authorization": "Bearer op-mgmt-load-005:operator,admin:mfa"}
+
+
+@contextmanager
+def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfaceStore]]:
+    """Isolated BFF app on a *persistent* TestClient portal (single event loop).
+
+    Using TestClient as a context manager keeps one event loop alive for the
+    whole `with` block instead of spinning up a fresh portal/event loop per
+    request. That persistent-loop shape is what a real long-lived uvicorn
+    worker looks like, and it is required for these concurrency tests: a
+    bare `TestClient(app).get(...)` call (no `with`) creates and tears down
+    its own event loop per call, which would make two "concurrent" requests
+    run on two unrelated event loops and silently defeat the point of the
+    test (see MGMT-LOAD-005 read-isolation fix in main.py).
+    """
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        bff_main.read_store = store
+        bff_main._SHELL_SUMMARY_COUNT_CACHE.clear()
+        bff_main._GOV_BFF_JOB_OVERLAY.clear()
+        bff_main._ACKNOWLEDGED_ALERTS.clear()
+        bff_main.app.openapi_schema = None
+        try:
+            with TestClient(bff_main.app, raise_server_exceptions=False) as client:
+                yield client, store
+        finally:
+            bff_main.read_store = original_store
+            bff_main._SHELL_SUMMARY_COUNT_CACHE.clear()
+            bff_main._GOV_BFF_JOB_OVERLAY.clear()
+            bff_main._ACKNOWLEDGED_ALERTS.clear()
+            bff_main.app.openapi_schema = None
+
+
+def _empty_evidence_payload(**_kwargs):
+    return {
+        "data": [],
+        "items": [],
+        "summary": {},
+        "facets": {},
+        "page_info": {},
+        "pagination": {},
+        "meta": {},
+    }
+
+
+def test_health_stays_fast_while_evidence_read_is_slow(monkeypatch) -> None:
+    """A slow Evidence aggregation must not delay a concurrent /health request."""
+
+    def slow_evidence_payload(**kwargs):
+        time.sleep(0.5)
+        return _empty_evidence_payload(**kwargs)
+
+    monkeypatch.setattr(bff_main, "_build_management_evidence_payload", slow_evidence_payload)
+
+    with _isolated_bff(monkeypatch) as (client, _store):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            evidence_future = pool.submit(client.get, "/bff/management/evidence", headers=HEADERS)
+            time.sleep(0.05)  # let the slow evidence request start first
+            health_started = time.monotonic()
+            health_response = client.get("/health")
+            health_elapsed = time.monotonic() - health_started
+            evidence_response = evidence_future.result()
+
+    assert health_response.status_code == 200
+    assert health_elapsed < 0.3, (
+        f"/health took {health_elapsed:.3f}s while a slow Evidence read was in flight; "
+        "the event loop must not be blocked by unrelated synchronous read work"
+    )
+    assert evidence_response.status_code == 200
+
+
+def test_health_stays_fast_while_jobs_read_is_slow(monkeypatch) -> None:
+    def slow_list_bff_jobs(*, status=None):
+        time.sleep(0.5)
+        return []
+
+    monkeypatch.setattr(bff_main, "_list_bff_jobs", slow_list_bff_jobs)
+
+    with _isolated_bff(monkeypatch) as (client, _store):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            jobs_future = pool.submit(client.get, "/bff/jobs", headers=HEADERS)
+            time.sleep(0.05)
+            health_started = time.monotonic()
+            health_response = client.get("/health")
+            health_elapsed = time.monotonic() - health_started
+            jobs_response = jobs_future.result()
+
+    assert health_response.status_code == 200
+    assert health_elapsed < 0.3, f"/health took {health_elapsed:.3f}s while a slow jobs read was in flight"
+    assert jobs_response.status_code == 200
+
+
+def test_evidence_timeout_returns_degraded_envelope_without_hanging(monkeypatch) -> None:
+    def slow_evidence_payload(**kwargs):
+        time.sleep(0.3)
+        return {**_empty_evidence_payload(**kwargs), "data": ["should-not-appear"]}
+
+    monkeypatch.setattr(bff_main, "_build_management_evidence_payload", slow_evidence_payload)
+    monkeypatch.setattr(bff_main, "_management_read_timeout_seconds", lambda: 0.05)
+
+    with _isolated_bff(monkeypatch) as (client, _store):
+        started = time.monotonic()
+        response = client.get("/bff/management/evidence", headers=HEADERS)
+        elapsed = time.monotonic() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.25, f"evidence route took {elapsed:.3f}s; it should degrade near the timeout budget"
+    payload = response.json()
+    assert payload["data"] == []
+    assert payload["items"] == []
+    surface = payload["meta"]["surfaces"]["management_evidence"]
+    assert surface["status"] == "degraded"
+    assert surface["reason"] == "read_timeout"
+
+
+def test_alerts_timeout_returns_degraded_envelope_without_hanging(monkeypatch) -> None:
+    def slow_alerts_payload(snapshot_at: str):
+        time.sleep(0.3)
+        return {"alerts": [{"alert_id": "should-not-appear"}], "summary": {}, "meta": {}}
+
+    monkeypatch.setattr(bff_main, "_build_operator_alerts_payload", slow_alerts_payload)
+    monkeypatch.setattr(bff_main, "_management_read_timeout_seconds", lambda: 0.05)
+
+    with _isolated_bff(monkeypatch) as (client, _store):
+        started = time.monotonic()
+        response = client.get("/bff/alerts", headers=HEADERS)
+        elapsed = time.monotonic() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.25, f"alerts route took {elapsed:.3f}s; it should degrade near the timeout budget"
+    payload = response.json()
+    assert payload["alerts"] == []
+    surface = payload["meta"]["surfaces"]["alerts"]
+    assert surface["status"] == "degraded"
+    assert surface["reason"] == "read_timeout"
+
+
+def test_approvals_timeout_returns_degraded_envelope_without_hanging(monkeypatch) -> None:
+    def slow_list_approval_queue_items():
+        time.sleep(0.3)
+        return [{"decision_id": "should-not-appear", "decision_state": "pending"}]
+
+    with _isolated_bff(monkeypatch) as (client, store):
+        monkeypatch.setattr(store, "list_approval_queue_items", slow_list_approval_queue_items)
+        monkeypatch.setattr(bff_main, "_management_read_timeout_seconds", lambda: 0.05)
+
+        started = time.monotonic()
+        response = client.get("/bff/approvals", headers=HEADERS)
+        elapsed = time.monotonic() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.25, f"approvals route took {elapsed:.3f}s; it should degrade near the timeout budget"
+    payload = response.json()
+    assert payload["items"] == []
+    assert payload["count"] == 0
+    surface = payload["meta"]["surfaces"]["approvals"]
+    assert surface["status"] == "degraded"
+    assert surface["reason"] == "read_timeout"
+
+
+def test_jobs_timeout_returns_degraded_envelope_without_hanging(monkeypatch) -> None:
+    def slow_list_bff_jobs(*, status=None):
+        time.sleep(0.3)
+        return [{"job_id": "should-not-appear", "status": "running"}]
+
+    monkeypatch.setattr(bff_main, "_list_bff_jobs", slow_list_bff_jobs)
+    monkeypatch.setattr(bff_main, "_management_read_timeout_seconds", lambda: 0.05)
+
+    with _isolated_bff(monkeypatch) as (client, _store):
+        started = time.monotonic()
+        response = client.get("/bff/jobs", headers=HEADERS)
+        elapsed = time.monotonic() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.25, f"jobs route took {elapsed:.3f}s; it should degrade near the timeout budget"
+    payload = response.json()
+    assert payload["data"] == []
+    assert payload["items"] == []
+    surface = payload["meta"]["surfaces"]["jobs"]
+    assert surface["status"] == "degraded"
+    assert surface["reason"] == "read_timeout"
+
+
+def test_evidence_returns_normal_payload_when_fast(monkeypatch) -> None:
+    """Sanity check: the timeout wrapper must not alter the happy path."""
+    with _isolated_bff(monkeypatch) as (client, _store):
+        response = client.get("/bff/management/evidence", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "management_evidence" in payload["meta"]["surfaces"]
+    # The isolated fixture's fresh local-snapshot store may legitimately report
+    # "degraded" for unrelated dataset-source reasons; what must not happen is
+    # a spurious read_timeout on the fast (non-monkeypatched) path.
+    assert payload["meta"]["surfaces"]["management_evidence"].get("reason") != "read_timeout"

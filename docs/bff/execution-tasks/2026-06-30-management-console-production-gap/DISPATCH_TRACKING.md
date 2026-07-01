@@ -20,7 +20,7 @@ Supplemental evidence added after the second-pass route/control audit:
 | `MGMT-GAP-003` | BFF DTO contracts | Claude2 | Codex | Done | Pantheon PR #2649, dev BFF deploy, OpenAPI/curl evidence |
 | `MGMT-GAP-004` | command truth | Codex | Claude2 | Done | execute-plans PR #132, merge `8ad6e034e9f831a11f143496b0320beba7a41dc2`, dev FE deploy, integration gate, hosted deployment proof |
 | `MGMT-GAP-005` | studios/capabilities | Codex2 | Claude | Closeout pending status sync | execute-plans PR #129 merged (`9f846697f03c89e72216749ee9b39d0a849e80a8`); Formula/Skill runner paths and Tools/MCP/Skills actions fail closed without governed runner/command receipts; Pantheon `done` waits for canonical `review_approved` sync |
-| `MGMT-GAP-008` | detail render honesty | Claude | Codex | Todo | live-id detail probe with no undefined/blank/NaN/seed-id leak; direct-render detail aliases redirected/canonicalized |
+| `MGMT-GAP-008` | detail render honesty | Claude | Codex2 | Done | execute-plans PR #133/#135, deployed FE commit `47b8f418`, dev FE-BFF integration gate run 28515196527 |
 | `MGMT-GAP-009` | session/RBAC contract | Claude2 | Codex | Todo | `/bff/me`, provider auth, tenant, roles, and management reads agree for documented token/tenant |
 | `MGMT-GAP-010` | load/release gate | Gemini2 | Codex | Todo | bundle budget, route-ready probe, shell request-count evidence; build warnings and large chunks are gated |
 | `MGMT-GAP-006` | acceptance harness | Gemini2 | Codex | Waiting | hosted strict-live harness covering all remaining gap detectors plus the 93-route/510-button route-control crawl shape |
@@ -34,7 +34,7 @@ MGMT-GAP-002: done after MGMT-GAP-003
 MGMT-GAP-003: done
 MGMT-GAP-004: done
 MGMT-GAP-005: unblocked by MGMT-GAP-003
-MGMT-GAP-008: unblocked by MGMT-GAP-002, MGMT-GAP-003
+MGMT-GAP-008: done
 MGMT-GAP-009: unblocked by MGMT-GAP-003
 MGMT-GAP-010: unblocked by MGMT-GAP-001, MGMT-GAP-002
 MGMT-GAP-006: waits for MGMT-GAP-004, MGMT-GAP-005, MGMT-GAP-008,
