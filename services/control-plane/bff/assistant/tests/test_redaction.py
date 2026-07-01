@@ -101,6 +101,8 @@ def test_redact_payload_masks_submitted_authorization_code_but_keeps_user_code()
         "reauth_session_id": "claude_reauth_123",
         "authorization_code": "oauth-code-should-redact",
         "authCode": "auth-code-should-redact",
+        "requires_authorization_code": True,
+        "requiresAuthorizationCode": True,
         "user_code": "ABCD-EFGH",
     }
 
@@ -109,6 +111,8 @@ def test_redact_payload_masks_submitted_authorization_code_but_keeps_user_code()
     assert result.value["reauth_session_id"] == "claude_reauth_123"
     assert result.value["authorization_code"] == "[REDACTED_TOKEN]"
     assert result.value["authCode"] == "[REDACTED_TOKEN]"
+    assert result.value["requires_authorization_code"] is True
+    assert result.value["requiresAuthorizationCode"] is True
     assert result.value["user_code"] == "ABCD-EFGH"
 
 

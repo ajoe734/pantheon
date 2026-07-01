@@ -605,6 +605,42 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(resp.json()["data"]["status"], "completed")
         status.assert_called_once_with("claude_reauth_1")
 
+    def test_assistant_claude_reauth_code_defaults_to_user_mode(self):
+        fake_payload = {
+            "reauth_session_id": "claude_reauth_1",
+            "provider": "claude",
+            "status": "code_submitted",
+            "code_submitted_at": "2026-07-01T00:00:00Z",
+        }
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(
+                allowed_tools=[adapter_main.ASSISTANT_PROVIDER_REAUTH_TOOL_NAME]
+            ),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-claude-code-1",
+        )
+        with patch.object(
+            adapter_main._CLAUDE_PROVIDER,
+            "submit_reauth_code",
+            return_value=fake_payload,
+        ) as submit, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/claude/reauth/claude_reauth_1/code",
+                json={"provider": "claude", "code": "claude-oauth-code-123", "confirmed": True},
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-claude-code-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["data"]["status"], "code_submitted")
+        submit.assert_called_once_with(
+            "claude_reauth_1",
+            code="claude-oauth-code-123",
+            operator_id="op-1",
+        )
+        entries = bridge._audit.read()  # noqa: SLF001 - test asserts route admission audit.
+        self.assertEqual(entries[0]["request_type"], "assistant_provider_reauth_code")
+        self.assertEqual(entries[0]["mode"], "user")
+
     def test_assistant_provider_registration_requires_bridge_allowlist(self):
         bridge = adapter_main.ToolWorkflowBridge(
             policy=adapter_main.ToolPolicy(allowed_tools=[]),
