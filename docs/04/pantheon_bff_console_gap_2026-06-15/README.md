@@ -1,5 +1,11 @@
 # Pantheon Management Console — BFF Gap & Execution Tasks (2026-06-15)
 
+> Superseded on 2026-06-30 by
+> `docs/04/pantheon_management_console_gap_2026-06-30/README.md`.
+> The routes listed here as missing BFF endpoints now appear in the hosted BFF
+> OpenAPI. The remaining management-console gap is FE canonical wiring,
+> command/write truth, IA cleanup, and production acceptance evidence.
+
 Source: management-console audit (`docs/04-frontend/management-console-inventory-2026-06-15.md`
 + execute-plans PR #36). Live probe basis: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
 with dev stub auth (`Authorization: Bearer op-dev:admin:mfa`).

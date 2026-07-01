@@ -24,9 +24,11 @@ def client():
         "SOURCE_INGEST_DLQ_PATH": os.environ.get("SOURCE_INGEST_DLQ_PATH"),
         "SOURCE_INGEST_AUDIT_PATH": os.environ.get("SOURCE_INGEST_AUDIT_PATH"),
         "SOURCE_INGEST_MAX_RECORDS": os.environ.get("SOURCE_INGEST_MAX_RECORDS"),
+        "SEARCH_INGEST_NOTIFY_URL": os.environ.get("SEARCH_INGEST_NOTIFY_URL"),
     }
     os.environ["SOURCE_INGEST_DATA_DIR"] = tempdir
     os.environ["SOURCE_INGEST_MAX_RECORDS"] = "3"
+    os.environ["SEARCH_INGEST_NOTIFY_URL"] = ""
 
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.import_module("services.source_ingestion.main")
@@ -130,6 +132,9 @@ def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
     run_id = body["run"]["ingest_run_id"]
     assert body["run"]["status"] == "completed"
     assert body["watermark"]["value"] == "2026-04-28T18:00:00Z"
+    assert body["source_search_refresh"]["status"] == "not_configured"
+    assert body["source_search_refresh"]["ingest_run_id"] == run_id
+    assert body["run"]["events"][-1]["event_type"] == "SearchIndexRefreshObserved"
     assert (data_dir / "ingest_schedule.jsonl").exists()
 
     reloaded = importlib.reload(module)
@@ -137,9 +142,55 @@ def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
     replayed_run = replay_client.get(f"/api/source-ingest/jobs/{run_id}")
     assert replayed_run.status_code == 200
     assert replayed_run.json()["run"]["status"] == "completed"
+    replayed_events = replayed_run.json()["run"]["events"]
+    assert replayed_events[-1]["event_type"] == "SearchIndexRefreshObserved"
+    assert json.loads(replayed_events[-1]["message"])["status"] == "not_configured"
     replayed_watermark = replay_client.get("/api/source-ingest/watermarks/conn-openalex")
     assert replayed_watermark.status_code == 200
     assert replayed_watermark.json()["watermark"]["last_ingest_run_id"] == run_id
+
+
+def test_provider_owned_job_parameters_are_accepted_by_jobs_api(client) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": {
+                "connector_id": "us-fred-macro",
+                "source_type": "macro",
+                "provider": "FRED",
+                "license_scope": "public_macro_reference",
+            },
+            "fetch": {
+                "mode": "provider_owned_adapter",
+                "adapter": "FredMacroSeriesAdapter.records_from_observations_payload",
+                "adapter_config": {"max_records": 3},
+                "request": {},
+                "max_records": 3,
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    response = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "us-fred-macro",
+            "trace_id": "trace-fred-job-parameters",
+            "trigger_type": "srclive_api_regression",
+            "job_parameters": {
+                "series_id": "GDP",
+                "csv_text": "observation_date,GDP\n2025-07-01,30623.1\n2025-10-01,30999.2\n",
+            },
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["run"]["status"] == "completed"
+    assert body["run"]["normalized_count"] == 2
+    assert body["records"][0]["metadata"]["series_id"] == "GDP"
+    assert body["records"][0]["metadata"]["fetch_mode"] == "public_csv_fallback"
 
 
 def test_configured_connector_fetch_runs_without_inline_records_and_persists_evidence_refs(client) -> None:
@@ -334,10 +385,19 @@ def test_financial_data_source_catalog_endpoint_exposes_templates(client) -> Non
     assert response.status_code == 200, response.text
     body = response.json()
     template_ids = {template["template_id"] for template in body["config_templates"]}
+    templates_by_id = {template["template_id"]: template for template in body["config_templates"]}
     assert body["catalog_status"] == "template_only_not_live_ingestion_claim"
     assert "template-tw-tej-research-backfill" in template_ids
     assert "template-tw-mops-official-disclosures" in template_ids
     assert "template-us-sec-edgar-filings" in template_ids
+    assert (
+        templates_by_id["template-tw-twse-tpex-official-market"]["fetch"]["adapter"]
+        == "TaiwanOfficialMarketDatasetAdapter.records_from_payload"
+    )
+    assert (
+        templates_by_id["template-tw-mops-official-disclosures"]["fetch"]["adapter"]
+        == "MopsSourceIngestAdapter.records_from_payload"
+    )
     assert body["active_universe_policy"]["summary"]["archive_baseline_rule_count"] >= 3
 
 

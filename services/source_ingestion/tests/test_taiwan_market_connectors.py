@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from services.research.adapters.taiwan_market_client import TaiwanMarketClient
 from services.source_ingestion.connectors import MopsSourceIngestAdapter, TejSourceIngestAdapter
+from services.source_ingestion.provider_adapters import execute_provider_owned_adapter, provider_adapter_tokens
 
 
 def test_mops_source_ingest_adapter_emits_official_filing_records() -> None:
@@ -34,6 +35,45 @@ def test_mops_source_ingest_adapter_emits_official_filing_records() -> None:
         "candidate_universe",
         "archive_universe",
     ]
+
+
+def test_mops_provider_owned_adapter_alias_fetches_allowlisted_route(monkeypatch) -> None:
+    adapter = MopsSourceIngestAdapter(connector_id="conn-mops-test")
+    payload = {
+        "code": 200,
+        "message": "查詢成功",
+        "result": {
+            "titles": [{"main": "發言日期"}, {"main": "發言時間"}, {"main": "公司代號"}, {"main": "公司名稱"}, {"main": "主旨"}],
+            "data": [["115/06/08", "14:07:19", "2428", "興勤", "本公司115年05月份自結合併營業收入公告"]],
+        },
+        "datetime": "115/06/08 23:11:35",
+    }
+
+    def fake_fetch(self, route_id, params=None):  # noqa: ANN001 - monkeypatch keeps the original method shape.
+        assert route_id == "t05st02"
+        assert params == {"year": "115", "month": "06", "day": "08"}
+        return payload
+
+    monkeypatch.setattr(TaiwanMarketClient, "fetch_mops_route", fake_fetch)
+    records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "MopsSourceIngestAdapter",
+            "adapter_config": {"max_records": 10},
+            "request": {
+                "route_id": "t05st02",
+                "params": {"year": "115", "month": "06", "day": "08"},
+            },
+            "max_records": 10,
+        },
+        trace_id="trace-mops-provider-owned",
+    )
+
+    assert "MopsSourceIngestAdapter" in set(provider_adapter_tokens())
+    assert records[0].connector_id == "conn-mops-test"
+    assert records[0].metadata["provider_owned_adapter"] == "MopsSourceIngestAdapter.records_from_payload"
+    assert records[0].metadata["route_id"] == "t05st02"
 
 
 def test_mops_monthly_revenue_rows_preserve_fiscal_and_availability_fields() -> None:

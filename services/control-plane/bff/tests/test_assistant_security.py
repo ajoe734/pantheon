@@ -53,8 +53,11 @@ def _control_mode_client(
     capabilities: list[str] | None = None,
     mfa_verified: bool = False,
     prepare_repair_worktree=None,
+    provider_list=None,
+    provider_register=None,
     provider_reauth=None,
     provider_reauth_status=None,
+    provider_reauth_code=None,
 ) -> TestClient:
     identity = _AssistantSecurityIdentity(
         roles=roles,
@@ -66,12 +69,17 @@ def _control_mode_client(
         build_context_pack=lambda *args, **kwargs: (_ for _ in ()).throw(NotImplementedError),
         extract_identity=lambda _authorization: identity,
         require_read_role=lambda _identity: None,
+        bff_error=bff_main._bff_error,
         control_mode_store=store,
+        provider_list=provider_list,
+        provider_register=provider_register,
         prepare_repair_worktree=prepare_repair_worktree,
         provider_reauth=provider_reauth,
         provider_reauth_status=provider_reauth_status,
+        provider_reauth_code=provider_reauth_code,
     )
     app = FastAPI()
+    app.add_exception_handler(bff_main.StarletteHTTPException, bff_main._bff_http_exception_handler)
     app.include_router(router)
     return TestClient(app, raise_server_exceptions=True)
 
@@ -460,50 +468,116 @@ def test_repair_worktree_prepare_delegates_to_openclaw_adapter(monkeypatch) -> N
     assert resp.json()["meta"]["openclawAdapterStatus"] == "ok"
 
 
-def test_provider_reauth_requires_active_kernel_debug_or_repair(monkeypatch) -> None:
+def test_provider_reauth_does_not_require_active_control_mode(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
     calls = []
 
     def reauth(payload, operator_id, trace_id):
         calls.append((payload, operator_id, trace_id))
-        return {"status": "ok", "data": {"status": "pending"}}
+        return {
+            "status": "ok",
+            "data": {
+                "reauth_session_id": "codex_reauth_1",
+                "status": "pending",
+            },
+        }
 
     store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
     client = _control_mode_client(
         store,
         roles=["operator"],
-        capabilities=["assistant.kernel.observe", "assistant.kernel.debug"],
+        capabilities=[],
         mfa_verified=True,
         provider_reauth=reauth,
     )
 
-    inactive_resp = client.post(
+    resp = client.post(
         "/bff/assistant/provider/reauth",
         json={"provider": "codex"},
         headers=OPERATOR_TOOL_HEADERS,
     )
-    assert inactive_resp.status_code == 409
-    assert inactive_resp.json()["error"]["details"]["reason"] == "not_active"
 
-    observe_resp = client.post(
-        "/bff/assistant/control-mode/activate",
-        json={
-            "passphrase": "control phrase ok",
-            "mode": "kernel_observe",
-            "reason": "observe only",
-        },
-        headers=OPERATOR_TOOL_HEADERS,
+    assert resp.status_code == 202, resp.text
+    assert len(calls) == 1
+    payload, operator_id, trace_id = calls[0]
+    assert operator_id == "op-security"
+    assert trace_id is None
+    assert payload["provider"] == "codex"
+    assert payload["mode"] == "user"
+    assert payload["operator_role"] == "operator"
+    assert payload["confirmed"] is True
+    assert payload["control_mode"] == {"active": False, "mode": "user", "activation_id": None}
+    assert resp.json()["data"]["status"] == "pending"
+
+
+def test_provider_reauth_requires_operator_mfa(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+
+    def reauth(payload, operator_id, trace_id):
+        return {"status": "ok", "data": {"status": "pending"}}
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    viewer_client = _control_mode_client(
+        store,
+        roles=["reviewer"],
+        capabilities=[],
+        mfa_verified=True,
+        provider_reauth=reauth,
     )
-    assert observe_resp.status_code == 202, observe_resp.text
-
-    denied_resp = client.post(
+    viewer_resp = viewer_client.post(
         "/bff/assistant/provider/reauth",
         json={"provider": "codex"},
         headers=OPERATOR_TOOL_HEADERS,
     )
-    assert denied_resp.status_code == 409
-    assert denied_resp.json()["error"]["details"]["reason"] == "kernel_debug_or_repair_required"
-    assert calls == []
+    assert viewer_resp.status_code == 403
+    assert viewer_resp.json()["error"]["details"]["field"] == "roles"
+
+    no_mfa_client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=[],
+        mfa_verified=False,
+        provider_reauth=reauth,
+    )
+    no_mfa_resp = no_mfa_client.post(
+        "/bff/assistant/provider/reauth",
+        json={"provider": "codex"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert no_mfa_resp.status_code == 403
+    assert no_mfa_resp.json()["error"]["details"]["field"] == "mfa"
+
+
+def test_provider_list_delegates_to_openclaw_adapter_with_auth_probe(monkeypatch) -> None:
+    calls = []
+
+    def provider_list(auth_probe: bool):
+        calls.append(auth_probe)
+        return {
+            "status": "ok",
+            "data": [
+                {"provider": "codex_cli", "ready": True, "auth_status": "ready"},
+                {"provider": "claude", "ready": False, "auth_status": "failed"},
+            ],
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+        provider_list=provider_list,
+    )
+
+    resp = client.get(
+        "/bff/assistant/providers?auth_probe=true",
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+
+    assert resp.status_code == 200
+    assert calls == [True]
+    assert resp.json()["data"][0]["provider"] == "codex_cli"
 
 
 def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:
@@ -542,21 +616,11 @@ def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:
     client = _control_mode_client(
         store,
         roles=["operator"],
-        capabilities=["assistant.kernel.debug"],
+        capabilities=[],
         mfa_verified=True,
         provider_reauth=reauth,
         provider_reauth_status=reauth_status,
     )
-    activate_resp = client.post(
-        "/bff/assistant/control-mode/activate",
-        json={
-            "passphrase": "control phrase ok",
-            "mode": "kernel_debug",
-            "reason": "reauth provider",
-        },
-        headers=OPERATOR_TOOL_HEADERS,
-    )
-    assert activate_resp.status_code == 202, activate_resp.text
 
     resp = client.post(
         "/bff/assistant/provider/reauth",
@@ -569,21 +633,212 @@ def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:
     assert operator_id == "op-security"
     assert trace_id == "trace-reauth-1"
     assert payload["provider"] == "codex"
-    assert payload["mode"] == "kernel_debug"
+    assert payload["mode"] == "user"
     assert payload["operator_role"] == "operator"
     assert payload["confirmed"] is True
-    assert payload["control_mode"]["active"] is True
-    assert payload["control_mode"]["mode"] == "kernel_debug"
+    assert payload["control_mode"] == {"active": False, "mode": "user", "activation_id": None}
+    reauth_session_id = resp.json()["data"]["reauth_session_id"]
+    assert reauth_session_id == "codex_reauth_1"
     assert resp.json()["data"]["verification_uri"] == "https://auth.openai.com/device"
     assert resp.json()["data"]["credential_exchange"]["bff_handles_credentials"] is False
 
     status_resp = client.get(
-        "/bff/assistant/provider/reauth/codex_reauth_1?provider=codex",
+        f"/bff/assistant/provider/reauth/{reauth_session_id}?provider=codex",
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert status_resp.status_code == 200
     assert status_resp.json()["data"]["status"] == "completed"
     assert status_resp.json()["data"]["operator"] == "op-security"
+
+
+def test_provider_reauth_delegates_claude_to_openclaw_adapter(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    calls = []
+    status_calls = []
+
+    def reauth(payload, operator_id, trace_id):
+        calls.append((payload, operator_id, trace_id))
+        return {
+            "status": "ok",
+            "data": {
+                "reauth_session_id": "claude_reauth_1",
+                "provider": "claude",
+                "status": "pending",
+                "verification_uri": "https://claude.ai/login",
+                "credential_exchange": {
+                    "bff_handles_credentials": False,
+                    "frontend_handles_credentials": False,
+                },
+            },
+        }
+
+    def reauth_status(provider, session_id, operator_id):
+        status_calls.append((provider, session_id, operator_id))
+        return {
+            "status": "ok",
+            "data": {
+                "reauth_session_id": session_id,
+                "provider": provider,
+                "status": "completed",
+                "readiness": {"ready": True},
+                "operator": operator_id,
+            },
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=[],
+        mfa_verified=True,
+        provider_reauth=reauth,
+        provider_reauth_status=reauth_status,
+    )
+
+    resp = client.post(
+        "/bff/assistant/provider/reauth",
+        json={"provider": "claude", "reason": "expired", "traceId": "trace-claude-reauth-1"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 202, resp.text
+    assert len(calls) == 1
+    payload, operator_id, trace_id = calls[0]
+    assert operator_id == "op-security"
+    assert trace_id == "trace-claude-reauth-1"
+    assert payload["provider"] == "claude"
+    assert payload["mode"] == "user"
+    assert payload["operator_role"] == "operator"
+    assert payload["confirmed"] is True
+    assert payload["control_mode"] == {"active": False, "mode": "user", "activation_id": None}
+    assert resp.json()["data"]["provider"] == "claude"
+    reauth_session_id = resp.json()["data"]["reauth_session_id"]
+    assert reauth_session_id == "claude_reauth_1"
+    assert resp.json()["data"]["verification_uri"] == "https://claude.ai/login"
+
+    status_resp = client.get(
+        f"/bff/assistant/provider/reauth/{reauth_session_id}?provider=claude",
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert status_resp.status_code == 200
+    assert status_resp.json()["data"]["status"] == "completed"
+    assert status_resp.json()["data"]["provider"] == "claude"
+    assert status_calls == [("claude", "claude_reauth_1", "op-security")]
+
+
+def test_provider_reauth_code_delegates_claude_code_to_openclaw_adapter(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    code_calls = []
+
+    def reauth_code(provider, session_id, code, operator_id, trace_id):
+        code_calls.append((provider, session_id, code, operator_id, trace_id))
+        return {
+            "status": "ok",
+            "data": {
+                "reauth_session_id": session_id,
+                "provider": provider,
+                "status": "code_submitted",
+                "authorization_code": code,
+                "code_submitted_at": "2026-07-01T00:00:00Z",
+            },
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=[],
+        mfa_verified=True,
+        provider_reauth_code=reauth_code,
+    )
+
+    resp = client.post(
+        "/bff/assistant/provider/reauth/claude_reauth_1/code?provider=claude",
+        json={
+            "provider": "claude",
+            "code": "claude-oauth-code-123",
+            "traceId": "trace-claude-code-1",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert code_calls == [
+        ("claude", "claude_reauth_1", "claude-oauth-code-123", "op-security", "trace-claude-code-1")
+    ]
+    assert resp.json()["data"]["reauth_session_id"] == "claude_reauth_1"
+    assert resp.json()["data"]["status"] == "code_submitted"
+    rendered = repr(resp.json())
+    assert "claude-oauth-code-123" not in rendered
+    assert "[REDACTED_TOKEN]" in rendered
+
+
+def test_provider_registration_requires_control_and_delegates(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    calls = []
+
+    def register(payload, operator_id, trace_id):
+        calls.append((payload, operator_id, trace_id))
+        return {
+            "status": "ok",
+            "data": {
+                "provider": "gemini_cli",
+                "provider_name": "Gemini CLI",
+                "status": "registered",
+                "ready": False,
+                "reauth_supported": False,
+            },
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+        provider_register=register,
+    )
+
+    denied = client.post(
+        "/bff/assistant/providers",
+        json={"provider": "gemini_cli", "providerName": "Gemini CLI"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert denied.status_code == 409
+
+    activate_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "mode": "kernel_debug",
+            "reason": "register provider",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert activate_resp.status_code == 202, activate_resp.text
+
+    resp = client.post(
+        "/bff/assistant/providers",
+        json={
+            "provider": "gemini_cli",
+            "providerName": "Gemini CLI",
+            "model": "gemini-2.5-pro",
+            "traceId": "trace-register-provider-1",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 201, resp.text
+    assert len(calls) == 1
+    payload, operator_id, trace_id = calls[0]
+    assert operator_id == "op-security"
+    assert trace_id == "trace-register-provider-1"
+    assert payload["provider"] == "gemini_cli"
+    assert payload["providerName"] == "Gemini CLI"
+    assert payload["model"] == "gemini-2.5-pro"
+    assert payload["mode"] == "kernel_debug"
+    assert payload["operator_role"] == "operator"
+    assert payload["confirmed"] is True
+    assert payload["control_mode"]["active"] is True
+    assert resp.json()["data"]["provider"] == "gemini_cli"
 
 
 def test_provider_reauth_response_redacts_adapter_credential_leak(monkeypatch) -> None:
@@ -607,20 +862,10 @@ def test_provider_reauth_response_redacts_adapter_credential_leak(monkeypatch) -
     client = _control_mode_client(
         store,
         roles=["operator"],
-        capabilities=["assistant.kernel.debug"],
+        capabilities=[],
         mfa_verified=True,
         provider_reauth=reauth,
     )
-    activate_resp = client.post(
-        "/bff/assistant/control-mode/activate",
-        json={
-            "passphrase": "control phrase ok",
-            "mode": "kernel_debug",
-            "reason": "reauth provider",
-        },
-        headers=OPERATOR_TOOL_HEADERS,
-    )
-    assert activate_resp.status_code == 202, activate_resp.text
 
     resp = client.post(
         "/bff/assistant/provider/reauth",
@@ -629,6 +874,7 @@ def test_provider_reauth_response_redacts_adapter_credential_leak(monkeypatch) -
     )
 
     assert resp.status_code == 202, resp.text
+    assert resp.json()["data"]["reauth_session_id"] == "codex_reauth_leak"
     rendered = repr(resp.json())
     assert "provider-token-should-not-leak" not in rendered
     assert "refresh-token-should-not-leak" not in rendered

@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-EVO-005",
+  "archived_at": "2026-06-27T22:39:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-EVO-005",
+    "title": "Prove evolution rollback and follow-through",
+    "summary_zh": "產出 approved rollback/mitigation command 到 runtime-manager/deployment 的 follow-through evidence。",
+    "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-EVO-004"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence",
+      "services/evolution",
+      "services/runtime-manager"
+    ],
+    "acceptance": [
+      "Evidence proves approved rollback command reaches runtime-manager or deployment",
+      "BFF shows proposed reviewed approved dispatched and executed stages",
+      "Failure path records blocked reason and retry state"
+    ],
+    "next": "Claude2 finalizing review_approved task: all 20 tests pass, evidence in dev via PR 2475, BFF stages and failure paths verified",
+    "last_update": "2026-06-27T22:39:02Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "evolution"
+    ],
+    "current_maturity": "reconciled",
+    "target_maturity": "proven-live",
+    "desired_state_sources": [
+      "approved evolution action"
+    ],
+    "actual_state_sources": [
+      "runtime-manager command",
+      "deployment saga",
+      "evidence packet"
+    ],
+    "wave_id": "Wave 5 Postmortem Evolution",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：20 tests pass",
+      "AC-1 E2E 凍結→rollback-followthrough→RuntimeManagerService.rollback() 驗證完成",
+      "AC-2 BFF observation-report 暴露全部五個 stage",
+      "AC-3 failure paths 明確 surfaced 阻塞原因"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-evo-005/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T22:39:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-evo-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-EVO-005",
+      "git_clean_required": false,
+      "commit": "f1331a1d29ce2738a9fdd77e050d4ff04f9053ab",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-AUTO-EVO-005",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-EVO-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "58e2b267574b15452eb4fdd732033e25200d8e30",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-EVO-005",
+      "from": "Gemini2",
+      "to": "Claude2",
+      "message": "Auto-reassigned LOOP-AUTO-EVO-005 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude2.",
+      "status": "done",
+      "created_at": "2026-06-27T12:37:13Z",
+      "resolved_at": "2026-06-27T12:37:16Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-005",
+      "from": "Gemini2",
+      "to": "Claude2",
+      "message": "Auto-reassigned LOOP-AUTO-EVO-005 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude2.",
+      "status": "done",
+      "created_at": "2026-06-27T12:37:16Z",
+      "resolved_at": "2026-06-27T17:59:18Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-005",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "20 tests pass. AC-1: test_end_to_end_evolution_freeze_to_runtime_rollback proves freeze → rollback-followthrough → RuntimeManagerService.rollback() → old binding retired, new active. AC-2: BFF observation-report exposes proposed/reviewed/approved/dispatched/executed stages. AC-3: failure tests surface blocked reason for missing active_binding_id, non-approved state, terminal/missing binding. Commit 1f257e51 on task/LOOP-AUTO-EVO-005.",
+      "status": "done",
+      "created_at": "2026-06-27T18:06:59Z",
+      "resolved_at": "2026-06-27T18:09:15Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-005",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: all 20 tests pass, all 3 ACs met with real service code paths. Owner Claude2 may finalize.",
+      "status": "done",
+      "created_at": "2026-06-27T18:09:15Z",
+      "resolved_at": "2026-06-27T18:15:23Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-005",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Re-handoff after live recovery: PR #2475 is merged and review artifact records Claude approval; requesting formal reviewer transition so owner can close out.",
+      "status": "done",
+      "created_at": "2026-06-27T22:27:47Z",
+      "resolved_at": "2026-06-27T22:30:03Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-005",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved — all 20 tests pass, three ACs met, evidence packet and review-claude.md complete. Returning to owner Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T22:30:03Z",
+      "resolved_at": "2026-06-27T22:39:03Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "LOOP-AUTO-EVO-005",
+      "owner": "Claude2",
+      "waiting_for": "Claude",
+      "message": "PR 2475 merged and CI green; review doc (docs/deployment/evidence/loop-auto-evo-005/review-claude.md) committed in 4e43453b shows Claude APPROVED; formal ai-status.sh approve transition was never run — needs Claude to run approve command before Claude2 can run done",
+      "status": "resolved",
+      "created_at": "2026-06-27T18:23:52Z",
+      "resolved_at": "2026-06-27T22:27:47Z"
+    }
+  ]
+}

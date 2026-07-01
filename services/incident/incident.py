@@ -131,6 +131,8 @@ class IncidentCase:
     # Optional evidence fields
     resolved_at: Optional[str] = None
     telemetry_event_ids: List[str] = field(default_factory=list)
+    reconciliation_ids: List[str] = field(default_factory=list)
+    incident_cluster_id: Optional[str] = None
     evidence_summary: Optional[str] = None
     lineage_ref: Optional[str] = None          # composite ref, e.g. "{artifact_id}@{artifact_version}"
 
@@ -282,6 +284,11 @@ class Postmortem:
     timeline: List[Dict[str, Any]] = field(default_factory=list)
     action_items: List[str] = field(default_factory=list)
     author_ids: List[str] = field(default_factory=list)
+    telemetry_event_ids: List[str] = field(default_factory=list)
+    reconciliation_ids: List[str] = field(default_factory=list)
+    incident_cluster_id: Optional[str] = None
+    incident_evidence_summary: Optional[str] = None
+    lineage_ref: Optional[str] = None
 
     # Optional
     published_at: Optional[str] = None
@@ -503,6 +510,37 @@ class IncidentStore:
         self._save()
         return updated
 
+    def merge_incident_evidence(self, incident_id: str, incoming: IncidentCase) -> IncidentCase:
+        """Merge additional evidence into an existing open IncidentCase."""
+        self._refresh_from_disk()
+        existing = self.require_incident(incident_id)
+        updates: Dict[str, Any] = {
+            "telemetry_event_ids": _merge_unique(
+                existing.telemetry_event_ids,
+                incoming.telemetry_event_ids,
+            ),
+            "reconciliation_ids": _merge_unique(
+                existing.reconciliation_ids,
+                incoming.reconciliation_ids,
+            ),
+            "severity": _max_incident_severity(existing.severity, incoming.severity),
+        }
+        if not existing.incident_cluster_id and incoming.incident_cluster_id:
+            updates["incident_cluster_id"] = incoming.incident_cluster_id
+        if incoming.evidence_summary:
+            updates["evidence_summary"] = _merge_summary(
+                existing.evidence_summary,
+                incoming.evidence_summary,
+            )
+
+        updated = IncidentCase(**{**existing.to_dict(), **updates})
+        errors = validate_incident_case(updated)
+        if errors:
+            raise IncidentError(f"Evidence merge produces invalid IncidentCase: {errors}")
+        self._incidents[incident_id] = updated
+        self._save()
+        return updated
+
     # ---- Postmortem reads ----
 
     def get_postmortem(self, postmortem_id: str) -> Optional[Postmortem]:
@@ -539,6 +577,30 @@ class IncidentStore:
             raise IncidentError(f"Invalid Postmortem: {errors}")
         if pm.postmortem_id in self._postmortems:
             raise IncidentError(f"Postmortem already exists: {pm.postmortem_id}")
+        if pm.incident_id not in self._incidents:
+            raise IncidentError(
+                f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
+                "Create the IncidentCase first."
+            )
+        self._validate_postmortem_against_incident(pm, self._incidents[pm.incident_id])
+        self._postmortems[pm.postmortem_id] = pm
+        self._save()
+        return pm
+
+    def update_postmortem_draft(self, pm: Postmortem) -> Postmortem:
+        """Replace an existing draft Postmortem with an updated draft."""
+        self._refresh_from_disk()
+        existing = self.require_postmortem(pm.postmortem_id)
+        if existing.status != PostmortemStatus.DRAFT.value or pm.status != PostmortemStatus.DRAFT.value:
+            raise IncidentError("Only draft Postmortems can be updated by the draft worker")
+        if existing.incident_id != pm.incident_id:
+            raise IncidentError(
+                "Postmortem draft updates cannot change the referenced IncidentCase: "
+                f"existing={existing.incident_id!r}, incoming={pm.incident_id!r}"
+            )
+        errors = validate_postmortem(pm)
+        if errors:
+            raise IncidentError(f"Invalid Postmortem: {errors}")
         if pm.incident_id not in self._incidents:
             raise IncidentError(
                 f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
@@ -644,3 +706,28 @@ class IncidentStore:
                 "Postmortem propagated evidence must match the referenced IncidentCase: "
                 f"{details}"
             )
+
+
+def _merge_unique(*values: List[str]) -> List[str]:
+    seen: Dict[str, None] = {}
+    for group in values:
+        for value in group or []:
+            item = str(value).strip()
+            if item:
+                seen[item] = None
+    return list(seen)
+
+
+def _max_incident_severity(left: str, right: str) -> str:
+    rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    return left if rank.get(left, 0) >= rank.get(right, 0) else right
+
+
+def _merge_summary(existing: Optional[str], incoming: str) -> str:
+    existing = (existing or "").strip()
+    incoming = incoming.strip()
+    if not existing:
+        return incoming
+    if not incoming or incoming in existing:
+        return existing
+    return f"{existing}; {incoming}"

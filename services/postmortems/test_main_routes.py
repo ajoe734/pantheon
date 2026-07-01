@@ -114,6 +114,8 @@ def test_create_postmortem():
     assert body["incident_id"] == _INC_ID
     assert body["root_cause"] == "Misconfigured drawdown threshold parameter"
     assert body["binding_id"] == _BINDING_ID
+    assert body["telemetry_event_ids"] == []
+    assert body["reconciliation_ids"] == []
 
 
 def test_create_postmortem_auto_id():
@@ -168,6 +170,97 @@ def test_create_postmortem_parent_incident_reference_error_rejected(monkeypatch)
     r = client.post("/api/postmortems", json=_PM_PAYLOAD)
     assert r.status_code == 422
     assert "reference_errors" in r.text
+
+
+# ---------------------------------------------------------------------------
+# POST /api/postmortems/consume-resolved-incident — draft worker
+# ---------------------------------------------------------------------------
+
+def test_consume_resolved_incident_creates_postmortem_draft():
+    _seed_incident(
+        status=IncidentStatus.RESOLVED.value,
+        resolved_at="2026-06-27T15:30:00Z",
+        telemetry_event_ids=["evt-drift-001"],
+        reconciliation_ids=["drift-report-001", "recon-run-001"],
+        incident_cluster_id="drift:rolling_drawdown_multiple",
+        evidence_summary="rolling_drawdown_multiple breached paper threshold",
+        lineage_ref="artifact-001@1.0.0",
+    )
+
+    r = client.post("/api/postmortems/consume-resolved-incident", json={"incident_id": _INC_ID})
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["postmortem_id"] == f"pm-{_INC_ID}"
+    assert body["status"] == "draft"
+    assert body["incident_id"] == _INC_ID
+    assert body["telemetry_event_ids"] == ["evt-drift-001"]
+    assert body["reconciliation_ids"] == ["drift-report-001", "recon-run-001"]
+    assert body["incident_cluster_id"] == "drift:rolling_drawdown_multiple"
+    assert body["incident_evidence_summary"] == "rolling_drawdown_multiple breached paper threshold"
+    assert body["lineage_ref"] == "artifact-001@1.0.0"
+    assert "root cause pending analysis" in body["root_cause"]
+    assert len(store.list_postmortems()) == 1
+
+
+def test_consume_resolved_incident_duplicate_event_is_idempotent():
+    _seed_incident(
+        status=IncidentStatus.RESOLVED.value,
+        resolved_at="2026-06-27T15:30:00Z",
+        telemetry_event_ids=["evt-drift-001"],
+        reconciliation_ids=["drift-report-001"],
+    )
+
+    first = client.post("/api/postmortems/consume-resolved-incident", json={"incident_id": _INC_ID})
+    second = client.post("/api/postmortems/consume-resolved-incident", json={"incident_id": _INC_ID})
+
+    assert first.status_code == 201
+    assert second.status_code == 200, second.text
+    assert second.json()["postmortem_id"] == first.json()["postmortem_id"]
+    assert len(store.list_postmortems()) == 1
+
+
+def test_consume_resolved_incident_refreshes_existing_draft_evidence():
+    _seed_incident(
+        status=IncidentStatus.RESOLVED.value,
+        resolved_at="2026-06-27T15:30:00Z",
+        telemetry_event_ids=["evt-drift-001"],
+        reconciliation_ids=["drift-report-001"],
+        evidence_summary="initial drift evidence",
+    )
+    first = client.post("/api/postmortems/consume-resolved-incident", json={"incident_id": _INC_ID})
+    assert first.status_code == 201
+
+    current = store.get_incident(_INC_ID)
+    assert current is not None
+    store._incidents[_INC_ID] = IncidentCase(
+        **{
+            **current.to_dict(),
+            "telemetry_event_ids": ["evt-drift-001", "evt-drift-002"],
+            "reconciliation_ids": ["drift-report-001", "recon-run-002"],
+            "evidence_summary": "initial drift evidence; second reconciliation evidence",
+        }
+    )
+
+    second = client.post("/api/postmortems/consume-resolved-incident", json={"incident_id": _INC_ID})
+
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["postmortem_id"] == first.json()["postmortem_id"]
+    assert body["telemetry_event_ids"] == ["evt-drift-001", "evt-drift-002"]
+    assert body["reconciliation_ids"] == ["drift-report-001", "recon-run-002"]
+    assert body["incident_evidence_summary"] == "initial drift evidence; second reconciliation evidence"
+    assert len(store.list_postmortems()) == 1
+
+
+def test_consume_resolved_incident_rejects_open_incident():
+    _seed_incident(status=IncidentStatus.OPEN.value)
+
+    r = client.post("/api/postmortems/consume-resolved-incident", json={"incident_id": _INC_ID})
+
+    assert r.status_code == 422
+    assert "not resolved or closed" in r.text
+    assert store.list_postmortems() == []
 
 
 # ---------------------------------------------------------------------------

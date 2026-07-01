@@ -179,6 +179,11 @@ Display rules:
     "display_label": "string",
     "open_in_new_tab": "boolean"
   },
+  "linked_object_summary": {
+    "entity_type": "string",
+    "entity_ref": "string",
+    "display_label": "string | null"
+  },
   "linked_decisions": [
     {
       "entity_type": "string (enum)",
@@ -217,6 +222,7 @@ Display rules:
 Display rules:
 - `source_document.excerpt` is always plain text. The frontend must not render it as markdown.
 - `source_document.storage_preview.preview_token` is a short-lived token; the frontend must not cache it beyond the response. It must not construct the preview URL from `source_ref` directly.
+- `linked_object_summary.display_label` is BFF-resolved and identifies the primary downstream readiness, artifact, decision, assertion, or other object this evidence supports. The frontend must not resolve labels from raw `entity_ref`.
 - `linked_decisions` is a BFF-resolved panel. The frontend must not reverse-resolve raw entity ids into routes or display labels.
 - `source_note_context` and `source_memory_context` are both nullable. When `null`, the evidence ref does not originate from a note or memory entry; the panel must be hidden, not shown as empty.
 - When `meta.surfaces.linked_decisions` is `degraded`, show an inline partial-data indicator inside the linked-decision panel rather than hiding the panel entirely.

@@ -19,6 +19,12 @@ from .base import (
     SourceRecordStatus,
     SourceType,
 )
+from .crypto_coingecko import (
+    COINGECKO_SPOT_CONNECTOR_ID,
+    COINGECKO_SPOT_OHLC_SCHEMA_HASH,
+    COINGECKO_SPOT_PRICE_SCHEMA_HASH,
+    CoinGeckoSpotMarketAdapter,
+)
 from .examples import ExternalFeedProviderExample, StaticRecordsProviderExample, example_provider_catalog
 from .finmind_taiwan import (
     FinMindTaiwanBrokerBulkBackfillAdapter,
@@ -53,6 +59,11 @@ from .us_public import (
     SecEdgarFilingAdapter,
     StooqDailyOhlcvAdapter,
 )
+from .us_yahoo import (
+    YAHOO_US_DAILY_OHLCV_CONNECTOR_ID,
+    YAHOO_US_DAILY_OHLCV_SCHEMA_HASH,
+    YahooUsEquityDailyAdapter,
+)
 from .yahoo_taiwan import (
     AnueTaiwanRssAdapter,
     YahooTaiwanBrokerTopAdapter,
@@ -68,6 +79,10 @@ __all__ = [
     "AnueTaiwanRssAdapter",
     "ConnectorMode",
     "ConnectorStatus",
+    "COINGECKO_SPOT_CONNECTOR_ID",
+    "COINGECKO_SPOT_OHLC_SCHEMA_HASH",
+    "COINGECKO_SPOT_PRICE_SCHEMA_HASH",
+    "CoinGeckoSpotMarketAdapter",
     "IngestEvent",
     "IngestRun",
     "IngestRunStatus",
@@ -110,6 +125,9 @@ __all__ = [
     "TejSourceIngestAdapter",
     "YahooTaiwanBrokerTopAdapter",
     "YahooTaiwanRssAdapter",
+    "YahooUsEquityDailyAdapter",
+    "YAHOO_US_DAILY_OHLCV_CONNECTOR_ID",
+    "YAHOO_US_DAILY_OHLCV_SCHEMA_HASH",
     "parse_yahoo_broker_trading_html",
     "example_provider_catalog",
 ]

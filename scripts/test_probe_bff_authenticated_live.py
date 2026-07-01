@@ -269,14 +269,43 @@ def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch
             "ok": True,
             "error_envelope": probe.expect_error_envelope,
         }
-        if probe.method == "POST" and probe.expect_error_envelope:
+        if probe.family.endswith("readback-not-persisted") and probe.path == "/bff/agora/notes":
+            result.update(
+                {
+                    "status": 200,
+                    "error_envelope": False,
+                    "absent_item_checks": [
+                        {"ok": True, "items_checked": 2},
+                        {"ok": True, "items_checked": 2},
+                    ],
+                }
+            )
+        elif probe.family.endswith("readback-not-persisted"):
+            result.update({"status": 404, "error_envelope": True, "error_code": "RESOURCE_NOT_FOUND"})
+        elif probe.method == "POST" and probe.expect_error_envelope:
             result["error_code"] = "FORBIDDEN"
         elif probe.method == "POST":
-            result["extracted"] = {
+            extracted = {
                 "meta.dryRun": True,
                 "meta.durable": False,
                 "meta.liveCapitalSideEffects": False,
             }
+            if probe.family in {
+                "rbac-write-operator-strategy",
+                "rbac-write-reviewer-strategy",
+                "rbac-write-approver-strategy",
+                "rbac-write-admin-strategy",
+                "rbac-write-operator-ranking-formula",
+                "rbac-write-reviewer-ranking-formula",
+                "rbac-write-approver-ranking-formula",
+                "rbac-write-admin-ranking-formula",
+                "rbac-write-operator-agora-note",
+                "rbac-write-reviewer-agora-note",
+                "rbac-write-approver-agora-note",
+                "rbac-write-admin-agora-note",
+            }:
+                extracted["data.id"] = f"{probe.family}-id"
+            result["extracted"] = extracted
         return result
 
     monkeypatch.setattr(probe, "request_json", fake_request_json)
@@ -303,6 +332,16 @@ def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch
     assert [result["side_effect_check"]["kind"] for result in write_results].count(
         "authorization_rejected_before_persistence"
     ) == 16
+    readback_checks = [
+        result["side_effect_check"].get("readback_not_persisted")
+        for result in write_results
+        if result["rbac_label"] in {"operator", "reviewer", "approver", "admin"}
+        and result["rbac_resource"] in {"strategy", "ranking-formula", "agora-note"}
+    ]
+    assert len(readback_checks) == 12
+    assert all(isinstance(check, dict) and check["ok"] is True for check in readback_checks)
+    assert [check["kind"] for check in readback_checks].count("readback_not_persisted") == 8
+    assert [check["kind"] for check in readback_checks].count("list_readback_not_persisted") == 4
     assert all("target_marker_sha256_12" in result["side_effect_check"] for result in write_results)
     assert "live-rbac-" not in json.dumps([result["side_effect_check"] for result in write_results])
 
@@ -471,6 +510,7 @@ def test_build_approval_race_accepts_single_winner_plus_conflict(monkeypatch) ->
         with lock:
             calls.append(request.headers["Authorization"])
             call_number = len(calls)
+        probe.time.sleep(0.02)
         if call_number == 1:
             return _FakeResponse(
                 status=202,
@@ -521,6 +561,8 @@ def test_build_approval_race_accepts_single_winner_plus_conflict(monkeypatch) ->
     assert result["accepted_count"] == 1
     assert result["safe_error_count"] == 1
     assert result["duplicate_winners"] is False
+    assert result["concurrency"]["concurrent"] is True
+    assert result["concurrency"]["overlap_ms"] >= 0
     assert sorted(calls) == ["Bearer token-a", "Bearer token-b"]
 
 
@@ -540,6 +582,7 @@ def test_build_two_man_race_accepts_two_operator_scoped_signatures(monkeypatch) 
         with lock:
             calls.append(request.headers["Authorization"])
             call_number = len(calls)
+        probe.time.sleep(0.02)
         return _FakeResponse(
             status=202,
             body={
@@ -575,6 +618,8 @@ def test_build_two_man_race_accepts_two_operator_scoped_signatures(monkeypatch) 
     assert result["replayed_count"] == 0
     assert result["distinct_command_ids"] is True
     assert result["command_id_count"] == 2
+    assert result["concurrency"]["concurrent"] is True
+    assert result["concurrency"]["overlap_ms"] >= 0
     assert sorted(calls) == ["Bearer token-a", "Bearer token-b"]
 
 

@@ -4,22 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Add persona data requirement schema
-- Status: review_approved
-- Owner: Claude
-- Reviewer: Codex
-- Next: Closeout complete — PR #2411 merged into dev 2026-06-27T13:52:09Z.
+- Status: review
+- Owner: Codex
+- Reviewer: Copilot
+- Next: required_data_sources schema, persona registry integration, governance doc, and evidence note are already present from merged PR #2411; Codex re-ran persona validation (27 focused tests, 134 discover tests OK) and is handing off for Copilot review/approval.
 
 ## Summary
 把 persona 的資料需求從 metadata label 升級成 first-class required_data_sources schema。
-
-## Review
-- Reviewed commit: 973ef5c900342a7e149663ddc8e84329710fe845.
-- Verified: `python3 -m unittest discover -s services/control-plane/persona -p 'test_*.py'` (134 tests OK; 27 on closeout re-run OK).
-- Verified: Draft7 check for `persona_registry.schema.json` and `required_data_sources.schema.json`; valid required_data_sources payload accepted, payload missing `source_class` rejected.
-- Non-blocking follow-up: `docs/03/SD-02_persona_governance.md` has duplicate `### 4.7` headings; does not block schema acceptance.
-
-## Closeout
-- Owner: Claude
-- PR: #2411 merged into dev 2026-06-27T13:52:09Z
-- Verified: `python3 services/control-plane/persona/test_persona_data_sources.py` — 27 tests OK
-- CI: Commit trailers / Runtime mirror guard / Smoke acceptance — all pass

@@ -17,6 +17,7 @@ def test_compose_wires_search_service_and_bff_normal_path() -> None:
     assert search["environment"]["PORT"] == "8098"
     assert search["environment"]["SEARCH_DATA_DIR"] == "/data/search"
     assert search["environment"]["SEARCH_INDEX_STORE_PATH"] == "/data/search/search-index.jsonl"
+    assert search["environment"]["SEARCH_MATERIALIZE_STORE_PATH"] == "/data/search/search-materialize.jsonl"
     assert search["environment"]["SEARCH_EVIDENCE_STORE_PATH"] == "/data/source-ingest/source_evidence.jsonl"
     assert search["environment"]["PANTHEON_SOURCE_SEARCH_POSTURE"] == "${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}"
     assert search["environment"]["PANTHEON_S3_ENDPOINT"] == "${PANTHEON_S3_ENDPOINT:-http://minio:9000}"

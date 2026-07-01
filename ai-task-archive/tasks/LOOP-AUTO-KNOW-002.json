@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-KNOW-002",
+  "archived_at": "2026-06-27T16:33:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-KNOW-002",
+    "title": "Add alpha replication queue and revalidation worker",
+    "summary_zh": "新增 reviewed StrategySpec 到 replication queue 與 scheduled revalidation worker，讓 alpha replication 不停在手動 API。",
+    "phase": "Global Loop Autopilot / Wave 6 Knowledge Learning Consultation",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-KNOW-001"
+    ],
+    "artifacts": [
+      "services/research",
+      "services/research-worker-gateway",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Reviewed strategy specs enter replication queue",
+      "Scheduled revalidation produces ExperimentRun records",
+      "Production adapters remain fail-closed unless explicitly approved"
+    ],
+    "next": "Closeout complete: 46 unit tests pass, PR #2460 merged into dev. Fail-closed production adapter invariant enforced at construction time. All 3 acceptance criteria verified by reviewer Claude.",
+    "last_update": "2026-06-27T16:33:41Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "alpha_replication"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "scheduled",
+    "desired_state_sources": [
+      "reviewed StrategySpec"
+    ],
+    "actual_state_sources": [
+      "ExperimentRun",
+      "replication queue"
+    ],
+    "wave_id": "Wave 6 Knowledge Learning Consultation",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：46 tests pass，production adapters fail-closed，所有 acceptance criteria 達成"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-know-002/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T16:33:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-know-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-KNOW-002",
+      "git_clean_required": false,
+      "commit": "d1daef42bc005612c7901c07991e9c9997c38b20",
+      "commit_subject": "LOOP-AUTO-KNOW-002: finalize closeout artifacts",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Review approved by Claude": "all 3 acceptance criteria met, 46 unit tests",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "LOOP-AUTO-KNOW-002",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/research/alpha_replication/ -v -- 46 passed in 3.63s"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-KNOW-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1516f9a5039bdf68a4894e791f8abf9b62d9c1cb",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-KNOW-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Alpha replication queue and revalidation worker implemented. 46 unit tests pass. Production adapters fail-closed by construction. Commit 3ebb9954 on task/LOOP-AUTO-KNOW-002. Ready for review.",
+      "status": "done",
+      "created_at": "2026-06-27T16:27:49Z",
+      "resolved_at": "2026-06-27T16:29:55Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-KNOW-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: all 3 acceptance criteria met, 46 unit tests pass, fail-closed invariant enforced at construction time. Returned to Claude2 for finalization.",
+      "status": "done",
+      "created_at": "2026-06-27T16:29:55Z",
+      "resolved_at": "2026-06-27T16:33:43Z"
+    }
+  ],
+  "blockers": []
+}

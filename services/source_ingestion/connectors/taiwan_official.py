@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
@@ -362,13 +363,39 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
+            "adapter_config": {
+                "max_records": self.max_records,
+            },
+            "request": {
+                "dataset": "tw_price_daily",
+                "venues": ["TWSE", "TPEx"],
+            },
             "next_watermark": None,
-            "provider_owned_fetcher": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
-            "endpoint_inventory": [dict(endpoint) for endpoint in TAIWAN_OFFICIAL_ENDPOINTS],
             "max_records": self.max_records,
         }
+
+    def fetch_payload(
+        self,
+        dataset: str,
+        venue: str,
+        *,
+        timeout_seconds: float = 20.0,
+    ) -> Any:
+        endpoint = dict(_endpoint_for(dataset, venue))
+        url = str(endpoint.get("endpoint") or "")
+        if not url:
+            raise ValueError(f"Taiwan official endpoint is not fetchable: dataset={dataset} venue={venue}")
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "pantheon-source-ingest/0.1",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return json.loads(response.read().decode("utf-8"))
 
     def records_from_payload(
         self,

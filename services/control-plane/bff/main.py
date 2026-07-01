@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from collections import deque
@@ -135,6 +136,7 @@ from source_search_ops_client import (
     SourceIngestCommandClient,
     SourceSearchOpsClientError,
 )
+from downstream_health_monitor import DownstreamHealthMonitor
 from loop_inventory import (
     get_loop_health_entry,
     get_loop_inventory_entry,
@@ -383,9 +385,11 @@ _CORS_ALLOW_HEADERS = [
     "X-Correlation-Id",
     "X-Dry-Run",
     "X-Idempotency-Key",
+    "X-Locale",
     "X-MFA-Token",
     "X-Request-Id",
     "X-Refresh-Token",
+    "X-Tenant-Id",
     "X-Trace-Id",
 ]
 _CORS_EXPOSE_HEADERS = [
@@ -520,6 +524,42 @@ async def _management_rejects_agora_scope(request: Request, call_next):
             "route": path,
         },
     )
+
+
+def _bff_session_contract_exempt(path: str) -> bool:
+    return path in {"/bff/auth/dev-login", "/bff/auth/refresh", "/bff/logout"}
+
+
+@app.middleware("http")
+async def _bff_session_rbac_contract(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or not path.startswith("/bff/") or _bff_session_contract_exempt(path):
+        return await call_next(request)
+
+    authorization = request.headers.get("authorization")
+    pantheon_session = request.cookies.get("pantheon_session")
+    if not authorization and not pantheon_session:
+        return await call_next(request)
+
+    try:
+        identity = _extract_identity(
+            authorization,
+            mfa_token=request.headers.get("x-mfa-token"),
+            session_cookie=pantheon_session,
+        )
+        _require_read_role(identity)
+        _raise_if_session_logged_out(identity)
+        requested_tenant = _first_nonblank(
+            request.headers.get("x-tenant-id"),
+            request.headers.get("x-pantheon-tenant"),
+        )
+        if requested_tenant:
+            _bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
+    except HTTPException as exc:
+        return _pack_d_http_exception_response(request, exc)
+
+    return await call_next(request)
+
 
 # --------------------------------------------------------------------------- #
 # Storage
@@ -864,6 +904,19 @@ read_store = ReadSurfaceStore(
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
 _COMMAND_AUTH_CONTEXT: Dict[str, Dict[str, Optional[str]]] = {}
 
+downstream_health_monitor = DownstreamHealthMonitor()
+
+
+@app.on_event("startup")
+async def _start_downstream_health_monitor() -> None:
+    await downstream_health_monitor.start()
+
+
+@app.on_event("shutdown")
+async def _stop_downstream_health_monitor() -> None:
+    await downstream_health_monitor.stop()
+
+
 _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 
 # --------------------------------------------------------------------------- #
@@ -935,7 +988,7 @@ def _dev_login_ttl_seconds() -> int:
 
 
 def _dev_login_roles() -> List[str]:
-    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer"]
+    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer", "approver"]
     return sorted(set(role for role in roles if role in _READ_ROLES or role in _WRITE_ROLES))
 
 
@@ -980,7 +1033,7 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
         os.getenv("PANTHEON_BFF_TENANT_ID"),
         os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
         os.getenv("PANTHEON_TENANT_ID"),
-        "pantheon-dev",
+        "tenant-dev",
     )
     allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
     mfa_verified = _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
@@ -7902,177 +7955,6 @@ _MANAGEMENT_RISK_LEVEL_ORDER = {
 }
 
 
-def _management_human_inbox_item(
-    *,
-    item_id: str,
-    inbox_type: str,
-    source_dataset: str,
-    title: str,
-    status: Optional[str],
-    risk_level: Optional[str],
-    created_at: Optional[str],
-    href: str,
-    source_record: Dict[str, Any],
-) -> Dict[str, Any]:
-    return {
-        "id": item_id,
-        "inboxType": inbox_type,
-        "inbox_type": inbox_type,
-        "sourceDataset": source_dataset,
-        "source_dataset": source_dataset,
-        "title": title,
-        "status": status,
-        "riskLevel": risk_level,
-        "risk_level": risk_level,
-        "createdAt": created_at,
-        "created_at": created_at,
-        "href": href,
-        "sourceRecord": source_record,
-        "source_record": source_record,
-    }
-
-
-def _build_management_human_inbox_payload(snapshot_at: str) -> Dict[str, Any]:
-    review_items = read_store.list_governance_review_queue_items()
-    approval_items = read_store.list_approval_queue_items()
-    interventions = _v5_intervention_records()
-    sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
-
-    items: List[Dict[str, Any]] = []
-    for item in review_items:
-        item_id = str(item.get("item_id") or item.get("id") or "").strip()
-        if not item_id:
-            continue
-        items.append(
-            _management_human_inbox_item(
-                item_id=item_id,
-                inbox_type="governance_review",
-                source_dataset="governance_review_queue_items",
-                title=f"Governance review: {item.get('item_type') or item_id}",
-                status=item.get("status") or item.get("governance_outcome"),
-                risk_level=item.get("risk_level"),
-                created_at=item.get("submitted_at"),
-                href=f"{_GOVERNANCE_REVIEW_QUEUE_ROUTE}?item={item_id}",
-                source_record=item,
-            )
-        )
-    for item in approval_items:
-        decision_id = str(item.get("decision_id") or item.get("id") or "").strip()
-        if not decision_id:
-            continue
-        items.append(
-            _management_human_inbox_item(
-                item_id=decision_id,
-                inbox_type="approval_decision",
-                source_dataset="approval_queue_items",
-                title=f"Approval required: {item.get('decision_type') or decision_id}",
-                status=item.get("decision_state"),
-                risk_level=item.get("risk_level"),
-                created_at=item.get("submitted_at"),
-                href=f"{_GOVERNANCE_APPROVAL_QUEUE_ROUTE}?decision={decision_id}",
-                source_record=item,
-            )
-        )
-    for item in interventions:
-        intervention_id = str(item.get("intervention_id") or item.get("id") or "").strip()
-        if not intervention_id:
-            continue
-        status = str(item.get("status") or "").strip().lower()
-        if status and status not in {"pending", "open", "escalated", "claimed", "in_review"}:
-            continue
-        items.append(
-            _management_human_inbox_item(
-                item_id=intervention_id,
-                inbox_type="intervention",
-                source_dataset="v5_interventions",
-                title=f"Intervention: {item.get('kind') or intervention_id}",
-                status=item.get("status"),
-                risk_level=item.get("severity") or item.get("risk_level"),
-                created_at=item.get("triggered_at") or item.get("created_at"),
-                href=f"/management/interventions?intervention={intervention_id}",
-                source_record=item,
-            )
-        )
-    for item in sentinel_findings:
-        finding_id = str(item.get("id") or item.get("finding_id") or "").strip()
-        if not finding_id:
-            continue
-        status = str(item.get("status") or "").strip().lower()
-        if status and status not in {"pending", "open", "active", "escalated"}:
-            continue
-        items.append(
-            _management_human_inbox_item(
-                item_id=finding_id,
-                inbox_type="sentinel_finding",
-                source_dataset="sentinel_findings",
-                title=f"Sentinel finding: {item.get('kind') or item.get('title') or finding_id}",
-                status=item.get("status"),
-                risk_level=item.get("severity") or item.get("risk_level"),
-                created_at=item.get("triggered_at") or item.get("created_at"),
-                href=f"/management/sentinel?finding={finding_id}",
-                source_record=item,
-            )
-        )
-
-    items = sorted(items, key=_management_record_time, reverse=True)
-
-    review_surface = _dataset_surface_status(
-        "governance_review_queue_items",
-        snapshot_at=snapshot_at,
-    )
-    approval_surface = _dataset_surface_status(
-        "approval_queue_items",
-        snapshot_at=snapshot_at,
-    )
-    intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
-    intervention_surface = _dataset_surface_status(
-        "v5_interventions",
-        snapshot_at=snapshot_at,
-        source=intervention_source,
-    )
-    incident_source = read_store.dataset_source("incidents")
-    sentinel_dataset = "incidents" if incident_source != "missing" else "sentinel_findings"
-    sentinel_surface = _dataset_surface_status(
-        sentinel_dataset,
-        snapshot_at=snapshot_at,
-        source=None if sentinel_available else "missing",
-    )
-    inbox_surface = _aggregate_group_surface(
-        "management_human_inbox",
-        [review_surface, approval_surface, intervention_surface, sentinel_surface],
-        snapshot_at=snapshot_at,
-        unavailable_message="Human inbox aggregate unavailable.",
-        degraded_message="Human inbox aggregate is available, but one or more contributing surfaces are degraded.",
-    )
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {
-        "management_human_inbox": inbox_surface,
-        "governance_review_queue": review_surface,
-        "approval_queue": approval_surface,
-        "v5_interventions": intervention_surface,
-        "sentinel_findings": sentinel_surface,
-    }
-    return {
-        "items": items,
-        "summary": {
-            "total": len(items),
-            "byType": _management_count_by(items, "inboxType"),
-            "by_type": _management_count_by(items, "inboxType"),
-            "byStatus": _management_count_by(items, "status"),
-            "by_status": _management_count_by(items, "status"),
-            "highestRiskLevel": _highest_ranked_value(
-                [str(item.get("riskLevel") or "") for item in items],
-                _MANAGEMENT_RISK_LEVEL_ORDER,
-            ),
-            "highest_risk_level": _highest_ranked_value(
-                [str(item.get("riskLevel") or "") for item in items],
-                _MANAGEMENT_RISK_LEVEL_ORDER,
-            ),
-        },
-        "meta": meta,
-    }
-
-
 def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_bindings = read_store.list_runtime_bindings()
     runtime_rows = [_project_operator_runtime_state_row(binding) for binding in runtime_bindings]
@@ -8960,7 +8842,7 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     link_type = item.get("link_type")
     route_href = item.get("route_href") or (f"/knowledge/evidence/{ref_id}" if ref_id else None)
     title = source_document.get("title") or display_label
-    return {
+    public_item = {
         "id": ref_id,
         "refId": ref_id,
         "ref_id": ref_id,
@@ -8986,6 +8868,108 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
         "redacted": False,
     }
+    artifact_manifest = item.get("artifact_manifest")
+    if isinstance(artifact_manifest, dict):
+        cloned_manifest = _management_json_clone(artifact_manifest)
+        public_item["artifactManifest"] = cloned_manifest
+        public_item["artifact_manifest"] = cloned_manifest
+    criteria = item.get("criteria")
+    if isinstance(criteria, dict):
+        public_item["criteria"] = _management_json_clone(criteria)
+    if "overall" in item:
+        public_item["overall"] = item.get("overall")
+    return public_item
+
+
+_BFF_LIVE_EVIDENCE_VERIFY_JSON_ENV = "PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON"
+_BFF_LIVE_EVIDENCE_VERIFY_JSON_NAME = "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json"
+_BFF_LIVE_EVIDENCE_REF_ID = "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY"
+
+
+def _management_live_evidence_verify_candidates() -> List[Path]:
+    candidates: List[Path] = []
+    explicit = str(os.getenv(_BFF_LIVE_EVIDENCE_VERIFY_JSON_ENV) or "").strip()
+    if explicit:
+        candidates.append(Path(explicit))
+    audit_dir = str(os.getenv("PANTHEON_AUDIT_OUT_DIR") or "").strip()
+    if audit_dir:
+        candidates.append(Path(audit_dir) / _BFF_LIVE_EVIDENCE_VERIFY_JSON_NAME)
+    candidates.append(
+        Path(_REPO_ROOT)
+        / ".lovable"
+        / "audits"
+        / "current-run"
+        / _BFF_LIVE_EVIDENCE_VERIFY_JSON_NAME
+    )
+    deduped: List[Path] = []
+    seen: Set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
+    for candidate in _management_live_evidence_verify_candidates():
+        try:
+            if not candidate.is_file():
+                continue
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        manifest = payload.get("artifact_manifest")
+        if not isinstance(manifest, dict):
+            continue
+        criteria = payload.get("criteria")
+        if not isinstance(criteria, dict):
+            criteria = {}
+        try:
+            mtime_captured_at = datetime.fromtimestamp(
+                candidate.stat().st_mtime,
+                timezone.utc,
+            ).isoformat()
+        except OSError:
+            mtime_captured_at = utc_now()
+        captured_at = payload.get("generated_at") or payload.get("created_at") or mtime_captured_at
+        artifact_dir = str(payload.get("artifact_dir") or candidate.parent)
+        return [
+            {
+                "ref_id": _BFF_LIVE_EVIDENCE_REF_ID,
+                "evidence_type": "live_evidence_artifact",
+                "link_type": "provenance",
+                "display_label": "BFF live evidence artifact verifier",
+                "source_document": {
+                    "title": "Strict BFF live evidence artifact verifier",
+                    "source_type": "workflow_artifact",
+                    "source_ref": str(candidate),
+                    "captured_at": captured_at,
+                },
+                "credibility": {
+                    "tier": "primary",
+                    "verified": payload.get("overall") == "pass",
+                },
+                "linked_object_summary": {
+                    "entity_type": "artifact",
+                    "entity_ref": _BFF_LIVE_EVIDENCE_REF_ID,
+                    "display_label": "Current-run BFF live evidence",
+                },
+                "resolved_link": {
+                    "availability": "available",
+                    "route_href": artifact_dir,
+                },
+                "route_href": str(candidate),
+                "overall": payload.get("overall"),
+                "artifact_manifest": _management_json_clone(manifest),
+                "criteria": _management_json_clone(criteria),
+                "created_at": captured_at,
+            }
+        ]
+    return []
 
 
 def _management_count_by_nested(
@@ -9069,8 +9053,17 @@ def _build_management_evidence_payload(
     )
 
     snapshot_at = utc_now()
-    evidence_refs = read_store.list_evidence_refs()
-    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+    current_run_evidence_refs = _management_current_run_live_evidence_refs()
+    stored_evidence_refs = read_store.list_evidence_refs()
+    evidence_refs = [*current_run_evidence_refs, *stored_evidence_refs]
+    evidence_dataset_source = read_store.dataset_source("evidence_refs")
+    evidence_dataset_available = evidence_dataset_source != "missing" or bool(current_run_evidence_refs)
+    if evidence_dataset_source != "missing":
+        evidence_surface_source = evidence_dataset_source
+    elif current_run_evidence_refs:
+        evidence_surface_source = "bff_current_run_artifact"
+    else:
+        evidence_surface_source = evidence_dataset_source
 
     clean_ref_id = str(ref_id or "").strip()
     if clean_ref_id:
@@ -9116,6 +9109,7 @@ def _build_management_evidence_payload(
         snapshot_at=snapshot_at,
         has_data=evidence_dataset_available,
         missing_message="Evidence reference read surface is unavailable.",
+        source=evidence_surface_source,
     )
     management_surface = _aggregate_group_surface(
         "management_evidence",
@@ -9775,7 +9769,7 @@ def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
     operator_home = _build_operator_home_payload(snapshot_at)
     runtime_health = _build_operator_health_status_payload(snapshot_at)
     alerts_payload = _build_operator_alerts_payload(snapshot_at)
-    human_inbox = _build_management_human_inbox_payload(snapshot_at)
+    human_inbox = _human_inbox_payload(snapshot_at, page_size=None)
     trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
     anomalies = _build_management_anomalies_payload(snapshot_at)
 
@@ -9788,7 +9782,7 @@ def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
         operator_home["meta"]["surfaces"]["operator_home"],
         runtime_health["meta"]["surfaces"]["health_status"],
         alerts_payload["meta"]["surfaces"]["alerts"],
-        human_inbox["meta"]["surfaces"]["management_human_inbox"],
+        human_inbox["meta"]["surfaces"]["human_inbox"],
         trading_pulse["meta"]["surfaces"]["management_trading_pulse"],
         anomalies["meta"]["surfaces"]["management_anomalies"],
     ]
@@ -9832,7 +9826,7 @@ def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
         "operator_home": operator_home["meta"]["surfaces"]["operator_home"],
         "runtime_health": runtime_health["meta"]["surfaces"]["health_status"],
         "alerts": alerts_payload["meta"]["surfaces"]["alerts"],
-        "human_inbox": human_inbox["meta"]["surfaces"]["management_human_inbox"],
+        "human_inbox": human_inbox["meta"]["surfaces"]["human_inbox"],
         "trading_pulse": trading_pulse["meta"]["surfaces"]["management_trading_pulse"],
         "anomalies": anomalies["meta"]["surfaces"]["management_anomalies"],
     }
@@ -14020,19 +14014,25 @@ async def get_deployment_plan(plan_id: str, authorization: Optional[str] = Heade
             f"Deployment plan {plan_id} does not exist",
         )
 
+    payload = _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
     decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
-    payload = dict(plan)
     if decision:
         payload["approval_decision"] = decision
+    stage_surfaces = _deployment_stage_truth_surfaces(
+        payload["stage_truth"],
+        snapshot_at=snapshot_at,
+    )
+    meta = _read_surface_meta(
+        "deployment_plans",
+        "deployment_plan_detail",
+        snapshot_at=snapshot_at,
+        surface=plan_surface,
+    )
+    meta["surfaces"].update(stage_surfaces)
 
     return {
         "data": payload,
-        "meta": _read_surface_meta(
-            "deployment_plans",
-            "deployment_plan_detail",
-            snapshot_at=snapshot_at,
-            surface=plan_surface,
-        ),
+        "meta": meta,
     }
 
 
@@ -14393,6 +14393,7 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
     if approval_decision:
         deployment_plan_payload["approval_decision"] = approval_decision
 
+    stage_truth = _deployment_stage_truth(plan)
     data = {
         "deployment_plan": deployment_plan_payload,
         "approval_decision": approval_decision or {},
@@ -14403,6 +14404,7 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
         "allowedActions": allowed_actions,
         "latestRun": latest_run,
         "review": review,
+        "stage_truth": stage_truth,
     }
 
     surfaces = {
@@ -14452,6 +14454,8 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
             has_data=review is not None,
         ),
     }
+
+    surfaces.update(_deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at))
 
     meta: Dict[str, Any] = {
         "snapshot_at": snapshot_at,
@@ -14654,6 +14658,335 @@ async def list_operator_alerts(
 
     snapshot_at = utc_now()
     return _build_operator_alerts_payload(snapshot_at)
+
+
+_SHELL_SUMMARY_COUNT_CACHE: Dict[str, Any] = {}
+_SHELL_SUMMARY_COUNT_CACHE_LOCK = threading.Lock()
+_SHELL_PENDING_APPROVAL_STATES = {"pending", "in_review", "proposed", "under_review", "reviewed"}
+_SHELL_ACTIVE_INCIDENT_STATUSES = {"open", "in_progress"}
+_SHELL_ACTIVE_JOB_STATUSES = {"running", "in_progress", "queued"}
+
+
+def _shell_summary_count_ttl_seconds() -> float:
+    try:
+        return max(0.0, float(os.getenv("PANTHEON_BFF_SHELL_SUMMARY_COUNT_TTL_SECONDS", "5")))
+    except (TypeError, ValueError):
+        return 5.0
+
+
+def _shell_count_unavailable_surface(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    message: str,
+) -> Dict[str, Any]:
+    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at)
+    surface["status"] = "unavailable"
+    surface["message"] = message
+    surface.setdefault(
+        "staleness",
+        {"served_from": "unverifiable", "last_known_at": snapshot_at},
+    )
+    return surface
+
+
+def _shell_count_freshness(
+    *,
+    computed_at: str,
+    ttl_seconds: float,
+    cache_status: str,
+) -> Dict[str, Any]:
+    return {
+        "computed_at": computed_at,
+        "ttl_seconds": ttl_seconds,
+        "cache": cache_status,
+    }
+
+
+def _attach_shell_count_freshness(
+    surface: Dict[str, Any],
+    *,
+    computed_at: str,
+    ttl_seconds: float,
+    cache_status: str,
+) -> Dict[str, Any]:
+    decorated = dict(surface)
+    decorated["freshness"] = _shell_count_freshness(
+        computed_at=computed_at,
+        ttl_seconds=ttl_seconds,
+        cache_status=cache_status,
+    )
+    return decorated
+
+
+def _shell_summary_pending_approvals_count(snapshot_at: str) -> tuple[int, Dict[str, Any]]:
+    surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    if surface.get("status") == "unavailable":
+        return 0, surface
+    try:
+        items = read_store.list_approval_queue_items()
+    except Exception:
+        return 0, _shell_count_unavailable_surface(
+            "approval_queue_items",
+            snapshot_at=snapshot_at,
+            message="Approval count source failed.",
+        )
+    pending = [
+        item for item in items
+        if str(item.get("decision_state") or "").strip().lower() in _SHELL_PENDING_APPROVAL_STATES
+    ]
+    return len(pending), surface
+
+
+def _shell_summary_running_jobs_count(snapshot_at: str) -> tuple[int, Dict[str, Any]]:
+    surface_source = "bff_overlay" if _GOV_BFF_JOB_OVERLAY else None
+    surface = _dataset_surface_status(
+        "jobs",
+        snapshot_at=snapshot_at,
+        source=surface_source,
+    )
+    if surface.get("status") == "unavailable" and not _GOV_BFF_JOB_OVERLAY:
+        return 0, surface
+    try:
+        jobs = _list_bff_jobs()
+    except Exception:
+        return 0, _shell_count_unavailable_surface(
+            "jobs",
+            snapshot_at=snapshot_at,
+            message="Job count source failed.",
+        )
+    running = [
+        job for job in jobs
+        if str(job.get("status") or "").strip().lower() in _SHELL_ACTIVE_JOB_STATUSES
+    ]
+    return len(running), surface
+
+
+def _shell_summary_open_alerts_count(snapshot_at: str) -> tuple[int, Dict[str, Any]]:
+    source_surfaces: Dict[str, Dict[str, Any]] = {}
+    count = 0
+
+    incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    source_surfaces["incidents"] = incident_surface
+    if incident_surface.get("status") != "unavailable":
+        try:
+            for incident in read_store.list_incidents():
+                incident_status = str(incident.get("status") or "").strip().lower()
+                if incident_status not in _SHELL_ACTIVE_INCIDENT_STATUSES:
+                    continue
+                incident_id = str(incident.get("incident_id") or incident.get("id") or "").strip()
+                if f"alert-incident-{incident_id}" not in _ACKNOWLEDGED_ALERTS:
+                    count += 1
+        except Exception:
+            source_surfaces["incidents"] = _shell_count_unavailable_surface(
+                "incidents",
+                snapshot_at=snapshot_at,
+                message="Incident alert count source failed.",
+            )
+
+    review_surface = _dataset_surface_status("governance_review_queue_items", snapshot_at=snapshot_at)
+    source_surfaces["governance_review_queue"] = review_surface
+    if review_surface.get("status") != "unavailable":
+        try:
+            for item in read_store.list_governance_review_queue_items():
+                status = str(item.get("status") or "").strip().lower()
+                if status not in {"pending", "in_review", "escalated"}:
+                    continue
+                item_id = str(item.get("item_id") or "").strip()
+                if f"alert-governance-review-{item_id}" not in _ACKNOWLEDGED_ALERTS:
+                    count += 1
+        except Exception:
+            source_surfaces["governance_review_queue"] = _shell_count_unavailable_surface(
+                "governance_review_queue_items",
+                snapshot_at=snapshot_at,
+                message="Governance review alert count source failed.",
+            )
+
+    approval_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    source_surfaces["approval_queue"] = approval_surface
+    if approval_surface.get("status") != "unavailable":
+        try:
+            for item in read_store.list_approval_queue_items():
+                state = str(item.get("decision_state") or "").strip().lower()
+                if state not in {"pending", "in_review"}:
+                    continue
+                decision_id = str(item.get("decision_id") or "").strip()
+                if f"alert-approval-{decision_id}" not in _ACKNOWLEDGED_ALERTS:
+                    count += 1
+        except Exception:
+            source_surfaces["approval_queue"] = _shell_count_unavailable_surface(
+                "approval_queue_items",
+                snapshot_at=snapshot_at,
+                message="Approval alert count source failed.",
+            )
+
+    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
+    source_surfaces["kill_switch"] = kill_switch_surface
+    if kill_switch_surface.get("status") != "unavailable":
+        try:
+            kill_switch = read_store.get_kill_switch_status()
+            safe_mode_status = str(kill_switch.get("safe_mode_status") or "").strip().lower()
+            kill_switch_status = str(kill_switch.get("status") or "").strip().lower()
+            safe_mode_active = safe_mode_status not in {"", "off", "released", "none", "null"}
+            if (
+                kill_switch.get("active")
+                or kill_switch_status in {"triggered", "cooling_down"}
+                or safe_mode_active
+            ) and "alert-kill-switch-state" not in _ACKNOWLEDGED_ALERTS:
+                count += 1
+        except Exception:
+            source_surfaces["kill_switch"] = _shell_count_unavailable_surface(
+                "kill_switch",
+                snapshot_at=snapshot_at,
+                message="Kill-switch alert count source failed.",
+            )
+
+    surface = _aggregate_group_surface(
+        "open_alerts",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Shell alert count unavailable.",
+        degraded_message="Shell alert count is degraded.",
+    )
+    surface["source"] = "bff_cheap_count"
+    surface["source_surfaces"] = {
+        key: {"status": value.get("status"), "source": value.get("source")}
+        for key, value in source_surfaces.items()
+    }
+    surface["note"] = "Cheap shell count avoids full alert feed aggregation."
+    return count, surface
+
+
+def _build_shell_summary_counts() -> Dict[str, Any]:
+    ttl_seconds = _shell_summary_count_ttl_seconds()
+    now = time.monotonic()
+    cache_key = {
+        "read_store_id": id(read_store),
+        "read_surface_state": _read_surface_state(),
+    }
+    with _SHELL_SUMMARY_COUNT_CACHE_LOCK:
+        cached = _SHELL_SUMMARY_COUNT_CACHE
+        if (
+            cached.get("expires_at", 0.0) > time.monotonic()
+            and cached.get("cache_key") == cache_key
+            and cached.get("counts")
+            and cached.get("surfaces")
+        ):
+            snapshot_at = str(cached["snapshot_at"])
+            return {
+                "counts": dict(cached["counts"]),
+                "surfaces": {
+                    key: _attach_shell_count_freshness(
+                        surface,
+                        computed_at=snapshot_at,
+                        ttl_seconds=ttl_seconds,
+                        cache_status="hit",
+                    )
+                    for key, surface in json.loads(json.dumps(cached["surfaces"])).items()
+                },
+                "snapshot_at": snapshot_at,
+            }
+
+        snapshot_at = utc_now()
+        pending_approvals, approvals_surface = _shell_summary_pending_approvals_count(snapshot_at)
+        open_alerts, alerts_surface = _shell_summary_open_alerts_count(snapshot_at)
+        running_jobs, jobs_surface = _shell_summary_running_jobs_count(snapshot_at)
+        source_surfaces = {
+            "pending_approvals": approvals_surface,
+            "open_alerts": alerts_surface,
+            "running_jobs": jobs_surface,
+        }
+        shell_surface = _aggregate_group_surface(
+            "shell_summary",
+            list(source_surfaces.values()),
+            snapshot_at=snapshot_at,
+            unavailable_message="Shell summary count sources unavailable.",
+            degraded_message="Shell summary count sources are degraded.",
+        )
+        shell_surface["source"] = "bff_composed"
+        surfaces = {
+            "shell_summary": shell_surface,
+            **source_surfaces,
+        }
+        counts = {
+            "pending_approvals": pending_approvals,
+            "open_alerts": open_alerts,
+            "running_jobs": running_jobs,
+        }
+        _SHELL_SUMMARY_COUNT_CACHE.clear()
+        _SHELL_SUMMARY_COUNT_CACHE.update(
+            {
+                "expires_at": time.monotonic() + ttl_seconds,
+                "cache_key": cache_key,
+                "snapshot_at": snapshot_at,
+                "counts": counts,
+                "surfaces": json.loads(json.dumps(surfaces)),
+            }
+        )
+        return {
+            "counts": counts,
+            "surfaces": {
+                key: _attach_shell_count_freshness(
+                    surface,
+                    computed_at=snapshot_at,
+                    ttl_seconds=ttl_seconds,
+                    cache_status="miss",
+                )
+                for key, surface in surfaces.items()
+            },
+            "snapshot_at": snapshot_at,
+        }
+
+
+def _shell_summary_session(identity: OperatorIdentity, *, checked_at: str) -> Dict[str, Any]:
+    user = _bff_me_user_payload(identity)
+    session = _bff_me_session_payload(identity, checked_at=checked_at)
+    session_state = _sem_session_state(identity)
+    return {
+        "operator_id": user["operator_id"],
+        "operatorId": user["operator_id"],
+        "display_label": user["display_name"],
+        "displayLabel": user["display_name"],
+        "roles": list(user["roles"]),
+        "session_kind": session.get("session_kind"),
+        "sessionKind": session.get("session_kind"),
+        "state": str(session_state.get("state") or "active"),
+        "fresh": session.get("fresh"),
+        "mfa_verified": user["mfa_verified"],
+    }
+
+
+@app.get("/bff/management/shell-summary")
+def bff_management_shell_summary(
+    authorization: Optional[str] = Header(default=None),
+    pantheon_session: Optional[str] = Cookie(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+):
+    """Cheap management shell summary for first-mount badges and session chrome."""
+    identity = _extract_identity(
+        authorization,
+        mfa_token=x_mfa_token,
+        session_cookie=pantheon_session,
+    )
+    _require_read_role(identity)
+    _raise_if_session_logged_out(identity)
+    count_payload = _build_shell_summary_counts()
+    checked_at = utc_now()
+    return {
+        "data": {
+            "counts": count_payload["counts"],
+            "session": _shell_summary_session(identity, checked_at=checked_at),
+            "transport": {
+                "bff_status": "ok",
+                "service": "operator-bff",
+                "api_version": app.version,
+            },
+        },
+        "meta": {
+            "snapshot_at": count_payload["snapshot_at"],
+            "surfaces": count_payload["surfaces"],
+        },
+    }
 
 
 @app.get("/api/v1/operator/home")
@@ -17136,6 +17469,7 @@ async def get_evidence_ref_detail(
         "link_type": evidence_ref.get("link_type"),
         "credibility": json.loads(json.dumps(evidence_ref.get("credibility") or {})),
         "resolved_link": json.loads(json.dumps(evidence_ref.get("resolved_link") or {})),
+        "linked_object_summary": json.loads(json.dumps(evidence_ref.get("linked_object_summary") or {})),
         "linked_decisions": linked_decisions,
         "source_note_context": json.loads(json.dumps(evidence_ref.get("source_note_context"))),
         "source_memory_context": json.loads(json.dumps(evidence_ref.get("source_memory_context"))),
@@ -24212,7 +24546,7 @@ def _project_persona_dto(
 ) -> Dict[str, Any]:
     """Project canonical persona data into execute-plans Persona DTO."""
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
-    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+    metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     archetype = str(
         metadata.get("archetype")
         or raw.get("strategy_family")
@@ -24247,10 +24581,26 @@ def _project_persona_dto(
         "strategyFamily": raw.get("strategy_family") or "",
         "traits": metadata.get("traits") if isinstance(metadata.get("traits"), dict) else {},
     }
+    required_data_sources = (
+        raw.get("required_data_sources")
+        if isinstance(raw.get("required_data_sources"), list)
+        else []
+    )
+    if isinstance(metadata.get("data_source_status"), dict) or isinstance(metadata.get("data_sources"), list) or required_data_sources:
+        data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
+            metadata.get("data_source_status") if isinstance(metadata.get("data_source_status"), dict) else {},
+            metadata.get("data_sources") if isinstance(metadata.get("data_sources"), list) else [],
+            required_data_sources=required_data_sources,
+        )
+        metadata["data_source_status"] = data_source_status
+        metadata["data_sources"] = data_sources
+        metadata["source_health_bindings"] = source_health_bindings
+
     for source_key, dto_key in (
         ("data_source_status", "dataSourceStatus"),
         ("data_sources", "dataSources"),
         ("data_source_refs", "dataSourceRefs"),
+        ("source_health_bindings", "sourceHealthBindings"),
         ("research_status", "researchStatus"),
         ("research_refs", "researchRefs"),
         ("current_research_projects", "currentResearchProjects"),
@@ -24258,6 +24608,8 @@ def _project_persona_dto(
         value = metadata.get(source_key)
         if value is not None:
             dto[dto_key] = json.loads(json.dumps(value))
+    if required_data_sources:
+        dto["requiredDataSources"] = json.loads(json.dumps(required_data_sources))
     performance = metadata.get("performance") if isinstance(metadata.get("performance"), dict) else {}
     if performance:
         dto["metrics"] = json.loads(json.dumps(performance))
@@ -29316,6 +29668,14 @@ _HUMAN_INBOX_OPEN_APPROVAL_STATES = {
     "proposed",
 }
 _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES = {"pending", "escalated"}
+_HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES = {
+    "pending",
+    "open",
+    "in_review",
+    "under_review",
+    "reviewed",
+}
+_HUMAN_INBOX_OPEN_SENTINEL_STATUSES = {"pending", "open", "active", "escalated"}
 _HUMAN_INBOX_PRIORITY_RANK = {
     "critical": 4,
     "high": 3,
@@ -29347,6 +29707,90 @@ def _human_inbox_priority(value: Any, *, fallback: str = "medium") -> str:
     return fallback
 
 
+def _human_inbox_attach_common_fields(
+    projected: Dict[str, Any],
+    *,
+    inbox_type: str,
+    source_dataset: str,
+    risk_level: str,
+    created_at: Optional[str],
+    updated_at: Optional[str],
+    href: str,
+    source_record: Dict[str, Any],
+) -> Dict[str, Any]:
+    source_clone = _management_json_clone(source_record)
+    projected.setdefault("kind", inbox_type)
+    projected["inbox_type"] = inbox_type
+    projected["sourceDataset"] = source_dataset
+    projected["source_dataset"] = source_dataset
+    projected["riskLevel"] = risk_level
+    projected["risk_level"] = risk_level
+    projected["createdAt"] = created_at
+    projected["created_at"] = created_at
+    projected["updatedAt"] = updated_at
+    projected["updated_at"] = updated_at
+    projected["href"] = href
+    projected.setdefault("route", href)
+    projected["sourceRecord"] = source_clone
+    projected["source_record"] = source_clone
+    return projected
+
+
+def _human_inbox_action_state(status: str, open_statuses: set[str]) -> str:
+    return "pending" if status in open_statuses else "resolved"
+
+
+def _human_inbox_governance_review_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    item_id = _management_record_id(item, "item_id", "id", "review_id")
+    if not item_id:
+        return None
+    review_type = str(item.get("item_type") or item.get("review_type") or "GovernanceReview").strip()
+    status = str(item.get("status") or item.get("governance_outcome") or "pending").strip().lower() or "pending"
+    risk_level = str(item.get("risk_level") or "unknown").strip().lower() or "unknown"
+    priority = _human_inbox_priority(item.get("priority") or risk_level, fallback="medium")
+    created_at = item.get("submitted_at") or item.get("created_at")
+    updated_at = item.get("updated_at") or created_at
+    route = f"{_GOVERNANCE_REVIEW_QUEUE_ROUTE}?item={item_id}"
+    action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES)
+    projected = {
+        "id": f"governance_review:{item_id}",
+        "inbox_id": f"governance_review:{item_id}",
+        "inboxType": "governance_review",
+        "source_type": "governance_review",
+        "source_id": item_id,
+        "review_item_id": item_id,
+        "title": item.get("title") or f"Governance review: {review_type}",
+        "summary": item.get("summary") or item.get("description") or "Governance review awaiting human action.",
+        "priority": priority,
+        "risk_level": risk_level,
+        "status": status,
+        "action_state": action_state,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "submitted_by": item.get("submitted_by"),
+        "target": {
+            "type": review_type,
+            "id": item.get("target_id") or item.get("plan_id") or item.get("artifact_id") or item_id,
+        },
+        "route": route,
+        "bff_detail_path": route,
+        "allowedActions": _management_json_clone(item.get("allowedActions") or {
+            "canReview": action_state == "pending",
+            "canRequestRevision": action_state == "pending",
+        }),
+    }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="governance_review",
+        source_dataset="governance_review_queue_items",
+        risk_level=risk_level,
+        created_at=created_at,
+        updated_at=updated_at,
+        href=route,
+        source_record=item,
+    )
+
+
 def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     decision_id = _management_record_id(item, "decision_id", "id", "approval_decision_id")
     if not decision_id:
@@ -29361,7 +29805,10 @@ def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]
     target_type = str(governance_chain.get("target_type") or decision_type or "ApprovalDecision").strip()
     target_id = str(governance_chain.get("target_id") or governance_chain.get("linked_review_item_id") or "").strip()
     action_state = "pending" if state in _HUMAN_INBOX_OPEN_APPROVAL_STATES else "resolved"
-    return {
+    route = f"/management/approvals?approval={decision_id}"
+    created_at = item.get("submitted_at")
+    updated_at = item.get("updated_at") or created_at
+    projected = {
         "id": f"approval:{decision_id}",
         "inbox_id": f"approval:{decision_id}",
         "inboxType": "approval",
@@ -29374,18 +29821,28 @@ def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "risk_level": risk_level,
         "status": state,
         "action_state": action_state,
-        "created_at": item.get("submitted_at"),
-        "updated_at": item.get("updated_at") or item.get("submitted_at"),
+        "created_at": created_at,
+        "updated_at": updated_at,
         "submitted_by": item.get("submitted_by"),
         "target": {
             "type": target_type,
             "id": target_id or None,
         },
-        "route": f"/management/approvals?approval={decision_id}",
+        "route": route,
         "bff_detail_path": f"/bff/approvals/{decision_id}",
         "decision_context": json.loads(json.dumps(context)),
         "allowedActions": json.loads(json.dumps(item.get("allowedActions") or {})),
     }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="approval",
+        source_dataset="approval_queue_items",
+        risk_level=risk_level,
+        created_at=created_at,
+        updated_at=updated_at,
+        href=route,
+        source_record=item,
+    )
 
 
 def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -29408,7 +29865,10 @@ def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str,
         "canRemediate": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
         **raw_allowed_actions,
     }
-    return {
+    route = f"/management/interventions?intervention={intervention_id}"
+    created_at = record.get("triggered_at") or record.get("created_at")
+    updated_at = record.get("remediated_at") or record.get("updated_at") or created_at
+    projected = {
         "id": f"intervention:{intervention_id}",
         "inbox_id": f"intervention:{intervention_id}",
         "inboxType": "intervention",
@@ -29421,14 +29881,14 @@ def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str,
         "risk_level": str(record.get("risk_level") or priority).strip().lower(),
         "status": status,
         "action_state": action_state,
-        "created_at": record.get("triggered_at"),
-        "updated_at": record.get("remediated_at") or record.get("updated_at") or record.get("triggered_at"),
+        "created_at": created_at,
+        "updated_at": updated_at,
         "triggered_by": record.get("triggered_by"),
         "target": {
             "type": record.get("target_type"),
             "id": record.get("target_id"),
         },
-        "route": f"/management/interventions?intervention={intervention_id}",
+        "route": route,
         "bff_detail_path": f"/bff/v5/interventions/{intervention_id}",
         "remediation_context": {
             "kind": kind,
@@ -29438,18 +29898,198 @@ def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str,
         },
         "allowedActions": json.loads(json.dumps(allowed_actions)),
     }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="intervention",
+        source_dataset="v5_interventions",
+        risk_level=str(record.get("risk_level") or priority).strip().lower(),
+        created_at=created_at,
+        updated_at=updated_at,
+        href=route,
+        source_record=record,
+    )
 
 
-def _human_inbox_all_items() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _human_inbox_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    finding_id = _management_record_id(record, "id", "finding_id", "incident_id")
+    if not finding_id:
+        return None
+    status = str(record.get("status") or "open").strip().lower() or "open"
+    if status not in _HUMAN_INBOX_OPEN_SENTINEL_STATUSES:
+        return None
+    kind = str(record.get("kind") or "sentinel_finding").strip().lower() or "sentinel_finding"
+    risk_level = str(record.get("severity") or record.get("risk_level") or "high").strip().lower() or "high"
+    priority = _human_inbox_priority(record.get("priority") or risk_level, fallback="high")
+    created_at = record.get("triggered_at") or record.get("created_at") or record.get("opened_at")
+    updated_at = record.get("updated_at") or record.get("last_seen_at") or created_at
+    runtime_id = record.get("runtime_id") or record.get("target_id")
+    persona_id = record.get("persona_id")
+    target_type = "Persona" if persona_id else "Runtime" if runtime_id else record.get("target_type")
+    target_id = persona_id or runtime_id or record.get("target_id") or finding_id
+    route = f"/management/sentinel?finding={finding_id}"
+    action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_SENTINEL_STATUSES)
+    projected = {
+        "id": f"sentinel_finding:{finding_id}",
+        "inbox_id": f"sentinel_finding:{finding_id}",
+        "inboxType": "sentinel_finding",
+        "source_type": "sentinel_finding",
+        "source_id": finding_id,
+        "finding_id": finding_id,
+        "title": record.get("title") or f"Sentinel finding: {kind}",
+        "summary": record.get("summary") or record.get("description") or "Sentinel finding requires operator review.",
+        "priority": priority,
+        "risk_level": risk_level,
+        "status": status,
+        "action_state": action_state,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "target": {
+            "type": target_type,
+            "id": target_id,
+        },
+        "route": route,
+        "bff_detail_path": f"/bff/v5/sentinel/findings/{finding_id}",
+        "sentinel_context": {
+            "kind": kind,
+            "runtime_id": runtime_id,
+            "persona_id": persona_id,
+            "derived_from_incident_id": record.get("derived_from_incident_id"),
+        },
+        "allowedActions": _management_json_clone(record.get("allowedActions") or {
+            "canReview": action_state == "pending",
+            "canRemediate": action_state == "pending",
+        }),
+    }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="sentinel_finding",
+        source_dataset="sentinel_findings",
+        risk_level=risk_level,
+        created_at=created_at,
+        updated_at=updated_at,
+        href=route,
+        source_record=record,
+    )
+
+
+def _human_inbox_persona_blocking_reasons(row: Dict[str, Any]) -> List[str]:
+    reasons: List[str] = []
+    current_work = str(row.get("current_work") or row.get("currentWork") or "").strip()
+    if current_work:
+        reasons.append(current_work)
+    recommendation = str(row.get("recommendation") or "").strip()
+    if recommendation:
+        reasons.append(f"governance recommendation: {recommendation}")
+    research_status = row.get("research_status") if isinstance(row.get("research_status"), dict) else {}
+    pending_task_ids = research_status.get("pending_task_ids")
+    if isinstance(pending_task_ids, list) and pending_task_ids:
+        reasons.append(f"pending research tasks: {', '.join(str(task_id) for task_id in pending_task_ids)}")
+    if row.get("can_deploy") is False or row.get("canDeploy") is False:
+        reasons.append("deployment is blocked until human review clears")
+    return reasons
+
+
+def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str) -> Optional[Dict[str, Any]]:
+    persona_id = _management_record_id(row, "persona_id", "personaId", "id")
+    if not persona_id or not bool(row.get("human_needed") or row.get("humanNeeded")):
+        return None
+    name = str(row.get("persona_name") or row.get("personaName") or row.get("name") or persona_id).strip()
+    status = str(row.get("state") or row.get("status") or "needs_human_approval").strip().lower()
+    research_status = row.get("research_status") if isinstance(row.get("research_status"), dict) else {}
+    current_projects = row.get("current_research_projects") if isinstance(row.get("current_research_projects"), list) else []
+    blocking_reasons = _human_inbox_persona_blocking_reasons(row)
+    risk_level = "high" if status in {"critical", "needs_human_approval", "blocked"} or blocking_reasons else "medium"
+    priority = _human_inbox_priority(row.get("priority") or risk_level, fallback=risk_level)
+    created_at = row.get("updated_at") or row.get("lastMutation") or row.get("last_mutation") or snapshot_at
+    route = f"/management/persona-fleet?persona={persona_id}"
+    summary = (
+        str(row.get("current_work") or row.get("currentWork") or "").strip()
+        or str(research_status.get("summary") or "").strip()
+        or "Persona readiness is blocked on human governance review."
+    )
+    projected = {
+        "id": f"readiness_blocker:persona:{persona_id}",
+        "inbox_id": f"readiness_blocker:persona:{persona_id}",
+        "inboxType": "readiness_blocker",
+        "source_type": "readiness_blocker",
+        "source_id": persona_id,
+        "persona_id": persona_id,
+        "title": f"Persona needs review: {name}",
+        "summary": summary,
+        "priority": priority,
+        "risk_level": risk_level,
+        "status": status,
+        "action_state": "pending",
+        "created_at": created_at,
+        "updated_at": created_at,
+        "target": {
+            "type": "persona",
+            "id": persona_id,
+        },
+        "route": route,
+        "bff_detail_path": f"/bff/management/human-inbox/readiness_blocker:persona:{persona_id}",
+        "blockingReasons": list(blocking_reasons),
+        "blocking_reasons": list(blocking_reasons),
+        "canProceed": False,
+        "can_proceed": False,
+        "research_context": {
+            "research_status": _management_json_clone(research_status),
+            "current_research_projects": _management_json_clone(current_projects),
+            "recommendation": row.get("recommendation"),
+            "current_work": row.get("current_work") or row.get("currentWork"),
+            "data_source_status": _management_json_clone(row.get("data_source_status") or {}),
+        },
+        "allowedActions": {
+            "canProceed": False,
+            "canDecide": False,
+            "canOpenPersonaFleet": True,
+            "canOpenResearch": bool(current_projects or research_status),
+            "canRequestRevision": True,
+        },
+    }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="readiness_blocker",
+        source_dataset="persona_fleet",
+        risk_level=risk_level,
+        created_at=created_at,
+        updated_at=created_at,
+        href=route,
+        source_record=row,
+    )
+
+
+def _human_inbox_all_items(
+    snapshot_at: Optional[str] = None,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    snapshot_at = snapshot_at or utc_now()
+    review_records = read_store.list_governance_review_queue_items() or []
     approval_records = read_store.list_approval_queue_items() or []
     intervention_records = _v5_intervention_records()
+    sentinel_available, sentinel_records = read_store.list_sentinel_findings()
+    persona_rows = _build_persona_health_items(
+        snapshot_at,
+        include_market_persona_defaults=True,
+    )
     items: List[Dict[str, Any]] = []
+    for review in review_records:
+        projected = _human_inbox_governance_review_item(review)
+        if projected is not None:
+            items.append(projected)
     for approval in approval_records:
         projected = _human_inbox_approval_item(approval)
         if projected is not None:
             items.append(projected)
     for intervention in intervention_records:
         projected = _human_inbox_intervention_item(intervention)
+        if projected is not None:
+            items.append(projected)
+    for sentinel in sentinel_records:
+        projected = _human_inbox_sentinel_item(sentinel)
+        if projected is not None:
+            items.append(projected)
+    for persona in persona_rows:
+        projected = _human_inbox_persona_readiness_item(persona, snapshot_at=snapshot_at)
         if projected is not None:
             items.append(projected)
     items.sort(
@@ -29460,7 +30100,14 @@ def _human_inbox_all_items() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]
         ),
         reverse=True,
     )
-    return items, approval_records, intervention_records
+    return items, {
+        "governance_review_records": review_records,
+        "approval_records": approval_records,
+        "intervention_records": intervention_records,
+        "sentinel_available": sentinel_available,
+        "sentinel_records": sentinel_records,
+        "persona_rows": persona_rows,
+    }
 
 
 def _human_inbox_filter_items(
@@ -29496,12 +30143,28 @@ def _human_inbox_filter_items(
 
 def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
     pending_items = [item for item in items if str(item.get("action_state") or "") == "pending"]
+    by_type = _management_count_by(items, "inboxType")
+    by_status = _management_count_by(items, "status")
+    highest_risk_level = _highest_ranked_value(
+        [str(item.get("riskLevel") or item.get("risk_level") or "") for item in items],
+        _MANAGEMENT_RISK_LEVEL_ORDER,
+    )
     return {
+        "total": len(items),
         "total_items": len(items),
         "returned_items": returned_count,
         "pending_items": len(pending_items),
+        "byType": by_type,
+        "by_type": by_type,
+        "byStatus": by_status,
+        "by_status": by_status,
+        "highestRiskLevel": highest_risk_level,
+        "highest_risk_level": highest_risk_level,
+        "governance_review_count": len([item for item in items if item.get("source_type") == "governance_review"]),
         "approval_count": len([item for item in items if item.get("source_type") == "approval"]),
         "intervention_count": len([item for item in items if item.get("source_type") == "intervention"]),
+        "sentinel_finding_count": len([item for item in items if item.get("source_type") == "sentinel_finding"]),
+        "readiness_blocker_count": len([item for item in items if item.get("source_type") == "readiness_blocker"]),
         "critical_count": len([item for item in items if item.get("priority") == "critical"]),
         "high_count": len([item for item in items if item.get("priority") == "high"]),
     }
@@ -29510,9 +30173,19 @@ def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Di
 def _human_inbox_surfaces(
     *,
     snapshot_at: str,
+    governance_review_records: List[Dict[str, Any]],
     approval_records: List[Dict[str, Any]],
     intervention_records: List[Dict[str, Any]],
+    sentinel_available: bool,
+    sentinel_records: List[Dict[str, Any]],
+    persona_rows: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    review_surface = _dataset_surface_status(
+        "governance_review_queue_items",
+        snapshot_at=snapshot_at,
+        has_data=bool(governance_review_records),
+        missing_message="Governance review queue has no readable source records.",
+    )
     approval_surface = _dataset_surface_status(
         "approval_queue_items",
         snapshot_at=snapshot_at,
@@ -29528,20 +30201,88 @@ def _human_inbox_surfaces(
     if intervention_records and intervention_surface.get("status") == "unavailable":
         intervention_surface = dict(_surface_status())
         intervention_surface["source"] = "bff_local_registry"
-    source_available = (
-        approval_surface.get("status") != "unavailable"
-        or intervention_surface.get("status") != "unavailable"
-        or bool(approval_records)
-        or bool(intervention_records)
+    incidents_source = read_store.dataset_source("incidents")
+    sentinel_dataset = "incidents" if incidents_source != "missing" else "sentinel_findings"
+    sentinel_surface = _dataset_surface_status(
+        sentinel_dataset,
+        snapshot_at=snapshot_at,
+        has_data=bool(sentinel_records),
+        missing_message="Sentinel findings have no readable source records.",
+        source=None if sentinel_available else "missing",
     )
+    persona_surface = _composed_dataset_surface_status(
+        "persona_fleet",
+        persona_rows,
+        snapshot_at=snapshot_at,
+        source="bff_composed",
+    )
+    source_surfaces = [
+        review_surface,
+        approval_surface,
+        intervention_surface,
+        sentinel_surface,
+        persona_surface,
+    ]
     return {
-        "human_inbox": _composed_surface_status(
+        "human_inbox": _aggregate_group_surface(
+            "human_inbox",
+            source_surfaces,
             snapshot_at=snapshot_at,
-            available=source_available,
-            missing_message="Human inbox has no readable approval or intervention source records.",
+            unavailable_message="Human inbox aggregate unavailable.",
+            degraded_message="Human inbox aggregate is available, but one or more contributing surfaces are degraded.",
         ),
+        "governance_review_queue": review_surface,
         "approval_queue": approval_surface,
         "v5_interventions": intervention_surface,
+        "sentinel_findings": sentinel_surface,
+        "persona_readiness": persona_surface,
+    }
+
+
+def _human_inbox_payload(
+    snapshot_at: str,
+    *,
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: Optional[int] = 20,
+) -> Dict[str, Any]:
+    items, sources = _human_inbox_all_items(snapshot_at)
+    filtered = _human_inbox_filter_items(
+        items,
+        source_type=source_type,
+        status=status,
+        priority=priority,
+    )
+    total = len(filtered)
+    if page_size is None:
+        page_items = filtered
+        next_page_token = None
+        returned_page_size = len(page_items)
+    else:
+        page_items, next_page_token = _page_slice(filtered, page_token, page_size)
+        returned_page_size = page_size
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = _human_inbox_surfaces(
+        snapshot_at=snapshot_at,
+        governance_review_records=sources["governance_review_records"],
+        approval_records=sources["approval_records"],
+        intervention_records=sources["intervention_records"],
+        sentinel_available=bool(sources["sentinel_available"]),
+        sentinel_records=sources["sentinel_records"],
+        persona_rows=sources["persona_rows"],
+    )
+    return {
+        "data": page_items,
+        "items": page_items,
+        "summary": _human_inbox_summary(filtered, len(page_items)),
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": returned_page_size,
+        },
+        "meta": meta,
     }
 
 
@@ -29553,6 +30294,9 @@ def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
         str(item.get("source_id") or ""),
         str(item.get("approval_decision_id") or ""),
         str(item.get("intervention_id") or ""),
+        str(item.get("review_item_id") or ""),
+        str(item.get("finding_id") or ""),
+        str(item.get("persona_id") or ""),
     }
     return clean in candidates
 
@@ -29856,7 +30600,7 @@ def _management_hiq_backlog_response(
     priorities = _hiq_backlog_filter_values(priority)
     kinds = _hiq_backlog_filter_values(kind, default=_HIQ_BACKLOG_DEFAULT_KINDS)
 
-    human_inbox_items, approval_records, inbox_intervention_records = _human_inbox_all_items()
+    human_inbox_items, inbox_sources = _human_inbox_all_items(snapshot_at)
     inbox_by_source_id = {
         str(item.get("source_id") or ""): item
         for item in human_inbox_items
@@ -29946,8 +30690,12 @@ def _management_hiq_backlog_response(
         )
     human_inbox_surfaces = _human_inbox_surfaces(
         snapshot_at=snapshot_at,
-        approval_records=approval_records,
-        intervention_records=inbox_intervention_records,
+        governance_review_records=inbox_sources["governance_review_records"],
+        approval_records=inbox_sources["approval_records"],
+        intervention_records=inbox_sources["intervention_records"],
+        sentinel_available=bool(inbox_sources["sentinel_available"]),
+        sentinel_records=inbox_sources["sentinel_records"],
+        persona_rows=inbox_sources["persona_rows"],
     )
     hiq_surface = _aggregate_group_surface(
         "hiq_backlog",
@@ -31407,37 +32155,18 @@ async def bff_management_human_inbox(
     page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
 ):
-    """BFF: compose human-action inbox rows from approvals and interventions."""
+    """BFF: compose human-action inbox rows from governed human-review sources."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    snapshot_at = utc_now()
-    items, approval_records, intervention_records = _human_inbox_all_items()
-    filtered = _human_inbox_filter_items(
-        items,
+    return _human_inbox_payload(
+        utc_now(),
         source_type=source_type,
         status=status,
         priority=priority,
+        page_token=page_token,
+        page_size=page_size,
     )
-    total = len(filtered)
-    page_items, next_page_token = _page_slice(filtered, page_token, page_size)
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = _human_inbox_surfaces(
-        snapshot_at=snapshot_at,
-        approval_records=approval_records,
-        intervention_records=intervention_records,
-    )
-    return {
-        "data": page_items,
-        "items": page_items,
-        "summary": _human_inbox_summary(filtered, len(page_items)),
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-            "page_size": page_size,
-        },
-        "meta": meta,
-    }
 
 
 @app.get("/bff/management/human-inbox/{item_id}")
@@ -31450,15 +32179,19 @@ async def bff_management_human_inbox_detail(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    items, approval_records, intervention_records = _human_inbox_all_items()
+    items, sources = _human_inbox_all_items(snapshot_at)
     for item in items:
         if _human_inbox_detail_match(item, item_id):
             detail = json.loads(json.dumps(item))
             meta = _snapshot_meta(snapshot_at)
             meta["surfaces"] = _human_inbox_surfaces(
                 snapshot_at=snapshot_at,
-                approval_records=approval_records,
-                intervention_records=intervention_records,
+                governance_review_records=sources["governance_review_records"],
+                approval_records=sources["approval_records"],
+                intervention_records=sources["intervention_records"],
+                sentinel_available=bool(sources["sentinel_available"]),
+                sentinel_records=sources["sentinel_records"],
+                persona_rows=sources["persona_rows"],
             )
             return {"data": detail, "meta": meta}
     raise _bff_error(
@@ -31569,24 +32302,6 @@ async def bff_management_evolution_journal(
         },
         "meta": meta,
     }
-
-
-@app.get("/bff/management/persona-fleet")
-async def bff_management_persona_fleet(
-    state: Optional[str] = None,
-    health: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: compose the Management Persona Fleet aggregate from read surfaces."""
-    return await bff_management_fleet(
-        state=state,
-        health=health,
-        page_token=page_token,
-        page_size=page_size,
-        authorization=authorization,
-    )
 
 
 # ---------------- /bff/management/nl (BFF-B6-001) ----------------
@@ -31912,6 +32627,373 @@ def _management_ai_list_audit_events(
         )
     ]
     return filtered[-limit:]
+
+
+def _management_ai_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        clean = str(value).strip()
+        return float(clean) if clean else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _management_ai_usage_number(usage: Any, *keys: str) -> Optional[float]:
+    if not isinstance(usage, dict):
+        return None
+    for key in keys:
+        value = _management_ai_number(usage.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _management_ai_provider_key(value: Any) -> str:
+    clean = str(value or "").strip().lower()
+    return clean or "unknown"
+
+
+def _management_ai_provider_display(provider: str) -> str:
+    labels = {
+        "codex": "Codex CLI",
+        "codex_cli": "Codex CLI",
+        "claude": "Claude CLI",
+        "claude_cli": "Claude CLI",
+        "openclaw": "OpenClaw",
+    }
+    return labels.get(provider, provider)
+
+
+def _management_ai_event_model(event: Dict[str, Any]) -> str:
+    output_summary = event.get("output_summary") if isinstance(event.get("output_summary"), dict) else {}
+    usage = output_summary.get("usage") if isinstance(output_summary.get("usage"), dict) else {}
+    for value in (
+        event.get("model"),
+        event.get("model_id"),
+        event.get("modelId"),
+        event.get("provider_model"),
+        event.get("providerModel"),
+        output_summary.get("model"),
+        output_summary.get("model_id"),
+        output_summary.get("modelId"),
+        usage.get("model"),
+        usage.get("model_id"),
+        usage.get("modelId"),
+    ):
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return "default"
+
+
+def _management_ai_quota_snapshot(provider: Dict[str, Any]) -> Dict[str, Any]:
+    usage = provider.get("usage") if isinstance(provider.get("usage"), dict) else None
+    quota = provider.get("quota") if isinstance(provider.get("quota"), dict) else None
+    source = usage or quota or {}
+    return {
+        "status": str(source.get("status") or "unknown"),
+        "source": str(source.get("source") or "not_configured"),
+        "remaining": source.get("remaining"),
+        "remainingPercent": source.get("remainingPercent", source.get("remaining_percent")),
+        "remaining_percent": source.get("remaining_percent", source.get("remainingPercent")),
+        "limit": source.get("limit"),
+        "used": source.get("used"),
+        "unit": source.get("unit"),
+        "resetAt": source.get("resetAt", source.get("reset_at")),
+        "reset_at": source.get("reset_at", source.get("resetAt")),
+        "updatedAt": source.get("updatedAt", source.get("updated_at")),
+        "updated_at": source.get("updated_at", source.get("updatedAt")),
+        "checkedAt": source.get("checkedAt", source.get("checked_at")),
+        "checked_at": source.get("checked_at", source.get("checkedAt")),
+        "reason": source.get("reason") or (
+            "provider_usage_source_not_configured" if not source else None
+        ),
+    }
+
+
+def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
+    return {
+        "provider": provider,
+        "providerName": _management_ai_provider_display(provider),
+        "provider_name": _management_ai_provider_display(provider),
+        "runtime": None,
+        "ready": None,
+        "authStatus": None,
+        "auth_status": None,
+        "status": "unknown",
+        "liveAuth": False,
+        "live_auth": False,
+        "calls": 0,
+        "successCount": 0,
+        "success_count": 0,
+        "failedCount": 0,
+        "failed_count": 0,
+        "startedCount": 0,
+        "started_count": 0,
+        "promptBytes": 0,
+        "prompt_bytes": 0,
+        "inputTokens": 0,
+        "input_tokens": 0,
+        "outputTokens": 0,
+        "output_tokens": 0,
+        "totalTokens": 0,
+        "total_tokens": 0,
+        "durationMs": 0,
+        "duration_ms": 0,
+        "averageDurationMs": None,
+        "average_duration_ms": None,
+        "lastUsedAt": None,
+        "last_used_at": None,
+        "lastStatus": None,
+        "last_status": None,
+        "lastError": None,
+        "last_error": None,
+        "quota": _management_ai_quota_snapshot({}),
+        "observedUsage": {"source": "management_ai_audit"},
+        "observed_usage": {"source": "management_ai_audit"},
+        "models": {},
+    }
+
+
+def _management_ai_empty_model_row(model: str) -> Dict[str, Any]:
+    return {
+        "model": model,
+        "calls": 0,
+        "successCount": 0,
+        "success_count": 0,
+        "failedCount": 0,
+        "failed_count": 0,
+        "promptBytes": 0,
+        "prompt_bytes": 0,
+        "inputTokens": 0,
+        "input_tokens": 0,
+        "outputTokens": 0,
+        "output_tokens": 0,
+        "totalTokens": 0,
+        "total_tokens": 0,
+        "durationMs": 0,
+        "duration_ms": 0,
+        "averageDurationMs": None,
+        "average_duration_ms": None,
+        "lastUsedAt": None,
+        "last_used_at": None,
+        "lastStatus": None,
+        "last_status": None,
+    }
+
+
+def _management_ai_touch_last(row: Dict[str, Any], event: Dict[str, Any], status: str) -> None:
+    recorded_at = str(event.get("recorded_at") or "")
+    current = _audit_datetime(row.get("lastUsedAt"))
+    candidate = _audit_datetime(recorded_at)
+    if candidate is None or current is None or candidate >= current:
+        row["lastUsedAt"] = recorded_at
+        row["last_used_at"] = recorded_at
+        row["lastStatus"] = status
+        row["last_status"] = status
+
+
+def _management_ai_finalize_usage_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    calls = int(row.get("calls") or 0)
+    duration = int(row.get("durationMs") or 0)
+    avg = round(duration / calls) if calls else None
+    row["averageDurationMs"] = avg
+    row["average_duration_ms"] = avg
+    observed = {
+        "source": "management_ai_audit",
+        "calls": row["calls"],
+        "successCount": row["successCount"],
+        "success_count": row["success_count"],
+        "failedCount": row["failedCount"],
+        "failed_count": row["failed_count"],
+        "promptBytes": row["promptBytes"],
+        "prompt_bytes": row["prompt_bytes"],
+        "inputTokens": row["inputTokens"],
+        "input_tokens": row["input_tokens"],
+        "outputTokens": row["outputTokens"],
+        "output_tokens": row["output_tokens"],
+        "totalTokens": row["totalTokens"],
+        "total_tokens": row["total_tokens"],
+    }
+    row["observedUsage"] = observed
+    row["observed_usage"] = observed
+    models = []
+    for model_row in row["models"].values():
+        model_calls = int(model_row.get("calls") or 0)
+        model_duration = int(model_row.get("durationMs") or 0)
+        model_avg = round(model_duration / model_calls) if model_calls else None
+        model_row["averageDurationMs"] = model_avg
+        model_row["average_duration_ms"] = model_avg
+        models.append(model_row)
+    row["models"] = sorted(models, key=lambda item: (-int(item.get("calls") or 0), str(item.get("model") or "")))
+    return row
+
+
+def _assistant_provider_usage_summary(
+    *,
+    auth_probe: bool = False,
+    limit: int = 500,
+    window_hours: Optional[int] = 168,
+) -> Dict[str, Any]:
+    event_limit = min(max(limit, 1), 500)
+    now_dt = datetime.now(timezone.utc)
+    since_dt = (
+        now_dt - timedelta(hours=max(1, int(window_hours)))
+        if window_hours is not None and int(window_hours) > 0
+        else None
+    )
+    rows: Dict[str, Dict[str, Any]] = {}
+
+    def ensure_provider(provider_value: Any) -> Dict[str, Any]:
+        provider = _management_ai_provider_key(provider_value)
+        if provider not in rows:
+            rows[provider] = _management_ai_empty_usage_row(provider)
+        return rows[provider]
+
+    def ensure_model(row: Dict[str, Any], model: str) -> Dict[str, Any]:
+        model_key = str(model or "default")
+        models = row["models"]
+        if model_key not in models:
+            models[model_key] = _management_ai_empty_model_row(model_key)
+        return models[model_key]
+
+    provider_list_payload = _assistant_provider_list(auth_probe=auth_probe)
+    provider_items = provider_list_payload.get("data") if isinstance(provider_list_payload, dict) else []
+    if not isinstance(provider_items, list):
+        provider_items = []
+    for item in provider_items:
+        if not isinstance(item, dict):
+            continue
+        row = ensure_provider(item.get("provider") or item.get("provider_id") or item.get("providerName"))
+        provider_name = str(item.get("provider_name") or item.get("providerName") or row["providerName"])
+        row["providerName"] = provider_name
+        row["provider_name"] = provider_name
+        row["runtime"] = item.get("runtime")
+        row["ready"] = item.get("ready")
+        auth_status = item.get("auth_status") or item.get("authStatus") or item.get("auth") or item.get("status")
+        row["authStatus"] = auth_status
+        row["auth_status"] = auth_status
+        row["status"] = item.get("status") or row["status"]
+        live_auth = bool(item.get("ready") is True and str(auth_status or "").lower() in {"ready", "account_session", "authorized"})
+        row["liveAuth"] = live_auth
+        row["live_auth"] = live_auth
+        row["quota"] = _management_ai_quota_snapshot(item)
+
+    started_by_run: Dict[str, Dict[str, Any]] = {}
+    events = _management_ai_list_audit_events(limit=event_limit)
+    considered_events = 0
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_dt = _audit_datetime(event.get("recorded_at"))
+        if since_dt is not None and event_dt is not None and event_dt < since_dt:
+            continue
+        event_type = str(event.get("event_type") or "")
+        if not event_type.startswith("management_ai.provider."):
+            continue
+        considered_events += 1
+        provider = event.get("provider") or "unknown"
+        run_id = str(event.get("provider_run_id") or event.get("trace_id") or event.get("message_id") or "")
+        row = ensure_provider(provider)
+        model = _management_ai_event_model(event)
+        model_row = ensure_model(row, model)
+        if event_type == "management_ai.provider.started":
+            if run_id:
+                started_by_run[run_id] = event
+            prompt_bytes = int(_management_ai_number(event.get("prompt_bytes")) or 0)
+            row["startedCount"] += 1
+            row["started_count"] += 1
+            row["promptBytes"] += prompt_bytes
+            row["prompt_bytes"] += prompt_bytes
+            model_row["promptBytes"] += prompt_bytes
+            model_row["prompt_bytes"] += prompt_bytes
+            _management_ai_touch_last(row, event, "started")
+            _management_ai_touch_last(model_row, event, "started")
+            continue
+
+        if event_type not in {"management_ai.provider.completed", "management_ai.provider.failed"}:
+            continue
+        source_started = started_by_run.get(run_id)
+        if source_started is not None:
+            prompt_bytes = int(_management_ai_number(source_started.get("prompt_bytes")) or 0)
+            if row["startedCount"] == 0:
+                row["promptBytes"] += prompt_bytes
+                row["prompt_bytes"] += prompt_bytes
+                model_row["promptBytes"] += prompt_bytes
+                model_row["prompt_bytes"] += prompt_bytes
+        duration_ms = int(_management_ai_number(event.get("duration_ms")) or 0)
+        output_summary = event.get("output_summary") if isinstance(event.get("output_summary"), dict) else {}
+        usage = output_summary.get("usage") if isinstance(output_summary.get("usage"), dict) else {}
+        input_tokens = int(_management_ai_usage_number(usage, "input_tokens", "inputTokens", "prompt_tokens", "promptTokens") or 0)
+        output_tokens = int(_management_ai_usage_number(usage, "output_tokens", "outputTokens", "completion_tokens", "completionTokens") or 0)
+        total_tokens = int(_management_ai_usage_number(usage, "total_tokens", "totalTokens") or 0)
+        if total_tokens == 0:
+            total_tokens = input_tokens + output_tokens
+        failed = event_type == "management_ai.provider.failed"
+        status = "failed" if failed else str(event.get("provider_state") or "completed")
+        for target in (row, model_row):
+            target["calls"] += 1
+            target["durationMs"] += duration_ms
+            target["duration_ms"] += duration_ms
+            target["inputTokens"] += input_tokens
+            target["input_tokens"] += input_tokens
+            target["outputTokens"] += output_tokens
+            target["output_tokens"] += output_tokens
+            target["totalTokens"] += total_tokens
+            target["total_tokens"] += total_tokens
+            if failed:
+                target["failedCount"] += 1
+                target["failed_count"] += 1
+            else:
+                target["successCount"] += 1
+                target["success_count"] += 1
+            _management_ai_touch_last(target, event, status)
+        if failed:
+            row["lastError"] = event.get("error_code") or event.get("error_message")
+            row["last_error"] = row["lastError"]
+
+    provider_rows = [_management_ai_finalize_usage_row(row) for row in rows.values()]
+    provider_rows.sort(key=lambda item: (not bool(item.get("liveAuth")), -int(item.get("calls") or 0), str(item.get("provider") or "")))
+    totals = {
+        "providers": len(provider_rows),
+        "liveAuthCount": sum(1 for row in provider_rows if row.get("liveAuth")),
+        "live_auth_count": sum(1 for row in provider_rows if row.get("liveAuth")),
+        "calls": sum(int(row.get("calls") or 0) for row in provider_rows),
+        "successCount": sum(int(row.get("successCount") or 0) for row in provider_rows),
+        "success_count": sum(int(row.get("successCount") or 0) for row in provider_rows),
+        "failedCount": sum(int(row.get("failedCount") or 0) for row in provider_rows),
+        "failed_count": sum(int(row.get("failedCount") or 0) for row in provider_rows),
+        "inputTokens": sum(int(row.get("inputTokens") or 0) for row in provider_rows),
+        "input_tokens": sum(int(row.get("inputTokens") or 0) for row in provider_rows),
+        "outputTokens": sum(int(row.get("outputTokens") or 0) for row in provider_rows),
+        "output_tokens": sum(int(row.get("outputTokens") or 0) for row in provider_rows),
+        "totalTokens": sum(int(row.get("totalTokens") or 0) for row in provider_rows),
+        "total_tokens": sum(int(row.get("totalTokens") or 0) for row in provider_rows),
+    }
+    return {
+        "status": "ok",
+        "data": {
+            "providers": provider_rows,
+            "totals": totals,
+            "quota": {
+                "truthPolicy": "provider_snapshot_only",
+                "truth_policy": "provider_snapshot_only",
+                "missingSourceMeans": "quota remaining is unknown, not zero",
+                "missing_source_means": "quota remaining is unknown, not zero",
+            },
+        },
+        "meta": {
+            "auth_probe": auth_probe,
+            "event_limit": event_limit,
+            "event_count": considered_events,
+            "window_hours": window_hours,
+            "since": since_dt.isoformat().replace("+00:00", "Z") if since_dt is not None else None,
+            "provider_snapshot_status": provider_list_payload.get("status") if isinstance(provider_list_payload, dict) else None,
+        },
+    }
 
 
 def _management_ai_href(route: str, **params: Optional[str]) -> str:
@@ -33575,7 +34657,7 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 list(alerts_payload.get("alerts") or []),
                 tenant_id,
             )
-            human_inbox_payload = _build_management_human_inbox_payload(snapshot_at)
+            human_inbox_payload = _human_inbox_payload(snapshot_at, page_size=None)
             inbox_items = _mgmt_nl_filter_tenant_records(
                 list(human_inbox_payload.get("items") or []),
                 tenant_id,
@@ -33591,12 +34673,13 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             )
             trading_pulse = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
             _mgmt_nl_add_record_entities(evidence_entities, alerts, "alert", "alert_id", "id")
-            _mgmt_nl_add_record_entities(evidence_entities, inbox_items, "approval", "id", "item_id")
+            _mgmt_nl_add_record_entities(evidence_entities, inbox_items, "human_inbox", "id", "item_id")
             _mgmt_nl_add_record_entities(evidence_entities, anomalies, "incident", "id")
             evidence_source_types.update({
                 "alert",
                 "incident",
                 "approval",
+                "human_inbox",
                 "runtime",
                 "runtime_binding",
                 "telemetry",
@@ -35003,6 +36086,32 @@ async def bff_management_nl_ask(
         )
         return JSONResponse(status_code=202, content=_management_json_clone(cached))
 
+    if _request_dry_run_requested():
+        return _dry_run_success_response(
+            {
+                "status": "accepted",
+                "lifecycleStatus": "accepted",
+                "lifecycle_status": "accepted",
+                "sessionId": str(payload.get("sessionId") or payload.get("session_id") or ""),
+                "session_id": str(payload.get("session_id") or payload.get("sessionId") or ""),
+                "message_id": "",
+                "traceId": str(payload.get("traceId") or payload.get("trace_id") or ""),
+                "trace_id": str(payload.get("trace_id") or payload.get("traceId") or ""),
+                "question": question,
+                "focus": focus,
+                "sources": [],
+                "confidence": "dry_run",
+            },
+            status_code=202,
+            idempotency_key=resolved_key,
+            evidence_kind="ManagementNLQuery",
+            extra_meta={
+                "status": "accepted",
+                "route": "POST /bff/management/nl/ask",
+                "dry_run_mode": "compact_receipt",
+            },
+        )
+
     now = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
     message_id = f"mnl-{uuid.uuid4().hex[:16]}"
@@ -35627,6 +36736,23 @@ async def bff_management_ai_audit(
             },
         },
     }
+
+
+@app.get("/bff/assistant/providers/usage-summary")
+async def bff_assistant_provider_usage_summary(
+    auth_probe: bool = False,
+    limit: int = Query(default=500, ge=1, le=500),
+    window_hours: int = Query(default=168, ge=1, le=24 * 90),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return provider/model usage history plus provider-reported quota snapshots."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _assistant_provider_usage_summary(
+        auth_probe=auth_probe,
+        limit=limit,
+        window_hours=window_hours,
+    )
 
 
 @app.get("/bff/management/ai/conversations")
@@ -42958,109 +44084,6 @@ async def bff_get_experiment_artifacts(
     }
 
 
-# -- Jobs --------------------------------------------------------------------
-
-@app.get("/bff/jobs")
-async def bff_list_jobs(
-    status: Optional[str] = None,
-    job_type: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job list."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    jobs = read_store.list_jobs_bff(status=status, job_type=job_type)
-    total = len(jobs)
-    page_items, next_page_token = _page_slice(jobs, page_token, page_size)
-    return {
-        "data": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta("jobs", "job_list", snapshot_at=snapshot_at, total=total),
-    }
-
-
-@app.get("/bff/jobs/{job_id}")
-async def bff_get_job(
-    job_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job detail."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    job = read_store.get_job_bff(job_id)
-    if not job:
-        surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at)
-        _raise_if_read_surface_unavailable(surface, label="Job")
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    return {
-        "data": job,
-        "meta": _read_surface_meta("jobs", "job_detail", snapshot_at=snapshot_at),
-    }
-
-
-@app.get("/bff/jobs/{job_id}/logs")
-async def bff_get_job_logs(
-    job_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job logs."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    job = read_store.get_job_bff(job_id)
-    if not job:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    logs = read_store.get_job_logs_bff(job_id)
-    return {
-        "data": logs,
-        "meta": _read_surface_meta("jobs", "job_logs", snapshot_at=snapshot_at),
-    }
-
-
-@app.post("/bff/jobs/{job_id}/actions/{action_id}", status_code=202)
-async def bff_job_action(
-    job_id: str,
-    action_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: job action."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    job = read_store.get_job_bff(job_id)
-    if not job:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    return _evol_exp_bff_action_command(
-        entity_type=ObjectType.JOB,
-        entity_id=job_id,
-        action_id=action_id,
-        resolved_key=resolved_key,
-        identity=identity,
-        payload=payload,
-        command_type=CommandType.JOB_ACTION,
-    )
-
-
 # -- Events list -------------------------------------------------------------
 
 @app.get("/bff/events")
@@ -44611,6 +45634,410 @@ async def bff_approval_evidence(
 
 # -- Deployments -------------------------------------------------------------
 
+_DEPLOYMENT_STAGE_TRUTH_ORDER = (
+    "approval",
+    "plan",
+    "saga",
+    "binding",
+    "runtime_fleet",
+)
+_DEPLOYMENT_STAGE_FAILURE_STATUSES = {
+    "aborted",
+    "blocked",
+    "dead_lettered",
+    "degraded",
+    "failed",
+    "missing",
+    "rejected",
+    "stale",
+    "unavailable",
+}
+
+
+def _deployment_stage_status(value: Any, *, default: str = "unknown") -> str:
+    status = str(value or "").strip().lower()
+    return status or default
+
+
+def _deployment_stage_entry(
+    *,
+    stage: str,
+    status: Any,
+    source_dataset: str,
+    source_id: Optional[str] = None,
+    available: bool = True,
+    message: Optional[str] = None,
+    failure: Optional[bool] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    normalized_status = _deployment_stage_status(status)
+    entry: Dict[str, Any] = {
+        "stage": stage,
+        "status": normalized_status,
+        "source_dataset": source_dataset,
+        "available": bool(available),
+        "failure": bool(
+            normalized_status in _DEPLOYMENT_STAGE_FAILURE_STATUSES
+            if failure is None
+            else failure
+        ),
+    }
+    if source_id:
+        entry["source_id"] = source_id
+    if message:
+        entry["message"] = message
+    for key, value in extra.items():
+        if value is not None:
+            entry[key] = value
+    return entry
+
+
+def _deployment_plan_identifier(plan: Dict[str, Any]) -> str:
+    return str(plan.get("plan_id") or plan.get("id") or "").strip()
+
+
+def _runtime_binding_matches_deployment_plan(
+    runtime_binding: Dict[str, Any],
+    plan: Dict[str, Any],
+) -> bool:
+    plan_id = _deployment_plan_identifier(plan)
+    runtime_plan_id = str(
+        runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or ""
+    ).strip()
+    if plan_id and runtime_plan_id == plan_id:
+        return True
+
+    requested_binding_ids = {
+        str(plan.get("runtime_binding_id") or "").strip(),
+        str(plan.get("binding_id") or plan.get("persona_capital_binding_id") or "").strip(),
+    }
+    requested_binding_ids.update(
+        str(value).strip()
+        for value in (plan.get("binding_ids") or [])
+        if str(value).strip()
+    )
+    requested_binding_ids.discard("")
+    runtime_binding_ids = {
+        str(runtime_binding.get("id") or "").strip(),
+        str(runtime_binding.get("binding_id") or "").strip(),
+        str(runtime_binding.get("runtime_binding_id") or "").strip(),
+        str(runtime_binding.get("persona_capital_binding_id") or "").strip(),
+    }
+    runtime_binding_ids.discard("")
+    return bool(requested_binding_ids.intersection(runtime_binding_ids))
+
+
+def _deployment_runtime_binding(plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    runtime_binding_id = str(plan.get("runtime_binding_id") or "").strip()
+    if runtime_binding_id:
+        binding = read_store.get_runtime_binding(runtime_binding_id)
+        if binding:
+            return binding
+
+    for binding in read_store.list_runtime_bindings():
+        if _runtime_binding_matches_deployment_plan(binding, plan):
+            return binding
+    return None
+
+
+def _runtime_fleet_stage_truth(runtime_binding: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not runtime_binding:
+        return _deployment_stage_entry(
+            stage="runtime_fleet",
+            status="unavailable",
+            source_dataset="runtime_bindings",
+            available=False,
+            message=(
+                "Runtime fleet evidence unavailable because no RuntimeBinding "
+                "projection is linked to this deployment plan."
+            ),
+        )
+
+    runtime_id = str(
+        runtime_binding.get("runtime_id")
+        or runtime_binding.get("id")
+        or runtime_binding.get("binding_id")
+        or ""
+    ).strip()
+    runtime_binding_id = str(
+        runtime_binding.get("runtime_binding_id")
+        or runtime_binding.get("binding_id")
+        or runtime_binding.get("id")
+        or ""
+    ).strip()
+    deployment_stage = str(
+        runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode") or ""
+    ).strip().lower()
+
+    monitoring = read_store.get_paper_runtime_monitoring_session(
+        runtime_id=runtime_id,
+        binding_id=runtime_binding_id,
+    )
+    if monitoring:
+        active = bool(monitoring.get("active", True))
+        staleness = monitoring.get("staleness") if isinstance(monitoring.get("staleness"), dict) else {}
+        terminal_reason = (
+            monitoring.get("terminal_reason")
+            or monitoring.get("ended_reason")
+            or staleness.get("reason")
+        )
+        status = "active" if active and not terminal_reason else "degraded"
+        return _deployment_stage_entry(
+            stage="runtime_fleet",
+            status=status,
+            source_dataset="paper_runtime_monitoring_sessions",
+            source_id=str(monitoring.get("session_id") or monitoring.get("id") or ""),
+            available=True,
+            failure=status != "active",
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            deployment_stage=deployment_stage or None,
+            active=active,
+            last_heartbeat_at=monitoring.get("last_heartbeat_at"),
+            terminal_reason=terminal_reason,
+        )
+
+    telemetry = read_store.get_telemetry_summary(runtime_id) if runtime_id else None
+    if telemetry:
+        health_summary = telemetry.get("health_summary") if isinstance(telemetry.get("health_summary"), dict) else {}
+        unhealthy = [
+            str(key)
+            for key, value in health_summary.items()
+            if str(value).strip().lower() not in {"", "ok", "not_applicable"}
+        ]
+        status = "degraded" if unhealthy else "observed"
+        return _deployment_stage_entry(
+            stage="runtime_fleet",
+            status=status,
+            source_dataset="telemetry_summaries",
+            source_id=runtime_id,
+            available=True,
+            failure=status == "degraded",
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            deployment_stage=deployment_stage or None,
+            last_heartbeat_at=telemetry.get("last_heartbeat_at"),
+            last_event_at=telemetry.get("last_event_at"),
+            degraded_checks=unhealthy or None,
+        )
+
+    source_dataset = (
+        "paper_runtime_monitoring_sessions"
+        if deployment_stage == "paper"
+        else "telemetry_summaries"
+    )
+    return _deployment_stage_entry(
+        stage="runtime_fleet",
+        status="unavailable",
+        source_dataset=source_dataset,
+        source_id=runtime_id or None,
+        available=False,
+        failure=True,
+        runtime_id=runtime_id or None,
+        runtime_binding_id=runtime_binding_id or None,
+        deployment_stage=deployment_stage or None,
+        message=(
+            "Runtime fleet evidence unavailable; status is not inferred from "
+            "deployment plan metadata or RuntimeBinding existence."
+        ),
+    )
+
+
+def _deployment_stage_truth(plan: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    plan_id = _deployment_plan_identifier(plan)
+    approval_decision_id = str(plan.get("approval_decision_id") or "").strip()
+    approval_decision = read_store.get_approval_decision(approval_decision_id)
+    if approval_decision:
+        approval_status = approval_decision.get("outcome") or approval_decision.get("state")
+        approval_entry = _deployment_stage_entry(
+            stage="approval",
+            status=approval_status,
+            source_dataset="approval_decisions",
+            source_id=str(
+                approval_decision.get("decision_id")
+                or approval_decision.get("id")
+                or approval_decision_id
+            ),
+            available=True,
+            failure=_deployment_stage_status(approval_status) in {"rejected", "failed"},
+            decision_state=approval_decision.get("state"),
+            reviewer=approval_decision.get("reviewer"),
+        )
+    else:
+        plan_status = _deployment_stage_status(plan.get("status"))
+        pending_status = "pending" if plan_status in {"pending_approval", "draft", "proposed"} else "missing"
+        approval_entry = _deployment_stage_entry(
+            stage="approval",
+            status=pending_status,
+            source_dataset="approval_decisions",
+            source_id=approval_decision_id or None,
+            available=False,
+            failure=False,
+            message="Approval decision has not been recorded for this deployment plan.",
+        )
+
+    plan_status = plan.get("status") or plan.get("state") or "unknown"
+    plan_entry = _deployment_stage_entry(
+        stage="plan",
+        status=plan_status,
+        source_dataset="deployment_plans",
+        source_id=plan_id or None,
+        available=True,
+        failure=_deployment_stage_status(plan_status) in {"aborted", "failed", "rejected"},
+        current_stage=plan.get("current_stage"),
+        target_stage=plan.get("target_stage") or plan.get("stage"),
+        transition_type=plan.get("transition_type"),
+    )
+
+    saga_progress = plan.get("saga_progress") if isinstance(plan.get("saga_progress"), dict) else {}
+    if saga_progress:
+        saga_status = saga_progress.get("progress_status") or saga_progress.get("saga_status")
+        saga_entry = _deployment_stage_entry(
+            stage="saga",
+            status=saga_status,
+            source_dataset="deployment_sagas",
+            source_id=str(saga_progress.get("saga_id") or plan.get("deployment_saga_id") or ""),
+            available=True,
+            failure=_deployment_stage_status(saga_status) in {"blocked", "failed"},
+            saga_status=saga_progress.get("saga_status"),
+            current_step=saga_progress.get("current_step"),
+            blocked_reason=saga_progress.get("blocked_reason"),
+            dlq_count=saga_progress.get("dlq_count"),
+            pending_event_count=saga_progress.get("pending_event_count"),
+        )
+    else:
+        saga_entry = _deployment_stage_entry(
+            stage="saga",
+            status="not_started",
+            source_dataset="deployment_sagas",
+            source_id=str(plan.get("deployment_saga_id") or "") or None,
+            available=False,
+            failure=False,
+            message="Deployment saga progress has not been observed for this plan.",
+        )
+
+    runtime_binding = _deployment_runtime_binding(plan)
+    if runtime_binding:
+        binding_status = runtime_binding.get("status") or runtime_binding.get("state") or "present"
+        binding_entry = _deployment_stage_entry(
+            stage="binding",
+            status=binding_status,
+            source_dataset="runtime_bindings",
+            source_id=str(
+                runtime_binding.get("runtime_binding_id")
+                or runtime_binding.get("binding_id")
+                or runtime_binding.get("id")
+                or ""
+            ),
+            available=True,
+            failure=_deployment_stage_status(binding_status) in {"failed", "rejected", "stopped"},
+            runtime_id=runtime_binding.get("runtime_id"),
+            deployment_stage=runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode"),
+            artifact_id=runtime_binding.get("artifact_id"),
+            artifact_version=runtime_binding.get("artifact_version"),
+        )
+    else:
+        binding_entry = _deployment_stage_entry(
+            stage="binding",
+            status="missing",
+            source_dataset="runtime_bindings",
+            available=False,
+            failure=False,
+            message="RuntimeBinding projection is not available for this deployment plan.",
+        )
+
+    return {
+        "approval": approval_entry,
+        "plan": plan_entry,
+        "saga": saga_entry,
+        "binding": binding_entry,
+        "runtime_fleet": _runtime_fleet_stage_truth(runtime_binding),
+    }
+
+
+def _deployment_stage_truth_surfaces(
+    stage_truth: Dict[str, Dict[str, Any]],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Dict[str, Any]]:
+    surfaces: Dict[str, Dict[str, Any]] = {}
+    for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER:
+        entry = stage_truth.get(stage) or {}
+        dataset = str(entry.get("source_dataset") or "").strip() or "deployment_plans"
+        surface = _dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at,
+            has_data=bool(entry.get("available")),
+            missing_message=entry.get("message"),
+        )
+        if entry.get("failure") and surface.get("status") == "ok":
+            surface["status"] = "degraded"
+            surface["message"] = entry.get("message") or f"{stage} stage requires operator attention."
+        surfaces[f"{stage}_stage"] = surface
+
+    surfaces["deployment_stage_truth"] = _aggregate_group_surface(
+        "deployment_stage_truth",
+        [surfaces[f"{stage}_stage"] for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER],
+        snapshot_at=snapshot_at,
+        unavailable_message="Deployment stage truth is unavailable.",
+        degraded_message="Deployment stage truth is degraded because one or more stages need evidence or attention.",
+    )
+    return surfaces
+
+
+def _deployment_stage_truth_collection_surfaces(
+    stage_truths: Sequence[Dict[str, Dict[str, Any]]],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Dict[str, Any]]:
+    collected = [
+        _deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at)
+        for stage_truth in stage_truths
+        if stage_truth
+    ]
+    if not collected:
+        return {}
+    if len(collected) == 1:
+        return collected[0]
+
+    surfaces: Dict[str, Dict[str, Any]] = {}
+    for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER:
+        surface_key = f"{stage}_stage"
+        stage_label = stage.replace("_", " ")
+        surfaces[surface_key] = _aggregate_group_surface(
+            surface_key,
+            [item[surface_key] for item in collected],
+            snapshot_at=snapshot_at,
+            unavailable_message=(
+                f"{stage_label} stage truth is unavailable across listed deployment plans."
+            ),
+            degraded_message=(
+                f"{stage_label} stage truth is degraded for one or more listed deployment plans."
+            ),
+        )
+
+    surfaces["deployment_stage_truth"] = _aggregate_group_surface(
+        "deployment_stage_truth",
+        [surfaces[f"{stage}_stage"] for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER],
+        snapshot_at=snapshot_at,
+        unavailable_message="Deployment stage truth is unavailable.",
+        degraded_message=(
+            "Deployment stage truth is degraded because one or more stages need "
+            "evidence or attention."
+        ),
+    )
+    return surfaces
+
+
+def _deployment_plan_with_stage_truth(
+    plan: Dict[str, Any],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    payload = dict(plan)
+    payload["stage_truth"] = _deployment_stage_truth(plan)
+    return payload
+
 @app.get("/bff/deployments")
 async def bff_list_deployments(
     status: Optional[str] = None,
@@ -44636,9 +46063,21 @@ async def bff_list_deployments(
         total = 0
     else:
         plans, next_page_token = _page_slice(plans, page_token, page_size)
+        plans = [
+            _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
+            for plan in plans
+        ]
 
     meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"deployments": surface}
+    stage_surfaces = (
+        _deployment_stage_truth_collection_surfaces(
+            [plan["stage_truth"] for plan in plans],
+            snapshot_at=snapshot_at,
+        )
+        if plans
+        else {}
+    )
+    meta["surfaces"] = {"deployments": surface, **stage_surfaces}
     staleness = _meta_staleness()
     if staleness is not None:
         meta["staleness"] = staleness
@@ -44671,16 +46110,28 @@ async def bff_get_deployment(
         )
 
     snapshot_at = utc_now()
+    plan_payload = _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
     decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
     review = read_store.get_review_summary(clean_id)
+    stage_surfaces = _deployment_stage_truth_surfaces(
+        plan_payload["stage_truth"],
+        snapshot_at=snapshot_at,
+    )
 
     return {
         "data": {
-            **plan,
+            **plan_payload,
             "approval_decision": decision or {},
             "review": review or {},
         },
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "deployments": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+                **stage_surfaces,
+            },
+            "staleness": _meta_staleness(),
+        },
     }
 
 
@@ -48186,6 +49637,31 @@ async def bff_v5_loop_inventory_detail(
     return _loop_inventory_response_meta(payload)
 
 
+@app.get("/bff/v5/downstream-health")
+async def bff_v5_downstream_health(
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return the current BFF downstream service health probe state.
+
+    Reports the most-recent probe result per downstream target.
+    overall_ok is null when no probes have run yet (monitor just started).
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    state = downstream_health_monitor.get_state()
+    return {
+        "read_model": "downstream_health",
+        "data": state,
+        "meta": {
+            "source": "bff_downstream_health_monitor",
+            "description": (
+                "Live probe results from the BFF continuous downstream health monitor. "
+                "Degraded targets have their last failure reason and consecutive failure count."
+            ),
+        },
+    }
+
+
 # -- V5 Loop-runs ------------------------------------------------------------
 
 @app.get("/bff/v5/loop-runs")
@@ -49669,26 +51145,339 @@ def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
 
 _SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
 _SOURCE_HEALTH_OVERLAY_TTL = 60.0
+_SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
+    "finmind": (
+        "tw-finmind-datasets",
+        "tw-finmind-broker-daily-report",
+        "tw-finmind-broker-bulk-parquet",
+    ),
+    "twse": ("tw-twse-tpex-official-market",),
+    "tpex": ("tw-twse-tpex-official-market",),
+    "mops": ("tw-mops-official-disclosures",),
+    # US research sources (SRCLIVE-005)
+    "yahoo": ("us-yahoo-daily-ohlcv",),
+    "stooq": ("us-yahoo-daily-ohlcv", "us-stooq-daily-ohlcv"),
+    "sec_edgar": ("us-sec-edgar-filings",),
+    "finra": ("us-finra-short-sale",),
+    "fred": ("us-fred-macro",),
+    "polygon": ("us-polygon-daily-ohlcv",),
+    "alphavantage": ("us-alpha-vantage-daily-ohlcv",),
+    # Crypto sources (SRCLIVE-003)
+    "coingecko": ("crypto-coingecko-spot",),
+}
 
 
-def _live_source_health_by_connector() -> Dict[str, Any]:
+def _source_ingest_truth_by_connector() -> Dict[str, Dict[str, Any]]:
     now = time.monotonic()
-    cached = _SOURCE_HEALTH_OVERLAY_CACHE.get("by_connector")
+    cached = _SOURCE_HEALTH_OVERLAY_CACHE.get("truth_by_connector")
     if cached is not None and (now - float(_SOURCE_HEALTH_OVERLAY_CACHE.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
         return cached
-    by_conn: Dict[str, Any] = {}
+
+    truth: Dict[str, Dict[str, Any]] = {}
+    try:
+        registry = read_store.get_source_connector_registry()
+        for connector in (registry.get("connectors") or []):
+            if not isinstance(connector, dict):
+                continue
+            connector_id = str(connector.get("connector_id") or "").strip()
+            if connector_id:
+                truth.setdefault(connector_id, {})["connector"] = json.loads(json.dumps(connector))
+    except Exception:  # read-only enrichment must never break persona surfaces
+        pass
+
     try:
         snapshot = read_store.get_source_health_usage_snapshot()
         for source in (snapshot.get("sources") or []):
+            if not isinstance(source, dict):
+                continue
             health = source.get("health") if isinstance(source.get("health"), dict) else {}
-            connector_id = str(health.get("source_id") or "")
+            connector_id = str(health.get("source_id") or "").strip()
             if connector_id:
-                by_conn[connector_id] = health
-    except Exception:  # read-only enrichment must never break the fleet surface
-        by_conn = {}
+                truth.setdefault(connector_id, {})["health"] = json.loads(json.dumps(health))
+                truth[connector_id]["usage_aggregate_30d"] = json.loads(
+                    json.dumps(source.get("usage_aggregate_30d") or {})
+                )
+                if source.get("recommendation") is not None:
+                    truth[connector_id]["recommendation"] = json.loads(json.dumps(source.get("recommendation")))
+    except Exception:  # read-only enrichment must never break persona surfaces
+        pass
+
     _SOURCE_HEALTH_OVERLAY_CACHE["at"] = now
-    _SOURCE_HEALTH_OVERLAY_CACHE["by_connector"] = by_conn
-    return by_conn
+    _SOURCE_HEALTH_OVERLAY_CACHE["truth_by_connector"] = truth
+    _SOURCE_HEALTH_OVERLAY_CACHE["by_connector"] = {
+        connector_id: payload["health"]
+        for connector_id, payload in truth.items()
+        if isinstance(payload.get("health"), dict)
+    }
+    return truth
+
+
+def _live_source_health_by_connector() -> Dict[str, Any]:
+    return {
+        connector_id: payload["health"]
+        for connector_id, payload in _source_ingest_truth_by_connector().items()
+        if isinstance(payload.get("health"), dict)
+    }
+
+
+def _connector_candidates_for_provider(source: Dict[str, Any]) -> List[str]:
+    candidates: List[str] = []
+    for key in ("connector_id", "connectorId", "source_id", "sourceId"):
+        value = str(source.get(key) or "").strip()
+        if value:
+            candidates.append(value)
+    provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip().lower()
+    candidates.extend(_SOURCE_PROVIDER_CONNECTOR_CANDIDATES.get(provider_key, ()))
+    return list(dict.fromkeys(candidates))
+
+
+def _source_failure_reason(health: Dict[str, Any], connector: Dict[str, Any]) -> Optional[str]:
+    metadata = health.get("metadata") if isinstance(health.get("metadata"), dict) else {}
+    health_metrics = connector.get("health_metrics") if isinstance(connector.get("health_metrics"), dict) else {}
+    state = connector.get("state") if isinstance(connector.get("state"), dict) else {}
+    for candidate in (
+        metadata.get("source_error"),
+        metadata.get("last_failure_error"),
+        health_metrics.get("source_error"),
+        state.get("last_error"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _provider_status_from_truth(health: Dict[str, Any], connector: Dict[str, Any]) -> str:
+    status = str(health.get("status") or "").strip().lower()
+    if status:
+        return "read_ok" if status == "ok" else f"source_health_{status}"
+    freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
+    freshness_status = str(freshness.get("status") or "").strip().lower()
+    if freshness_status:
+        return f"connector_{freshness_status}"
+    return "connector_configured_no_health"
+
+
+def _source_truth_projection(connector_id: str, truth: Dict[str, Any]) -> Dict[str, Any]:
+    health = truth.get("health") if isinstance(truth.get("health"), dict) else {}
+    connector = truth.get("connector") if isinstance(truth.get("connector"), dict) else {}
+    schedule = connector.get("schedule") if isinstance(connector.get("schedule"), dict) else {}
+    freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
+    latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), dict) else {}
+    health_metrics = connector.get("health_metrics") if isinstance(connector.get("health_metrics"), dict) else {}
+    status = _provider_status_from_truth(health, connector)
+    last_fetch_at = (
+        latest_run.get("finished_at")
+        or latest_run.get("started_at")
+        or health.get("last_failure_at")
+        or health.get("last_success_at")
+        or freshness.get("last_success_at")
+    )
+    last_push_at = (
+        health.get("last_success_at")
+        or health_metrics.get("last_success_at")
+        or freshness.get("last_success_at")
+    )
+    failure_reason = _source_failure_reason(health, connector)
+    projection = {
+        "schema_version": "bff_source_health_truth.v1",
+        "connector_id": connector_id,
+        "connectorId": connector_id,
+        "health_source": "source_ingest",
+        "healthSource": "source_ingest",
+        "static_label": False,
+        "staticLabel": False,
+        "source_health_available": bool(health),
+        "sourceHealthAvailable": bool(health),
+        "health_status": health.get("status"),
+        "healthStatus": health.get("status"),
+        "connector_status": connector.get("status"),
+        "connectorStatus": connector.get("status"),
+        "status": status,
+        "last_success_at": health.get("last_success_at"),
+        "lastSuccessAt": health.get("last_success_at"),
+        "last_failure_at": health.get("last_failure_at"),
+        "lastFailureAt": health.get("last_failure_at"),
+        "last_fetch_at": last_fetch_at,
+        "lastFetchAt": last_fetch_at,
+        "last_push_at": last_push_at,
+        "lastPushAt": last_push_at,
+        "failure_reason": failure_reason,
+        "failureReason": failure_reason,
+        "latest_watermark": health.get("latest_watermark") or freshness.get("last_watermark"),
+        "latestWatermark": health.get("latest_watermark") or freshness.get("last_watermark"),
+        "row_count_last_run": health.get("row_count_last_run"),
+        "rowCountLastRun": health.get("row_count_last_run"),
+        "rejected_count_last_run": health.get("rejected_count_last_run"),
+        "rejectedCountLastRun": health.get("rejected_count_last_run"),
+        "connector_schedule": json.loads(json.dumps(schedule)),
+        "connectorSchedule": json.loads(json.dumps(schedule)),
+        "connector_freshness": json.loads(json.dumps(freshness)),
+        "connectorFreshness": json.loads(json.dumps(freshness)),
+        "source_health": json.loads(json.dumps(health)),
+        "sourceHealth": json.loads(json.dumps(health)),
+    }
+    if isinstance(truth.get("usage_aggregate_30d"), dict):
+        projection["usage_aggregate_30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
+        projection["usageAggregate30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
+    if truth.get("recommendation") is not None:
+        projection["recommendation"] = json.loads(json.dumps(truth["recommendation"]))
+    return projection
+
+
+def _select_source_truth(
+    candidate_ids: List[str],
+    truth_by_connector: Dict[str, Dict[str, Any]],
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    for connector_id in candidate_ids:
+        truth = truth_by_connector.get(connector_id)
+        if isinstance(truth, dict) and (truth.get("health") or truth.get("connector")):
+            return connector_id, truth
+    return None, None
+
+
+def _source_health_bindings_from_requirements(
+    required_data_sources: List[Dict[str, Any]],
+    truth_by_connector: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    bindings: List[Dict[str, Any]] = []
+    for requirement in required_data_sources:
+        if not isinstance(requirement, dict):
+            continue
+        candidates = [
+            str(candidate).strip()
+            for candidate in (requirement.get("connector_candidates") or [])
+            if str(candidate).strip()
+        ]
+        connector_id, truth = _select_source_truth(candidates, truth_by_connector)
+        binding = {
+            "dataset": requirement.get("dataset"),
+            "market": requirement.get("market"),
+            "cadence": requirement.get("cadence"),
+            "source_class": requirement.get("source_class"),
+            "sourceClass": requirement.get("source_class"),
+            "connector_candidates": candidates,
+            "connectorCandidates": candidates,
+            "selected_connector_id": connector_id,
+            "selectedConnectorId": connector_id,
+            "health_source": "source_ingest" if truth else "unbound",
+            "healthSource": "source_ingest" if truth else "unbound",
+            "source_health_available": bool(truth and truth.get("health")),
+            "sourceHealthAvailable": bool(truth and truth.get("health")),
+        }
+        if truth and connector_id:
+            binding.update(_source_truth_projection(connector_id, truth))
+        elif str(requirement.get("source_class") or "") == "seed_only":
+            binding["health_source"] = "seed_only_not_live_binding"
+            binding["healthSource"] = "seed_only_not_live_binding"
+        bindings.append(binding)
+    return bindings
+
+
+def _data_source_ok_tone(value: Any) -> bool:
+    token = str(value or "").strip().lower()
+    return any(marker in token for marker in ("read_ok", "readback_ok", "smoke_ok"))
+
+
+def _upgrade_all_green_data_source_state(dss: Dict[str, Any]) -> None:
+    provider_statuses = dss.get("provider_statuses")
+    if not isinstance(provider_statuses, dict) or not provider_statuses:
+        return
+    if _data_source_ok_tone(dss.get("state")):
+        return
+    if not all(_data_source_ok_tone(status) for status in provider_statuses.values()):
+        return
+
+    provider_count = len(provider_statuses)
+    dss["state"] = "live_readback_ok"
+    dss["summary"] = (
+        f"All declared data-source providers ({provider_count}/{provider_count}) "
+        "report readback OK after live source-health overlay."
+    )
+
+
+def _overlay_source_health_truth(
+    data_source_status: Any,
+    data_sources: Any,
+    *,
+    required_data_sources: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    dss = json.loads(json.dumps(data_source_status)) if isinstance(data_source_status, dict) else {}
+    srcs = json.loads(json.dumps(data_sources)) if isinstance(data_sources, list) else []
+    truth_by_connector = _source_ingest_truth_by_connector()
+    provider_statuses = dss.get("provider_statuses")
+    if not isinstance(provider_statuses, dict):
+        provider_statuses = {}
+        dss["provider_statuses"] = provider_statuses
+
+    connector_health: List[Dict[str, Any]] = []
+    live_connector_ids: List[str] = []
+    static_source_labels: List[str] = []
+    for source in srcs:
+        if not isinstance(source, dict):
+            continue
+        provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip()
+        connector_id, truth = _select_source_truth(
+            _connector_candidates_for_provider(source),
+            truth_by_connector,
+        )
+        if connector_id and truth:
+            projection = _source_truth_projection(connector_id, truth)
+            has_live_health = bool(projection.get("source_health_available"))
+            original_status = source.get("status")
+            original_reason = source.get("reason")
+            original_secret_ref = source.get("secret_ref")
+            source.update(projection)
+            if not has_live_health:
+                # Registry entry present but health-usage-snapshot has no live health;
+                # preserve the honest static defaults so read_unavailable /
+                # credential_unavailable are not silently overwritten.
+                if original_status:
+                    source["status"] = original_status
+                if original_reason is not None:
+                    source["reason"] = original_reason
+                if original_secret_ref is not None:
+                    source["secret_ref"] = original_secret_ref
+            elif original_status == "credential_unavailable":
+                # credential_unavailable is only upgraded when source-ingest confirms
+                # health.status=ok.  A degraded/failed health snapshot (e.g. missing
+                # API key reported by source-ingest) must NOT silently flip the status
+                # to source_health_degraded — the operator must see credential_unavailable
+                # with the secret_ref until the key is present and health is green.
+                if str(projection.get("health_status") or "").strip().lower() != "ok":
+                    source["status"] = original_status
+                    if original_reason is not None:
+                        source["reason"] = original_reason
+                    if original_secret_ref is not None:
+                        source["secret_ref"] = original_secret_ref
+            if provider_key:
+                provider_statuses[provider_key] = source["status"]
+            if has_live_health:
+                connector_health.append(projection)
+                live_connector_ids.append(connector_id)
+        else:
+            source.setdefault("health_source", "static_metadata")
+            source.setdefault("healthSource", "static_metadata")
+            source.setdefault("static_label", True)
+            source.setdefault("staticLabel", True)
+            if provider_key in _SOURCE_PROVIDER_CONNECTOR_CANDIDATES:
+                static_source_labels.append(provider_key)
+
+    bindings = _source_health_bindings_from_requirements(required_data_sources or [], truth_by_connector)
+    has_live_truth = bool(connector_health) or any(binding.get("health_source") == "source_ingest" for binding in bindings)
+    dss["source_health_source"] = "source_ingest" if has_live_truth else "static_metadata"
+    dss["sourceHealthSource"] = dss["source_health_source"]
+    dss["live_ingestion_enabled"] = bool(has_live_truth)
+    dss["connector_health"] = json.loads(json.dumps(connector_health))
+    dss["connectorHealth"] = json.loads(json.dumps(connector_health))
+    dss["live_source_connector_ids"] = list(dict.fromkeys(live_connector_ids))
+    dss["liveSourceConnectorIds"] = dss["live_source_connector_ids"]
+    dss["static_source_labels"] = sorted(set(static_source_labels))
+    dss["staticSourceLabels"] = dss["static_source_labels"]
+    dss["required_source_health"] = json.loads(json.dumps(bindings))
+    dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
+    _upgrade_all_green_data_source_state(dss)
+    return dss, srcs, bindings
 
 
 def _overlay_live_finmind_health(data_source_status, data_sources):
@@ -49723,6 +51512,114 @@ def _overlay_live_finmind_health(data_source_status, data_sources):
     return dss, srcs
 
 
+_PERSONA_FLEET_CONTEXT_METADATA_KEYS = (
+    "market_scope",
+    "asset_classes",
+    "current_work",
+    "ooda_stage",
+    "deployment_stage",
+    "league_score",
+    "recommended_governance_action",
+    "governance_required",
+    "risk_flags",
+    "performance",
+    "data_source_status",
+    "data_sources",
+    "data_source_refs",
+    "research_status",
+    "research_refs",
+    "current_research_projects",
+)
+
+
+def _persona_fleet_context_missing(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return False
+
+
+def _persona_fleet_market_key(persona: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[str]:
+    for value in (
+        metadata.get("market"),
+        persona.get("market"),
+        persona.get("market_scope"),
+        metadata.get("market_scope"),
+    ):
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            normalized = str(candidate or "").strip().upper()
+            if normalized in {"US", "TW", "CRYPTO"}:
+                return normalized
+
+    asset_classes = {
+        str(value or "").strip().lower()
+        for value in (metadata.get("asset_classes") or persona.get("asset_classes") or [])
+    }
+    if "crypto" in asset_classes:
+        return "CRYPTO"
+
+    broker_adapter = str(metadata.get("broker_adapter") or persona.get("broker_adapter") or "").lower()
+    if "shioaji" in broker_adapter:
+        return "TW"
+    if "kraken" in broker_adapter or "crypto" in broker_adapter:
+        return "CRYPTO"
+    if "ibkr" in broker_adapter:
+        return "US"
+
+    name = str(persona.get("name") or persona.get("persona_name") or persona.get("id") or "").upper()
+    if name.startswith("CRYPTO") or "BTC" in name:
+        return "CRYPTO"
+    if name.startswith("TW") or "TAIWAN" in name:
+        return "TW"
+    if name.startswith("US") or "U.S." in name or "UNITED STATES" in name:
+        return "US"
+    return None
+
+
+def _persona_fleet_context_defaults_by_market() -> Dict[str, Dict[str, Any]]:
+    defaults: Dict[str, Dict[str, Any]] = {}
+    for candidate in read_store.list_personas(include_market_persona_defaults=True):
+        if not isinstance(candidate, dict):
+            continue
+        metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+        if not (
+            isinstance(metadata.get("data_source_status"), dict)
+            and metadata.get("data_source_status")
+            and isinstance(metadata.get("current_research_projects"), list)
+            and metadata.get("current_research_projects")
+        ):
+            continue
+        market = _persona_fleet_market_key(candidate, metadata)
+        if market and market not in defaults:
+            defaults[market] = {
+                "persona": json.loads(json.dumps(candidate)),
+                "metadata": json.loads(json.dumps(metadata)),
+            }
+    return defaults
+
+
+def _persona_fleet_context_overlay(
+    persona: Dict[str, Any],
+    metadata: Dict[str, Any],
+    defaults_by_market: Dict[str, Dict[str, Any]],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    market = _persona_fleet_market_key(persona, metadata)
+    default_context = defaults_by_market.get(market or "")
+    if not default_context:
+        return metadata, {}
+
+    default_metadata = default_context.get("metadata") if isinstance(default_context.get("metadata"), dict) else {}
+    context_metadata = json.loads(json.dumps(metadata))
+    for key in _PERSONA_FLEET_CONTEXT_METADATA_KEYS:
+        if _persona_fleet_context_missing(context_metadata.get(key)) and not _persona_fleet_context_missing(default_metadata.get(key)):
+            context_metadata[key] = json.loads(json.dumps(default_metadata[key]))
+    return context_metadata, default_context.get("persona") if isinstance(default_context.get("persona"), dict) else {}
+
+
 def _build_persona_health_items(
     snapshot_at: str,
     *,
@@ -49734,6 +51631,11 @@ def _build_persona_health_items(
             include_market_persona_defaults=include_market_persona_defaults,
         )
     }
+    context_defaults = (
+        _persona_fleet_context_defaults_by_market()
+        if include_market_persona_defaults
+        else {}
+    )
     items: List[Dict[str, Any]] = []
     for persona in read_store.list_personas(
         include_market_persona_defaults=include_market_persona_defaults,
@@ -49742,6 +51644,11 @@ def _build_persona_health_items(
         if not persona_id:
             continue
         metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        context_metadata, context_persona = _persona_fleet_context_overlay(
+            persona,
+            metadata,
+            context_defaults,
+        )
         league_entry = league_by_persona.get(persona_id, {})
         league_metrics = (
             league_entry.get("metrics")
@@ -49749,8 +51656,8 @@ def _build_persona_health_items(
             else {}
         )
         performance = (
-            metadata.get("performance")
-            if isinstance(metadata.get("performance"), dict)
+            context_metadata.get("performance")
+            if isinstance(context_metadata.get("performance"), dict)
             else {}
         )
         metrics = {**performance, **league_metrics}
@@ -49778,33 +51685,34 @@ def _build_persona_health_items(
             or runtime.get("deployment_stage")
             or runtime.get("deployment_mode")
             or metadata.get("deployment_stage")
+            or context_metadata.get("deployment_stage")
             or "none"
         )
         market_scope = list(
             league_entry.get("market_scope")
-            or metadata.get("market_scope")
+            or context_metadata.get("market_scope")
             or []
         )
-        asset_classes = list(metadata.get("asset_classes") or [])
-        risk_flags = list(league_entry.get("risk_flags") or metadata.get("risk_flags") or [])
+        asset_classes = list(context_metadata.get("asset_classes") or [])
+        risk_flags = list(league_entry.get("risk_flags") or context_metadata.get("risk_flags") or [])
         lifecycle_state = str(persona.get("lifecycle_state") or persona.get("status") or "unknown")
         health = _persona_health_status(
             lifecycle_state=lifecycle_state,
             league_entry=league_entry,
             risk_flags=risk_flags,
         )
-        score = _as_float(league_entry.get("league_score") or metadata.get("league_score"), 75.0)
+        score = _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), 75.0)
         routed = _routed_strategies_for_persona(persona_id)
         open_findings = len(risk_flags) + int(metrics.get("violation_count") or 0)
         drill_target = runtime_id or persona_id
         governance_required = bool(
             league_entry.get("governance_required")
             if "governance_required" in league_entry
-            else metadata.get("governance_required", True)
+            else context_metadata.get("governance_required", True)
         )
         recommendation = (
             league_entry.get("recommendation")
-            or metadata.get("recommended_governance_action")
+            or context_metadata.get("recommended_governance_action")
             or ""
         )
         persona_status = str(
@@ -49814,36 +51722,45 @@ def _build_persona_health_items(
             or lifecycle_state
         )
         data_source_status = (
-            metadata.get("data_source_status")
-            if isinstance(metadata.get("data_source_status"), dict)
+            context_metadata.get("data_source_status")
+            if isinstance(context_metadata.get("data_source_status"), dict)
             else {}
         )
         data_sources = (
-            metadata.get("data_sources")
-            if isinstance(metadata.get("data_sources"), list)
+            context_metadata.get("data_sources")
+            if isinstance(context_metadata.get("data_sources"), list)
             else []
         )
-        data_source_status, data_sources = _overlay_live_finmind_health(
-            data_source_status, data_sources
+        required_data_sources = (
+            persona.get("required_data_sources")
+            if isinstance(persona.get("required_data_sources"), list)
+            else []
+        )
+        if not required_data_sources and isinstance(context_persona.get("required_data_sources"), list):
+            required_data_sources = context_persona.get("required_data_sources") or []
+        data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
+            data_source_status,
+            data_sources,
+            required_data_sources=required_data_sources,
         )
         data_source_refs = (
-            metadata.get("data_source_refs")
-            if isinstance(metadata.get("data_source_refs"), list)
+            context_metadata.get("data_source_refs")
+            if isinstance(context_metadata.get("data_source_refs"), list)
             else []
         )
         research_status = (
-            metadata.get("research_status")
-            if isinstance(metadata.get("research_status"), dict)
+            context_metadata.get("research_status")
+            if isinstance(context_metadata.get("research_status"), dict)
             else {}
         )
         research_refs = (
-            metadata.get("research_refs")
-            if isinstance(metadata.get("research_refs"), list)
+            context_metadata.get("research_refs")
+            if isinstance(context_metadata.get("research_refs"), list)
             else []
         )
         current_research_projects = (
-            metadata.get("current_research_projects")
-            if isinstance(metadata.get("current_research_projects"), list)
+            context_metadata.get("current_research_projects")
+            if isinstance(context_metadata.get("current_research_projects"), list)
             else []
         )
         human_needed = governance_required and str(recommendation).strip().lower() not in {
@@ -49857,7 +51774,7 @@ def _build_persona_health_items(
             or persona.get("last_active_at")
             or snapshot_at
         )
-        ooda_stage = league_entry.get("ooda_stage") or metadata.get("ooda_stage")
+        ooda_stage = league_entry.get("ooda_stage") or context_metadata.get("ooda_stage")
         item = {
             "id": persona_id,
             "persona_id": persona_id,
@@ -49885,8 +51802,8 @@ def _build_persona_health_items(
             "last_mutation": str(updated_at)[:10],
             "lastMutation": str(updated_at)[:10],
             "state": persona_status,
-            "current_work": metadata.get("current_work"),
-            "currentWork": metadata.get("current_work"),
+            "current_work": context_metadata.get("current_work"),
+            "currentWork": context_metadata.get("current_work"),
             "routed_strategies": routed,
             "routedStrategies": routed,
             "open_findings": open_findings,
@@ -49912,6 +51829,10 @@ def _build_persona_health_items(
             "dataSources": json.loads(json.dumps(data_sources)),
             "data_source_refs": json.loads(json.dumps(data_source_refs)),
             "dataSourceRefs": json.loads(json.dumps(data_source_refs)),
+            "required_data_sources": json.loads(json.dumps(required_data_sources)),
+            "requiredDataSources": json.loads(json.dumps(required_data_sources)),
+            "source_health_bindings": json.loads(json.dumps(source_health_bindings)),
+            "sourceHealthBindings": json.loads(json.dumps(source_health_bindings)),
             "research_status": json.loads(json.dumps(research_status)),
             "researchStatus": json.loads(json.dumps(research_status)),
             "research_refs": json.loads(json.dumps(research_refs)),
@@ -50044,9 +51965,8 @@ async def bff_persona_league_detail(
     }
 
 
-@app.get("/bff/management/fleet")
 @app.get("/bff/management/persona-fleet")
-async def bff_management_fleet(
+async def bff_management_persona_fleet(
     state: Optional[str] = None,
     health: Optional[str] = None,
     page_token: Optional[str] = None,
@@ -51166,9 +53086,34 @@ async def bff_approvals_batch_decide(
 @app.post("/bff/incidents/{id}/resolve", status_code=202)
 @app.post("/bff/incidents/{id}/rollback-deployment", status_code=202)
 @app.post("/bff/incidents/{id}/start-mitigation", status_code=202)
-async def sem_final_generic_id_command_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_operator_role(_extract_identity(authorization))
-    return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "status": "accepted"}, "meta": {"snapshot_at": utc_now()}})
+async def sem_final_generic_id_command_alias(
+    id: str,
+    request: Request,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+):
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    snapshot_at = utc_now()
+    if _request_dry_run_requested(x_dry_run):
+        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        route_path = str(getattr(request.scope.get("route"), "path", "") or request.url.path)
+        return _dry_run_success_response(
+            {
+                "id": id,
+                "status": "accepted",
+                "route": route_path,
+                "params": jsonable_encoder(payload or {}),
+                "submitted_by": identity.operator_id,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="generic_id_command.preview",
+        )
+    return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "status": "accepted"}, "meta": {"snapshot_at": snapshot_at}})
 
 
 @app.post("/bff/artifacts", status_code=201)
@@ -51790,6 +53735,35 @@ def _assistant_provider_readiness() -> Dict[str, Any]:
         }
 
 
+def _assistant_provider_list(auth_probe: bool = False) -> Dict[str, Any]:
+    provider = _mgmt_nl_provider_name()
+    try:
+        return OpenClawOpsClient().list_assistant_providers(auth_probe=auth_probe)
+    except OpenClawOpsClientError as exc:
+        return {
+            "status": "degraded",
+            "data": [
+                {
+                    "provider": provider,
+                    "runtime": "openclaw_gateway_cli_mount",
+                    "ready": False,
+                    "status": "unavailable",
+                    "auth": "unavailable" if auth_probe else "not_checked",
+                    "auth_status": "failed" if auth_probe else "not_checked",
+                    "reason": exc.error_code,
+                    "message": exc.message,
+                    "httpStatus": exc.status_code,
+                }
+            ],
+            "meta": {
+                "openclawAdapterStatus": "degraded",
+                "openclaw_adapter_status": "degraded",
+                "reason": exc.error_code,
+                "message": exc.message,
+            },
+        }
+
+
 def _assistant_openclaw_tool_policy() -> Dict[str, Any]:
     try:
         return OpenClawOpsClient().get_tool_policy()
@@ -51858,6 +53832,21 @@ def _assistant_prepare_repair_worktree(
         raise _openclaw_client_error(exc) from exc
 
 
+def _assistant_provider_register(
+    payload: Dict[str, Any],
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().register_assistant_provider(
+            payload=payload,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
 def _assistant_provider_reauth(
     payload: Dict[str, Any],
     operator_id: str,
@@ -51885,6 +53874,25 @@ def _assistant_provider_reauth_status(
             provider=provider or "codex",
             session_id=session_id,
             operator_id=operator_id or "management-ai",
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
+def _assistant_provider_reauth_code(
+    provider: str,
+    session_id: str,
+    code: str,
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().submit_assistant_provider_reauth_code(
+            provider=provider or "claude",
+            session_id=session_id,
+            code=code,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
         )
     except OpenClawOpsClientError as exc:
         raise _openclaw_client_error(exc) from exc
@@ -51932,12 +53940,15 @@ def _include_assistant_routes() -> None:
             transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
             control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
             provider_readiness=_assistant_provider_readiness,
+            provider_list=_assistant_provider_list,
             openclaw_tool_policy=_assistant_openclaw_tool_policy,
             openclaw_effective_tools=_assistant_openclaw_effective_tools,
             authorize_assistant_skill=_assistant_authorize_skill,
             prepare_repair_worktree=_assistant_prepare_repair_worktree,
+            provider_register=_assistant_provider_register,
             provider_reauth=_assistant_provider_reauth,
             provider_reauth_status=_assistant_provider_reauth_status,
+            provider_reauth_code=_assistant_provider_reauth_code,
         )
     )
 

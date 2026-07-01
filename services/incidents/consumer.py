@@ -21,6 +21,10 @@ from services.incident.evidence_collector import (
 from services.incident.incident import IncidentCase, IncidentError, IncidentStore
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 class IncidentConsumerError(ValueError):
     """Raised when a telemetry payload cannot be consumed into an IncidentCase."""
 
@@ -29,6 +33,13 @@ class IncidentConsumerError(ValueError):
 class ThresholdIncidentResult:
     incident: IncidentCase
     created: bool
+
+
+@dataclass(frozen=True)
+class DriftReportIncidentResult:
+    incident: IncidentCase
+    created: bool
+    incident_cluster_id: str
 
 
 class ThresholdTelemetryIncidentConsumer:
@@ -70,6 +81,74 @@ class ThresholdTelemetryIncidentConsumer:
             raise IncidentConsumerError(str(exc)) from exc
 
         return ThresholdIncidentResult(incident=created, created=True)
+
+
+class DriftReportIncidentConsumer:
+    """Consume DriftReports into deduped IncidentCases."""
+
+    def __init__(
+        self,
+        *,
+        incident_store: IncidentStore,
+        reference_validator: Any | None = None,
+    ) -> None:
+        self._store = incident_store
+        self._reference_validator = reference_validator
+
+    def consume(self, payload: Mapping[str, Any]) -> DriftReportIncidentResult:
+        try:
+            report = _drift_report_payload(payload)
+            incident = build_incident_from_drift_report(report)
+        except (IncidentError, ValueError, TypeError) as exc:
+            raise IncidentConsumerError(str(exc)) from exc
+
+        if self._reference_validator is not None:
+            self._reference_validator.validate_incident(incident)
+
+        existing = self._find_existing_incident(incident)
+        if existing is not None:
+            updated = self._store.merge_incident_evidence(existing.incident_id, incident)
+            return DriftReportIncidentResult(
+                incident=updated,
+                created=False,
+                incident_cluster_id=incident.incident_cluster_id or "",
+            )
+
+        try:
+            created = self._store.create_incident(incident)
+        except IncidentError as exc:
+            existing = self._store.get_incident(incident.incident_id)
+            if existing is not None:
+                updated = self._store.merge_incident_evidence(existing.incident_id, incident)
+                return DriftReportIncidentResult(
+                    incident=updated,
+                    created=False,
+                    incident_cluster_id=incident.incident_cluster_id or "",
+                )
+            raise IncidentConsumerError(str(exc)) from exc
+
+        return DriftReportIncidentResult(
+            incident=created,
+            created=True,
+            incident_cluster_id=incident.incident_cluster_id or "",
+        )
+
+    def _find_existing_incident(self, incident: IncidentCase) -> IncidentCase | None:
+        direct = self._store.get_incident(incident.incident_id)
+        if direct is not None:
+            return direct
+
+        cluster_id = incident.incident_cluster_id
+        if not cluster_id:
+            return None
+        for existing in self._store.find_open_incidents():
+            if (
+                existing.binding_id == incident.binding_id
+                and existing.runtime_id == incident.runtime_id
+                and existing.incident_cluster_id == cluster_id
+            ):
+                return existing
+        return None
 
 
 def build_incident_from_threshold_payload(
@@ -171,6 +250,217 @@ def build_incident_from_threshold_payload(
         incident_id=_incident_id(payload, event_id, metric_name),
         created_at=_created_at(payload, event),
     )
+
+
+def build_incident_from_drift_report(payload: Mapping[str, Any]) -> IncidentCase:
+    """Build a canonical IncidentCase from a reconciliation DriftReport."""
+    if not isinstance(payload, Mapping):
+        raise IncidentConsumerError("drift report payload must be an object")
+
+    report_id = _required_str(
+        "drift_report_id",
+        _first_value(payload, keys=("drift_report_id", "id")),
+    )
+    if str(payload.get("status") or "open").lower() not in {"open", "investigating"}:
+        raise IncidentConsumerError("drift report is not open")
+
+    binding_id = _required_str(
+        "binding_id",
+        _first_value(payload, keys=("binding_id", "runtime_binding_id", "scope_ref")),
+    )
+    runtime_id = _required_str("runtime_id", _first_value(payload, keys=("runtime_id", "runtime_ref")))
+    cluster_id = _drift_incident_cluster_id(payload)
+    telemetry_event_ids = _drift_telemetry_event_ids(payload)
+    if not telemetry_event_ids:
+        raise IncidentConsumerError("drift report must link at least one telemetry_event_id")
+
+    reconciliation_ids = _drift_reconciliation_ids(payload)
+    if report_id not in reconciliation_ids:
+        reconciliation_ids.insert(0, report_id)
+
+    severity = _drift_incident_severity(payload.get("severity"))
+    artifact_id = _required_str("artifact_id", _first_value(payload, keys=("artifact_id", "registry_id")))
+    artifact_version = _required_str(
+        "artifact_version",
+        _first_value(payload, keys=("artifact_version", "version")),
+    )
+    worst_metric = _drift_metric(payload)
+    evidence_summary = (
+        f"DriftReport {report_id}; cluster={cluster_id}; "
+        f"reconciliation_ids={','.join(reconciliation_ids)}; "
+        f"telemetry_event_ids={','.join(telemetry_event_ids)}"
+    )
+    if worst_metric:
+        evidence_summary = f"{evidence_summary}; worst_metric={worst_metric}"
+
+    return IncidentCase(
+        incident_id=_drift_incident_id(payload, binding_id, runtime_id, cluster_id),
+        title=str(
+            payload.get("title")
+            or f"Drift threshold breach: {cluster_id} for {binding_id}"
+        ),
+        status="open",
+        severity=severity,
+        created_at=str(payload.get("generated_at") or payload.get("created_at") or _utc_now()),
+        binding_id=binding_id,
+        deployment_stage=_required_str(
+            "deployment_stage",
+            _first_value(payload, keys=("deployment_stage", "deployment_mode", "environment")),
+        ),
+        deployment_plan_id=_required_str(
+            "deployment_plan_id",
+            _first_value(payload, keys=("deployment_plan_id", "plan_id")),
+        ),
+        capital_pool_id=_required_str("capital_pool_id", _first_value(payload, keys=("capital_pool_id",))),
+        persona_capital_binding_id=_required_str(
+            "persona_capital_binding_id",
+            _first_value(payload, keys=("persona_capital_binding_id", "persona_binding_id")),
+        ),
+        artifact_id=artifact_id,
+        artifact_version=artifact_version,
+        runtime_id=runtime_id,
+        trace_id=_required_str("trace_id", _first_value(payload, keys=("trace_id",))),
+        telemetry_event_ids=telemetry_event_ids,
+        reconciliation_ids=reconciliation_ids,
+        incident_cluster_id=cluster_id,
+        evidence_summary=evidence_summary,
+        lineage_ref=f"{artifact_id}@{artifact_version}",
+    )
+
+
+def _drift_report_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    for key in ("drift_report", "report"):
+        nested = _mapping(payload.get(key))
+        if nested is not None:
+            return nested
+    return payload
+
+
+def _drift_incident_cluster_id(payload: Mapping[str, Any]) -> str:
+    explicit = _first_value(payload, keys=("incident_cluster_id", "cluster_id"))
+    if explicit:
+        return explicit
+    metric = _drift_metric(payload)
+    drift_type = str(payload.get("drift_type") or metric or "threshold_breach")
+    return f"drift:{_safe_component(drift_type)}"
+
+
+def _drift_metric(payload: Mapping[str, Any]) -> str:
+    metrics = _mapping(payload.get("metrics")) or {}
+    value = metrics.get("worst_metric") or payload.get("worst_metric")
+    if value not in (None, ""):
+        return str(value)
+    breached = metrics.get("breached_metric_ids") or payload.get("breached_metric_ids")
+    if isinstance(breached, Sequence) and not isinstance(breached, (str, bytes, bytearray)):
+        for item in breached:
+            if item not in (None, ""):
+                return str(item)
+    return ""
+
+
+def _drift_incident_id(
+    payload: Mapping[str, Any],
+    binding_id: str,
+    runtime_id: str,
+    cluster_id: str,
+) -> str:
+    explicit = _first_value(payload, keys=("incident_id",))
+    if explicit:
+        return explicit
+    seed = f"{binding_id}:{runtime_id}:{cluster_id}"
+    return f"inc-drift-{uuid.uuid5(uuid.NAMESPACE_URL, seed).hex[:12]}"
+
+
+def _drift_telemetry_event_ids(payload: Mapping[str, Any]) -> list[str]:
+    seen: dict[str, None] = {}
+
+    def add(value: Any) -> None:
+        if value in (None, ""):
+            return
+        if isinstance(value, str):
+            item = value.strip()
+            if item:
+                seen[item] = None
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+            for part in value:
+                add(part)
+
+    add(payload.get("telemetry_event_ids"))
+    add(payload.get("telemetry_event_id"))
+    for ref in payload.get("evidence_refs") or []:
+        ref_id = _evidence_ref_id(ref, expected_type="telemetry_event")
+        if ref_id:
+            add(ref_id)
+    return list(seen)
+
+
+def _drift_reconciliation_ids(payload: Mapping[str, Any]) -> list[str]:
+    seen: dict[str, None] = {}
+
+    def add(value: Any) -> None:
+        if value in (None, ""):
+            return
+        if isinstance(value, str):
+            item = value.strip()
+            if item:
+                seen[item] = None
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+            for part in value:
+                add(part)
+
+    for key in (
+        "drift_report_id",
+        "recon_run_id",
+        "reconciliation_id",
+        "reconciliation_record_id",
+        "evaluation_id",
+    ):
+        add(payload.get(key))
+    for ref in payload.get("evidence_refs") or []:
+        ref_id = _evidence_ref_id(
+            ref,
+            expected_type={"drift_report", "reconciliation_record", "drift_evaluation"},
+        )
+        if ref_id:
+            add(ref_id)
+    return list(seen)
+
+
+def _evidence_ref_id(ref: Any, *, expected_type: str | set[str]) -> str | None:
+    expected = {expected_type} if isinstance(expected_type, str) else expected_type
+    if isinstance(ref, str):
+        if ":" not in ref:
+            return None
+        ref_type, ref_id = ref.split(":", 1)
+        return ref_id.strip() if ref_type.strip() in expected and ref_id.strip() else None
+    if isinstance(ref, Mapping):
+        ref_type = str(ref.get("type") or ref.get("ref_type") or "").strip()
+        ref_id = str(ref.get("id") or ref.get("ref_id") or "").strip()
+        if ref_type in expected and ref_id:
+            return ref_id
+    return None
+
+
+def _drift_incident_severity(raw: Any) -> str:
+    normalized = str(raw or "").strip().lower().replace("_", "-")
+    mapping = {
+        "critical": "critical",
+        "error": "high",
+        "high": "high",
+        "warning": "medium",
+        "medium": "medium",
+        "low": "low",
+        "degraded": "low",
+    }
+    return mapping.get(normalized, "medium")
+
+
+def _safe_component(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in value.strip())
+    safe = safe.strip("-._").lower()
+    return safe or "threshold-breach"
 
 
 def _threshold_snapshot(payload: Mapping[str, Any]) -> Mapping[str, Any]:

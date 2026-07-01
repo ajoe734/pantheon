@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-DEP-004-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-27T15:11:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-DEP-004-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare LOOP-AUTO-DEP-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 LOOP-AUTO-DEP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Global Loop Autopilot / Wave 3 Deployment Saga",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-DEP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-AUTO-DEP-004/LOOP-AUTO-DEP-004-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed: support-only BFF/frontend handoff packet approved and merged in PR #2447 (merge de417ed58f5aa5af568c780d115321491935d000; task commit 788a161d6828e27b5f36e8a02408163c606d8eb7). Verified git diff --check 788a161d^ 788a161d and PR checks success; parent owner Codex2 may absorb into LOOP-AUTO-DEP-004.",
+    "last_update": "2026-06-27T15:11:05Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-AUTO-DEP-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only BFF/frontend handoff packet approved: captures current deployment/BFF evidence, stage-split query gaps, operator journey, frontend rules, and parent verification guidance without canonical truth or runtime changes."
+    ],
+    "review_file": "support/sidecars/LOOP-AUTO-DEP-004/LOOP-AUTO-DEP-004-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T15:11:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-dep-004-sidecar-bff-handoff-closeout-788a161d",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "788a161d6828e27b5f36e8a02408163c606d8eb7",
+      "commit_subject": "LOOP-AUTO-DEP-004-SIDECAR-BFF-HANDOFF: add handoff packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/sidecars/LOOP-AUTO-DEP-004 handoff material.",
+        "Not changing": "L1 canonical truth, BFF runtime code, deployment service,",
+        "Composes with": "LOOP-AUTO-DEP-004 parent implementation by Codex2.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "LOOP-AUTO-DEP-004-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex2",
+        "Verified": "git diff --no-index --check; rg trailing-whitespace/non-ASCII checks"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6b57af097e3104bff7a83568c61df2c107dc325f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-DEP-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only BFF/frontend handoff packet is merged in PR #2447 at de417ed58f5aa5af568c780d115321491935d000. Please review support/sidecars/LOOP-AUTO-DEP-004/LOOP-AUTO-DEP-004-SIDECAR-BFF-HANDOFF.md for parent-owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-27T15:04:43Z",
+      "resolved_at": "2026-06-27T15:06:54Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-DEP-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend handoff packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-27T15:06:54Z",
+      "resolved_at": "2026-06-27T15:11:06Z"
+    }
+  ],
+  "blockers": []
+}

@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 
 # ---------------------------------------------------------------------------
@@ -86,6 +86,7 @@ from models import (  # type: ignore
     ExecuteRequest,
     ObservationWindowReportResponse,
     ProposeFromIncidentRequest,
+    ProposeFromPostmortemPublishedRequest,
     ProposeRequest,
     RejectRequest,
     RedeployFollowthroughRequest,
@@ -95,6 +96,10 @@ from models import (  # type: ignore
     ThresholdEvalResponse,
 )
 from sweep import run_daily_sweep  # type: ignore
+from postmortem_bridge import (  # type: ignore
+    PostmortemBridgeError,
+    build_published_postmortem_proposal_request,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -127,10 +132,29 @@ incident_store = IncidentStore(
 )
 controller = EvolutionController()
 evaluator = ThresholdEvaluator()
+
+# ---------------------------------------------------------------------------
+# Sweep state — updated on every POST /api/evolution/daily-sweep call.
+# Exposed via GET /api/evolution/sweep-status and the /livez health metrics.
+# ---------------------------------------------------------------------------
+_sweep_state: Dict[str, Any] = {
+    "last_success_at": None,
+    "last_success_proposal_count": None,
+    "last_failure_at": None,
+    "last_failure_reason": None,
+    "total_sweeps_run": 0,
+    "total_proposals_created": 0,
+}
+
 register_fastapi_health_routes(
     app,
     "evolution",
-    metrics=lambda: {"decision_count": len(store.list_all())},
+    metrics=lambda: {
+        "decision_count": len(store.list_all()),
+        "sweep_last_success_at": _sweep_state["last_success_at"],
+        "sweep_last_failure_at": _sweep_state["last_failure_at"],
+        "sweep_total_proposals_created": _sweep_state["total_proposals_created"],
+    },
     details=lambda: {
         "evolution_data_dir": EVOLUTION_DATA_DIR,
         "incident_data_dir": INCIDENT_DATA_DIR,
@@ -430,6 +454,40 @@ def _proposal_request_from_incident(body: ProposeFromIncidentRequest) -> Propose
     )
 
 
+def _find_postmortem_bridge_decision(
+    *,
+    postmortem: Postmortem,
+    bridge_key: str,
+    decision_id: str,
+) -> EvolutionDecision | None:
+    if postmortem.linked_evolution_decision_id:
+        linked = store.get(postmortem.linked_evolution_decision_id)
+        if linked is not None:
+            return linked
+    direct = store.get(decision_id)
+    if direct is not None:
+        return direct
+    for decision in store.list_all():
+        metadata = decision.metadata or {}
+        if metadata.get("postmortem_bridge_key") == bridge_key:
+            return decision
+    return None
+
+
+def _link_postmortem_to_decision(postmortem_id: str, decision_id: str) -> None:
+    try:
+        current = incident_store.get_postmortem(postmortem_id)
+        if current is not None and current.linked_evolution_decision_id != decision_id:
+            incident_store.link_evolution_decision(postmortem_id, decision_id)
+    except IncidentError as exc:
+        log.warning(
+            "evolution.postmortem_bridge: could not back-link postmortem %s -> decision %s: %s",
+            postmortem_id,
+            decision_id,
+            exc,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -547,6 +605,66 @@ def propose_from_incident(body: ProposeFromIncidentRequest):
     return propose(_proposal_request_from_incident(body))
 
 
+@app.post(
+    "/api/evolution/proposals/from-postmortem-published",
+    status_code=201,
+    response_model=DecisionResponse,
+)
+def propose_from_postmortem_published(
+    body: ProposeFromPostmortemPublishedRequest,
+    response: Response,
+):
+    """
+    Admit a published Postmortem event as exactly one EvolutionDecision proposal.
+
+    Idempotency is scoped to target type, target artifact id, and incident
+    cluster. Duplicate publish events return the existing proposal with HTTP
+    200. The created decision remains in ``proposed`` until normal review and
+    approval gates advance it.
+    """
+    postmortem = incident_store.get_postmortem(body.postmortem_id)
+    if postmortem is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Postmortem not found: {body.postmortem_id}",
+        )
+    incident = incident_store.get_incident(postmortem.incident_id)
+    if incident is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Postmortem {body.postmortem_id!r} references unavailable "
+                f"IncidentCase {postmortem.incident_id!r}"
+            ),
+        )
+    try:
+        proposal_payload = build_published_postmortem_proposal_request(
+            postmortem,
+            incident,
+            decision_id=body.decision_id,
+            publish_event_id=body.publish_event_id,
+            created_by_id=body.created_by_id,
+            created_by_role=body.created_by_role,
+        )
+    except PostmortemBridgeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    metadata = proposal_payload.get("metadata") or {}
+    bridge_key = str(metadata.get("postmortem_bridge_key") or "")
+    decision_id = str(proposal_payload["decision_id"])
+    existing = _find_postmortem_bridge_decision(
+        postmortem=postmortem,
+        bridge_key=bridge_key,
+        decision_id=decision_id,
+    )
+    if existing is not None:
+        _link_postmortem_to_decision(postmortem.postmortem_id, existing.decision_id)
+        response.status_code = 200
+        return _decision_to_response(existing)
+
+    return propose(ProposeRequest(**proposal_payload))
+
+
 # --- Daily sweep -------------------------------------------------------------
 
 @app.post("/api/evolution/daily-sweep", response_model=DailySweepResponse)
@@ -557,7 +675,13 @@ def daily_sweep(body: DailySweepRequest):
     The sweep is proposal-only: it reads IncidentCase evidence, derives
     EvolutionDecision proposals, and relies on the existing single-active-rule
     to block repeated triggers while cooldown/observation is active.
+
+    Sweep outcomes are recorded in the module-level ``_sweep_state`` so
+    ``GET /api/evolution/sweep-status`` and the health metrics can surface
+    last success, last failure, and cumulative proposal count without a
+    persistent store.
     """
+    now_str = _format_rfc3339(datetime.now(timezone.utc))
     try:
         result = run_daily_sweep(
             incident_store=incident_store,
@@ -569,8 +693,49 @@ def daily_sweep(body: DailySweepRequest):
             evaluator=evaluator,
         )
     except ValueError as exc:
+        _sweep_state["last_failure_at"] = now_str
+        _sweep_state["last_failure_reason"] = str(exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _sweep_state["last_success_at"] = now_str
+    _sweep_state["last_success_proposal_count"] = result.created_decisions
+    _sweep_state["total_sweeps_run"] = _sweep_state["total_sweeps_run"] + 1
+    _sweep_state["total_proposals_created"] = (
+        _sweep_state["total_proposals_created"] + result.created_decisions
+    )
+    log.info(
+        "evolution.daily_sweep sweep_id=%s created=%d blocked=%d scanned=%d",
+        body.sweep_id,
+        result.created_decisions,
+        result.cooldown_blocked,
+        result.scanned_incidents,
+    )
     return result.to_dict()
+
+
+@app.get("/api/evolution/sweep-status")
+def sweep_status():
+    """
+    Return the current daily-sweep worker status.
+
+    Reports last success timestamp, last failure timestamp, last success
+    proposal count, total sweeps run this process lifetime, and total
+    cumulative proposals created.  Values are in-memory only and reset on
+    service restart; they are sufficient for operator liveness checks.
+    """
+    return {
+        "last_success_at": _sweep_state["last_success_at"],
+        "last_success_proposal_count": _sweep_state["last_success_proposal_count"],
+        "last_failure_at": _sweep_state["last_failure_at"],
+        "last_failure_reason": _sweep_state["last_failure_reason"],
+        "total_sweeps_run": _sweep_state["total_sweeps_run"],
+        "total_proposals_created": _sweep_state["total_proposals_created"],
+        "scheduler_attach": {
+            "route": "POST /api/evolution/daily-sweep",
+            "worker_module": "services.evolution.scheduler_worker",
+            "compose_service": "evolution-daily-sweep-scheduler",
+            "compose_profile": "evolution-daily-sweep-scheduler",
+        },
+    }
 
 
 # --- List / filter -----------------------------------------------------------

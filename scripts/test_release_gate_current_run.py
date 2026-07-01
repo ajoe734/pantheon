@@ -40,6 +40,25 @@ def _assert_current_run_is_only_uploaded_audit_path(paths: list[str]) -> None:
     assert all("historical" not in path for path in audit_paths)
 
 
+BFF_LIVE_EVIDENCE_UPLOAD_PATHS = [
+    ".lovable/audits/current-run/BFF-LIVE-EVIDENCE-PREFLIGHT.json",
+    ".lovable/audits/current-run/BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json",
+    ".lovable/audits/current-run/release-gate-summary.json",
+    ".lovable/audits/current-run/release-gate-summary.md",
+    ".lovable/audits/current-run/BFF-LUV-AUTHED-LIVE-001-live-smoke.json",
+    ".lovable/audits/current-run/BFF-CONSOL-011-sse-replay-smoke.json",
+]
+
+
+def _assert_bff_live_evidence_upload_allowlist(paths: list[str]) -> None:
+    assert paths == BFF_LIVE_EVIDENCE_UPLOAD_PATHS
+    assert ".lovable/audits/current-run" not in paths
+    assert all(path.startswith(".lovable/audits/current-run/") for path in paths)
+    assert all("*" not in path for path in paths)
+    assert all("historical" not in path for path in paths)
+    assert all("archive" not in path for path in paths)
+
+
 def _strict_dry_run_items(*, with_side_effect_checks: bool = True, mismatched_readback_target: bool = False):
     strategy_id = "strategy-dry-run-001"
     ranking_formula_id = "ranking-formula-dry-run-001"
@@ -230,6 +249,25 @@ def _strict_rbac_matrix_items(
                 item["request_bearer_sha256_12"] = f"rbac-{label}-hash"
             if with_write_side_effect_checks:
                 if label in write_allowed:
+                    readback = None
+                    if name == "agora-note":
+                        readback = {
+                            "kind": "list_readback_not_persisted",
+                            "ok": True,
+                            "target_id_sha256_12": f"target-{label}-{name}",
+                            "status": 200,
+                            "absent_checks": 2,
+                            "items_checked": 3,
+                        }
+                    elif name in {"strategy", "ranking-formula"}:
+                        readback = {
+                            "kind": "readback_not_persisted",
+                            "ok": True,
+                            "target_id_sha256_12": f"target-{label}-{name}",
+                            "status": 404,
+                            "error_envelope": True,
+                            "error_code": "RESOURCE_NOT_FOUND",
+                        }
                     item["side_effect_check"] = {
                         "kind": "rbac_dry_run_write_meta",
                         "ok": True,
@@ -238,6 +276,8 @@ def _strict_rbac_matrix_items(
                         "liveCapitalSideEffects": False,
                         "target_marker_sha256_12": target_marker_hash,
                     }
+                    if readback is not None:
+                        item["side_effect_check"]["readback_not_persisted"] = readback
                 else:
                     item["side_effect_check"] = {
                         "kind": "authorization_rejected_before_persistence",
@@ -542,7 +582,7 @@ def test_release_gate_ignores_step_outcome_evidence_outside_current_run(tmp_path
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -756,7 +796,7 @@ def test_integration_gate_uploads_only_current_run_audits() -> None:
     assert "scripts/probe_bff_sse_stream.py" in text
     assert "--strict-live-evidence" in text
     assert "--soak-seconds 75" in text
-    assert "--reconnect-attempts 5" in text
+    assert "--reconnect-attempts 7" in text
     assert "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json" in text
 
 
@@ -842,7 +882,7 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -896,7 +936,7 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "pass"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp_path: Path) -> None:
@@ -918,7 +958,7 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -972,7 +1012,7 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:2/5 attemptDetails:false attemptLineage:false observed:2/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:2/5 attemptDetails:false attemptLineage:false observed:2/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp_path: Path) -> None:
@@ -994,7 +1034,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -1051,7 +1091,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 attemptDetails:false attemptLineage:false observed:5/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:false attemptLineage:false observed:5/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_lineage(tmp_path: Path) -> None:
@@ -1073,7 +1113,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -1127,7 +1167,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tmp_path: Path) -> None:
@@ -1149,7 +1189,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -1203,7 +1243,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_path: Path) -> None:
@@ -1225,7 +1265,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -1276,7 +1316,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> None:
@@ -1307,21 +1347,20 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "--approval-race-id" in text
     assert "BFF-LUV-AUTHED-LIVE-001-live-smoke.json" in text
     assert "scripts/probe_bff_sse_stream.py" in text
-    assert "--soak-min-heartbeats 1" in text
-    assert "--reconnect-attempts 5" in text
+    assert "--soak-min-heartbeats 2" in text
+    assert "--reconnect-attempts 7" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
     assert "scripts/verify_bff_live_evidence_artifact.py" in text
     assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
-    assert "path: .lovable/audits/current-run" in text
+    assert "path: |" in text
     assert ".lovable/audits/*.md" not in text
     assert ".lovable/audits/historical" not in text
     upload_step = _workflow_step(workflow, "live-evidence", "Upload current-run evidence")
     upload_paths = _upload_artifact_paths(upload_step)
     assert upload_step["uses"] == "actions/upload-artifact@v4"
-    assert upload_paths == [".lovable/audits/current-run"]
     assert upload_step["with"]["if-no-files-found"] == "error"
-    _assert_current_run_is_only_uploaded_audit_path(upload_paths)
+    _assert_bff_live_evidence_upload_allowlist(upload_paths)
 
 
 def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> None:
@@ -1362,21 +1401,20 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "--approval-race-id" in text
     assert "BFF-LUV-AUTHED-LIVE-001-live-smoke.json" in text
     assert "scripts/probe_bff_sse_stream.py" in text
-    assert "--soak-min-heartbeats 1" in text
-    assert "--reconnect-attempts 5" in text
+    assert "--soak-min-heartbeats 2" in text
+    assert "--reconnect-attempts 7" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
     assert "scripts/verify_bff_live_evidence_artifact.py" in text
     assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
-    assert "path: .lovable/audits/current-run" in text
+    assert "path: |" in text
     assert ".lovable/audits/*.md" not in text
     assert ".lovable/audits/historical" not in text
     upload_step = _workflow_step(workflow, "live-evidence", "Upload current-run evidence")
     upload_paths = _upload_artifact_paths(upload_step)
     assert upload_step["uses"] == "actions/upload-artifact@v4"
-    assert upload_paths == [".lovable/audits/current-run"]
     assert upload_step["with"]["if-no-files-found"] == "error"
-    _assert_current_run_is_only_uploaded_audit_path(upload_paths)
+    _assert_bff_live_evidence_upload_allowlist(upload_paths)
 
 
 def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: Path) -> None:
@@ -1487,7 +1525,7 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     )
 
     assert rbac_check["status"] == "pass"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeMarkerLinks:32/32"
     assert dry_run_check["status"] == "pass"
     assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true readbackLinked:true sideEffectProofs:7/7 sideEffects:none"
     assert race_check["status"] == "pass"
@@ -2159,7 +2197,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_required_family_coverag
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:55/56 detailLinks:55/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:55/56 detailLinks:55/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeMarkerLinks:32/32"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_detail(tmp_path: Path) -> None:
@@ -2252,7 +2290,7 @@ def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_detail(tmp_path: 
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:55/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:55/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeMarkerLinks:32/32"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_path: Path) -> None:
@@ -2350,7 +2388,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:6/7 writeSideEffectProofs:32/32 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:6/7 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeMarkerLinks:32/32"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proofs(tmp_path: Path) -> None:
@@ -2443,7 +2481,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proof
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:0/32 writeMarkerLinks:0/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:0/32 writeReadbackProofs:0/12 writeMarkerLinks:0/32"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_write_marker(tmp_path: Path) -> None:
@@ -2536,7 +2574,7 @@ def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_write_marker(tmp_
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeMarkerLinks:31/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeMarkerLinks:31/32"
 
 def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_path: Path) -> None:
     if shutil.which("node") is None:

@@ -246,7 +246,10 @@ class TestRoutePolicies:
             assert "next_page_token" in pi
             assert "total" in pi
             assert "page_size" in pi
+            assert "returned" in pi
             assert "snapshot_at" in body["meta"]
+            assert "status" in body["meta"]
+            assert "source" in body["meta"]
             assert "surfaces" in body["meta"]
         finally:
             bff_main.read_store = original

@@ -13,7 +13,7 @@
 Pantheon has confirmed **both** of the following routes are live and returning the published field shape:
 
 1. `GET /api/v1/knowledge/evidence` — returns a paginated list with `ref_id`, source-document identity, `link_type`, credibility metadata, `linked_object_summary`, `resolved_link`, and `meta.surfaces.evidence_refs_list`.
-2. `GET /api/v1/knowledge/evidence/{ref_id}` — returns full evidence reference detail with source-document fields, `credibility`, `resolved_link`, `linked_decisions`, `source_note_context`, `source_memory_context`, and per-panel surface state.
+2. `GET /api/v1/knowledge/evidence/{ref_id}` — returns full evidence reference detail with source-document fields, `credibility`, `resolved_link`, `linked_object_summary`, `linked_decisions`, `source_note_context`, `source_memory_context`, and per-panel surface state.
 
 Build the production pages against these live surfaces. If any required field is absent or diverges from the synced contract, emit `.coordination/requests/KW-03-evidence-refs-bff-gap.yaml` instead of inventing state or constructing URLs from raw `ref_id`, `source_ref`, or `storage_ref` values.
 
@@ -134,6 +134,11 @@ interface EvidenceRefDetail {
     display_label: string;
     open_in_new_tab: boolean;
   };
+  linked_object_summary: {
+    entity_type: string;
+    entity_ref: string;
+    display_label: string | null;         // BFF-resolved — do not resolve from entity_ref
+  };
   linked_decisions: LinkedDecision[];
   source_note_context: SourceNoteContext | null;
   source_memory_context: SourceMemoryContext | null;
@@ -194,6 +199,7 @@ interface SourceMemoryContext {
 - Renders `source_document.excerpt` as plain text — do not render as markdown.
 - `source_document.storage_preview.preview_token` is short-lived — do not cache it beyond the response. Do not construct a preview URL from `source_ref` directly.
 - `resolved_link` is the sole source for any navigable external or internal link. When `availability` is `unavailable`, show a degraded link indicator; when `external`, open in new tab (`open_in_new_tab: true`).
+- `linked_object_summary` panel: render `display_label`, `entity_type`, and `entity_ref` from BFF. This is the primary downstream readiness, artifact, decision, assertion, or other object the evidence supports.
 - `linked_decisions` panel: render `display_label` and `route_href` from BFF — do not reverse-resolve raw entity refs. When `meta.surfaces.linked_decisions` is `degraded`, show an inline partial-data indicator inside the panel rather than hiding it.
 - `source_note_context`: when `null`, hide the panel entirely. When present, use `route_href` from the BFF to navigate to the source note.
 - `source_memory_context`: when `null`, hide the panel entirely. When present, render `lifecycle_status` from the BFF — do not infer superseded state from `superseded_by` presence.

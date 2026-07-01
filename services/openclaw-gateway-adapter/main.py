@@ -61,6 +61,7 @@ from session_lifecycle import (
     SessionRecord,
 )
 from tool_workflow_bridge import (
+    ASSISTANT_PROVIDER_REGISTER_TOOL_NAME,
     ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
     BridgeAuditLog,
     BridgeError,
@@ -79,11 +80,12 @@ from live_gate_adapter import (
 )
 from assistant_credential_mounts import AssistantCredentialMounts
 from assistant_codex_provider import AssistantCodexProvider, CodexProviderError
-from assistant_claude_provider import AssistantClaudeProvider, ClaudeProviderResult
+from assistant_claude_provider import AssistantClaudeProvider, ClaudeProviderError, ClaudeProviderResult
 from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
     OpenClawProviderError as GatewayOpenClawProviderError,
 )
+from assistant_provider_registry import AssistantProviderRegistry, AssistantProviderRegistryError
 from assistant_provider_runtime import (
     AssistantProviderRuntime,
     AssistantProviderRuntimeError,
@@ -747,6 +749,59 @@ class AssistantProviderReauthRequest(BaseModel):
         return self.max_wait_seconds if self.max_wait_seconds is not None else self.maxWaitSeconds
 
 
+class AssistantProviderReauthCodeRequest(BaseModel):
+    provider: str = "claude"
+    code: Optional[str] = None
+    authorization_code: Optional[str] = None
+    authorizationCode: Optional[str] = None
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
+
+    def auth_code(self) -> str:
+        return str(self.code or self.authorization_code or self.authorizationCode or "").strip()
+
+
+class AssistantProviderRegisterRequest(BaseModel):
+    provider: str
+    provider_name: Optional[str] = None
+    providerName: Optional[str] = None
+    runtime: Optional[str] = None
+    model: Optional[str] = None
+    auth_strategy: Optional[str] = None
+    authStrategy: Optional[str] = None
+    binary: Optional[str] = None
+    binary_env: Optional[str] = None
+    binaryEnv: Optional[str] = None
+    note: Optional[str] = None
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
+    reason: Optional[str] = None
+
+    def registry_payload(self) -> Dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "providerName": self.providerName or self.provider_name,
+            "runtime": self.runtime,
+            "model": self.model,
+            "authStrategy": self.authStrategy or self.auth_strategy,
+            "binary": self.binary,
+            "binaryEnv": self.binaryEnv or self.binary_env,
+            "note": self.note,
+        }
+
+
 class AssistantRepairWorktreePrepareRequest(BaseModel):
     task_id: Optional[str] = None
     taskId: Optional[str] = None
@@ -809,13 +864,17 @@ def _assistant_repair_workflow_error_response(exc: AssistantRepairWorkflowError)
 @app.get("/api/openclaw-adapter/assistant/readiness/{provider}")
 def get_assistant_readiness(provider: str, auth_probe: bool = False) -> Dict[str, Any]:
     """Probes the provider binary and auth mount readiness."""
-    if provider in {"codex", "codex_cli"}:
-        return _CODEX_PROVIDER.readiness(auth_probe=auth_probe)
-    if provider in {"claude", "claude_cli"}:
-        return _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe)
-    if provider in {"openclaw", "openclaw_agent"}:
-        return _OPENCLAW_AGENT_PROVIDER.readiness(auth_probe=auth_probe)
-    return _ASSISTANT_RUNTIME.check_readiness(provider)
+    normalized_provider = str(provider or "").strip().lower()
+    if normalized_provider in {"codex", "codex_cli"}:
+        return _with_reauth_support(_CODEX_PROVIDER.readiness(auth_probe=auth_probe), True)
+    if normalized_provider in {"claude", "claude_cli"}:
+        return _with_reauth_support(_CLAUDE_PROVIDER.readiness(auth_probe=auth_probe), True)
+    if normalized_provider in {"openclaw", "openclaw_agent"}:
+        return _with_reauth_support(_OPENCLAW_AGENT_PROVIDER.readiness(auth_probe=auth_probe), False)
+    registered = _PROVIDER_REGISTRY.get_readiness(normalized_provider)
+    if registered is not None:
+        return registered
+    return _ASSISTANT_RUNTIME.check_readiness(normalized_provider)
 
 
 @app.get("/api/openclaw-adapter/assistant/providers")
@@ -823,11 +882,61 @@ def list_assistant_providers(auth_probe: bool = False) -> Dict[str, Any]:
     return {
         "status": "ok",
         "data": [
-            _OPENCLAW_AGENT_PROVIDER.readiness(auth_probe=auth_probe),
-            _CODEX_PROVIDER.readiness(auth_probe=auth_probe),
-            _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe),
-        ],
+            _with_reauth_support(_OPENCLAW_AGENT_PROVIDER.readiness(auth_probe=auth_probe), False),
+            _with_reauth_support(_CODEX_PROVIDER.readiness(auth_probe=auth_probe), True),
+            _with_reauth_support(_CLAUDE_PROVIDER.readiness(auth_probe=auth_probe), True),
+        ] + _PROVIDER_REGISTRY.list_readiness(),
     }
+
+
+def _with_reauth_support(payload: Dict[str, Any], supported: bool) -> Dict[str, Any]:
+    return {**payload, "reauth_supported": supported, "reauthSupported": supported}
+
+
+@app.post("/api/openclaw-adapter/assistant/providers")
+def register_assistant_provider(
+    req: AssistantProviderRegisterRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for provider registration.",
+            },
+        )
+    try:
+        _BRIDGE.authorize_assistant_skill(
+            skill_id=ASSISTANT_PROVIDER_REGISTER_TOOL_NAME,
+            operator_id=x_operator_id.strip(),
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
+            trace_id=x_trace_id,
+            request_type="assistant_provider_register",
+            audit_extra={
+                "provider": req.provider,
+                "reason_hash": _audit_value_hash(req.reason),
+            },
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    try:
+        result = _PROVIDER_REGISTRY.register(
+            req.registry_payload(),
+            operator_id=x_operator_id.strip(),
+            trace_id=x_trace_id,
+        )
+    except AssistantProviderRegistryError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    return JSONResponse(status_code=201, content={"status": "ok", "data": result})
 
 
 @app.post("/api/openclaw-adapter/assistant/skills/{skill_id}/authorize")
@@ -886,20 +995,20 @@ def start_assistant_provider_reauth(
             },
         )
     normalized = str(provider or req.provider or "").strip().lower()
-    if normalized not in {"codex", "codex_cli"}:
+    if normalized not in {"codex", "codex_cli", "claude", "claude_cli"}:
         return JSONResponse(
             status_code=404,
             content={
                 "status": "provider_error",
                 "error_code": "PROVIDER_REAUTH_UNSUPPORTED",
-                "message": "Provider reauth is currently supported only for codex.",
+                "message": "Provider reauth is currently supported only for codex and claude.",
             },
         )
     try:
         _BRIDGE.authorize_assistant_skill(
             skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
             operator_id=x_operator_id.strip(),
-            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode) or "user",
             operator_role=req.operator_role or req.operatorRole or x_operator_role,
             confirmed=req.confirmed is True,
             confirm_token=req.confirm_token or req.confirmToken,
@@ -914,15 +1023,27 @@ def start_assistant_provider_reauth(
     except BridgeError as exc:
         return _bridge_error_response(exc)
     try:
-        result = _CODEX_PROVIDER.start_device_reauth(
-            operator_id=x_operator_id.strip(),
-            trace_id=x_trace_id,
-            reason=req.reason,
-            capture_timeout_seconds=req.capture_timeout(),
-            poll_interval_seconds=req.poll_interval(),
-            max_wait_seconds=req.max_wait(),
-        )
+        if normalized in {"claude", "claude_cli"}:
+            result = _CLAUDE_PROVIDER.start_device_reauth(
+                operator_id=x_operator_id.strip(),
+                trace_id=x_trace_id,
+                reason=req.reason,
+                capture_timeout_seconds=req.capture_timeout(),
+                poll_interval_seconds=req.poll_interval(),
+                max_wait_seconds=req.max_wait(),
+            )
+        else:
+            result = _CODEX_PROVIDER.start_device_reauth(
+                operator_id=x_operator_id.strip(),
+                trace_id=x_trace_id,
+                reason=req.reason,
+                capture_timeout_seconds=req.capture_timeout(),
+                poll_interval_seconds=req.poll_interval(),
+                max_wait_seconds=req.max_wait(),
+            )
     except CodexProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    except ClaudeProviderError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
     return JSONResponse(status_code=202, content={"status": "ok", "data": result})
 
@@ -943,18 +1064,93 @@ def get_assistant_provider_reauth_status(
             },
         )
     normalized = str(provider or "").strip().lower()
-    if normalized not in {"codex", "codex_cli"}:
+    if normalized not in {"codex", "codex_cli", "claude", "claude_cli"}:
         return JSONResponse(
             status_code=404,
             content={
                 "status": "provider_error",
                 "error_code": "PROVIDER_REAUTH_UNSUPPORTED",
-                "message": "Provider reauth is currently supported only for codex.",
+                "message": "Provider reauth is currently supported only for codex and claude.",
             },
         )
     try:
-        result = _CODEX_PROVIDER.reauth_status(session_id)
+        if normalized in {"claude", "claude_cli"}:
+            result = _CLAUDE_PROVIDER.reauth_status(session_id)
+        else:
+            result = _CODEX_PROVIDER.reauth_status(session_id)
     except CodexProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    except ClaudeProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    return JSONResponse(status_code=200, content={"status": "ok", "data": result})
+
+
+@app.post("/api/openclaw-adapter/assistant/providers/{provider}/reauth/{session_id}/code")
+def submit_assistant_provider_reauth_code(
+    provider: str,
+    session_id: str,
+    req: AssistantProviderReauthCodeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for provider reauth code submission.",
+            },
+        )
+    normalized = str(provider or req.provider or "").strip().lower()
+    if normalized not in {"claude", "claude_cli"}:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": "provider_error",
+                "error_code": "PROVIDER_REAUTH_CODE_UNSUPPORTED",
+                "message": "Provider reauth code submission is currently supported only for Claude.",
+            },
+        )
+    code = req.auth_code()
+    if not code:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "provider_error",
+                "error_code": "CLAUDE_REAUTH_CODE_REQUIRED",
+                "message": "Claude provider reauth requires an authorization code.",
+            },
+        )
+    try:
+        _BRIDGE.authorize_assistant_skill(
+            skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
+            operator_id=x_operator_id.strip(),
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode) or "user",
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
+            trace_id=x_trace_id,
+            session_id=session_id,
+            request_type="assistant_provider_reauth_code",
+            audit_extra={
+                "provider": normalized,
+                "session_id_hash": _audit_value_hash(session_id),
+                "code_hash": _audit_value_hash(code),
+            },
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    try:
+        result = _CLAUDE_PROVIDER.submit_reauth_code(
+            session_id,
+            code=code,
+            operator_id=x_operator_id.strip(),
+        )
+    except ClaudeProviderError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
     return JSONResponse(status_code=200, content={"status": "ok", "data": result})
 
@@ -1668,6 +1864,7 @@ _ASSISTANT_MOUNTS = AssistantCredentialMounts()
 _CODEX_PROVIDER = AssistantCodexProvider(mounts=_ASSISTANT_MOUNTS)
 _CLAUDE_PROVIDER = AssistantClaudeProvider(mounts=_ASSISTANT_MOUNTS)
 _OPENCLAW_AGENT_PROVIDER = AssistantOpenClawProvider()
+_PROVIDER_REGISTRY = AssistantProviderRegistry()
 _CODEX_RUNTIME = AssistantProviderRuntime(runner=_CODEX_PROVIDER.invoke)
 _ASSISTANT_RUNTIME = AssistantProviderRuntime(runner=_dummy_runner)
 _REPAIR_WORKFLOW = AssistantRepairWorkflow()

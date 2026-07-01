@@ -397,6 +397,19 @@ def live_evidence_environment() -> str:
     return os.environ.get("PANTHEON_LIVE_EVIDENCE_ENVIRONMENT", "").strip() or "dev"
 
 
+def strict_live_evidence_run() -> dict[str, str]:
+    return {
+        "github_environment": live_evidence_environment(),
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", "").strip(),
+        "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "").strip(),
+        "github_workflow": os.environ.get("GITHUB_WORKFLOW", "").strip(),
+        "github_job": os.environ.get("GITHUB_JOB", "").strip(),
+        "repository": os.environ.get("GITHUB_REPOSITORY", "").strip(),
+        "ref": (os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", "")).strip(),
+        "sha": os.environ.get("GITHUB_SHA", "").strip(),
+    }
+
+
 def build_operator_remediation(missing: list[str], invalid: list[dict[str, str]], args: argparse.Namespace) -> dict[str, Any]:
     repository = workflow_repository()
     environment = live_evidence_environment()
@@ -476,6 +489,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
         "strict_live_evidence_preflight": True,
+        "strict_live_evidence_run": strict_live_evidence_run(),
         "generated_at": utc_now(),
         "github_environment": remediation["github_environment"],
         "target_url": args.base_url.strip(),

@@ -100,15 +100,20 @@ write-path testing and the corresponding BFF governance gates are ready.
 ## Required BFF CORS Env
 
 Before browser smoke tests, the running dev BFF must allow the Pantheon-owned FE
-origin:
+origin and use the same tenant scope as the FE dev gate:
 
 ```sh
 PANTHEON_BFF_CORS_ORIGINS=...,https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
+PANTHEON_BFF_TENANT_ID=tenant-dev
+PANTHEON_BFF_ALLOWED_TENANTS=tenant-dev,pantheon-dev
+PANTHEON_BFF_DEV_LOGIN_ROLES=operator,reviewer,approver
 ```
 
 Do not rely on Lovable origins to validate the Pantheon dev FE. A local or
 Pantheon-owned FE origin missing from `PANTHEON_BFF_CORS_ORIGINS` will fail in
-the browser even when curl to the BFF succeeds.
+the browser even when curl to the BFF succeeds. A BFF tenant scope that excludes
+`tenant-dev` will make `/bff/me` fail while older read probes may appear healthy;
+that is not valid dev frontend proof.
 
 ## Agora Compatibility Gate
 
