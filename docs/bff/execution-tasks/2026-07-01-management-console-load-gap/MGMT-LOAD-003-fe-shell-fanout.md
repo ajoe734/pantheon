@@ -136,3 +136,29 @@ npx playwright test e2e/22-management-evidence-load.spec.ts
 npm run build
   succeeds; retained existing Browserslist/Rollup/CSS/chunk-size warnings
 ```
+
+## 2026-07-01 Owner Closeout
+
+Frontend delivery PR:
+[ajoe734/execute-plans#136](https://github.com/ajoe734/execute-plans/pull/136)
+merged into `execute-plans/dev` at
+`75a943ed3fb007c61f056496e5b8f7dfdb305a53`.
+
+Pantheon evidence/follow-up PR:
+[ajoe734/pantheon#2705](https://github.com/ajoe734/pantheon/pull/2705)
+merged into `pantheon/dev` at
+`3f9c91f0c70f37e6645b14cf03611890e645df1a`.
+
+Closeout verification recorded by Codex2:
+
+```text
+gh pr view 136 --repo ajoe734/execute-plans --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,title,url,statusCheckRollup
+  state MERGED; integration-gate SUCCESS
+gh pr view 2705 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,title,url,statusCheckRollup
+  state MERGED; Commit trailers, Runtime mirror guard, Smoke acceptance, and Orchestrator Sync SUCCESS
+git diff --check
+```
+
+Owner closeout scope is record-only in this Pantheon repository. It does not
+change runtime behavior, frontend code, route registry, BFF contracts, or L1
+canonical architecture.
