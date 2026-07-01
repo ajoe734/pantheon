@@ -33,8 +33,8 @@ the exact dependency ledger, artifact paths, or BFF fanout evidence that
 | `AI_COLLABORATION_GUIDE.md` | L0/L1 boundary and sidecar support discipline. |
 | `.orchestrator/task-briefs/mgmt_load_006_sidecar_bff_handoff_followup_3.md` | Task-scoped assignment and support-only scope. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Commit boundary for task-scoped support artifacts. |
-| `.orchestrator/skills/task-closeout-finalization.md` | Closeout boundary; this task is not `review_approved` yet. |
-| `ai-status.json` and `AI_NAME=Codex2 ./scripts/ai-status.sh show ...` | Active task context and status-root caveat. |
+| `.orchestrator/skills/task-closeout-finalization.md` | Closeout boundary; this task must only move from `review_approved` to `done` after owner finalization and a merged closeout PR. |
+| `ai-status.json` and `AI_NAME=Codex2 ./scripts/ai-status.sh show ...` | Active task context, review approval, and status-root caveat. |
 | `docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md` | Budget targets, route-load root cause, and phase-5 release-gate expectations. |
 | `docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md` | Fleet sequencing and global acceptance requirements. |
 | `docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-001-baseline-route-probes.md` | Required route-load and BFF fanout probe behavior. |
@@ -49,12 +49,23 @@ the exact dependency ledger, artifact paths, or BFF fanout evidence that
 
 ## Status-Root Caveat
 
-The task status wrapper resolves this sidecar as active and `in_progress` from
-the configured status root (`PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon`),
+The task status wrapper resolves this sidecar as active and `review_approved`
+from the configured status root (`PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon`),
 while this task worktree's local `ai-status.json` does not contain the sidecar
-row. This packet does not reconcile L0 state. The parent owner should not use
-raw local status rows as release proof; use merged PRs, deployed commits, and
-the release-gate artifact paths recorded in the final manifest.
+row. This packet and closeout note do not reconcile L0 state by hand; the owner
+must use `AI_NAME=Codex2 ./scripts/ai-status.sh done ...` after the closeout PR
+merges. The parent owner should not use raw local status rows as release proof;
+use merged PRs, deployed commits, and the release-gate artifact paths recorded
+in the final manifest.
+
+## Closeout Evidence
+
+| Evidence | Result |
+|---|---|
+| Reviewer approval | Claude approved this packet as support-scope-correct in `/tmp/review-mgmt-load-006-followup-3.md`. |
+| Reviewed delivery | PR #2692 merged into `dev` at merge commit `0dcfcf79fafd8feec38827ef76c066c4ca184fdd`; task commit `4069b9de69ea9087cbc219f2ba4d5dc2a4302a40`. |
+| Scope check | Review confirmed the delivery touched only this support packet and the generated task brief. |
+| Local finalization checks | `AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3`; `git merge-base --is-ancestor origin/task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3 origin/dev`; `git diff --check`. |
 
 ## Release-Gate Absorption Boundary
 
@@ -262,7 +273,7 @@ Claude should review this follow-up as a support-only handoff:
 
 ## Handoff
 
-This Follow-Up 3 packet is ready to hand to Claude for support-slice review.
-The parent owner should decide whether to copy the ledger, manifest fields, and
-failure codes into the `MGMT-LOAD-006` release-gate implementation and closeout
-artifacts.
+Claude approved this Follow-Up 3 packet as a support-scope-correct sidecar, and
+the reviewed delivery is merged in PR #2692. The parent owner should decide
+whether to copy the ledger, manifest fields, and failure codes into the
+`MGMT-LOAD-006` release-gate implementation and closeout artifacts.
