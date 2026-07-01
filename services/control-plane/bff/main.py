@@ -7440,6 +7440,24 @@ def _build_alert_summary(alerts: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _management_alerts_degraded_payload(snapshot_at: str) -> Dict[str, Any]:
+    """MGMT-LOAD-005: explicit degraded envelope when alert aggregation times out."""
+    meta = _snapshot_meta(snapshot_at)
+    meta["acknowledgement_supported"] = True
+    meta["surfaces"] = {
+        "alerts": _management_read_timeout_surface(
+            "alerts",
+            snapshot_at=snapshot_at,
+            message="Alert aggregation timed out under concurrent read fanout; degraded empty response returned.",
+        ),
+    }
+    return {
+        "alerts": [],
+        "summary": _build_alert_summary([]),
+        "meta": meta,
+    }
+
+
 def _build_operator_alerts_payload(snapshot_at: str) -> Dict[str, Any]:
     incident_alerts, incident_surface = _build_incident_alerts(snapshot_at)
     governance_alerts, governance_surfaces = _build_governance_alerts(snapshot_at)
@@ -9020,6 +9038,38 @@ def _management_evidence_summary(
         "by_link_type": by_link_type,
         "byCredibilityTier": by_credibility_tier,
         "by_credibility_tier": by_credibility_tier,
+    }
+
+
+def _management_evidence_degraded_payload(*, page_size: int) -> Dict[str, Any]:
+    """MGMT-LOAD-005: explicit degraded envelope when evidence aggregation times out."""
+    snapshot_at = utc_now()
+    summary = _management_evidence_summary(filtered_total=0, page_items=[], redacted_count=0)
+    facets = {
+        "sourceTypes": summary["bySourceType"],
+        "source_types": summary["by_source_type"],
+        "linkTypes": summary["byLinkType"],
+        "link_types": summary["by_link_type"],
+        "credibilityTiers": summary["byCredibilityTier"],
+        "credibility_tiers": summary["by_credibility_tier"],
+    }
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_evidence": _management_read_timeout_surface(
+            "management_evidence",
+            snapshot_at=snapshot_at,
+            message="Evidence aggregation timed out under concurrent read fanout; degraded empty response returned.",
+        ),
+    }
+    meta["redacted_evidence_count"] = 0
+    return {
+        "data": [],
+        "items": [],
+        "summary": summary,
+        "facets": facets,
+        "page_info": {"next_page_token": None, "total": 0, "page_size": page_size},
+        "pagination": {"next_page_token": None, "has_more": False, "page_size": page_size},
+        "meta": meta,
     }
 
 
@@ -12259,14 +12309,103 @@ def _get_control_path_guidance(action_type: str) -> Optional[Dict[str, Any]]:
 # Endpoints
 # --------------------------------------------------------------------------- #
 
+def _management_read_timeout_seconds() -> float:
+    """Bound for offloaded management read aggregation (MGMT-LOAD-005).
+
+    /health and other lightweight routes must stay responsive while shell
+    summary / Evidence / alerts / approvals / jobs fan out concurrently.
+    Those routes run their synchronous read-store aggregation in a worker
+    thread (asyncio.to_thread) instead of inline on the event loop, so a slow
+    backing read cannot delay unrelated coroutines. This timeout bounds how
+    long a route waits before falling back to a degraded response.
+    """
+    try:
+        return max(0.05, float(os.getenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.6")))
+    except (TypeError, ValueError):
+        return 0.6
+
+
+def _management_read_timeout_surface(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    message: str,
+) -> Dict[str, Any]:
+    """Explicit degraded surface for a management read that hit its timeout budget."""
+    return {
+        "status": "degraded",
+        "dataset": dataset,
+        "source": "management_read_timeout",
+        "reason": "read_timeout",
+        "message": message,
+        "staleness": {"served_from": "timeout_degraded", "last_known_at": snapshot_at},
+    }
+
+
+def _log_management_read_timing(
+    route: str,
+    started_at: float,
+    *,
+    timed_out: bool = False,
+) -> None:
+    elapsed_ms = int((time.monotonic() - started_at) * 1000)
+    log.info(
+        "bff.management_read route=%s elapsed_ms=%d status=%s",
+        route,
+        elapsed_ms,
+        "timeout_degraded" if timed_out else "ok",
+    )
+
+
+class _ManagementReadTimeout(Exception):
+    """Raised when a management read exceeds its bounded wait budget (MGMT-LOAD-005)."""
+
+
+def _discard_late_management_read_result(task: "asyncio.Task[Any]") -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning("bff.management_read late worker-thread error after timeout budget: %r", exc)
+
+
+async def _run_management_read(
+    func: Callable[..., Any],
+    *args: Any,
+    timeout_seconds: Optional[float] = None,
+    **kwargs: Any,
+) -> Any:
+    """Run a synchronous read-store aggregation on a worker thread, bounded by a wait budget.
+
+    Deliberately uses asyncio.wait rather than asyncio.wait_for: once the
+    underlying OS thread has started executing synchronous code, Python
+    cannot forcibly cancel it, so wait_for would still block the caller for
+    the full duration of the slow call before raising TimeoutError (it only
+    reclassifies the outcome afterward). asyncio.wait instead stops waiting
+    at the budget and lets the route return a degraded response immediately;
+    the abandoned thread keeps running in the background and its (now
+    irrelevant) result is discarded by _discard_late_management_read_result.
+    """
+    budget = _management_read_timeout_seconds() if timeout_seconds is None else timeout_seconds
+    task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    done, _pending = await asyncio.wait({task}, timeout=budget)
+    if task in done:
+        return task.result()
+    task.add_done_callback(_discard_late_management_read_result)
+    raise _ManagementReadTimeout()
+
+
 @app.get("/health")
 async def health():
-    return {
+    started = time.monotonic()
+    payload = {
         "status": "ok",
         "service": "operator-bff",
         "version": "0.2.0",
         "timestamp": utc_now(),
     }
+    _log_management_read_timing("health", started)
+    return payload
 
 
 @app.get("/api/v1/settings")
@@ -14963,6 +15102,7 @@ def bff_management_shell_summary(
     x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
 ):
     """Cheap management shell summary for first-mount badges and session chrome."""
+    started = time.monotonic()
     identity = _extract_identity(
         authorization,
         mfa_token=x_mfa_token,
@@ -14972,7 +15112,7 @@ def bff_management_shell_summary(
     _raise_if_session_logged_out(identity)
     count_payload = _build_shell_summary_counts()
     checked_at = utc_now()
-    return {
+    result = {
         "data": {
             "counts": count_payload["counts"],
             "session": _shell_summary_session(identity, checked_at=checked_at),
@@ -14987,6 +15127,8 @@ def bff_management_shell_summary(
             "surfaces": count_payload["surfaces"],
         },
     }
+    _log_management_read_timing("shell_summary", started)
+    return result
 
 
 @app.get("/api/v1/operator/home")
@@ -22731,8 +22873,25 @@ async def list_bff_approvals(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
+    started = time.monotonic()
     try:
-        items = read_store.list_approval_queue_items()
+        items = await _run_management_read(read_store.list_approval_queue_items)
+    except _ManagementReadTimeout:
+        _log_management_read_timing("approvals", started, timed_out=True)
+        return {
+            "items": [],
+            "count": 0,
+            "generated_at": snapshot_at,
+            "meta": {
+                "surfaces": {
+                    "approvals": _management_read_timeout_surface(
+                        "approvals",
+                        snapshot_at=snapshot_at,
+                        message="Approval queue read timed out under concurrent read fanout; degraded empty response returned.",
+                    ),
+                },
+            },
+        }
     except Exception:
         items = []
     pending = [
@@ -22740,6 +22899,7 @@ async def list_bff_approvals(
         if str(item.get("decision_state") or "").lower()
         in {"pending", "in_review", "proposed", "under_review", "reviewed"}
     ]
+    _log_management_read_timing("approvals", started)
     return {
         "items": pending,
         "count": len(pending),
@@ -36964,17 +37124,25 @@ async def bff_management_evidence(
     """BFF: adapt knowledge evidence refs into the Management Evidence Explorer."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    return _build_management_evidence_payload(
-        identity=identity,
-        ref_id=ref_id,
-        linked_entity_type=linked_entity_type,
-        linked_entity_ref=linked_entity_ref,
-        link_type=link_type,
-        credibility_tier=credibility_tier,
-        verified=verified,
-        page_token=page_token,
-        page_size=page_size,
-    )
+    started = time.monotonic()
+    try:
+        payload = await _run_management_read(
+            _build_management_evidence_payload,
+            identity=identity,
+            ref_id=ref_id,
+            linked_entity_type=linked_entity_type,
+            linked_entity_ref=linked_entity_ref,
+            link_type=link_type,
+            credibility_tier=credibility_tier,
+            verified=verified,
+            page_token=page_token,
+            page_size=page_size,
+        )
+    except _ManagementReadTimeout:
+        _log_management_read_timing("evidence", started, timed_out=True)
+        return _management_evidence_degraded_payload(page_size=page_size)
+    _log_management_read_timing("evidence", started)
+    return payload
 
 
 @app.get("/bff/management/persona-intent")
@@ -46653,7 +46821,14 @@ async def bff_list_alerts(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    return _build_operator_alerts_payload(snapshot_at)
+    started = time.monotonic()
+    try:
+        payload = await _run_management_read(_build_operator_alerts_payload, snapshot_at)
+    except _ManagementReadTimeout:
+        _log_management_read_timing("alerts", started, timed_out=True)
+        return _management_alerts_degraded_payload(snapshot_at)
+    _log_management_read_timing("alerts", started)
+    return payload
 
 
 @app.get("/bff/alerts/{alert_id}")
@@ -47935,7 +48110,29 @@ async def bff_list_jobs(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    jobs = _list_bff_jobs(status=status)
+    started = time.monotonic()
+    try:
+        jobs = await _run_management_read(_list_bff_jobs, status=status)
+    except _ManagementReadTimeout:
+        _log_management_read_timing("jobs", started, timed_out=True)
+        meta = _snapshot_meta(snapshot_at)
+        meta["surfaces"] = {
+            "jobs": _management_read_timeout_surface(
+                "jobs",
+                snapshot_at=snapshot_at,
+                message="Jobs read timed out under concurrent read fanout; degraded empty response returned.",
+            ),
+        }
+        return {
+            "data": [],
+            "items": [],
+            "page_info": {
+                "next_page_token": None,
+                "total": 0,
+                "returned": 0,
+            },
+            "meta": meta,
+        }
     surface = _dataset_surface_status(
         "jobs",
         snapshot_at=snapshot_at,
@@ -47950,6 +48147,7 @@ async def bff_list_jobs(
 
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {"jobs": surface}
+    _log_management_read_timing("jobs", started)
     return {
         "data": page_items,
         "items": page_items,
