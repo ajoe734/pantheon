@@ -10,6 +10,8 @@ Evidence archive:
 
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md`
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md`
+- `docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md`
+- `docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.json`
 
 Active tracking:
 
@@ -40,6 +42,21 @@ python3 scripts/dispatch_management_console_gap_2026-06-30.py
 | 5 | `MGMT-GAP-010` | Gemini2 | Codex | Turn the management load-gap follow-up into bundle, shell-fanout, and hosted route-ready release gates. |
 | 5 | `MGMT-GAP-006` | Gemini2 | Codex | Add hosted management production acceptance harness. |
 | 5 | `MGMT-GAP-007` | Codex | Claude | Track closeout to production level, archive final proof, and verify deployment. |
+
+## Second-Pass Route/Control Inputs
+
+The supplemental 2026-07-01 route/control re-audit must be treated as execution
+input, not just background reading.
+
+| Evidence | Task impact |
+|---|---|
+| 93 route samples: 53 visible nav, 40 detail/hidden/alias | `MGMT-GAP-006` harness must cover the same route classes on hosted FE. |
+| 510 buttons, 42 disabled controls | `MGMT-GAP-004` must burn down enabled write-like CTAs and prove disabled reasons. |
+| 10 mock-visible routes | `MGMT-GAP-005` and `MGMT-GAP-006` must demote, gate, or fail mock-as-live behavior. |
+| Direct-render detail aliases for capital pools, ranking formulas, rebalances, and research | `MGMT-GAP-008` must redirect or canonicalize these detail routes. |
+| Cockpit/LLM Provider Auth localhost CORS noise | `MGMT-GAP-006` must run on hosted origin and classify expected degraded auth separately from real console failure. |
+| Large management build and chunk warnings | `MGMT-GAP-010` and `MGMT-LOAD-*` must enforce bundle/load release gates. |
+| Source scan: `runActionSafe`, `bffWrites`, `toast.success`, `writeOverlay` | `MGMT-GAP-004` must prove command receipts or explicit non-production disablement. |
 
 ## Dependencies
 

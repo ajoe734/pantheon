@@ -64,3 +64,17 @@ Hosted browser probe after deploy proved:
 - `/management/deployment/dep-9?tab=events -> /management/deployments/dep-9?tab=events`
 - primary nav excludes Formula Studio, Skill Sandbox, and loop subpages;
   `/management/loops` remains.
+
+## Second-Pass Note
+
+The 2026-07-01 route/control re-audit confirmed the legacy list aliases still
+redirect correctly, including `/management/control-room`, `/management/one-ring`,
+`/management/overview`, `/management/command-center`, `/management/risk-center`,
+`/management/capital-pools`, `/management/ranking-formulas`,
+`/management/rebalances`, `/management/research`, and `/management/deployment`.
+
+It also found detail aliases that still direct-render:
+`/management/capital-pools/:id`, `/management/ranking-formulas/:id`,
+`/management/rebalances/:id`, and `/management/research/:id`. Those are not a
+reopen of `MGMT-GAP-001`; they are tracked under `MGMT-GAP-008` because the fix
+is detail DTO/canonical mapper honesty.

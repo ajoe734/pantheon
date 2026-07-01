@@ -17,6 +17,11 @@ before the target route is ready, duplicate jobs reads were observed in the load
 gap, and `network-idle` is not reliable readiness proof for live management
 pages.
 
+The supplemental route/control re-audit build also produced release-risk
+signals: generated CSS had a minify warning, realtime modules were imported both
+statically and dynamically, and the main `index` asset was about 5.5 MB before
+gzip with several large chunks still over the bundler warning threshold.
+
 This task materializes the separate load-gap plan into an execution gate.
 
 ## Scope
@@ -31,6 +36,8 @@ Implement the follow-up from
 - make hosted probes use deterministic route-ready markers instead of
   `network-idle`;
 - add bundle/load regression thresholds to the management release gate.
+- gate build warnings that can hide broken generated CSS or ineffective
+  code-splitting, including static/dynamic import conflicts for realtime code.
 
 `MGMT-GAP-010` is the umbrella gate. Production execution is split into
 `MGMT-LOAD-001` through `MGMT-LOAD-007`; the parent task closes only after
@@ -46,6 +53,8 @@ Implement the follow-up from
 
 - Management build output records initial bundle and async chunk sizes, with a
   documented budget and fail condition.
+- Build output records and fails or explicitly waives CSS minify warnings,
+  route-splitting import conflicts, and large chunk warnings.
 - Hosted management probe records route-ready time, key endpoint timings, and
   shell request counts.
 - The route harness no longer treats `network-idle` as the only readiness proof.

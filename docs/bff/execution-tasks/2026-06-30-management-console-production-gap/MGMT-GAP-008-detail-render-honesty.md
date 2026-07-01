@@ -17,6 +17,10 @@ against live BFF data.
 These are operator trust failures. The console must show live truth, explicit
 empty/degraded state, or a clear unavailable reason.
 
+The supplemental route/control re-audit added one more route-level honesty
+finding: several old detail aliases still direct-render their component instead
+of redirecting to canonical detail paths.
+
 ## Scope
 
 Fix detail render honesty for the live-id route families captured in the
@@ -32,6 +36,9 @@ re-audit:
 - evidence detail: `/management/evidence/:id`
 - empty capability detail families: `/management/tools/:id`,
   `/management/mcp/:id`, `/management/skills/:id`
+- direct-render detail aliases from the route/control re-audit:
+  `/management/capital-pools/:id`, `/management/ranking-formulas/:id`,
+  `/management/rebalances/:id`, and `/management/research/:id`
 
 Required behavior:
 
@@ -58,6 +65,9 @@ Required behavior:
   detail pages.
 - Alias routes either redirect to the canonical path or share a tested canonical
   DTO mapper.
+- The specific direct-render aliases captured in
+  `route-control-reaudit-2026-07-01.md` no longer render a second independent
+  detail surface.
 - Empty capability detail paths fail honestly with live-empty/not-found copy and
   no seed id is promoted as production data.
 - Tests cover success, missing optional fields, unknown enum values, empty
