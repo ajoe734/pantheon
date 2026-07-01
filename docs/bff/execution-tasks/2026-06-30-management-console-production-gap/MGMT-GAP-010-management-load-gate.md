@@ -62,3 +62,32 @@ Implement the follow-up from
   measured reason.
 - Release evidence includes before/after build output, hosted probe JSON,
   Markdown summary, commit SHA, and PR link.
+
+## MGMT-LOAD-007 Parent Gate Handoff
+
+Closeout archive:
+`docs/04/pantheon_management_console_load_gap_2026-07-01/archive/MGMT-LOAD-007-closeout-2026-07-01.md`.
+
+`MGMT-LOAD-001` through `MGMT-LOAD-006` are terminal `done` in the live task
+archive. The merged load work includes route-ready probes, shell-summary and
+jobs canonicalization, frontend shell fanout reduction, route code splitting,
+BFF read-concurrency isolation, and `scripts/aggregate-release-gate.mjs`.
+
+Current production-green status: blocked. The latest release gate manifest,
+`docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-load-gate-2026-07-01.json`,
+has `result.pass:false` because it intentionally aggregates the archived
+pre-fix `MGMT-LOAD-001` route-timing, request-waterfall, and BFF-fanout
+evidence. That is correct fail-closed behavior, not a false green.
+
+Measured improvement evidence:
+
+- Hosted route split probe after execute-plans PR `#134`: first row/empty-state
+  p75 931 ms and p95 1203 ms on `/management/evidence`.
+- Local BFF concurrency reproduction after Pantheon PR `#2682`: `/health` p95
+  189 ms and Evidence p95 425 ms under synthetic concurrent slow reads.
+- Bundle budget after execute-plans PR `#138`: initial management JS gzip
+  269474 bytes and Evidence route chunk gzip 13345 bytes, both under budget.
+
+Remaining required proof before reviewer-approved production-green closeout:
+run fresh hosted route-load and BFF-fanout probes against the merged dev FE/BFF
+pair, then regenerate the release gate artifact with `result.pass:true`.
