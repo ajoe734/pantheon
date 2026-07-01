@@ -1,9 +1,14 @@
 # LOOP-AUTO-TEL-002: Scheduled Reconciliation Worker — Evidence
 
 Task: LOOP-AUTO-TEL-002 — Add scheduled reconciliation worker
-Owner: Claude
-Reviewer: Codex
-Date: 2026-06-27
+Owner: Codex (helper-claimed re-dispatch)
+Reviewer: Claude
+Date: 2026-07-01
+
+Original implementation PR: <https://github.com/ajoe734/pantheon/pull/2426>
+- Merged: 2026-06-27T14:22:05Z
+- Merge commit: `d2a02f08bb3b821b2dbb6f0753c5c83ba226aa98`
+- Final task-branch head: `b45d5712d01cb005838302f7676d856fc0335cbd`
 
 ## Deliverables
 
@@ -60,6 +65,18 @@ reconciliation-drift-scheduler:
 ```
 
 ## Test Evidence
+
+Current Codex verification, 2026-07-01:
+
+```
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py -q
+8 passed in 3.34s
+
+python3 -m pytest services/reconciliation-drift/tests -q
+21 passed in 5.85s
+```
+
+Original implementation verification, 2026-06-27:
 
 ```
 python3 -m pytest services/reconciliation-drift/tests/ -v
