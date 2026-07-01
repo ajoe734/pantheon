@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-01T00:40:07Z",
+  "updated_at": "2026-07-01T00:49:18Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -102,8 +102,8 @@
         "MGMT-GAP-002"
       ],
       "branch": "task/LSP-002-V2",
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:50Z"
+      "next": "MGMT-GAP-003 dependency closed with hosted BFF proof; MGMT-GAP-002 frontend canonical read wiring can start.",
+      "last_update": "2026-07-01T00:49:18Z"
     },
     {
       "name": "Gemini",
@@ -189,12 +189,11 @@
       "current_task_ids": [
         "LOOP-AUTO-DEP-002",
         "LOOP-AUTO-TEL-003",
-        "LOOP-AUTO-EVO-001",
-        "MGMT-GAP-003"
+        "LOOP-AUTO-EVO-001"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "MGMT-GAP-003 implementation branch task/mgmt-gap-003-bff-contracts is in progress; await PR merge, dev deploy, and hosted curl evidence before closeout.",
-      "last_update": "2026-07-01T00:40:07Z"
+      "next": "MGMT-GAP-003 closed by PR #2649, dev BFF deploy, and hosted curl evidence; continue remaining LOOP assignments.",
+      "last_update": "2026-07-01T00:49:18Z"
     },
     {
       "name": "Gemini2",
@@ -2570,7 +2569,7 @@
       "phase": "MGMT Console Production Gap / Batch 2 BFF contracts",
       "owner": "Claude2",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "services/control-plane/bff",
@@ -2579,12 +2578,40 @@
       "acceptance": [
         "所有端點 OpenAPI + contract test + hosted curl 200; 空資料為明確 degraded/unavailable 而不是 ambiguous []"
       ],
-      "next": "Implementation branch task/mgmt-gap-003-bff-contracts adds typed management DTO envelopes, OpenAPI response schemas, and local contract tests; still needs PR merge, dev deploy, and hosted curl 200 evidence.",
-      "last_update": "2026-07-01T00:40:07Z",
+      "next": "Closed by PR #2649; dev BFF deploy run 28485593169 and hosted authenticated curl prove OpenAPI schemas plus 200 envelopes for all eight endpoints.",
+      "last_update": "2026-07-01T00:49:18Z",
       "source_ref": {
         "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
         "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
         "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "completion_evidence": {
+        "implementation_repo": "ajoe734/pantheon",
+        "implementation_pr": "https://github.com/ajoe734/pantheon/pull/2649",
+        "implementation_commit": "8600ccc3f3a4b1d926e99223d92fbe207ca9c4b0",
+        "merge_commit": "0f3fc3ff60ad408d390f36244d3f9f465372457c",
+        "dev_branch_ci_run": "https://github.com/ajoe734/pantheon/actions/runs/28485525251",
+        "dev_orchestrator_sync_run": "https://github.com/ajoe734/pantheon/actions/runs/28485525242",
+        "dev_bff_deploy_run": "https://github.com/ajoe734/pantheon/actions/runs/28485593169",
+        "bff_healthz": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/healthz",
+        "openapi_components": [
+          "SurfaceState",
+          "PageInfo",
+          "ManagementListMeta",
+          "ManagementRecordsEnvelope",
+          "DataSourcesEnvelope",
+          "LineageEnvelope"
+        ],
+        "hosted_curl": [
+          "/bff/management/data-sources 200 meta.status=ok surface.data_sources=ok/service_client returned=13 total=13",
+          "/bff/management/permissions 200 meta.status=unavailable surface.governance_permissions=unavailable/missing returned=0 total=0",
+          "/bff/management/memory-governance 200 meta.status=unavailable surface.memory_governance_rules=unavailable/missing returned=0 total=0",
+          "/bff/management/consult-rules 200 meta.status=unavailable surface.consult_rules=unavailable/missing returned=0 total=0",
+          "/bff/lineage 200 meta.status=degraded surface.lineage=degraded/service_client returned=0 total=0",
+          "/bff/workflows 200 meta.status=unavailable surface.workflow_templates=unavailable/missing returned=0 total=0",
+          "/bff/hooks 200 meta.status=unavailable surface.hook_registry=unavailable/missing returned=0 total=0",
+          "/bff/knowledge 200 meta.status=ok surface.knowledge_inbox=ok/bff_composed returned=8 total=8"
+        ]
       },
       "delivery_layer": "primary",
       "mutates_canonical": true,
@@ -2614,8 +2641,8 @@
       "acceptance": [
         "hosted browser probe 捕捉每頁 intended endpoint; success/degraded 測試綠; 無 seed/mock 被顯示為 live truth"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:50Z",
+      "next": "Dependency MGMT-GAP-003 is done with hosted BFF contract proof; start FE canonical read wiring against typed management envelopes.",
+      "last_update": "2026-07-01T00:49:18Z",
       "source_ref": {
         "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
         "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",

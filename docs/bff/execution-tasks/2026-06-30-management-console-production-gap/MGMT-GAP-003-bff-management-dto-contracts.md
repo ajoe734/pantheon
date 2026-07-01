@@ -4,7 +4,7 @@ Owner: Claude2
 Reviewer: Codex
 Batch: 2
 Fleet lane: BFF/control-plane contract
-Status: in progress
+Status: done
 
 ## Problem
 
@@ -74,5 +74,31 @@ python3 -m pytest \
 
 Result: `34 passed`.
 
-Closeout is still pending until this branch is merged, deployed to dev BFF, and
-hosted curl evidence proves 200 responses for every in-scope endpoint.
+## Closeout Evidence
+
+Closed by `ajoe734/pantheon` PR #2649:
+`https://github.com/ajoe734/pantheon/pull/2649`.
+
+| Item | Evidence |
+|---|---|
+| Implementation commit | `8600ccc3f3a4b1d926e99223d92fbe207ca9c4b0` |
+| Merge commit | `0f3fc3ff60ad408d390f36244d3f9f465372457c` |
+| Dev Branch CI Gate | `https://github.com/ajoe734/pantheon/actions/runs/28485525251` |
+| Dev BFF deploy | `https://github.com/ajoe734/pantheon/actions/runs/28485593169` |
+| Hosted BFF health | `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/healthz` |
+| Archive | `docs/04/pantheon_management_console_gap_2026-06-30/archive/mgmt-gap-003-closeout-2026-07-01.md` |
+
+Hosted `/openapi.json` exposes `SurfaceState`, `PageInfo`,
+`ManagementListMeta`, `ManagementRecordsEnvelope`, `DataSourcesEnvelope`, and
+`LineageEnvelope`.
+
+Hosted authenticated curl returned `200` for all eight in-scope endpoints:
+
+- `/bff/management/data-sources`
+- `/bff/management/permissions`
+- `/bff/management/memory-governance`
+- `/bff/management/consult-rules`
+- `/bff/lineage`
+- `/bff/workflows`
+- `/bff/hooks`
+- `/bff/knowledge`

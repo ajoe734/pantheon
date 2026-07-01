@@ -37,6 +37,11 @@ Conclusion: the old "missing endpoint" gap for these routes is superseded.
 The live gap is now FE wiring, DTO contract semantics, write command truth, and
 production acceptance.
 
+Update: `MGMT-GAP-003` closed the DTO/OpenAPI/contract semantics slice in
+`ajoe734/pantheon` PR #2649 and deployed BFF commit
+`0f3fc3ff60ad408d390f36244d3f9f465372457c` to dev. See
+`archive/mgmt-gap-003-closeout-2026-07-01.md` for hosted curl evidence.
+
 ## Source Inventory
 
 Active FE source checked from `/home/lupin/code/pantheon/.fe-ep`
