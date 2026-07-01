@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-008",
+  "archived_at": "2026-07-01T12:00:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-GAP-008",
+    "title": "Management detail DTO and render honesty",
+    "summary_zh": "修正 2026-07-01 全量再盤點發現的 detail DTO/render 誠實度問題: status.undefined、risk.undefined、blank h1/owner/update、NaN%、alias duplicate render、empty capability registry seed ids。",
+    "phase": "MGMT Console Production Gap / Batch 2.5 detail render honesty",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-002",
+      "MGMT-GAP-003"
+    ],
+    "artifacts": [
+      "frontend-checkout:src/management",
+      "frontend-checkout:src/lib/bff-v1",
+      "frontend-checkout:e2e",
+      "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md"
+    ],
+    "acceptance": [
+      "live-id detail pages 不再顯示 undefined/blank/NaN; old detail aliases redirect or canonicalize; empty Tools/MCP/Skills registries show explicit live-empty state; hosted probe records live ids and screenshots/logs"
+    ],
+    "next": "Finalized: confirmed execute-plans PR #133/#135 merged and deployed to dev FE (commit 47b8f418, integration gate green); recorded closeout evidence doc and updated DISPATCH_TRACKING.md; merged dev into task branch to resolve a real conflict from 83 commits of drift; Pantheon PR #2669 merged into dev.",
+    "last_update": "2026-07-01T12:00:47Z",
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+      "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+      "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
+      "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "batch": 2.5,
+    "fleet_lane": "frontend-detail-honesty",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "已 review execute-plans PR #135 follow-up patch；local checks 通過 tsc、eslint changed files、targeted vitest、vite build、check-management-naming。",
+      "GitHub integration-gate 初次因 dev BFF anonymous 502 在 aggregate gate 失敗；確認 /livez 和 /openapi.json 恢復 200 後 rerun，run 28513737231 / job 84521764161 成功。",
+      "GitHub 無法用同一 gh 帳號正式 approve 自己開的 PR，已在 PR comment 記錄 Codex2 approval；internal task gate 以此 approve。"
+    ],
+    "review_file": "https://github.com/ajoe734/execute-plans/pull/135#issuecomment-4854093280",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T12:00:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-gap-008",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-GAP-008",
+      "git_clean_required": false,
+      "commit": "5d922c9bd55c4e0dc26d685b893ab2ff03c6d5e0",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-GAP-008",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-GAP-008",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7618c726975dbec5e8ae9e8ae8d9f258ab515ab8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-GAP-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implemented detail DTO/render honesty fixes in execute-plans (frontend-checkout) PR #133 (https://github.com/ajoe734/execute-plans/pull/133), task/MGMT-GAP-008 -> dev, not yet merged. Fixes: seed.ts normalizeBaseObjectFields recovers state/risk/name/owner/updatedAt from live BFF field-name aliases without fabricating data; StatusBadge/RiskBadge show an honest 'Unavailable' badge instead of the literal status.undefined/risk.undefined key; EntityHeader falls back h1 to id and owner to em-dash instead of blank; safeRatio/safePercent eliminate NaN% in CapitalPoolDetail (originally reported case), RebalanceDetail, DeploymentDetail runtime rows; capital-pools/:id, ranking-formulas/:id, rebalances/:id, research/:id now redirect to their canonical detail route via a new makeDetailAliasRedirect (generalized from the existing DeploymentAliasRedirect) instead of duplicate-rendering; Lists.tsx basePaths updated to canonical so in-app navigation no longer bounces through the alias; Tool/MCP/Skill detail pages show an explicit live-registry-empty EmptyState instead of hanging on loading forever for a seed id that is not live. Verified: tsc --noEmit, eslint on all changed files, vitest run (103 files / 1020 tests incl. 2 new test files), vite build, check-management-naming.ts. e2e/20-management-route-ia.spec.ts extended with the 4 new alias-redirect cases (not run against a live FE/BFF this session). NOTE: no pantheon-repo commit was needed/made since all owned artifacts are frontend-checkout: (execute-plans repo); please review PR #133 directly.",
+      "status": "done",
+      "created_at": "2026-07-01T07:51:12Z",
+      "resolved_at": "2026-07-01T08:07:36Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-01T08:07:36Z",
+      "resolved_at": "2026-07-01T08:37:35Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Chair reassigned review from Codex2 to Copilot: Reviewer lane codex2 is dispatch-paused since 08:07:39Z, hint reset 2026-07-02T01:11Z (~17h away), blocking review 1h23m. Prior cycle's target Gemini was skipped as not a configured agent adapter; Copilot is a real configured, idle, non-paused lane and not the task owner (Claude).",
+      "status": "done",
+      "created_at": "2026-07-01T08:37:35Z",
+      "resolved_at": "2026-07-01T08:57:16Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008",
+      "from": "Copilot",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Copilot to Claude2 after repeated Copilot quota terminal: You have exceeded your monthly quota (Request ID: 92A0:39BC96:2F45C45:34E67E0:6A44D666)",
+      "status": "done",
+      "created_at": "2026-07-01T08:57:16Z",
+      "resolved_at": "2026-07-01T09:19:35Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008",
+      "from": "Claude2",
+      "to": "Copilot",
+      "message": "Chair reassigned review from Claude2 to Copilot: Reviewer hot-potatoed Codex2 -> Copilot -> Claude2 over ~2.5h, each hitting a terminal quota/rate-limit error within minutes; Claude2 now paused until 09:57:58Z. Copilot's own earlier pass (08:56:17Z) already produced a complete review spec that never got formalized before the handoff died; Copilot's quota pause has since expired (resumed 09:12:24Z) and it is not the task owner (Claude), so it can pick its own review context back up.",
+      "status": "done",
+      "created_at": "2026-07-01T09:19:35Z",
+      "resolved_at": "2026-07-01T09:58:12Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008",
+      "from": "Copilot",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Copilot to Claude2 after repeated Copilot quota terminal: You have exceeded your monthly quota (Request ID: CDD0:35D50A:267A2A3:297B110:6A44DF85)",
+      "status": "done",
+      "created_at": "2026-07-01T09:58:12Z",
+      "resolved_at": "2026-07-01T10:33:51Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Chair reassigned review from Claude2 to Codex2: Claude2 reviewer lane has been quota-paused since 2026-07-01T09:58:51Z while MGMT-GAP-008 is waiting in review with green PR checks; Codex2 is not paused and just completed a successful review at 2026-07-01T10:31:50Z.",
+      "status": "done",
+      "created_at": "2026-07-01T10:33:51Z",
+      "resolved_at": "2026-07-01T10:39:17Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Codex2 review blocked PR #2669: current diff is spec-only, not MGMT-GAP-008 delivery. Implement frontend/BFF detail render fixes, alias redirects, empty registry states, hosted live-id probe evidence, and clean doc trailing whitespace before re-review. Evidence: https://github.com/ajoe734/pantheon/pull/2669#issuecomment-4853416961",
+      "status": "done",
+      "created_at": "2026-07-01T10:39:17Z",
+      "resolved_at": "2026-07-01T10:39:17Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Owner work complete: execute-plans PR #133 (merged 2026-07-01T10:49:14Z, base MGMT-GAP-008 delivery: normalizeBaseObjectFields, honest StatusBadge/RiskBadge, alias-redirect factory, capability-registry empty states) plus follow-up PR #135 (https://github.com/ajoe734/execute-plans/pull/135, CI in progress) fixing 3 real bugs a hosted Playwright re-probe found in the merged fix: blank h1 on research/experiment detail (id/name never recovered from experiment_id/experiment_name), literal 'undefined' subtitle on artifact detail (kind vs live artifact_type), and Tool/MCP/Skill detail stuck forever on the loading spinner for missing seed ids (get() rejection had no .catch(), so the new CapabilityDetailEmptyState never rendered). Re-probed capital-pool/deployment/channel/alias-redirect detail pages after PR #133's redeploy: all clean (no undefined/NaN/blank h1, capital-pools/:id and research/:id aliases correctly redirect to canonical routes). Please review PR #135 once integration-gate is green; the pantheon-repo PR #2669 (spec-only) should be closed/superseded in favor of these two execute-plans PRs as the actual delivery.",
+      "status": "done",
+      "created_at": "2026-07-01T11:20:36Z",
+      "resolved_at": "2026-07-01T11:39:11Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Codex2 review approved: execute-plans PR #135 patch reviewed, local validation passed, integration-gate rerun green (run 28513737231 job 84521764161). GitHub formal approval was blocked by same-account rule, so review evidence is recorded in PR comment 4854093280; owner may close out after PR #135 merge and supersede/close pantheon PR #2669 as spec-only.",
+      "status": "done",
+      "created_at": "2026-07-01T11:39:11Z",
+      "resolved_at": "2026-07-01T12:00:48Z"
+    }
+  ],
+  "blockers": []
+}

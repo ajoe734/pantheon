@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-07-01T16:03:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare MGMT-LOAD-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-LOAD-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT Console Load Gap / Wave 3 release gate",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-LOAD-001",
+      "MGMT-LOAD-002",
+      "MGMT-LOAD-004",
+      "MGMT-LOAD-005"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-LOAD-006/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete: support packet and task brief finalized, PR #2707 merged into dev at 9cef6012b646c3ab6882c3eb52872a02848807b3 after required checks; parent MGMT-LOAD-006 can absorb the support-only handoff.",
+    "last_update": "2026-07-01T16:03:14Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-LOAD-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Diff 僅限 task brief 與 support packet，未觸及 canonical/runtime/CI/route registry",
+      "依賴狀態(LOAD-003 in_progress/LOAD-006 todo/LOAD-007 todo)與 ai-status 實際值一致",
+      "pass-eligibility 表與 non-pass manifest 範例清楚,可交付 parent owner 使用"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T16:03:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-006-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "56829fab6d437f715bfa6f53ff6239d917982ede",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9cef6012b646c3ab6882c3eb52872a02848807b3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only Follow-Up 5 packet is committed and PR #2706 is open with auto-merge enabled. Please review the task brief and support packet; scope is limited to MGMT-LOAD-006 dependency/pass-eligibility handoff, with no canonical/runtime/frontend/gate implementation changes.",
+      "status": "done",
+      "created_at": "2026-07-01T15:53:35Z",
+      "resolved_at": "2026-07-01T15:55:00Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only Follow-Up 5 packet reviewed: diff scope confirmed limited to task brief + support artifact, dependency snapshot matches live ai-status for LOAD-003/006/007, PR #2706 green with auto-merge. Approved and returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-07-01T15:55:00Z",
+      "resolved_at": "2026-07-01T16:03:15Z"
+    }
+  ],
+  "blockers": []
+}

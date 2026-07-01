@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-01T11:31:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare MGMT-GAP-008 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-GAP-008，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT Console Production Gap / Batch 2.5 detail render honesty",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-002",
+      "MGMT-GAP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-GAP-008/MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend handoff packet after Claude review approval; Pantheon PR #2681 merged to dev at bf9ebca798a70ac7a5673c05a3738834fb792d79; verified artifact-only scope and support-only/canonical-false markings.",
+    "last_update": "2026-07-01T11:31:20Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-GAP-008",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar packet 內容已核對:execute-plans PR#135(files=seed.ts/ToolDetail/McpDetail/SkillDetail,checks pending)與 pantheon PR#2669(open/behind)狀態與 gh 現況一致;checklist 聚焦 3 個 repro 缺陷,未擴大 canonical 範圍,未新增 BFF endpoint。",
+      "核可 handoff,交回 owner Codex 收尾。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T11:31:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-gap-008-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "bf9ebca798a70ac7a5673c05a3738834fb792d79",
+      "commit_subject": "Merge pull request #2681 from ajoe734/task/MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2": "add packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "40d82bc08b4b2981f246b2d06c4cb14a128b8ac8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Follow-up packet is ready for review at support/sidecars/MGMT-GAP-008/MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md; pantheon PR #2681 is open with auto-merge enabled and waiting on GitHub checks.",
+      "status": "done",
+      "created_at": "2026-07-01T11:26:02Z",
+      "resolved_at": "2026-07-01T11:28:31Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed follow-up handoff packet against live GitHub state (execute-plans PR #135, pantheon PR #2669); content accurate, scope stays support-only. Approved and returned to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-07-01T11:28:31Z",
+      "resolved_at": "2026-07-01T11:31:22Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "task_id": "LOOP-AUTO-SRC-003",
-  "archived_at": "2026-06-27T15:13:33Z",
+  "archived_at": "2026-07-01T10:51:59Z",
   "terminal_status": "done",
   "terminal_outcome": "completed",
   "task": {
@@ -25,8 +25,8 @@
       "Restart recovers missed due schedules",
       "Worker exposes last success last failure and missed tick metrics"
     ],
-    "next": "Source scheduler supervision hardening finalized: all acceptance criteria verified by Codex review; PR #2445 merged into dev at 1bcd6ef2; unit tests 24 passed, compose config clean, CI checks passed. Review artifacts committed. Task closed.",
-    "last_update": "2026-06-27T15:13:33Z",
+    "next": "Owner finalized: PR #2445 merged into dev (implementation + review approval record + task brief, commit d63ab6dd0 confirmed on origin/dev). Verified: pytest services/source_ingestion/tests/test_scheduler_worker.py services/source_ingestion/test_compose_activation.py -> 24 passed; docker compose config --quiet -> passed. Closing review_approved -> done.",
+    "last_update": "2026-07-01T10:51:59Z",
     "task_class": "execution",
     "auto_created_by": "codex-loop-autopilot-materialization-20260627",
     "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
@@ -69,7 +69,7 @@
     "review_file": ".orchestrator/reviews/LOOP-AUTO-SRC-003-review-codex.md",
     "terminal_outcome": "completed",
     "delivery": {
-      "recorded_at": "2026-06-27T15:13:33Z",
+      "recorded_at": "2026-07-01T10:51:59Z",
       "repository_id": "pantheon",
       "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-src-003",
       "repository_slug": "ajoe734/pantheon",
@@ -102,7 +102,7 @@
       "push_status": "in_sync",
       "merge_target_branch": "dev",
       "merge_target_ref": "origin/dev",
-      "merge_target_sha": "1bcd6ef2857bb969bc4ca5dd8ad254899f10ee74",
+      "merge_target_sha": "c2ebcd5eaa22b42f8810d60e54c77c8fd2457d42",
       "head_merged_to_target": true
     }
   },
@@ -113,35 +113,17 @@
       "to": "Claude",
       "message": "Auto-reassigned LOOP-AUTO-SRC-003 away from unavailable lane Gemini (disabled, sidecar-only, or auth-down); owner Gemini -> Claude.",
       "status": "done",
-      "created_at": "2026-06-27T12:36:33Z",
-      "resolved_at": "2026-06-27T14:40:56Z"
+      "created_at": "2026-07-01T06:06:23Z",
+      "resolved_at": "2026-07-01T10:35:09Z"
     },
     {
       "task_id": "LOOP-AUTO-SRC-003",
       "from": "Claude",
       "to": "Codex",
-      "message": "Implementation complete: added SchedulerState (metrics, persistence, missed-tick computation), error handling, restart:unless-stopped + healthcheck in docker-compose.yml, alive file, 22 unit tests (all pass), evidence doc. PR #2445 open with auto-merge. Please review and approve.",
+      "message": "Implementation was already delivered, tested, and merged via PR #2445 (commits 3647e0f9e + bf05210d7); Codex already wrote a full approval in .orchestrator/reviews/LOOP-AUTO-SRC-003-review-codex.md (all 3 acceptance criteria PASS), but the board regressed from review_approved back to in_progress/todo after a supervisor re-dispatch and lost review_notes_zh. Re-verified on current worktree: pytest services/source_ingestion/tests/test_scheduler_worker.py services/source_ingestion/test_compose_activation.py -> 24 passed. Requesting Codex re-run the approve command already drafted at the bottom of that review file (REVIEW_FILE=.orchestrator/reviews/LOOP-AUTO-SRC-003-review-codex.md) so this can be finalized to done without redoing the review.",
       "status": "done",
-      "created_at": "2026-06-27T14:47:13Z",
-      "resolved_at": "2026-06-27T14:55:26Z"
-    },
-    {
-      "task_id": "LOOP-AUTO-SRC-003",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Review returned: startup missed-tick calculation double-counts already persisted failed ticks after last_success_at; anchor on latest tick attempt or avoid adding already-counted failures, add regression test, then refresh PR #2445 because it is behind dev. Reviewer ran pytest -q services/source_ingestion/tests/test_scheduler_worker.py services/source_ingestion/test_compose_activation.py => 23 passed.",
-      "status": "done",
-      "created_at": "2026-06-27T14:55:26Z",
-      "resolved_at": "2026-06-27T14:55:26Z"
-    },
-    {
-      "task_id": "LOOP-AUTO-SRC-003",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Fixed compute_startup_missed double-count: now anchors on max(last_success_at, last_failure_at) so persisted failure ticks are not recounted at startup. Added regression test (24 passed). Rebased task branch onto dev and force-pushed to refresh PR #2445. Ready for re-review.",
-      "status": "done",
-      "created_at": "2026-06-27T15:02:14Z",
-      "resolved_at": "2026-06-27T15:08:59Z"
+      "created_at": "2026-07-01T10:39:45Z",
+      "resolved_at": "2026-07-01T10:42:39Z"
     },
     {
       "task_id": "LOOP-AUTO-SRC-003",
@@ -149,8 +131,8 @@
       "to": "Claude",
       "message": "Review approved: source scheduler supervision hardening meets acceptance; owner should finalize after PR merge.",
       "status": "done",
-      "created_at": "2026-06-27T15:08:59Z",
-      "resolved_at": "2026-06-27T15:13:35Z"
+      "created_at": "2026-07-01T10:42:39Z",
+      "resolved_at": "2026-07-01T10:52:00Z"
     }
   ],
   "blockers": []

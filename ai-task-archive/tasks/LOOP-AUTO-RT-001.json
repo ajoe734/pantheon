@@ -1,7 +1,7 @@
 {
   "version": 1,
   "task_id": "LOOP-AUTO-RT-001",
-  "archived_at": "2026-06-27T13:17:21Z",
+  "archived_at": "2026-07-01T06:45:00Z",
   "terminal_status": "done",
   "terminal_outcome": "completed",
   "task": {
@@ -25,8 +25,8 @@
       "Retired paused and blocked bindings are excluded or explicitly marked",
       "Query is stable for fleet reconciliation and tests"
     ],
-    "next": "Closeout: fleet desired-state query implemented and merged (PR #2408, #2413). 113 tests pass including 39 focused fleet tests. Acceptance criteria met: active paper/canary bindings queryable with policy envelope, excluded statuses explicit, invalid stage filters fail closed. Evidence at docs/deployment/evidence/loop-auto-rt-001/desired-state-query-evidence.md.",
-    "last_update": "2026-06-27T13:17:21Z",
+    "next": "Closeout finalized: fleet desired-state query and policy envelope merged via PR #2413 (5efb9117), HEAD confirmed ancestor of origin/dev. Re-verified test_fleet_desired_state.py + test_runtime_manager.py -> 89 passed. Evidence packet docs/deployment/evidence/loop-auto-rt-001/desired-state-query-evidence.md already reflects delivered scope; no further repo changes required.",
+    "last_update": "2026-07-01T06:45:00Z",
     "task_class": "execution",
     "auto_created_by": "codex-loop-autopilot-materialization-20260627",
     "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
@@ -62,9 +62,12 @@
     ],
     "wave_id": "Wave 2 Runtime Fleet",
     "mutates_canonical": true,
+    "review_notes_zh": [
+      "No blocking findings. Desired-state contract includes active paper/canary bindings, explicit exclusion reasons for live/frozen and non-active statuses, policy envelope shape, invalid stage fail-closed behavior, and route coverage. Verified current task HEAD is an ancestor of origin/dev and task files match origin/dev. Validation: python3 -m pytest services/runtime-manager/test_fleet_desired_state.py -q -> 33 passed; python3 -m pytest services/runtime-manager/test_runtime_manager.py -q -> 56 passed."
+    ],
     "terminal_outcome": "completed",
     "delivery": {
-      "recorded_at": "2026-06-27T13:17:21Z",
+      "recorded_at": "2026-07-01T06:45:00Z",
       "repository_id": "pantheon",
       "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-rt-001",
       "repository_slug": "ajoe734/pantheon",
@@ -93,7 +96,7 @@
       "push_status": "ahead",
       "merge_target_branch": "dev",
       "merge_target_ref": "origin/dev",
-      "merge_target_sha": "feb8f3d92bc9c38ceffa90f64fcb178ff5cafcb9",
+      "merge_target_sha": "0fbf33c02a6c3e396efaddfbac628bde51cec0b8",
       "head_merged_to_target": true
     }
   },
@@ -102,19 +105,19 @@
       "task_id": "LOOP-AUTO-RT-001",
       "from": "Claude",
       "to": "Codex",
-      "message": "Implemented desired-state query module (fleet_desired_state.py), GET /api/runtime-fleet/desired-state route, 32 passing unit tests, and evidence note. PR #2408 open with auto-merge. Please review for contract correctness, policy envelope completeness, and test coverage.",
+      "message": "Implementation for the desired-state query is complete and merged to dev (commits e2ab620a define query, 0a944ad8 route coverage, 0c5a28b7 reject invalid stage filters; merged via PR #2408 and #2413). Verified: python3 -m pytest services/runtime-manager/test_fleet_desired_state.py -q -> 33 passed. Acceptance criteria met: active paper/canary bindings queryable with policy envelope; retired/paused/pending_pause/failed/live/frozen explicitly excluded with reason; query_version + tests make the query stable for the RT-002 reconciler. Please review and approve.",
       "status": "done",
-      "created_at": "2026-06-27T13:04:45Z",
-      "resolved_at": "2026-06-27T13:13:27Z"
+      "created_at": "2026-07-01T06:24:42Z",
+      "resolved_at": "2026-07-01T06:32:42Z"
     },
     {
       "task_id": "LOOP-AUTO-RT-001",
       "from": "Codex",
       "to": "Claude",
-      "message": "Review complete: PR #2408 and follow-up PR #2413 merged; local focused validation 89 passed; owner may finalize once status lifecycle is reconciled from todo to review.",
+      "message": "Review approved by Codex. Desired-state query and route contract meet LOOP-AUTO-RT-001 acceptance; owner Claude should finalize closeout. Verified: test_fleet_desired_state.py -q 33 passed; test_runtime_manager.py -q 56 passed.",
       "status": "done",
-      "created_at": "2026-06-27T13:13:27Z",
-      "resolved_at": "2026-06-27T13:17:22Z"
+      "created_at": "2026-07-01T06:32:42Z",
+      "resolved_at": "2026-07-01T06:45:02Z"
     }
   ],
   "blockers": []

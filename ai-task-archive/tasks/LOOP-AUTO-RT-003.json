@@ -1,7 +1,7 @@
 {
   "version": 1,
   "task_id": "LOOP-AUTO-RT-003",
-  "archived_at": "2026-06-27T14:08:04Z",
+  "archived_at": "2026-07-01T10:17:44Z",
   "terminal_status": "done",
   "terminal_outcome": "completed",
   "task": {
@@ -10,7 +10,7 @@
     "summary_zh": "清理 stale paper monitoring sessions，讓 worker restart 建立 fresh session，不再用 ended_at=null 當 liveness proof。",
     "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
     "owner": "Codex",
-    "reviewer": "Claude2",
+    "reviewer": "Claude",
     "status": "done",
     "depends_on": [
       "LOOP-AUTO-RT-002"
@@ -25,8 +25,8 @@
       "Restarted workers create fresh sessions",
       "BFF surfaces session staleness and terminal reason"
     ],
-    "next": "PR #2427 merged into dev at d63d052da9eacdf7e3b455302efc17baca9db0f5; runtime reaper closeout finalized. Verified locally: python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q (50 passed in 18.71s). GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator.",
-    "last_update": "2026-06-27T14:08:04Z",
+    "next": "Owner closeout complete: PR #2668 merged into dev at 427262fdcfba8fc61cd0e3b1b851eb684cd2af24; implementation was already merged in PR #2427, Claude review approved, and post-merge pytest passed (51 passed, 8 warnings).",
+    "last_update": "2026-07-01T10:17:44Z",
     "task_class": "execution",
     "auto_created_by": "codex-loop-autopilot-materialization-20260627",
     "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
@@ -65,30 +65,32 @@
     "wave_id": "Wave 2 Runtime Fleet",
     "mutates_canonical": true,
     "review_notes_zh": [
-      "審查通過：三項驗收標準全部實作",
-      "stale session 自動終止、restart 建立 fresh session、BFF 暴露 terminal_reason 和 staleness 均有測試覆蓋",
-      "50 tests pass (verified locally)"
+      "reconciler 與 BFF 的 staleness 判斷邏輯一致，force-close 後才開新 session_id，符合三項 acceptance",
+      "focused suite 50 passed, full runtime-manager suite 92 passed，未發現需修正問題"
     ],
-    "review_file": "docs/deployment/evidence/loop-auto-rt-003/README.md",
+    "review_file": ".orchestrator/reviews/LOOP-AUTO-RT-003-review-claude.md",
     "terminal_outcome": "completed",
     "delivery": {
-      "recorded_at": "2026-06-27T14:08:04Z",
+      "recorded_at": "2026-07-01T10:17:44Z",
       "repository_id": "pantheon",
       "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-rt-003",
       "repository_slug": "ajoe734/pantheon",
       "branch": "task/LOOP-AUTO-RT-003",
       "git_clean_required": false,
-      "commit": "7738793a63d509ad1be9df60b8d1255933e077ec",
-      "commit_subject": "LOOP-AUTO-RT-003: refresh post-merge evidence",
+      "commit": "dae279388791ccbf7579a9df7b5d09574588ef0e",
+      "commit_subject": "LOOP-AUTO-RT-003: record post-merge closeout evidence",
       "commit_author": {
         "name": "pantheon-release-bot",
         "email": "pantheon-release-bot@users.noreply.github.com"
       },
       "commit_metadata": {
+        "Owned layer": "LOOP-AUTO-RT-003 evidence artifact.",
+        "Not changing": "runtime-manager/BFF implementation or reviewer decision.",
+        "Composes with": "PR #2427 implementation merge and PR #2668 closeout metadata.",
+        "Verified": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q (51 passed, 8 warnings in 15.12s)",
         "LLM-Agent": "Codex",
         "Task-ID": "LOOP-AUTO-RT-003",
-        "Reviewer": "Claude2",
-        "Verified": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q (50 passed)"
+        "Reviewer": "Claude"
       },
       "git_clean": true,
       "dirty_entry_count": 0,
@@ -102,7 +104,7 @@
       "push_status": "in_sync",
       "merge_target_branch": "dev",
       "merge_target_ref": "origin/dev",
-      "merge_target_sha": "d63d052da9eacdf7e3b455302efc17baca9db0f5",
+      "merge_target_sha": "427262fdcfba8fc61cd0e3b1b851eb684cd2af24",
       "head_merged_to_target": true
     }
   },
@@ -111,19 +113,28 @@
       "task_id": "LOOP-AUTO-RT-003",
       "from": "Codex",
       "to": "Claude2",
-      "message": "Implementation pushed in PR #2427: stale paper monitoring evidence is terminal, restarts open fresh sessions, and BFF runtime-state surfaces terminal_reason/staleness; local verification 50 passed.",
+      "message": "Runtime session reaper and restart alignment are already merged to dev; owner re-verified focused suite: python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q => 50 passed. Please review/approve central status so owner can finalize done.",
       "status": "done",
-      "created_at": "2026-06-27T13:52:04Z",
-      "resolved_at": "2026-06-27T13:55:06Z"
+      "created_at": "2026-07-01T07:00:13Z",
+      "resolved_at": "2026-07-01T07:48:54Z"
     },
     {
       "task_id": "LOOP-AUTO-RT-003",
       "from": "Claude2",
-      "to": "Codex",
-      "message": "All three acceptance criteria implemented and test-verified: stale session reaper active (missing/stale heartbeat detection), fresh session on restart (zombie force-close + new UUID), BFF terminal_reason/staleness projection with row_health degraded. 50 tests pass.",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: {\"type\":\"assistant\",\"message\":{\"id\":\"fd6ca914-a67a-4e2c-ac81-5f723e3b0544\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_details\":null,\"stop_reason\":\"stop_sequenc",
       "status": "done",
-      "created_at": "2026-06-27T13:55:06Z",
-      "resolved_at": "2026-06-27T14:08:08Z"
+      "created_at": "2026-07-01T07:48:54Z",
+      "resolved_at": "2026-07-01T07:59:19Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved: session reaper and restart alignment verified against controller liveness evidence (PR #2668 adds reviewer evidence artifact, implementation already merged via PR #2427). Owner may finalize once PR #2668 merges.",
+      "status": "done",
+      "created_at": "2026-07-01T07:59:19Z",
+      "resolved_at": "2026-07-01T10:17:45Z"
     }
   ],
   "blockers": []

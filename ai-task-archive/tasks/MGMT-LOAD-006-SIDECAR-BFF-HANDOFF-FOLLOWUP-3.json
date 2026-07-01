@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-01T12:31:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-LOAD-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-LOAD-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT Console Load Gap / Wave 3 release gate",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-LOAD-001",
+      "MGMT-LOAD-002",
+      "MGMT-LOAD-004",
+      "MGMT-LOAD-005"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-LOAD-006/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: Claude approved the support-only packet; PR #2692 and closeout PR #2693 merged to dev; no canonical, runtime, frontend, CI, registry, or governance changes.",
+    "last_update": "2026-07-01T12:31:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-LOAD-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "支援包範圍正確，未觸碰 canonical truth",
+      "數值門檻與 MANAGEMENT_CONSOLE_LOAD_GAP_SPEC 一致",
+      "CI 全綠，核准交還 owner 收尾"
+    ],
+    "review_file": "/tmp/review-mgmt-load-006-followup-3.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T12:31:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-006-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "447fead4f0716d3d44d9b50b776462845cd2862a",
+      "commit_subject": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: record closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "closeout evidence in the generated task brief and support-sidecar packet for the MGMT-LOAD-006 release-gate handoff.",
+        "Not changing": "canonical truth, BFF runtime code, frontend runtime code, release-gate implementation, CI configuration, route registry behavior, or governance policy.",
+        "Composes with": "PR #2692 reviewed delivery, Claude support-slice approval, and the owner done transition after this closeout PR merges.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Claude",
+        "Verified": "AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3; git merge-base --is-ancestor origin/task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3 origin/dev; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5b41eb62ffac34dbb7fcbfea2d82328d00f967dd",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Handoff to Claude: support-only Follow-Up 3 packet merged in PR #2692 (merge 0dcfcf79fafd8feec38827ef76c066c4ca184fdd; task commit 4069b9de69ea9087cbc219f2ba4d5dc2a4302a40). Packet adds MGMT-LOAD-006 release-gate evidence ledger, manifest shape, stable failure codes, PR/review checklist, and MGMT-LOAD-007 artifact boundary without changing canonical truth, runtime code, frontend code, CI config, or governance behavior. Verification: git diff --check; git show --check --stat HEAD; GitHub Commit trailers, Runtime mirror guard, Smoke acceptance passed.",
+      "status": "done",
+      "created_at": "2026-07-01T12:21:12Z",
+      "resolved_at": "2026-07-01T12:24:44Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: support-only packet, no canonical/runtime changes, thresholds verified against spec, PR #2692 merged with green CI. Returned to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-07-01T12:24:44Z",
+      "resolved_at": "2026-07-01T12:31:17Z"
+    }
+  ],
+  "blockers": []
+}

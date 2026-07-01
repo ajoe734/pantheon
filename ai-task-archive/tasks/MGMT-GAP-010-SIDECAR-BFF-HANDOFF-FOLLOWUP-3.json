@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-01T18:03:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-GAP-010 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-GAP-010，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT Console Production Gap / Batch 5 load release gate",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-001",
+      "MGMT-GAP-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-GAP-010/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: reviewer Claude approved (review file .orchestrator/reviews/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-review-claude.md). Both task commits (add packet abcb9ee1b, fix stale mirror ledger b1e38d627, add reviewer approval notes b22abf4a5) merged into dev via PR #2715 and #2718. Sidecar packet support/sidecars/MGMT-GAP-010/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md is the durable handoff artifact for the parent MGMT-GAP-010 owner; no canonical truth changed.",
+    "last_update": "2026-07-01T18:03:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-GAP-010",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：重新驗證 reopen 修正（改用 ai_status.py show 查 PANTHEON_STATUS_ROOT，不再讀 worktree 過期鏡像），pytest 20 passed，PR #2709/#2711/#2712/#2714 merge SHA 全部核對相符",
+      "殘餘落差：MGMT-LOAD-007 目前已 archived done（packet 仍寫 review），屬快速並行系統的預期時間差非方法論錯誤，不影響核准"
+    ],
+    "review_file": ".orchestrator/reviews/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T18:03:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-gap-010-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "99a4ccef408d6f25bcfda212a4bde9302616c592",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f7ce708871847136c58242675bd2472b313a1767",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support packet ready for review: PR #2715 (task/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3 -> dev), auto-merge enabled. Reconciles ai-status.json stale-todo state for MGMT-LOAD-001..006 against archived/PR evidence; documents MGMT-LOAD-003 closeout (execute-plans #136, pantheon #2705/#2709) and MGMT-LOAD-006's real release-gate (pantheon #2711/#2712) whose pass:false is against MGMT-LOAD-001 pre-fix baseline evidence, not a regression. Support-only, no canonical/runtime changes; git diff --check passed; 20 tests passed.",
+      "status": "done",
+      "created_at": "2026-07-01T17:41:35Z",
+      "resolved_at": "2026-07-01T17:46:22Z"
+    },
+    {
+      "task_id": "MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Reopened by reviewer (Claude): the packet's core claim is stale-mirror-sourced,\nnot live-store-verified. Ran `python3 scripts/ai_status.py show <id>` against\nthe canonical PANTHEON_STATUS_ROOT (/home/lupin/code/pantheon), not this\nworktree's ai-status.json copy:\n\n- MGMT-LOAD-001..006 are ALL already archived `done` in the canonical live\n  store (archived_at 2026-07-01T10:31Z through 17:32Z), not \"todo (stale)\" as\n  the packet's Coordination Snapshot table and Reconciliation Ask item 1\n  claim. MGMT-LOAD-006 archived at 17:32:55Z, before this packet's own commit\n  (17:41:04Z).\n- MGMT-GAP-010's live owner is already `Claude` (reassigned from Gemini2 at\n  06:06:53Z), not `Gemini2` as the snapshot table's parent row states.\n\nThe packet read the worktree-local ai-status.json file directly instead of\n`ai_status.py show`, which is the same worktree-mirror-vs-live-store gap\nalready flagged in prior sidecar work. Please re-verify every row against\n`ai_status.py show <task-id>` (not the raw file) and correct the Coordination\nSnapshot table, \"ai-status.json has not caught up\" framing, and the\nReconciliation Ask so it doesn't ask the parent owner to re-close tasks that\nare already archived done. The MGMT-LOAD-006 pass:false / stale-baseline\nanalysis itself looked accurate and can stay.",
+      "status": "done",
+      "created_at": "2026-07-01T17:46:22Z",
+      "resolved_at": "2026-07-01T17:46:22Z"
+    },
+    {
+      "task_id": "MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Fixed the stale-mirror ledger per your reopen note: every Coordination Snapshot row, the reconciliation ask, and the 'ai-status.json has not caught up' framing now cite python3 scripts/ai_status.py show <task-id> against canonical PANTHEON_STATUS_ROOT instead of this worktree's local ai-status.json file. Confirmed MGMT-LOAD-001 through MGMT-LOAD-006 are archived done, MGMT-LOAD-007 is in review with PR #2714 merged, and MGMT-GAP-010's live owner is Claude (not Gemini2). The MGMT-LOAD-006 pass:false/stale-baseline analysis was left unchanged as you noted it looked accurate. Fix commit b1e38d627 merged to dev via PR #2715 (previous worker run died before recording this handoff, hence the redispatch).",
+      "status": "done",
+      "created_at": "2026-07-01T17:54:43Z",
+      "resolved_at": "2026-07-01T17:58:19Z"
+    },
+    {
+      "task_id": "MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Reviewer Claude approved: reopen-note fix verified against ai_status.py show, PR SHAs and pytest re-checked, one non-blocking snapshot-drift note recorded (MGMT-LOAD-007 now archived done, not review)",
+      "status": "done",
+      "created_at": "2026-07-01T17:58:19Z",
+      "resolved_at": "2026-07-01T18:03:27Z"
+    }
+  ],
+  "blockers": []
+}

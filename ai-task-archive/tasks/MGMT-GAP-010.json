@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-010",
+  "archived_at": "2026-07-01T18:50:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-GAP-010",
+    "title": "Management console load and release gate performance",
+    "summary_zh": "落實 management load-gap follow-up: code split management routes、defer shell fanout、aggregate counts、remove duplicate jobs reads、把 bundle/load regression 納入 release gate。",
+    "phase": "MGMT Console Production Gap / Batch 5 load release gate",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-001",
+      "MGMT-GAP-002",
+      "MGMT-LOAD-007"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_management_console_load_gap_2026-07-01",
+      "docs/bff/execution-tasks/2026-07-01-management-console-load-gap",
+      "frontend-checkout:src",
+      "frontend-checkout:scripts",
+      "frontend-checkout:e2e",
+      "services/control-plane/bff"
+    ],
+    "acceptance": [
+      "MGMT-LOAD-007 done or reviewed superseded",
+      "load closeout includes route-ready timings, request waterfall, bundle sizes, BFF fanout, PR SHAs, deploy evidence, and residual risks",
+      "MGMT-GAP-006 receives exact load-gate artifact paths for hosted management production acceptance"
+    ],
+    "next": "Closeout finalized: reviewer Claude2 approved review_approved->done. Independently re-verified production-green claim in owner finalization pass: reran node scripts/aggregate-release-gate.mjs with the postfix route-timing/waterfall/bff-fanout inputs + release-bundle-2026-07-01.json (isolated --out-dir), result byte-identical (excl generatedAt) to archived release-load-gate-2026-07-01.json — pass:true, zero failures, zero missing. PR #2720 (74eefdba1) confirmed merged into origin/dev; HEAD is an ancestor of origin/dev. Dependencies MGMT-GAP-001/002 done, MGMT-LOAD-007 archived done. No new code changes required for closeout; git status clean of task-owned diffs.",
+    "last_update": "2026-07-01T18:50:17Z",
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+      "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "batch": 5,
+    "fleet_lane": "frontend-performance-gate",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+    "auto_generated": true,
+    "load_gap_children": [
+      "MGMT-LOAD-001",
+      "MGMT-LOAD-002",
+      "MGMT-LOAD-004",
+      "MGMT-LOAD-003",
+      "MGMT-LOAD-005",
+      "MGMT-LOAD-006",
+      "MGMT-LOAD-007"
+    ],
+    "review_notes_zh": [
+      "review approved: PR #2720(74eefdba1) 已合併 origin/dev 且與 worktree 完全一致；獨立重跑 aggregate-release-gate.mjs 得到與封存 manifest 逐位元相符的 result.pass:true；execute-plans PR #139 fanout probe 修正已 merge 且 CI 轉綠，解除 residual risk；MGMT-LOAD-007/MGMT-GAP-001/002 依賴均為 done",
+      "核准移交 owner Claude 進行 finalization；未變更的 residual risk（BFF /deployment.json 404）維持交給 MGMT-GAP-007/Codex 追蹤，非本次 detector 阻塞項"
+    ],
+    "review_file": ".orchestrator/reviews/MGMT-GAP-010-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T18:50:17Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-gap-010",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-GAP-010",
+      "git_clean_required": false,
+      "commit": "74eefdba1d5a90e76acf101b51e252059ade7eb4",
+      "commit_subject": "Merge pull request #2720 from ajoe734/task/MGMT-GAP-010",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-GAP-010": "regenerate release load gate as production-green"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-GAP-010",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "74eefdba1d5a90e76acf101b51e252059ade7eb4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-GAP-010",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Auto-reassigned MGMT-GAP-010 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-01T06:06:53Z",
+      "resolved_at": "2026-07-01T17:53:33Z"
+    },
+    {
+      "task_id": "MGMT-GAP-010",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation merged: pantheon PR #2720 (commit 67840982f, ancestor of dev) regenerated release-load-gate-2026-07-01.json/.md as result.pass:true after a fresh hosted route-load + BFF-fanout rerun against dev FE/BFF commit cbd833c49edc. Fixed a second gap along the way: execute-plans probe-bff-fanout-concurrency.mjs never measured /bff/management/shell-summary despite the gate budgeting it, so that check was permanently 'missing' -- fixed in execute-plans PR #139 (merged). Please review docs/04/pantheon_management_console_load_gap_2026-07-01/archive/MGMT-GAP-010-production-green-closeout-2026-07-01.md and the regenerated release-load-gate-2026-07-01.json for approval into review_approved.",
+      "status": "done",
+      "created_at": "2026-07-01T18:16:52Z",
+      "resolved_at": "2026-07-01T18:40:21Z"
+    },
+    {
+      "task_id": "MGMT-GAP-010",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex to Claude2: Codex (codex1/codex2 dispatch slots) has been quota_terminal-paused since 18:00:48Z/18:01:25Z (37/36 min elapsed, over the 30-min bar) with hint_blocked_until 2026-07-06T18:24:00Z (hint_capped:true) even though the nominal blocked_until (~19:00Z) will make the supervisor retry Codex hourly and fail again; MGMT-GAP-010 is status:review with Codex as sole reviewer, so it is actively stalled. Claude2 is idle, not in dispatch_pauses, carries governance-review capability, and is not the task owner (owner=Claude).",
+      "status": "done",
+      "created_at": "2026-07-01T18:40:21Z",
+      "resolved_at": "2026-07-01T18:45:25Z"
+    },
+    {
+      "task_id": "MGMT-GAP-010",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: production-green load/release-gate claim independently reproduced (byte-identical gate rerun, verified execute-plans PR #139 merge+CI-green, PR #2720 diff/CI clean). Returned to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-07-01T18:45:25Z",
+      "resolved_at": "2026-07-01T18:50:18Z"
+    }
+  ],
+  "blockers": []
+}

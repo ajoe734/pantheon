@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-009",
+  "archived_at": "2026-07-01T10:27:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-GAP-009",
+    "title": "Management session auth and RBAC contract consistency",
+    "summary_zh": "修正 /bff/me 403 但其他 management BFF reads 200 的 session/RBAC 契約裂縫；dev gate token、tenant、roles 與 FE session bootstrap 必須一致 fail-closed。",
+    "phase": "MGMT Console Production Gap / Batch 2.5 session auth contract",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-003"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "frontend-checkout:src/lib/bff",
+      "frontend-checkout:e2e",
+      "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md"
+    ],
+    "acceptance": [
+      "/bff/me 與 management reads 對同一 token/tenant 的 auth 結果一致; privileged pages 不可在 session 403 時顯示 live data; BFF + hosted browser tests cover success/403/role-missing paths"
+    ],
+    "next": "Owner finalized after implementation PR #2660 and closeout PR #2672 merged into dev; focused BFF session/RBAC verification passed: 41 tests with isolated BFF_DATA_DIR.",
+    "last_update": "2026-07-01T10:27:40Z",
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+      "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+      "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
+      "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "batch": 2.5,
+    "fleet_lane": "bff-session-rbac",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "Codex review: PR #2660 merged as 6304ee8e; session/RBAC middleware aligns authenticated /bff/* reads with /bff/me read-role, logged-out-session, and tenant-scope checks; dev-login/deploy tenant defaults align to tenant-dev with operator,reviewer,approver. Verified focused BFF auth/session and management read tests; one non-isolated run hit pre-existing command-store idempotency keys and passed with isolated BFF_DATA_DIR."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T10:27:40Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-gap-009",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-GAP-009",
+      "git_clean_required": false,
+      "commit": "41178ed6263ded78553ad4f6e7f04c3bc857f366",
+      "commit_subject": "MGMT-GAP-009: refresh owner closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-GAP-009",
+        "Reviewer": "Codex",
+        "Verified": "BFF_DATA_DIR=\"$(mktemp -d)\" python3 -m pytest services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py services/control-plane/bff/tests/test_bff_management_data_sources_contract.py -q (41 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-GAP-009",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9b73ffa56f74481189dad0d8f674f646cf21019e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-GAP-009",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-07-01T06:07:10Z",
+      "resolved_at": "2026-07-01T06:07:52Z"
+    },
+    {
+      "task_id": "MGMT-GAP-009",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation merged via PR #2660 (merge commit 6304ee8e7fefe53b2cc975182ecb7e324d4872aa). Please review the session/RBAC contract changes and approve or request follow-up before owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-01T06:20:58Z",
+      "resolved_at": "2026-07-01T06:47:52Z"
+    },
+    {
+      "task_id": "MGMT-GAP-009",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude2 to Codex after repeated Claude2 terminal: {\"type\":\"assistant\",\"message\":{\"id\":\"3b7921ca-105c-46b4-a584-e80d9f1e9446\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_details\":null,\"stop_reason\":\"stop_sequenc",
+      "status": "done",
+      "created_at": "2026-07-01T06:47:52Z",
+      "resolved_at": "2026-07-01T07:07:29Z"
+    },
+    {
+      "task_id": "MGMT-GAP-009",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewed and approved PR #2660 session/RBAC contract fix; hand back to owner for closeout after lifecycle state is reconciled.",
+      "status": "done",
+      "created_at": "2026-07-01T07:07:29Z",
+      "resolved_at": "2026-07-01T10:27:41Z"
+    }
+  ],
+  "blockers": []
+}
