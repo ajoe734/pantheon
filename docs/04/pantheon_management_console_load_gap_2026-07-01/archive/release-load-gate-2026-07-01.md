@@ -1,6 +1,6 @@
 # MGMT-LOAD-006 Release Load Gate
 
-Generated: 2026-07-01T17:22:11.561Z
+Generated: 2026-07-01T17:38:59.319Z
 Audit dir: `docs/04/pantheon_management_console_load_gap_2026-07-01/archive`
 Overall: **fail** (pass=false)
 
