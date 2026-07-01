@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-01T05:36:22Z",
+  "updated_at": "2026-07-01T06:01:20Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -99,11 +99,12 @@
         "LOOP-AUTO-002",
         "LOOP-AUTO-RT-001",
         "LOOP-AUTO-DEP-001",
-        "MGMT-GAP-008"
+        "MGMT-GAP-008",
+        "MGMT-LOAD-003"
       ],
       "branch": "task/LSP-002-V2",
-      "next": "Start detail honesty hardening: fix live-id detail undefined/blank/NaN states, alias canonicalization, empty capability registries, and evidence-source degraded copy.",
-      "last_update": "2026-07-01T05:36:22Z"
+      "next": "Continue MGMT-GAP-008 if active; MGMT-LOAD-003 waits for MGMT-LOAD-001 and MGMT-LOAD-002.",
+      "last_update": "2026-07-01T06:01:20Z"
     },
     {
       "name": "Gemini",
@@ -118,11 +119,12 @@
         "LOOP-AUTO-SRC-003",
         "LOOP-AUTO-RT-002",
         "LOOP-AUTO-EVO-003",
-        "MGMT-GAP-005"
+        "MGMT-GAP-005",
+        "MGMT-LOAD-005"
       ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Start studios/capabilities hardening: make Formula Studio, Skill Sandbox, Tools/MCP/Skills runtime-backed with job/command evidence and limits, or demote/disable them.",
-      "last_update": "2026-07-01T05:36:22Z"
+      "next": "Continue MGMT-GAP-005 if active; MGMT-LOAD-005 waits for MGMT-LOAD-001 and MGMT-LOAD-002.",
+      "last_update": "2026-07-01T06:01:20Z"
     },
     {
       "name": "Codex",
@@ -136,11 +138,12 @@
       "current_task_ids": [
         "LOOP-AUTO-000",
         "MGMT-GAP-004",
-        "MGMT-GAP-007"
+        "MGMT-GAP-007",
+        "MGMT-LOAD-007"
       ],
       "branch": "task/ASST-OCGW-001",
-      "next": "Start durable write truth: enumerate in-scope write CTAs, replace toast/local-only success with command receipt/audit or explicit disabled state, and prove dry-run/no-side-effect behavior.",
-      "last_update": "2026-07-01T05:36:22Z"
+      "next": "Continue MGMT-GAP-004 if active; MGMT-LOAD-007 waits for MGMT-LOAD-006 closeout evidence.",
+      "last_update": "2026-07-01T06:01:20Z"
     },
     {
       "name": "Codex2",
@@ -154,11 +157,12 @@
       "current_task_ids": [
         "LOOP-AUTO-001",
         "LOOP-AUTO-SRC-004",
-        "LOOP-AUTO-RT-005"
+        "LOOP-AUTO-RT-005",
+        "MGMT-LOAD-004"
       ],
       "branch": "task/ASST-OCGW-004",
-      "next": "MGMT-GAP-001 closed by execute-plans PR #120; continue remaining LOOP assignments.",
-      "last_update": "2026-06-30T14:45:55Z"
+      "next": "Wait for MGMT-LOAD-001 baseline, then start management route code splitting.",
+      "last_update": "2026-07-01T06:01:20Z"
     },
     {
       "name": "Copilot",
@@ -190,11 +194,12 @@
         "LOOP-AUTO-DEP-002",
         "LOOP-AUTO-TEL-003",
         "LOOP-AUTO-EVO-001",
-        "MGMT-GAP-009"
+        "MGMT-GAP-009",
+        "MGMT-LOAD-002"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Start session/RBAC contract hardening: align /bff/me, tenant, roles, and management reads for the documented dev gate token path.",
-      "last_update": "2026-07-01T05:36:22Z"
+      "next": "Start BFF shell-summary endpoint and /bff/jobs route canonicalization.",
+      "last_update": "2026-07-01T06:01:20Z"
     },
     {
       "name": "Gemini2",
@@ -210,11 +215,13 @@
         "LOOP-AUTO-TEL-005",
         "LOOP-AUTO-EVO-005",
         "MGMT-GAP-006",
-        "MGMT-GAP-010"
+        "MGMT-GAP-010",
+        "MGMT-LOAD-001",
+        "MGMT-LOAD-006"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Start load-gate work: enforce management bundle budgets, route-ready markers, shell request-count evidence, and no network-idle-only readiness.",
-      "last_update": "2026-07-01T05:36:22Z",
+      "next": "Wait for MGMT-LOAD-001 through MGMT-LOAD-005, then wire release load budgets.",
+      "last_update": "2026-07-01T06:01:20Z",
       "last_action_at": "2026-05-20T11:29:47Z",
       "last_action_note": "Manual ai-status sync by Claude: cleared ['LOVABLE-STRICT-PUBLISH', 'OSS-QUANTLIB-V2-001'] after push-auth failure."
     },
@@ -2914,24 +2921,28 @@
       "status": "todo",
       "depends_on": [
         "MGMT-GAP-001",
-        "MGMT-GAP-002"
+        "MGMT-GAP-002",
+        "MGMT-LOAD-007"
       ],
       "artifacts": [
         "docs/04/pantheon_management_console_load_gap_2026-07-01",
+        "docs/bff/execution-tasks/2026-07-01-management-console-load-gap",
         "frontend-checkout:src",
         "frontend-checkout:scripts",
-        "frontend-checkout:e2e"
+        "frontend-checkout:e2e",
+        "services/control-plane/bff"
       ],
       "acceptance": [
-        "management initial bundle/runtime chunk budget documented and enforced; shell no longer fans out duplicate heavyweight reads before route readiness; hosted probe avoids network-idle false readiness and records load evidence"
+        "MGMT-LOAD-007 done or reviewed superseded",
+        "load closeout includes route-ready timings, request waterfall, bundle sizes, BFF fanout, PR SHAs, deploy evidence, and residual risks",
+        "MGMT-GAP-006 receives exact load-gate artifact paths for hosted management production acceptance"
       ],
-      "next": "Start load-gate work: enforce management bundle budgets, route-ready markers, shell request-count evidence, and no network-idle-only readiness.",
+      "next": "Wait for MGMT-LOAD-007 child closeout; do not close umbrella from a single local probe or partial optimization.",
       "last_update": "2026-07-01T05:36:22Z",
       "source_ref": {
-        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
-        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
-        "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
-        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+        "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+        "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
       },
       "delivery_layer": "primary",
       "mutates_canonical": true,
@@ -2939,7 +2950,289 @@
       "fleet_lane": "frontend-performance-gate",
       "task_class": "execution",
       "auto_created_by": "dispatch_management_console_gap_2026-06-30",
-      "auto_generated": true
+      "auto_generated": true,
+      "load_gap_children": [
+        "MGMT-LOAD-001",
+        "MGMT-LOAD-002",
+        "MGMT-LOAD-004",
+        "MGMT-LOAD-003",
+        "MGMT-LOAD-005",
+        "MGMT-LOAD-006",
+        "MGMT-LOAD-007"
+      ]
+    },
+    {
+      "id": "MGMT-LOAD-001",
+      "title": "Management load baseline and route-ready probes",
+      "summary_zh": "建立 /management/evidence hosted browser route-load baseline 與 BFF fanout baseline；readiness 改用 heading/row/API milestone，不用 networkidle 判定 SSE 頁面就緒。",
+      "phase": "MGMT Console Load Gap / Wave 0 baseline probes",
+      "owner": "Gemini2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-GAP-001",
+        "MGMT-GAP-002"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_management_console_load_gap_2026-07-01",
+        "frontend-checkout:scripts",
+        "frontend-checkout:e2e",
+        "services/control-plane/bff"
+      ],
+      "acceptance": [
+        "route timing JSON + request waterfall + Markdown baseline archived; probe does not wait on networkidle; BFF fanout probe captures /health/evidence/alerts/approvals/jobs timings"
+      ],
+      "next": "Start hosted route-load baseline and BFF fanout probes; do not use networkidle as readiness proof.",
+      "last_update": "2026-07-01T06:01:20Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+        "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "MGMT-GAP-010",
+      "helper_kind": "load_gap_execution_slice",
+      "wave": 0,
+      "fleet_lane": "release-probe-baseline"
+    },
+    {
+      "id": "MGMT-LOAD-002",
+      "title": "BFF shell summary and jobs route canonicalization",
+      "summary_zh": "新增 /bff/management/shell-summary，提供 session/transport 與 cheap badge counts；避免 full list aggregation；整理 duplicate /bff/jobs route definitions。",
+      "phase": "MGMT Console Load Gap / Wave 1 BFF shell summary",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-GAP-003"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "docs/04/pantheon_management_console_load_gap_2026-07-01",
+        "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-002-bff-shell-summary.md"
+      ],
+      "acceptance": [
+        "shell-summary 不回 full approvals/alerts/jobs lists; count freshness/degraded surfaces explicit; /bff/jobs only one canonical route; OpenAPI + contract tests + dev timing evidence"
+      ],
+      "next": "Start BFF shell-summary endpoint and /bff/jobs route canonicalization.",
+      "last_update": "2026-07-01T06:01:20Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+        "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "MGMT-GAP-010",
+      "helper_kind": "load_gap_execution_slice",
+      "wave": 1,
+      "fleet_lane": "bff-shell-summary"
+    },
+    {
+      "id": "MGMT-LOAD-004",
+      "title": "Management route code splitting",
+      "summary_zh": "把 management route graph 拆成 lazy route clusters，讓 Evidence route 不再下載/解析整個 console；保留 direct navigation、redirect alias、chunk error handling。",
+      "phase": "MGMT Console Load Gap / Wave 1 FE route splitting",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-GAP-001",
+        "MGMT-LOAD-001"
+      ],
+      "artifacts": [
+        "frontend-checkout:src/App.tsx",
+        "frontend-checkout:src/management",
+        "frontend-checkout:e2e",
+        "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-004-management-route-code-split.md"
+      ],
+      "acceptance": [
+        "initial management JS gzip <= 800KB or approved exception; Evidence route chunk gzip <= 150KB excluding shared vendor; route smoke + hosted timing evidence archived"
+      ],
+      "next": "Wait for MGMT-LOAD-001 baseline, then start management route code splitting.",
+      "last_update": "2026-07-01T06:01:20Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+        "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "MGMT-GAP-010",
+      "helper_kind": "load_gap_execution_slice",
+      "wave": 1,
+      "fleet_lane": "frontend-route-splitting"
+    },
+    {
+      "id": "MGMT-LOAD-003",
+      "title": "Frontend shell fanout reduction",
+      "summary_zh": "TopBar 改接 shell-summary；summary unavailable 時 defer full list reads；JobProgressDrawer 不在 first route load 重複抓 /bff/jobs；drawer hydration 延後到使用者開啟或 primary content 後。",
+      "phase": "MGMT Console Load Gap / Wave 2 FE shell fanout",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-LOAD-001",
+        "MGMT-LOAD-002"
+      ],
+      "artifacts": [
+        "frontend-checkout:src/platform",
+        "frontend-checkout:src/lib/bff-v1",
+        "frontend-checkout:e2e",
+        "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-003-fe-shell-fanout.md"
+      ],
+      "acceptance": [
+        "Evidence first row 前 non-primary BFF requests <= 2; no duplicate /bff/jobs before first row/empty state; tests cover summary success/degraded/unavailable and lazy drawer hydration"
+      ],
+      "next": "Continue MGMT-GAP-008 if active; MGMT-LOAD-003 waits for MGMT-LOAD-001 and MGMT-LOAD-002.",
+      "last_update": "2026-07-01T06:01:20Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+        "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "MGMT-GAP-010",
+      "helper_kind": "load_gap_execution_slice",
+      "wave": 2,
+      "fleet_lane": "frontend-shell-fanout"
+    },
+    {
+      "id": "MGMT-LOAD-005",
+      "title": "BFF read concurrency isolation",
+      "summary_zh": "隔離 shell summary/Evidence/alerts/approvals/jobs 的同步 read aggregation；/health 不可被 management read fanout 卡住；慢路徑要 timeout/degraded 而不是拖住 unrelated routes。",
+      "phase": "MGMT Console Load Gap / Wave 2 BFF read concurrency",
+      "owner": "Gemini",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-LOAD-001",
+        "MGMT-LOAD-002"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-005-bff-read-concurrency.md"
+      ],
+      "acceptance": [
+        "/health p95 <= 200ms during shell-summary/Evidence fanout; Evidence p95 <= 750ms during fanout or blocker names exact read path; timeout/degraded behavior tested"
+      ],
+      "next": "Continue MGMT-GAP-005 if active; MGMT-LOAD-005 waits for MGMT-LOAD-001 and MGMT-LOAD-002.",
+      "last_update": "2026-07-01T06:01:20Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+        "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "MGMT-GAP-010",
+      "helper_kind": "load_gap_execution_slice",
+      "wave": 2,
+      "fleet_lane": "bff-read-concurrency"
+    },
+    {
+      "id": "MGMT-LOAD-006",
+      "title": "Management load release gate",
+      "summary_zh": "把 route-load baseline 變成 release gate：bundle budget、route-ready milestones、startup request count、duplicate jobs detection、BFF fanout latency 全部可 fail gate 並輸出 JSON/Markdown artifact。",
+      "phase": "MGMT Console Load Gap / Wave 3 release gate",
+      "owner": "Gemini2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-LOAD-001",
+        "MGMT-LOAD-002",
+        "MGMT-LOAD-003",
+        "MGMT-LOAD-004",
+        "MGMT-LOAD-005"
+      ],
+      "artifacts": [
+        "frontend-checkout:scripts",
+        "frontend-checkout:e2e",
+        "scripts/aggregate-release-gate.mjs",
+        "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-006-release-load-gate.md"
+      ],
+      "acceptance": [
+        "release gate fails on budget breach",
+        "duplicate startup /bff/jobs",
+        "networkidle-only readiness",
+        "excess non-primary startup requests",
+        "or BFF fanout latency regression; artifacts linked to MGMT-GAP-006 handoff"
+      ],
+      "next": "Wait for MGMT-LOAD-001 through MGMT-LOAD-005, then wire release load budgets.",
+      "last_update": "2026-07-01T06:01:20Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+        "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "MGMT-GAP-010",
+      "helper_kind": "load_gap_execution_slice",
+      "wave": 3,
+      "fleet_lane": "release-load-gate"
+    },
+    {
+      "id": "MGMT-LOAD-007",
+      "title": "Load gap closeout and parent gate",
+      "summary_zh": "彙整 MGMT-LOAD 全任務 closeout，更新 MGMT-GAP-010，交付 MGMT-GAP-006 可驗收的 hosted load-gate artifact paths 與 residual risk。",
+      "phase": "MGMT Console Load Gap / Wave 4 closeout",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-LOAD-006"
+      ],
+      "artifacts": [
+        "ai-status.json",
+        "docs/04/pantheon_management_console_load_gap_2026-07-01/archive",
+        "docs/bff/execution-tasks/2026-07-01-management-console-load-gap"
+      ],
+      "acceptance": [
+        "all MGMT-LOAD tasks done or reviewed superseded; final archive includes before/after timing",
+        "waterfall",
+        "bundle sizes",
+        "BFF fanout",
+        "PR SHAs",
+        "deploy evidence",
+        "residual risks; MGMT-GAP-010 reviewer-approved"
+      ],
+      "next": "Continue MGMT-GAP-004 if active; MGMT-LOAD-007 waits for MGMT-LOAD-006 closeout evidence.",
+      "last_update": "2026-07-01T06:01:20Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+        "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "MGMT-GAP-010",
+      "helper_kind": "load_gap_execution_slice",
+      "wave": 4,
+      "fleet_lane": "oversight-closeout"
     }
   ],
   "handoffs": [
