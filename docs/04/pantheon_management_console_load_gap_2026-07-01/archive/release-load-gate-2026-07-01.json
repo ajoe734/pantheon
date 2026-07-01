@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "taskId": "MGMT-LOAD-006",
-  "generatedAt": "2026-07-01T16:52:07.562Z",
+  "generatedAt": "2026-07-01T17:22:11.561Z",
   "auditDir": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive",
   "inputs": {
     "routeTimingFile": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-timing-2026-07-01.json",
     "waterfallFile": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/request-waterfall-2026-07-01.json",
     "bffFanoutFile": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-baseline-2026-07-01.json",
-    "bundleFile": "/tmp/fe-bundle-out/bundle-budget-2026-07-01.json"
+    "bundleFile": "/tmp/bundle-budget-mgmt-load-006-refresh.json"
   },
   "budgets": {
     "initialManagementJsGzipBudgetBytes": 819200,
@@ -96,13 +96,13 @@
         "label": "Initial management JS gzip <= 819200 bytes.",
         "status": "pass",
         "note": "observed:269474 budget:819200",
-        "evidence": "/tmp/fe-bundle-out/bundle-budget-2026-07-01.json"
+        "evidence": "/tmp/bundle-budget-mgmt-load-006-refresh.json"
       },
       {
         "label": "Evidence route chunk gzip <= 153600 bytes.",
         "status": "pass",
         "note": "observed:13345 budget:153600",
-        "evidence": "/tmp/fe-bundle-out/bundle-budget-2026-07-01.json"
+        "evidence": "/tmp/bundle-budget-mgmt-load-006-refresh.json"
       }
     ],
     "2_route_timing": [

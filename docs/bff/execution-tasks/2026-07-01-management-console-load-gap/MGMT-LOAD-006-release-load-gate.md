@@ -1,6 +1,6 @@
 # MGMT-LOAD-006 - Management Load Release Gate
 
-Owner: Gemini2
+Owner: Claude
 Reviewer: Codex
 Parent: `MGMT-GAP-010`
 Depends on: `MGMT-LOAD-001`, `MGMT-LOAD-002`, `MGMT-LOAD-003`, `MGMT-LOAD-004`, `MGMT-LOAD-005`
@@ -48,13 +48,17 @@ false readiness.
   [#138](https://github.com/ajoe734/execute-plans/pull/138) adds
   `scripts/bundle-budget-check.mjs`, wires `probe:bundle-budget` into
   `pantheon-integration-gate.yml` right after `Build`, and records current
-  bundle evidence in `docs/testing/mgmt-load-006-release-load-gate.md` (not
-  yet merged at the time of this closeout — see Residual Risk below).
+  bundle evidence in `docs/testing/mgmt-load-006-release-load-gate.md`.
+  **Merged** into `execute-plans` `dev` at `cbd833c49edc` (2026-07-01T17:14:51Z);
+  `probe:bundle-budget` is now part of the standard integration-gate run on
+  every `dev` PR, resolving the "not yet merged" item this closeout originally
+  logged under Residual Risk.
 - Real gate run against currently available evidence (MGMT-LOAD-001's
   hosted route-timing/request-waterfall archive, MGMT-LOAD-001's hosted and
-  MGMT-LOAD-005's local BFF-fanout archive, and a fresh `npm run build &&
-  npm run probe:bundle-budget` from `execute-plans` `dev` tip
-  `5b7d6b724f91`):
+  MGMT-LOAD-005's local BFF-fanout archive, and a fresh
+  `npm run probe:bundle-budget` re-run from `execute-plans` `dev` tip
+  `cbd833c49edc` after PR #138 merged — gzip sizes are byte-identical to the
+  pre-merge run, only `feCommit` changed):
   - `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-load-gate-2026-07-01.json`
   - `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-load-gate-2026-07-01.md`
   - `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-route-timing-2026-07-01.json`
@@ -77,10 +81,14 @@ false readiness.
 
 ## Residual Risk
 
-- `execute-plans` PR #138 (bundle-budget evidence + CI wiring) is open, not
-  yet merged. Until it merges, `frontend-checkout:scripts` evidence for this
-  task lives only on the task branch; `probe:bundle-budget` is not yet part
-  of every `dev` PR's automated evidence.
+- `execute-plans` PR #138 (bundle-budget evidence + CI wiring) merged into
+  `dev` at `cbd833c49edc`. `frontend-checkout:scripts` bundle evidence is now
+  produced by the standard integration-gate run on every `dev` PR, not just
+  the task branch. This closeout's earlier "not yet merged" residual risk is
+  resolved; note the merge here since `ai-status.sh done`'s automated
+  merged-PR gate does not recognize the `frontend-checkout:` artifact prefix
+  and cannot verify this itself (registered under `.orchestrator/multi_repo_registry.py`
+  gap) — verified manually via `gh pr view 138 --repo ajoe734/execute-plans`.
 - No fresh hosted route-load/BFF-fanout probe was run for this closeout: the
   hosted dev BFF requires a bearer token this worker does not have standing
   authorization to source from docs/secrets, so a post-merge hosted re-run is
