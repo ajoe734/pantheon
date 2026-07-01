@@ -1,11 +1,11 @@
 # MGMT-GAP-010 Sidecar BFF Handoff Follow-Up 2
 
-Task ID: `MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`  
-Parent task: `MGMT-GAP-010`  
-Helper kind: `bff_handoff_packet`  
-Owner: `Codex2`  
-Reviewer: `Claude`  
-Prepared: 2026-07-01  
+Task ID: `MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`
+Parent task: `MGMT-GAP-010`
+Helper kind: `bff_handoff_packet`
+Owner: `Codex2`
+Reviewer: `Claude`
+Prepared: 2026-07-01
 Mutates canonical truth: false
 
 ## Scope
