@@ -8,6 +8,11 @@ Helper kind: `bff_handoff_packet`
 Scope: support-only packet. This does not change canonical truth, BFF runtime
 code, frontend runtime code, release-gate implementation, CI configuration,
 route registry behavior, governance policy, or parent closeout status.
+Closeout status: reviewer Codex approved the support-only packet, and PR
+`#2716` merged into `dev` at
+`d6b8c781d9f5f89caa86369f6371730007d6f958` on 2026-07-01. This finalization
+only records the sidecar handoff; the `MGMT-LOAD-007` owner still decides
+whether to absorb this packet into the parent closeout.
 
 ## Purpose
 
@@ -31,6 +36,7 @@ row into the final archive, residual-risk table, or `MGMT-GAP-006` handoff.
 | `.orchestrator/skills/worker-anchor-commit.md` | Worker-safe commit and anchor boundary for support artifacts. |
 | `.orchestrator/skills/task-closeout-finalization.md` | Closeout rule after reviewer approval and PR merge. |
 | central `ai-status.json` through `jq` | Confirmed this sidecar is active, `in_progress`, owned by Codex2, reviewed by Codex, and that `MGMT-LOAD-007` is active owner Codex/reviewer Claude. |
+| GitHub PR `#2716` | Confirmed the support-only packet PR merged into `dev` before owner finalization. |
 | `docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md` | Original route-load diagnosis, operator journey, BFF fanout gaps, and target budgets. |
 | `docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md` | Fleet sequencing and global closeout acceptance. |
 | `docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-001-baseline-route-probes.md` | Hosted before-state route-load and BFF fanout evidence. |
@@ -45,7 +51,7 @@ row into the final archive, residual-risk table, or `MGMT-GAP-006` handoff.
 
 ## Current Parent State
 
-Central L0 state at this handoff has:
+Central L0 state at the original handoff had:
 
 | Task | State | Meaning for this packet |
 |---|---|---|
@@ -56,6 +62,10 @@ Central L0 state at this handoff has:
 The local worktree's checked-in `ai-status.json` is older and still lists
 `MGMT-LOAD-001..007` as `todo`; do not use that stale copy to override the
 central status-root state or the task archive.
+
+Closeout note: after review, the task brief records this sidecar as closed and
+keeps the parent task disposition unchanged. This packet remains a support
+artifact and is not a final green release-load gate claim.
 
 ## Evidence Ledger For Parent Closeout
 
