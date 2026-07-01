@@ -133,13 +133,16 @@ def test_bff_management_data_sources_returns_canonical_envelope() -> None:
             assert pi["next_page_token"] is None
             assert pi["total"] == 2
             assert pi["page_size"] == 2
+            assert pi["returned"] == 2
+            assert pi["has_more"] is False
 
             # meta
             meta = payload["meta"]
             assert meta["status"] == "ok"
             assert meta["source"] == "service_client"
             assert "snapshot_at" in meta
-            assert meta["surfaces"]["data_sources"] == "ok"
+            assert meta["surfaces"]["data_sources"]["status"] == "ok"
+            assert meta["surfaces"]["data_sources"]["source"] == "service_client"
         finally:
             bff_main.read_store = original
 
@@ -179,6 +182,7 @@ def test_bff_management_data_sources_degraded_when_source_missing() -> None:
             # must NOT be a bare [] — must be a proper degraded envelope
             assert payload["items"] == []
             assert payload["page_info"]["total"] == 0
+            assert payload["page_info"]["returned"] == 0
 
             data = payload["data"]
             assert data["status"] == "unavailable"
@@ -188,7 +192,9 @@ def test_bff_management_data_sources_degraded_when_source_missing() -> None:
             meta = payload["meta"]
             assert meta["status"] == "unavailable"
             assert meta["source"] == "missing"
-            assert meta["surfaces"]["data_sources"] == "unavailable"
+            assert meta["surfaces"]["data_sources"]["status"] == "unavailable"
+            assert meta["surfaces"]["data_sources"]["source"] == "missing"
+            assert meta["degradation"]["reason"]
         finally:
             bff_main.read_store = original
 
@@ -208,7 +214,8 @@ def test_bff_management_data_sources_degraded_when_source_unavailable() -> None:
             meta = payload["meta"]
             assert meta["status"] == "unavailable"
             assert meta["source"] == "unavailable"
-            assert meta["surfaces"]["data_sources"] == "unavailable"
+            assert meta["surfaces"]["data_sources"]["status"] == "unavailable"
+            assert meta["surfaces"]["data_sources"]["source"] == "unavailable"
         finally:
             bff_main.read_store = original
 

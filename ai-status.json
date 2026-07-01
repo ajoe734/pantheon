@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-06-30T14:45:55Z",
+  "updated_at": "2026-07-01T00:40:07Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -193,8 +193,8 @@
         "MGMT-GAP-003"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:49Z"
+      "next": "MGMT-GAP-003 implementation branch task/mgmt-gap-003-bff-contracts is in progress; await PR merge, dev deploy, and hosted curl evidence before closeout.",
+      "last_update": "2026-07-01T00:40:07Z"
     },
     {
       "name": "Gemini2",
@@ -2570,7 +2570,7 @@
       "phase": "MGMT Console Production Gap / Batch 2 BFF contracts",
       "owner": "Claude2",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [],
       "artifacts": [
         "services/control-plane/bff",
@@ -2579,8 +2579,8 @@
       "acceptance": [
         "所有端點 OpenAPI + contract test + hosted curl 200; 空資料為明確 degraded/unavailable 而不是 ambiguous []"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:49Z",
+      "next": "Implementation branch task/mgmt-gap-003-bff-contracts adds typed management DTO envelopes, OpenAPI response schemas, and local contract tests; still needs PR merge, dev deploy, and hosted curl 200 evidence.",
+      "last_update": "2026-07-01T00:40:07Z",
       "source_ref": {
         "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
         "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",

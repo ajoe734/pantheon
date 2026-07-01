@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query
 
+from .contracts import ManagementRecordsEnvelope
+
 
 ReadStoreProvider = Callable[[], Any]
 ExtractIdentity = Callable[[Optional[str]], Any]
@@ -100,6 +102,8 @@ def _list_response(
     )
     meta: Dict[str, Any] = {
         "snapshot_at": snapshot_at,
+        "status": surface["status"],
+        "source": surface["source"],
         "total": total,
         "surfaces": {
             surface_key: surface,
@@ -116,7 +120,9 @@ def _list_response(
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
+            "page_size": page_size,
             "returned": len(page_items),
+            "has_more": next_page_token is not None,
         },
         "meta": meta,
     }
@@ -136,6 +142,7 @@ def create_workflows_hooks_router(
         "/bff/workflows",
         summary="List workflow templates",
         operation_id="listBffWorkflowTemplates",
+        response_model=ManagementRecordsEnvelope,
     )
     async def list_workflows(
         page_token: Optional[str] = None,
@@ -159,6 +166,7 @@ def create_workflows_hooks_router(
         "/bff/hooks",
         summary="List cron and hook registry entries",
         operation_id="listBffHookRegistry",
+        response_model=ManagementRecordsEnvelope,
     )
     async def list_hooks(
         page_token: Optional[str] = None,

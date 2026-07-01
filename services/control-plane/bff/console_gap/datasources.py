@@ -4,6 +4,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Header
 
+from .contracts import DataSourcesEnvelope
+
 
 def create_datasources_router(
     *,
@@ -20,7 +22,10 @@ def create_datasources_router(
     """
     router = APIRouter()
 
-    @router.get("/bff/management/data-sources")
+    @router.get(
+        "/bff/management/data-sources",
+        response_model=DataSourcesEnvelope,
+    )
     async def bff_management_data_sources(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -45,14 +50,31 @@ def create_datasources_router(
         else:
             surface_state = "ok" if items else "degraded"
 
+        surface = {
+            "status": surface_state,
+            "source": source,
+        }
+        if surface_state == "unavailable":
+            surface["message"] = "Source-ingest registry is unavailable or unconfigured."
+            surface["staleness"] = {
+                "served_from": "unverifiable" if source == "missing" else source,
+                "last_known_at": snapshot_at,
+            }
+        elif surface_state == "degraded":
+            surface["message"] = "Source-ingest registry is readable but currently empty."
+
         meta: Dict[str, Any] = {
             **snapshot_meta(snapshot_at),
             "status": surface_state,
             "source": source,
             "surfaces": {
-                "data_sources": surface_state,
+                "data_sources": surface,
             },
         }
+        if surface_state == "unavailable":
+            meta["degradation"] = {
+                "reason": "management data sources are currently unavailable.",
+            }
 
         if source in ("missing", "unavailable"):
             return {
@@ -67,6 +89,8 @@ def create_datasources_router(
                     "next_page_token": None,
                     "total": 0,
                     "page_size": 0,
+                    "returned": 0,
+                    "has_more": False,
                 },
                 "meta": meta,
             }
@@ -94,6 +118,8 @@ def create_datasources_router(
                 "next_page_token": None,
                 "total": len(items),
                 "page_size": len(items),
+                "returned": len(items),
+                "has_more": False,
             },
             "meta": meta,
         }

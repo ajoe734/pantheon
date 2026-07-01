@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import APIRouter, Header, Query
 
 from ._envelope import _gov_list_envelope
+from .contracts import ManagementRecordsEnvelope
 
 _DATASET = "memory_governance_rules"
 _SURFACE_KEY = "memory_governance_rules"
@@ -18,7 +19,10 @@ def create_memory_governance_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    @router.get("/bff/management/memory-governance")
+    @router.get(
+        "/bff/management/memory-governance",
+        response_model=ManagementRecordsEnvelope,
+    )
     def bff_management_memory_governance(
         page_token: Optional[str] = Query(default=None),
         page_size: int = Query(default=50, ge=1, le=200),
