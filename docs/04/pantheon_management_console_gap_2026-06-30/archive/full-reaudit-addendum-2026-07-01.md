@@ -139,6 +139,14 @@ These should remain in the console but need UX/contract adjustment:
 | DTO normalization | Normalize detail DTOs so pages never render `status.undefined`, `risk.undefined`, blank owner/update fields, or `NaN%` |
 | Load performance | Use the separate load-gap plan: code split management routes, defer shell fanout, remove duplicate jobs reads, avoid network-idle as readiness proof |
 
+MGMT-GAP-009 implementation note: the BFF now applies the same read role,
+logged-out session, and tenant-scope checks to authenticated `/bff/*` data
+requests before they can return management data. The dev-login default session
+now matches the frontend dev gate role/tenant contract
+`operator,reviewer,approver` + `tenant-dev`, and the dev BFF deploy path passes
+`PANTHEON_BFF_TENANT_ID=tenant-dev` plus
+`PANTHEON_BFF_ALLOWED_TENANTS=tenant-dev,pantheon-dev`.
+
 ## 7. What Should Be Deleted, Hidden, Or Redirected
 
 Do not delete canonical operator viewpoints just because they share layout.

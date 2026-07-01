@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from collections import deque
@@ -524,6 +525,42 @@ async def _management_rejects_agora_scope(request: Request, call_next):
         },
     )
 
+
+def _bff_session_contract_exempt(path: str) -> bool:
+    return path in {"/bff/auth/dev-login", "/bff/auth/refresh", "/bff/logout"}
+
+
+@app.middleware("http")
+async def _bff_session_rbac_contract(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or not path.startswith("/bff/") or _bff_session_contract_exempt(path):
+        return await call_next(request)
+
+    authorization = request.headers.get("authorization")
+    pantheon_session = request.cookies.get("pantheon_session")
+    if not authorization and not pantheon_session:
+        return await call_next(request)
+
+    try:
+        identity = _extract_identity(
+            authorization,
+            mfa_token=request.headers.get("x-mfa-token"),
+            session_cookie=pantheon_session,
+        )
+        _require_read_role(identity)
+        _raise_if_session_logged_out(identity)
+        requested_tenant = _first_nonblank(
+            request.headers.get("x-tenant-id"),
+            request.headers.get("x-pantheon-tenant"),
+        )
+        if requested_tenant:
+            _bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
+    except HTTPException as exc:
+        return _pack_d_http_exception_response(request, exc)
+
+    return await call_next(request)
+
+
 # --------------------------------------------------------------------------- #
 # Storage
 # --------------------------------------------------------------------------- #
@@ -951,7 +988,7 @@ def _dev_login_ttl_seconds() -> int:
 
 
 def _dev_login_roles() -> List[str]:
-    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer"]
+    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer", "approver"]
     return sorted(set(role for role in roles if role in _READ_ROLES or role in _WRITE_ROLES))
 
 
@@ -996,7 +1033,7 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
         os.getenv("PANTHEON_BFF_TENANT_ID"),
         os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
         os.getenv("PANTHEON_TENANT_ID"),
-        "pantheon-dev",
+        "tenant-dev",
     )
     allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
     mfa_verified = _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
@@ -7403,6 +7440,24 @@ def _build_alert_summary(alerts: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _management_alerts_degraded_payload(snapshot_at: str) -> Dict[str, Any]:
+    """MGMT-LOAD-005: explicit degraded envelope when alert aggregation times out."""
+    meta = _snapshot_meta(snapshot_at)
+    meta["acknowledgement_supported"] = True
+    meta["surfaces"] = {
+        "alerts": _management_read_timeout_surface(
+            "alerts",
+            snapshot_at=snapshot_at,
+            message="Alert aggregation timed out under concurrent read fanout; degraded empty response returned.",
+        ),
+    }
+    return {
+        "alerts": [],
+        "summary": _build_alert_summary([]),
+        "meta": meta,
+    }
+
+
 def _build_operator_alerts_payload(snapshot_at: str) -> Dict[str, Any]:
     incident_alerts, incident_surface = _build_incident_alerts(snapshot_at)
     governance_alerts, governance_surfaces = _build_governance_alerts(snapshot_at)
@@ -8983,6 +9038,38 @@ def _management_evidence_summary(
         "by_link_type": by_link_type,
         "byCredibilityTier": by_credibility_tier,
         "by_credibility_tier": by_credibility_tier,
+    }
+
+
+def _management_evidence_degraded_payload(*, page_size: int) -> Dict[str, Any]:
+    """MGMT-LOAD-005: explicit degraded envelope when evidence aggregation times out."""
+    snapshot_at = utc_now()
+    summary = _management_evidence_summary(filtered_total=0, page_items=[], redacted_count=0)
+    facets = {
+        "sourceTypes": summary["bySourceType"],
+        "source_types": summary["by_source_type"],
+        "linkTypes": summary["byLinkType"],
+        "link_types": summary["by_link_type"],
+        "credibilityTiers": summary["byCredibilityTier"],
+        "credibility_tiers": summary["by_credibility_tier"],
+    }
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_evidence": _management_read_timeout_surface(
+            "management_evidence",
+            snapshot_at=snapshot_at,
+            message="Evidence aggregation timed out under concurrent read fanout; degraded empty response returned.",
+        ),
+    }
+    meta["redacted_evidence_count"] = 0
+    return {
+        "data": [],
+        "items": [],
+        "summary": summary,
+        "facets": facets,
+        "page_info": {"next_page_token": None, "total": 0, "page_size": page_size},
+        "pagination": {"next_page_token": None, "has_more": False, "page_size": page_size},
+        "meta": meta,
     }
 
 
@@ -12222,14 +12309,103 @@ def _get_control_path_guidance(action_type: str) -> Optional[Dict[str, Any]]:
 # Endpoints
 # --------------------------------------------------------------------------- #
 
+def _management_read_timeout_seconds() -> float:
+    """Bound for offloaded management read aggregation (MGMT-LOAD-005).
+
+    /health and other lightweight routes must stay responsive while shell
+    summary / Evidence / alerts / approvals / jobs fan out concurrently.
+    Those routes run their synchronous read-store aggregation in a worker
+    thread (asyncio.to_thread) instead of inline on the event loop, so a slow
+    backing read cannot delay unrelated coroutines. This timeout bounds how
+    long a route waits before falling back to a degraded response.
+    """
+    try:
+        return max(0.05, float(os.getenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.6")))
+    except (TypeError, ValueError):
+        return 0.6
+
+
+def _management_read_timeout_surface(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    message: str,
+) -> Dict[str, Any]:
+    """Explicit degraded surface for a management read that hit its timeout budget."""
+    return {
+        "status": "degraded",
+        "dataset": dataset,
+        "source": "management_read_timeout",
+        "reason": "read_timeout",
+        "message": message,
+        "staleness": {"served_from": "timeout_degraded", "last_known_at": snapshot_at},
+    }
+
+
+def _log_management_read_timing(
+    route: str,
+    started_at: float,
+    *,
+    timed_out: bool = False,
+) -> None:
+    elapsed_ms = int((time.monotonic() - started_at) * 1000)
+    log.info(
+        "bff.management_read route=%s elapsed_ms=%d status=%s",
+        route,
+        elapsed_ms,
+        "timeout_degraded" if timed_out else "ok",
+    )
+
+
+class _ManagementReadTimeout(Exception):
+    """Raised when a management read exceeds its bounded wait budget (MGMT-LOAD-005)."""
+
+
+def _discard_late_management_read_result(task: "asyncio.Task[Any]") -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning("bff.management_read late worker-thread error after timeout budget: %r", exc)
+
+
+async def _run_management_read(
+    func: Callable[..., Any],
+    *args: Any,
+    timeout_seconds: Optional[float] = None,
+    **kwargs: Any,
+) -> Any:
+    """Run a synchronous read-store aggregation on a worker thread, bounded by a wait budget.
+
+    Deliberately uses asyncio.wait rather than asyncio.wait_for: once the
+    underlying OS thread has started executing synchronous code, Python
+    cannot forcibly cancel it, so wait_for would still block the caller for
+    the full duration of the slow call before raising TimeoutError (it only
+    reclassifies the outcome afterward). asyncio.wait instead stops waiting
+    at the budget and lets the route return a degraded response immediately;
+    the abandoned thread keeps running in the background and its (now
+    irrelevant) result is discarded by _discard_late_management_read_result.
+    """
+    budget = _management_read_timeout_seconds() if timeout_seconds is None else timeout_seconds
+    task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    done, _pending = await asyncio.wait({task}, timeout=budget)
+    if task in done:
+        return task.result()
+    task.add_done_callback(_discard_late_management_read_result)
+    raise _ManagementReadTimeout()
+
+
 @app.get("/health")
 async def health():
-    return {
+    started = time.monotonic()
+    payload = {
         "status": "ok",
         "service": "operator-bff",
         "version": "0.2.0",
         "timestamp": utc_now(),
     }
+    _log_management_read_timing("health", started)
+    return payload
 
 
 @app.get("/api/v1/settings")
@@ -14621,6 +14797,338 @@ async def list_operator_alerts(
 
     snapshot_at = utc_now()
     return _build_operator_alerts_payload(snapshot_at)
+
+
+_SHELL_SUMMARY_COUNT_CACHE: Dict[str, Any] = {}
+_SHELL_SUMMARY_COUNT_CACHE_LOCK = threading.Lock()
+_SHELL_PENDING_APPROVAL_STATES = {"pending", "in_review", "proposed", "under_review", "reviewed"}
+_SHELL_ACTIVE_INCIDENT_STATUSES = {"open", "in_progress"}
+_SHELL_ACTIVE_JOB_STATUSES = {"running", "in_progress", "queued"}
+
+
+def _shell_summary_count_ttl_seconds() -> float:
+    try:
+        return max(0.0, float(os.getenv("PANTHEON_BFF_SHELL_SUMMARY_COUNT_TTL_SECONDS", "5")))
+    except (TypeError, ValueError):
+        return 5.0
+
+
+def _shell_count_unavailable_surface(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    message: str,
+) -> Dict[str, Any]:
+    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at)
+    surface["status"] = "unavailable"
+    surface["message"] = message
+    surface.setdefault(
+        "staleness",
+        {"served_from": "unverifiable", "last_known_at": snapshot_at},
+    )
+    return surface
+
+
+def _shell_count_freshness(
+    *,
+    computed_at: str,
+    ttl_seconds: float,
+    cache_status: str,
+) -> Dict[str, Any]:
+    return {
+        "computed_at": computed_at,
+        "ttl_seconds": ttl_seconds,
+        "cache": cache_status,
+    }
+
+
+def _attach_shell_count_freshness(
+    surface: Dict[str, Any],
+    *,
+    computed_at: str,
+    ttl_seconds: float,
+    cache_status: str,
+) -> Dict[str, Any]:
+    decorated = dict(surface)
+    decorated["freshness"] = _shell_count_freshness(
+        computed_at=computed_at,
+        ttl_seconds=ttl_seconds,
+        cache_status=cache_status,
+    )
+    return decorated
+
+
+def _shell_summary_pending_approvals_count(snapshot_at: str) -> tuple[int, Dict[str, Any]]:
+    surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    if surface.get("status") == "unavailable":
+        return 0, surface
+    try:
+        items = read_store.list_approval_queue_items()
+    except Exception:
+        return 0, _shell_count_unavailable_surface(
+            "approval_queue_items",
+            snapshot_at=snapshot_at,
+            message="Approval count source failed.",
+        )
+    pending = [
+        item for item in items
+        if str(item.get("decision_state") or "").strip().lower() in _SHELL_PENDING_APPROVAL_STATES
+    ]
+    return len(pending), surface
+
+
+def _shell_summary_running_jobs_count(snapshot_at: str) -> tuple[int, Dict[str, Any]]:
+    surface_source = "bff_overlay" if _GOV_BFF_JOB_OVERLAY else None
+    surface = _dataset_surface_status(
+        "jobs",
+        snapshot_at=snapshot_at,
+        source=surface_source,
+    )
+    if surface.get("status") == "unavailable" and not _GOV_BFF_JOB_OVERLAY:
+        return 0, surface
+    try:
+        jobs = _list_bff_jobs()
+    except Exception:
+        return 0, _shell_count_unavailable_surface(
+            "jobs",
+            snapshot_at=snapshot_at,
+            message="Job count source failed.",
+        )
+    running = [
+        job for job in jobs
+        if str(job.get("status") or "").strip().lower() in _SHELL_ACTIVE_JOB_STATUSES
+    ]
+    return len(running), surface
+
+
+def _shell_summary_open_alerts_count(snapshot_at: str) -> tuple[int, Dict[str, Any]]:
+    source_surfaces: Dict[str, Dict[str, Any]] = {}
+    count = 0
+
+    incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    source_surfaces["incidents"] = incident_surface
+    if incident_surface.get("status") != "unavailable":
+        try:
+            for incident in read_store.list_incidents():
+                incident_status = str(incident.get("status") or "").strip().lower()
+                if incident_status not in _SHELL_ACTIVE_INCIDENT_STATUSES:
+                    continue
+                incident_id = str(incident.get("incident_id") or incident.get("id") or "").strip()
+                if f"alert-incident-{incident_id}" not in _ACKNOWLEDGED_ALERTS:
+                    count += 1
+        except Exception:
+            source_surfaces["incidents"] = _shell_count_unavailable_surface(
+                "incidents",
+                snapshot_at=snapshot_at,
+                message="Incident alert count source failed.",
+            )
+
+    review_surface = _dataset_surface_status("governance_review_queue_items", snapshot_at=snapshot_at)
+    source_surfaces["governance_review_queue"] = review_surface
+    if review_surface.get("status") != "unavailable":
+        try:
+            for item in read_store.list_governance_review_queue_items():
+                status = str(item.get("status") or "").strip().lower()
+                if status not in {"pending", "in_review", "escalated"}:
+                    continue
+                item_id = str(item.get("item_id") or "").strip()
+                if f"alert-governance-review-{item_id}" not in _ACKNOWLEDGED_ALERTS:
+                    count += 1
+        except Exception:
+            source_surfaces["governance_review_queue"] = _shell_count_unavailable_surface(
+                "governance_review_queue_items",
+                snapshot_at=snapshot_at,
+                message="Governance review alert count source failed.",
+            )
+
+    approval_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    source_surfaces["approval_queue"] = approval_surface
+    if approval_surface.get("status") != "unavailable":
+        try:
+            for item in read_store.list_approval_queue_items():
+                state = str(item.get("decision_state") or "").strip().lower()
+                if state not in {"pending", "in_review"}:
+                    continue
+                decision_id = str(item.get("decision_id") or "").strip()
+                if f"alert-approval-{decision_id}" not in _ACKNOWLEDGED_ALERTS:
+                    count += 1
+        except Exception:
+            source_surfaces["approval_queue"] = _shell_count_unavailable_surface(
+                "approval_queue_items",
+                snapshot_at=snapshot_at,
+                message="Approval alert count source failed.",
+            )
+
+    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
+    source_surfaces["kill_switch"] = kill_switch_surface
+    if kill_switch_surface.get("status") != "unavailable":
+        try:
+            kill_switch = read_store.get_kill_switch_status()
+            safe_mode_status = str(kill_switch.get("safe_mode_status") or "").strip().lower()
+            kill_switch_status = str(kill_switch.get("status") or "").strip().lower()
+            safe_mode_active = safe_mode_status not in {"", "off", "released", "none", "null"}
+            if (
+                kill_switch.get("active")
+                or kill_switch_status in {"triggered", "cooling_down"}
+                or safe_mode_active
+            ) and "alert-kill-switch-state" not in _ACKNOWLEDGED_ALERTS:
+                count += 1
+        except Exception:
+            source_surfaces["kill_switch"] = _shell_count_unavailable_surface(
+                "kill_switch",
+                snapshot_at=snapshot_at,
+                message="Kill-switch alert count source failed.",
+            )
+
+    surface = _aggregate_group_surface(
+        "open_alerts",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Shell alert count unavailable.",
+        degraded_message="Shell alert count is degraded.",
+    )
+    surface["source"] = "bff_cheap_count"
+    surface["source_surfaces"] = {
+        key: {"status": value.get("status"), "source": value.get("source")}
+        for key, value in source_surfaces.items()
+    }
+    surface["note"] = "Cheap shell count avoids full alert feed aggregation."
+    return count, surface
+
+
+def _build_shell_summary_counts() -> Dict[str, Any]:
+    ttl_seconds = _shell_summary_count_ttl_seconds()
+    now = time.monotonic()
+    cache_key = {
+        "read_store_id": id(read_store),
+        "read_surface_state": _read_surface_state(),
+    }
+    with _SHELL_SUMMARY_COUNT_CACHE_LOCK:
+        cached = _SHELL_SUMMARY_COUNT_CACHE
+        if (
+            cached.get("expires_at", 0.0) > time.monotonic()
+            and cached.get("cache_key") == cache_key
+            and cached.get("counts")
+            and cached.get("surfaces")
+        ):
+            snapshot_at = str(cached["snapshot_at"])
+            return {
+                "counts": dict(cached["counts"]),
+                "surfaces": {
+                    key: _attach_shell_count_freshness(
+                        surface,
+                        computed_at=snapshot_at,
+                        ttl_seconds=ttl_seconds,
+                        cache_status="hit",
+                    )
+                    for key, surface in json.loads(json.dumps(cached["surfaces"])).items()
+                },
+                "snapshot_at": snapshot_at,
+            }
+
+        snapshot_at = utc_now()
+        pending_approvals, approvals_surface = _shell_summary_pending_approvals_count(snapshot_at)
+        open_alerts, alerts_surface = _shell_summary_open_alerts_count(snapshot_at)
+        running_jobs, jobs_surface = _shell_summary_running_jobs_count(snapshot_at)
+        source_surfaces = {
+            "pending_approvals": approvals_surface,
+            "open_alerts": alerts_surface,
+            "running_jobs": jobs_surface,
+        }
+        shell_surface = _aggregate_group_surface(
+            "shell_summary",
+            list(source_surfaces.values()),
+            snapshot_at=snapshot_at,
+            unavailable_message="Shell summary count sources unavailable.",
+            degraded_message="Shell summary count sources are degraded.",
+        )
+        shell_surface["source"] = "bff_composed"
+        surfaces = {
+            "shell_summary": shell_surface,
+            **source_surfaces,
+        }
+        counts = {
+            "pending_approvals": pending_approvals,
+            "open_alerts": open_alerts,
+            "running_jobs": running_jobs,
+        }
+        _SHELL_SUMMARY_COUNT_CACHE.clear()
+        _SHELL_SUMMARY_COUNT_CACHE.update(
+            {
+                "expires_at": time.monotonic() + ttl_seconds,
+                "cache_key": cache_key,
+                "snapshot_at": snapshot_at,
+                "counts": counts,
+                "surfaces": json.loads(json.dumps(surfaces)),
+            }
+        )
+        return {
+            "counts": counts,
+            "surfaces": {
+                key: _attach_shell_count_freshness(
+                    surface,
+                    computed_at=snapshot_at,
+                    ttl_seconds=ttl_seconds,
+                    cache_status="miss",
+                )
+                for key, surface in surfaces.items()
+            },
+            "snapshot_at": snapshot_at,
+        }
+
+
+def _shell_summary_session(identity: OperatorIdentity, *, checked_at: str) -> Dict[str, Any]:
+    user = _bff_me_user_payload(identity)
+    session = _bff_me_session_payload(identity, checked_at=checked_at)
+    session_state = _sem_session_state(identity)
+    return {
+        "operator_id": user["operator_id"],
+        "operatorId": user["operator_id"],
+        "display_label": user["display_name"],
+        "displayLabel": user["display_name"],
+        "roles": list(user["roles"]),
+        "session_kind": session.get("session_kind"),
+        "sessionKind": session.get("session_kind"),
+        "state": str(session_state.get("state") or "active"),
+        "fresh": session.get("fresh"),
+        "mfa_verified": user["mfa_verified"],
+    }
+
+
+@app.get("/bff/management/shell-summary")
+def bff_management_shell_summary(
+    authorization: Optional[str] = Header(default=None),
+    pantheon_session: Optional[str] = Cookie(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+):
+    """Cheap management shell summary for first-mount badges and session chrome."""
+    started = time.monotonic()
+    identity = _extract_identity(
+        authorization,
+        mfa_token=x_mfa_token,
+        session_cookie=pantheon_session,
+    )
+    _require_read_role(identity)
+    _raise_if_session_logged_out(identity)
+    count_payload = _build_shell_summary_counts()
+    checked_at = utc_now()
+    result = {
+        "data": {
+            "counts": count_payload["counts"],
+            "session": _shell_summary_session(identity, checked_at=checked_at),
+            "transport": {
+                "bff_status": "ok",
+                "service": "operator-bff",
+                "api_version": app.version,
+            },
+        },
+        "meta": {
+            "snapshot_at": count_payload["snapshot_at"],
+            "surfaces": count_payload["surfaces"],
+        },
+    }
+    _log_management_read_timing("shell_summary", started)
+    return result
 
 
 @app.get("/api/v1/operator/home")
@@ -22365,8 +22873,25 @@ async def list_bff_approvals(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
+    started = time.monotonic()
     try:
-        items = read_store.list_approval_queue_items()
+        items = await _run_management_read(read_store.list_approval_queue_items)
+    except _ManagementReadTimeout:
+        _log_management_read_timing("approvals", started, timed_out=True)
+        return {
+            "items": [],
+            "count": 0,
+            "generated_at": snapshot_at,
+            "meta": {
+                "surfaces": {
+                    "approvals": _management_read_timeout_surface(
+                        "approvals",
+                        snapshot_at=snapshot_at,
+                        message="Approval queue read timed out under concurrent read fanout; degraded empty response returned.",
+                    ),
+                },
+            },
+        }
     except Exception:
         items = []
     pending = [
@@ -22374,6 +22899,7 @@ async def list_bff_approvals(
         if str(item.get("decision_state") or "").lower()
         in {"pending", "in_review", "proposed", "under_review", "reviewed"}
     ]
+    _log_management_read_timing("approvals", started)
     return {
         "items": pending,
         "count": len(pending),
@@ -36598,17 +37124,25 @@ async def bff_management_evidence(
     """BFF: adapt knowledge evidence refs into the Management Evidence Explorer."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    return _build_management_evidence_payload(
-        identity=identity,
-        ref_id=ref_id,
-        linked_entity_type=linked_entity_type,
-        linked_entity_ref=linked_entity_ref,
-        link_type=link_type,
-        credibility_tier=credibility_tier,
-        verified=verified,
-        page_token=page_token,
-        page_size=page_size,
-    )
+    started = time.monotonic()
+    try:
+        payload = await _run_management_read(
+            _build_management_evidence_payload,
+            identity=identity,
+            ref_id=ref_id,
+            linked_entity_type=linked_entity_type,
+            linked_entity_ref=linked_entity_ref,
+            link_type=link_type,
+            credibility_tier=credibility_tier,
+            verified=verified,
+            page_token=page_token,
+            page_size=page_size,
+        )
+    except _ManagementReadTimeout:
+        _log_management_read_timing("evidence", started, timed_out=True)
+        return _management_evidence_degraded_payload(page_size=page_size)
+    _log_management_read_timing("evidence", started)
+    return payload
 
 
 @app.get("/bff/management/persona-intent")
@@ -43718,109 +44252,6 @@ async def bff_get_experiment_artifacts(
     }
 
 
-# -- Jobs --------------------------------------------------------------------
-
-@app.get("/bff/jobs")
-async def bff_list_jobs(
-    status: Optional[str] = None,
-    job_type: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job list."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    jobs = read_store.list_jobs_bff(status=status, job_type=job_type)
-    total = len(jobs)
-    page_items, next_page_token = _page_slice(jobs, page_token, page_size)
-    return {
-        "data": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta("jobs", "job_list", snapshot_at=snapshot_at, total=total),
-    }
-
-
-@app.get("/bff/jobs/{job_id}")
-async def bff_get_job(
-    job_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job detail."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    job = read_store.get_job_bff(job_id)
-    if not job:
-        surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at)
-        _raise_if_read_surface_unavailable(surface, label="Job")
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    return {
-        "data": job,
-        "meta": _read_surface_meta("jobs", "job_detail", snapshot_at=snapshot_at),
-    }
-
-
-@app.get("/bff/jobs/{job_id}/logs")
-async def bff_get_job_logs(
-    job_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job logs."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    job = read_store.get_job_bff(job_id)
-    if not job:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    logs = read_store.get_job_logs_bff(job_id)
-    return {
-        "data": logs,
-        "meta": _read_surface_meta("jobs", "job_logs", snapshot_at=snapshot_at),
-    }
-
-
-@app.post("/bff/jobs/{job_id}/actions/{action_id}", status_code=202)
-async def bff_job_action(
-    job_id: str,
-    action_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: job action."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    job = read_store.get_job_bff(job_id)
-    if not job:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    return _evol_exp_bff_action_command(
-        entity_type=ObjectType.JOB,
-        entity_id=job_id,
-        action_id=action_id,
-        resolved_key=resolved_key,
-        identity=identity,
-        payload=payload,
-        command_type=CommandType.JOB_ACTION,
-    )
-
-
 # -- Events list -------------------------------------------------------------
 
 @app.get("/bff/events")
@@ -46390,7 +46821,14 @@ async def bff_list_alerts(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    return _build_operator_alerts_payload(snapshot_at)
+    started = time.monotonic()
+    try:
+        payload = await _run_management_read(_build_operator_alerts_payload, snapshot_at)
+    except _ManagementReadTimeout:
+        _log_management_read_timing("alerts", started, timed_out=True)
+        return _management_alerts_degraded_payload(snapshot_at)
+    _log_management_read_timing("alerts", started)
+    return payload
 
 
 @app.get("/bff/alerts/{alert_id}")
@@ -47672,7 +48110,29 @@ async def bff_list_jobs(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    jobs = _list_bff_jobs(status=status)
+    started = time.monotonic()
+    try:
+        jobs = await _run_management_read(_list_bff_jobs, status=status)
+    except _ManagementReadTimeout:
+        _log_management_read_timing("jobs", started, timed_out=True)
+        meta = _snapshot_meta(snapshot_at)
+        meta["surfaces"] = {
+            "jobs": _management_read_timeout_surface(
+                "jobs",
+                snapshot_at=snapshot_at,
+                message="Jobs read timed out under concurrent read fanout; degraded empty response returned.",
+            ),
+        }
+        return {
+            "data": [],
+            "items": [],
+            "page_info": {
+                "next_page_token": None,
+                "total": 0,
+                "returned": 0,
+            },
+            "meta": meta,
+        }
     surface = _dataset_surface_status(
         "jobs",
         snapshot_at=snapshot_at,
@@ -47687,6 +48147,7 @@ async def bff_list_jobs(
 
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {"jobs": surface}
+    _log_management_read_timing("jobs", started)
     return {
         "data": page_items,
         "items": page_items,

@@ -11,6 +11,8 @@
 | Supersedes | `docs/04/pantheon_bff_console_gap_2026-06-15/README.md` for management-console gap status |
 | Archive evidence | `archive/live-audit-2026-06-30.md` |
 | Re-audit addendum | `archive/full-reaudit-addendum-2026-07-01.md` |
+| Route/control re-audit | `archive/route-control-reaudit-2026-07-01.md` |
+| Route/control raw artifact | `archive/route-control-reaudit-2026-07-01.json` |
 | Execution packet | `docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md` |
 | Dispatch tracking | `docs/bff/execution-tasks/2026-06-30-management-console-production-gap/DISPATCH_TRACKING.md` |
 
@@ -77,6 +79,15 @@ mock/unavailable flags, DTO honesty issues such as `status.undefined` and
 `NaN%`, and updated recommendations for which surfaces should be adjusted,
 hidden/deleted, or deeply developed.
 
+The supplemental 2026-07-01 route/control re-audit is archived in
+`docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md`,
+with raw crawl JSON in
+`docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.json`.
+It covers 93 route samples, 510 buttons, 42 disabled buttons, 386 links, 47
+inputs, mock-visible routes, direct-render detail aliases, high-density action
+surfaces, and source-scan evidence for `runActionSafe`, `bffWrites`,
+`NonProductionActionButton`, `toast.success`, and `writeOverlay`.
+
 For execution artifacts, `frontend-checkout:...` means the active frontend
 source checkout audited at `/home/lupin/code/pantheon/.fe-ep`; it is not a
 literal path under this orchestration repository.
@@ -94,6 +105,7 @@ literal path under this orchestration repository.
 | G7 | P0 | Detail render honesty | 2026-07-01 live-id probes show `status.undefined`, `risk.undefined`, blank h1/owner/update fields, and `NaN%` | Detail pages normalize DTOs, aliases canonicalize, and empty registries fail honestly without seed-id leakage | `MGMT-GAP-008` |
 | G8 | P0 | Session/RBAC contract | Same dev operator token can read management data while `/bff/me` returns 403 | `/bff/me`, tenant, roles, and management reads share one documented fail-closed contract | `MGMT-GAP-009` |
 | G9 | P1 | Load/release gate | Management bundle and shell fanout can distort hosted readiness; localhost/network-idle probes are weak evidence | Bundle budgets, route-ready markers, endpoint timing, and shell request counts are part of release proof | `MGMT-GAP-010` |
+| G10 | P0 | Route/control proof depth | Supplemental crawl found 93 route samples, 510 buttons, 42 disabled buttons, 10 mock-visible routes, and detail aliases still direct-rendering | Acceptance harness covers route/control density, disabled reasons, alias final paths, mock flags, and command-receipt proof | `MGMT-GAP-004` + `MGMT-GAP-005` + `MGMT-GAP-006` + `MGMT-GAP-008` |
 
 ## 4. Development Principles
 
@@ -250,6 +262,10 @@ Deliverables:
   fields, session/RBAC mismatch, and unavailable-as-success states;
 - release gate records FE commit, BFF health, OpenAPI endpoint presence, and
   route evidence.
+- the route/control crawl shape from `route-control-reaudit-2026-07-01` is
+  promoted into the hosted harness: visible nav, hidden aliases, detail samples,
+  button/disabled counts, mock-visible surfaces, console-error classification,
+  and high-density action hotspots.
 
 Production gate:
 

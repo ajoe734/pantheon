@@ -20,6 +20,9 @@ archived and tied to merged PRs and deployed commits.
 - Verify BFF health/OpenAPI endpoint evidence.
 - Archive final probe reports, screenshots or logs, route manifest, and residual
   risks.
+- Reconcile final hosted harness output against the supplemental route/control
+  re-audit: visible routes, detail/alias samples, button/disabled counts,
+  mock-visible surfaces, high-density action hotspots, and build/load evidence.
 - Publish a closeout note that states exactly what is complete, what was
   superseded, and what remains blocked if anything remains.
 
@@ -32,6 +35,9 @@ archived and tied to merged PRs and deployed commits.
 - All `MGMT-GAP-*` tasks are `done` or reviewed superseded.
 - The final archive contains FE deployment evidence, BFF evidence, hosted probe
   evidence, and residual risk owners/expiry.
+- The final archive states whether every finding in
+  `route-control-reaudit-2026-07-01.md` was fixed, superseded by broader hosted
+  evidence, or remains blocked with an owner and expiry.
 - The closeout references PR numbers and merge SHAs.
 - The management console is either production-level by the spec, or the blocker
   is explicit and owned.
