@@ -1,0 +1,3063 @@
+{
+  "base": "http://127.0.0.1:4175",
+  "generatedAt": "2026-07-01T06:54:39.244Z",
+  "routeCount": 93,
+  "okCount": 92,
+  "problemRoutes": [
+    {
+      "path": "/management/cockpit",
+      "finalUrl": "/management/cockpit",
+      "problems": [
+        "empty main"
+      ],
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers' from origin 'http://127.0.0.1:4175' has been blocked by CORS ",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers/usage-summary?auth_probe=false&window_hours=168&limit=500' fro"
+      ],
+      "textSample": ""
+    },
+    {
+      "path": "/management/persona-fleet",
+      "finalUrl": "/management/persona-fleet",
+      "problems": [],
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726"
+      ],
+      "textSample": "Persona 艦隊 所有 persona 負責人下的 AI 交易人格。 顯示已封存 (0) 顯示非正式資料 (0) 目前沒有 live Persona Fleet 資料 此頁不顯示 demo、seed 或非正式 Persona Fleet 列。 重新整理"
+    },
+    {
+      "path": "/management/control-room",
+      "finalUrl": "/management/cockpit",
+      "problems": [],
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers' from origin 'http://127.0.0.1:4175' has been blocked by CORS ",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/orchestrator/status' from origin 'http://127.0.0.1:4175' has been blocke"
+      ],
+      "textSample": "Pathreon Management 駕駛艙 整個 AI 交易組織健康嗎？誰需要我？ 💬 詢問 AI Management Autonomy guarded Human pending 3 Critical findings 1 Persona owners 4 Personas 4 Broker live ready Capital bound blocked Strict publish ok BFF HA ok LLM Provider Auth active=unknown · kernel unavailable control inactive auth unknown Failed to fetch No LLM provider auth status returned. Open provider auth 資金總覽 開啟詳情 → 總 NAV $22,400,000 "
+    },
+    {
+      "path": "/management/one-ring",
+      "finalUrl": "/management/cockpit",
+      "problems": [],
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers' from origin 'http://127.0.0.1:4175' has been blocked by CORS ",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/mode' from origin 'http://127.0.0.1:4175' has been blocked by CORS polic"
+      ],
+      "textSample": "Pathreon Management 駕駛艙 整個 AI 交易組織健康嗎？誰需要我？ 💬 詢問 AI Management Autonomy guarded Human pending 3 Critical findings 1 Persona owners 4 Personas 4 Broker live ready Capital bound blocked Strict publish ok BFF HA ok LLM Provider Auth active=unknown · kernel unavailable control inactive auth unknown Failed to fetch No LLM provider auth status returned. Open provider auth 資金總覽 開啟詳情 → 總 NAV $22,400,000 "
+    },
+    {
+      "path": "/management/overview",
+      "finalUrl": "/management/cockpit",
+      "problems": [],
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers' from origin 'http://127.0.0.1:4175' has been blocked by CORS ",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers/usage-summary?auth_probe=false&window_hours=168&limit=500' fro"
+      ],
+      "textSample": "Pathreon Management 駕駛艙 整個 AI 交易組織健康嗎？誰需要我？ 💬 詢問 AI Management Autonomy guarded Human pending 3 Critical findings 1 Persona owners 4 Personas 4 Broker live ready Capital bound blocked Strict publish ok BFF HA ok LLM Provider Auth active=unknown · kernel unavailable control inactive auth unknown Failed to fetch No LLM provider auth status returned. Open provider auth 資金總覽 開啟詳情 → 總 NAV $22,400,000 "
+    },
+    {
+      "path": "/management/command-center",
+      "finalUrl": "/management/cockpit",
+      "problems": [],
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers' from origin 'http://127.0.0.1:4175' has been blocked by CORS ",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/orchestrator/status' from origin 'http://127.0.0.1:4175' has been blocke"
+      ],
+      "textSample": "Pathreon Management 駕駛艙 整個 AI 交易組織健康嗎？誰需要我？ 💬 詢問 AI Management Autonomy guarded Human pending 3 Critical findings 1 Persona owners 4 Personas 4 Broker live ready Capital bound blocked Strict publish ok BFF HA ok LLM Provider Auth active=unknown · kernel unavailable control inactive auth unknown Failed to fetch No LLM provider auth status returned. Open provider auth 資金總覽 開啟詳情 → 總 NAV $22,400,000 "
+    }
+  ],
+  "mockVisibleCount": 10,
+  "totals": {
+    "buttons": 510,
+    "enabledButtons": 468,
+    "disabledButtons": 42,
+    "links": 386,
+    "inputs": 47,
+    "textareas": 1,
+    "selects": 11,
+    "switches": 0
+  },
+  "results": [
+    {
+      "path": "/management/cockpit",
+      "kind": "nav",
+      "finalUrl": "/management/cockpit",
+      "problems": [
+        "empty main"
+      ],
+      "headings": [
+        "Pathreon Management 駕駛艙",
+        "LLM Provider Auth",
+        "資金總覽",
+        "Persona 聯賽",
+        "季度排名倒數",
+        "資料源健康",
+        "OODA LOOP FLOW",
+        "PERSONA × OODA"
+      ],
+      "buttons": [
+        "💬 詢問 AI Management",
+        "Refresh LLM provider auth"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 2,
+        "enabledButtons": 2,
+        "disabledButtons": 0,
+        "links": 39,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "",
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers' from origin 'http://127.0.0.1:4175' has been blocked by CORS ",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers/usage-summary?auth_probe=false&window_hours=168&limit=500' fro",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/mode' from origin 'http://127.0.0.1:4175' has been blocked by CORS polic",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/orchestrator/status' from origin 'http://127.0.0.1:4175' has been blocke",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers?auth_probe=true' from origin 'http://127.0.0.1:4175' has been ",
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "path": "/management/persona-fleet",
+      "kind": "nav",
+      "finalUrl": "/management/persona-fleet",
+      "problems": [],
+      "headings": [
+        "Persona 艦隊"
+      ],
+      "buttons": [
+        "顯示已封存 (0)",
+        "顯示非正式資料 (0)",
+        "重新整理"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 3,
+        "enabledButtons": 3,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Persona 艦隊 所有 persona 負責人下的 AI 交易人格。 顯示已封存 (0) 顯示非正式資料 (0) 目前沒有 live Persona Fleet 資料 此頁不顯示 demo、seed 或非正式 Persona Fleet 列。 重新整理",
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726"
+      ]
+    },
+    {
+      "path": "/management/human-inbox",
+      "kind": "nav",
+      "finalUrl": "/management/human-inbox",
+      "problems": [],
+      "headings": [
+        "人類收件匣"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "人類收件匣 10 種類型 · 預先顯示所需角色與後果 · 直接連到能處理的頁面。 目前沒有 live 收件匣項目。",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/trading-pulse",
+      "kind": "nav",
+      "finalUrl": "/management/trading-pulse",
+      "problems": [],
+      "headings": [
+        "交易脈動",
+        "資料覆蓋",
+        "Runtime 明細",
+        "TOP IMPROVING PERSONAS",
+        "TOP DEGRADING PERSONAS",
+        "TOP IMPROVING STRATEGIES",
+        "WORST EXECUTION QUALITY",
+        "HIGHEST RISK CAPITAL POOLS"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 9,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "交易脈動 Live runtime、telemetry 與 paper/live drift 基準聚合。 資料覆蓋 快照時間: — DEGRADED management_trading_pulse unavailable local_snapshot Live Trading Pulse data is unavailable. Runtime Status runtime-status 0 狀態: — 階段: — P&L pnl — Telemetry 覆蓋: 0 Worst Drawdown drawdown — Execution Quality execution-quality — 最差滑價 bps: — Baseline Comparison baseline-comparison 0 Baseline 覆蓋: 0 基準狀態: — Runtime 明細 0 Runtime 階",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/evolution-journal",
+      "kind": "nav",
+      "finalUrl": "/management/evolution-journal",
+      "problems": [],
+      "headings": [
+        "演化日誌"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "演化日誌 AI 交易系統如何自我改善。 Tune momentum lookback 30→45 improved ev-101 改前 1.20 改後 1.31 落地時間 5/19/2026, 12:00:00 AM Add ATR-based position sizing inconclusive ev-102 改前 1.05 改後 1.04 落地時間 5/17/2026, 12:00:00 AM Switch to vol-target rebal weekly degraded ev-103 改前 1.10 改後 0.98 落地時間 5/15/2026, 12:00:00 AM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/evidence",
+      "kind": "nav",
+      "finalUrl": "/management/evidence",
+      "problems": [
+        "mock-visible"
+      ],
+      "headings": [
+        "證據庫"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "證據庫 Proof packet、readiness 證據、artifact provenance、決策與 assertion 歷史。 總數 1 可見 1 已驗證 0 已遮蔽 0 資料面 mock 來源 / PACKET 可信度 可解析性 關聯物件 擷取時間 Readiness evidence unavailable in mock mode evref-demo-readiness-001 unknown · supporting evidence 未驗證 unverified unavailable Source unavailable Mock readiness gate readiness:mock-readiness 6/15/2026, 1:02:00 PM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/persona-intent",
+      "kind": "nav",
+      "finalUrl": "/management/persona-intent",
+      "problems": [],
+      "headings": [
+        "Persona 意圖稽核",
+        "Rebalance momentum sleeve toward higher beta names.",
+        "[redacted by policy]",
+        "受限意圖紀錄"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Persona 意圖稽核 彙整 persona trace、訓練 session、Agora session 的交易意圖稽核軌。內容維持政策保護；此頁只顯示安全摘要、來源、風險旗標與證據覆蓋。 紀錄 3 已遮蔽 1 受限 1 風險旗標 2 證據引用 2 未知來源 · 狀態未知 Rebalance momentum sleeve toward higher beta names. Persona: persona:alpha-trader 紀錄: trace-001 摘要 5/20/2026, 9:15:00 AM 來源 未知來源 保護層級 摘要 風險旗標 1 證據引用 1 詮釋：Increase momentum sleeve gross to 1.2x; rotate into TSMC, NVDA. 工具：screener.momentum, risk.var-projection b",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/portfolio-book",
+      "kind": "nav",
+      "finalUrl": "/management/portfolio-book",
+      "problems": [],
+      "headings": [
+        "資金持倉總覽",
+        "資金池摘要",
+        "持倉"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 8,
+        "inputs": 1,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "資金持倉總覽 所有受管資金池 — NAV、曝險、槓桿與持倉。 總 NAV $22,400,000 總現金 $2,980,000 總曝險 $29,100,000 淨曝險 $14,100,000 槓桿 1.3× 未實現損益 $11,920 今日損益 -$46,000 30 天損益 $145,000 資金池摘要 資金池 NAV 槓桿 使用率 今日損益 回撤 狀態 管理 Alpha US Equity $12,400,000 1.15× 72.00% $24,000 -3.80% ok 管理 FX Macro $6,800,000 1.4× 81.00% -$18,000 -6.10% watch 管理 Crypto Hedge $3,200,000 1.69× 92.00% -$52,000 -12.40% breach 管理 持倉 代號 資產類別 方向 數量 市值 權重 未實現損益 曝險 管理",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/persona-league",
+      "kind": "nav",
+      "finalUrl": "/management/persona-league",
+      "problems": [],
+      "headings": [
+        "Persona 聯賽",
+        "暫停 / 退役"
+      ],
+      "buttons": [
+        "升級為 Canary 候選 →",
+        "分解",
+        "增加研究預算 →",
+        "分解",
+        "分解",
+        "分解",
+        "分解",
+        "分解",
+        "要求重訓 →",
+        "分解",
+        "暫停 persona →",
+        "分解"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 12,
+        "enabledButtons": 12,
+        "disabledButtons": 0,
+        "links": 15,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 1,
+        "switches": 0
+      },
+      "textSample": "Persona 聯賽 讓所有 AI 人格在損益、風險、執行、介入與演化指標上同場競賽。 預設視角 綜合 損益 風險調整 執行品質 穩定性 改進度 風險罰分 人類介入 演化效益 Tier 分布 S: 2 A: 2 B: 2 C: 1 D: 0 watch: 0 suspended: 1 排名上升最多 Capital Steward ▲ 2 Alpha Trader ▲ 1 FX Scout — 排名下降最多 Risk Guard ▼ 1 Vol Hunter ▼ 1 Crypto Scout ▼ 1 排名 Δ PERSONA TIER 分數 30 天損益 SHARPE 最大回撤 人類介入 建議 #1 ▲ 1 Alpha Trader S 94 $275,000 2.2 -3.20% 1 升級為 Canary 候選 → 分解 #2 ▼ 1 Risk Guard S 88 $230,000 2 ",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/quarterly-ranking",
+      "kind": "nav",
+      "finalUrl": "/management/quarterly-ranking",
+      "problems": [],
+      "headings": [
+        "季度排名",
+        "公式權重",
+        "失格 / 資料不足",
+        "證據包"
+      ],
+      "buttons": [
+        "升級為 Canary 候選 →",
+        "增加研究預算 →",
+        "要求重訓 →"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 3,
+        "enabledButtons": 3,
+        "disabledButtons": 0,
+        "links": 18,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "季度排名 季度競賽結果。建議僅送治理流程，絕不自動執行。 目前季度 2026-Q2 結算日 2026-06-30 剩餘天數 39 公式版本 1.0.0 公式權重 損益 0.25 Sharpe 0.2 回撤控制 0.15 執行品質 0.15 風險合規 0.15 改進度 0.05 人類介入罰分 0.05 最少交易日: 45 · 最少交易筆數: 200 排名 上季排名 Δ PERSONA TIER 分數 季度損益 SHARPE 資格 建議 #1 2 ▲ 1 Alpha Trader S 71.1 $710,000 2.2 合格 升級為 Canary 候選 → #2 1 ▼ 1 Risk Guard S 66.3 $600,000 2 合格 增加研究預算 → #3 3 — FX Scout A 61.6 $490,000 1.8 合格 維持現狀 #4 6 ▲ 2 Capital Steward A",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/performance-attribution",
+      "kind": "nav",
+      "finalUrl": "/management/performance-attribution",
+      "problems": [],
+      "headings": [
+        "績效歸因"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 7,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 2,
+        "switches": 0
+      },
+      "textSample": "績效歸因 拆解損益與風險到 persona、策略、資金池、資產類別、broker、runtime。 全部維度 Persona 策略 資金池 資產類別 代號 產業 區域 Broker Runtime 研究後端 季度 市場 regime 7 天 30 天 季度 本年至今 維度 標的 損益貢獻 損益 % 風險 % 回撤 % 管理 資金池 Alpha US Equity $320,000 62.00% 42.00% 18.00% 管理 → 策略 Momentum US $220,000 43.00% 34.00% 22.00% 管理 → Persona Alpha Trader $184,000 36.00% 28.00% 18.00% 管理 → Persona Risk Guard $92,000 18.00% 12.00% 8.00% 管理 → 策略 FX Carry -$28,000 -5.",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/readiness/ep5",
+      "kind": "nav",
+      "finalUrl": "/management/readiness/ep5",
+      "problems": [],
+      "headings": [
+        "EP5 Canary 就緒度",
+        "就緒度檢查清單",
+        "證據 PACKET",
+        "阻擋項"
+      ],
+      "buttons": [
+        "重新整理就緒度",
+        "匯出 Packet"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 2,
+        "enabledButtons": 2,
+        "disabledButtons": 0,
+        "links": 2,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "EP5 Canary 就緒度 環境：paper→canary · 最近更新 5/20/2026, 12:00:00 PM pending 分數 67% can_proceed: false 主要阻擋：Risk-owner signoff pending on canary activation 查看證據 開啟人類 Gate 重新整理就緒度 匯出 Packet 就緒度檢查清單 OODA paper packet present 負責角色：research-owner · 證據： 已附加 · 阻擋中 pass EP4 governed paper proof present 負責角色：research-owner · 證據： 已附加 · 阻擋中 pass M7 readiness packet present 負責角色：research-owner · 證據： 已附加 · 阻擋中 pass B",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/readiness/broker-live",
+      "kind": "nav",
+      "finalUrl": "/management/readiness/broker-live",
+      "problems": [],
+      "headings": [
+        "Broker Live Activation",
+        "就緒度檢查清單",
+        "證據 PACKET",
+        "阻擋項"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Broker Live Activation 環境：canary→live · 最近更新 5/20/2026, 12:00:00 PM blocked 分數 60% can_proceed: false 主要阻擋：Risk-owner has not signed off broker-live activation. 就緒度檢查清單 broker_live_activation_criteria present 負責角色：broker-owner · 證據： 已附加 · 阻擋中 pass 14d paper evidence present 負責角色：research-owner · 證據： 已附加 · 阻擋中 pass 7d canary evidence present 負責角色：ops-owner · 證據： 缺少 · 阻擋中 pending Broker sandbox evid",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/readiness/capital-binding-live",
+      "kind": "nav",
+      "finalUrl": "/management/readiness/capital-binding-live",
+      "problems": [],
+      "headings": [
+        "Capital Binding Live",
+        "就緒度檢查清單",
+        "證據 PACKET",
+        "阻擋項"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Capital Binding Live 環境：live · 最近更新 5/20/2026, 12:00:00 PM pending 分數 79% can_proceed: false 主要阻擋：Operator role not yet assigned for the binding. 就緒度檢查清單 CapitalBindingLiveReadiness packet present 負責角色：capital-owner · 證據： 已附加 · 阻擋中 pass Sponsor persona assigned 負責角色：capital-owner · 證據： 已附加 · 阻擋中 pass Live owner assigned 負責角色：capital-owner · 證據： 已附加 · 阻擋中 pass Risk owner assigned 負責角色：risk-owner · ",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/readiness/bff-ha",
+      "kind": "nav",
+      "finalUrl": "/management/readiness/bff-ha",
+      "problems": [],
+      "headings": [
+        "BFF HA / Control Plane Resilience",
+        "就緒度檢查清單",
+        "證據 PACKET",
+        "阻擋項"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "BFF HA / Control Plane Resilience 環境：platform · 最近更新 5/20/2026, 12:00:00 PM pending 分數 55% can_proceed: false 主要阻擋：Multi-replica PoC + SSE replay still in progress. 就緒度檢查清單 Topology selected 負責角色：platform-owner · 證據： 已附加 · 阻擋中 pass SLA targets present 負責角色：platform-owner · 證據： 已附加 · 阻擋中 pass Multi-replica PoC present 負責角色：platform-owner · 證據： 缺少 · 阻擋中 pending SSE fanout / replay proof present 負責角色",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/readiness/strict-publish",
+      "kind": "nav",
+      "finalUrl": "/management/readiness/strict-publish",
+      "problems": [],
+      "headings": [
+        "Strict Publish Audit",
+        "就緒度檢查清單",
+        "證據 PACKET",
+        "阻擋項"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Strict Publish Audit 環境：strict-live · 最近更新 5/20/2026, 12:00:00 PM ready 分數 100% can_proceed: true 就緒度檢查清單 Deployment URL present 負責角色：operator · 證據： 已附加 · 阻擋中 pass Strict env manifest present 負責角色：operator · 證據： 已附加 · 阻擋中 pass VITE_BFF_MODE=live 負責角色：operator · 阻擋中 pass VITE_BFF_FALLBACK=strict 負責角色：operator · 阻擋中 pass VITE_BFF_REAL_WRITES=false 負責角色：operator · 阻擋中 pass Bundle hash present 負責角色：op",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/strategies",
+      "kind": "nav",
+      "finalUrl": "/management/strategies",
+      "problems": [],
+      "headings": [
+        "策略與 Alpha"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 Strategy 列表 策略與 Alpha 建立 名稱 狀態 風險 ALPHA PNL 30D SHARPE 負責人 更新時間 Momentum Quant Alpha 已部署 中 alpha_mq_v3 8.20% 1.70 alice 7/1/2026, 4:50:27 AM Cross-Sector Mean Reversion 審查中 高 alpha_msr_v1 3.10% 0.90 bob 7/1/2026, 1:50:27 AM Asia Tech Long-Short 已部署 低 alpha_atls_v2 5.20% 2.10 carol 6/30/2026, 6:50:27 PM FX Carry Tactical 暫停 極高 alpha_fxc_v1 -1.20% -0.30 dan 6/30/2026, 12:50:27 AM Vol Surface A",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/alpha-factory",
+      "kind": "nav",
+      "finalUrl": "/management/alpha-factory",
+      "problems": [
+        "mock-visible"
+      ],
+      "headings": [
+        "Alpha 工廠"
+      ],
+      "buttons": [
+        "開啟策略列表",
+        "建檔",
+        "建檔",
+        "建檔",
+        "建檔",
+        "建檔",
+        "重現",
+        "重現",
+        "重現"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 9,
+        "enabledButtons": 9,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 Alpha 工廠 Alpha 工廠 Alpha 流水線看板 — 發現候選、Scaffolded 實驗、已重現的策略。 開啟策略列表 MOCK 資料此頁不會再把 fixture 候選冒充為即時資料；沒有後端欄位時會顯示空狀態。 已探索 5 Liquidity-shock divergence disc_021 低 由研究訊號浮現,需建檔成回測。 建檔 Macro surprise momentum disc_022 中 由研究訊號浮現,需建檔成回測。 建檔 Stablecoin flow imbalance disc_023 中 由研究訊號浮現,需建檔成回測。 建檔 Options skew reversion disc_024 低 由研究訊號浮現,需建檔成回測。 建檔 On-chain whale accumulation disc_025 高 由研究訊號浮現,需建檔成回測。 ",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/personas",
+      "kind": "nav",
+      "finalUrl": "/management/personas",
+      "problems": [],
+      "headings": [
+        "Persona"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 Persona 列表 Persona 建立 名稱 狀態 風險 類型 策略與 ALPHA 勝率 負責人 更新時間 Quant Architect 已部署 低 Quant 3 78% alice 6/30/2026, 10:50:27 PM Macro Strategist 已部署 中 Macro 2 64% bob 6/30/2026, 10:50:27 AM Risk Officer Bot 已部署 低 Risk 4 91% carol 7/1/2026, 3:50:27 AM Red Team Adversary 審查中 高 RedTeam 0 50% dan 6/29/2026, 4:50:27 AM Synthetic Persona 5 審查中 低 Quant 0 50% alice 7/1/2026, 4:50:27 AM Synthetic Persona 6 已部",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/capital",
+      "kind": "nav",
+      "finalUrl": "/management/capital",
+      "problems": [],
+      "headings": [
+        "資金池"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 資金池 資金池 建立 名稱 狀態 風險 值 持倉 使用率 限額 負責人 更新時間 Alpha Pool 已部署 中 USD 25,000,000 18,400,000 4.0% capital 7/1/2026, 5:50:27 AM Beta Pool 已部署 高 USD 12,000,000 7,200,000 6.0% capital 7/1/2026, 12:50:27 AM Tactical Pool 已部署 極高 USDT 5,000,000 4,800,000 8.0% capital 6/30/2026, 8:50:27 PM Synthetic Pool 1 已部署 低 USD 2,000,000 800,000 3.0% capital 7/1/2026, 1:50:27 AM Synthetic Pool 2 已部署 中 USDT 3,000,000 1,",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/ranking",
+      "kind": "nav",
+      "finalUrl": "/management/ranking",
+      "problems": [],
+      "headings": [
+        "排序儀表板"
+      ],
+      "buttons": [
+        "啟用公式版本",
+        "重新計算",
+        "比較公式",
+        "凍結排名",
+        "發布排名",
+        "Persona",
+        "策略",
+        "Alpha 家族",
+        "資金池",
+        "Paper 策略",
+        "Live 策略",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫",
+        "套用覆寫"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 35,
+        "enabledButtons": 35,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 1,
+        "switches": 0
+      },
+      "textSample": "管理控制台 排序儀表板 排序儀表板 依公式排序的績效儀表板,可下鑽看分數組成。 Sharpe-Adjusted Drawdown v3 Capacity-Weighted Alpha Synthetic Formula 3 Synthetic Formula 4 Synthetic Formula 5 Synthetic Formula 6 啟用公式版本 重新計算 比較公式 凍結排名 發布排名 Persona 策略 Alpha 家族 資金池 Paper 策略 Live 策略 # 名稱 分數 SHARPE PNL 30D 回撤 1 Momentum Quant Alpha 1.080 1.70 8.20% -4.50% 套用覆寫 2 Asia Tech Long-Short 1.075 2.10 5.20% -2.10% 套用覆寫 3 Synthetic Strategy 12 1.065 ",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/rebalance",
+      "kind": "nav",
+      "finalUrl": "/management/rebalance",
+      "problems": [],
+      "headings": [
+        "季度調倉"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 季度調倉 季度調倉 建立 名稱 狀態 風險 優先度 變更摘要 負責人 更新時間 Q2 2026 Rebalance 審查中 高 2026-Q2 12.0% capital 7/1/2026, 2:50:27 AM Q1 2026 Rebalance 已部署 中 2026-Q1 4.0% capital 4/2/2026, 6:50:27 AM Synthetic Rebalance 1 已部署 中 2025-Q3 5.0% capital 5/2/2026, 6:50:27 AM Synthetic Rebalance 2 已部署 中 2025-Q4 5.0% capital 4/2/2026, 6:50:27 AM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/evolution",
+      "kind": "nav",
+      "finalUrl": "/management/evolution",
+      "problems": [],
+      "headings": [
+        "演化方向"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 演化方向 演化方向 建立 名稱 狀態 風險 版本 成員 績效 進度 負責人 更新時間 Momentum α Evolution 已部署 中 G14 64 1.83 72% ai_trainer 7/1/2026, 6:02:27 AM Vol Surface Search 審查中 高 G6 32 1.21 31% ai_trainer 7/1/2026, 3:50:27 AM Synthetic Evolution 3 已部署 低 G1 16 0.80 20% ai_trainer 7/1/2026, 5:50:27 AM Synthetic Evolution 4 已部署 低 G2 32 0.85 40% ai_trainer 7/1/2026, 4:50:27 AM Synthetic Evolution 5 已部署 低 G3 48 0.90 60% ai_trainer ",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/experiments",
+      "kind": "nav",
+      "finalUrl": "/management/experiments",
+      "problems": [],
+      "headings": [
+        "研究與實驗"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 研究與實驗 研究與實驗 建立 名稱 狀態 風險 狀態 指標 值 負責人 更新時間 Asia Tech earnings drift 審查中 低 RUNNING IR 0.68 carol 7/1/2026, 5:20:27 AM FX Carry regime gating 已核准 中 CONCLUDED Sharpe Δ 0.31 dan 6/29/2026, 2:50:27 PM Cross-asset momentum blend 草稿 低 QUEUED Sharpe 0.00 alice 7/1/2026, 6:26:27 AM Synthetic Experiment 1 草稿 低 QUEUED IR 0.00 alice 7/1/2026, 5:50:27 AM Synthetic Experiment 2 審查中 中 RUNNING Sharpe 0.05 bob",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/artifacts",
+      "kind": "nav",
+      "finalUrl": "/management/artifacts",
+      "problems": [],
+      "headings": [
+        "Artifact 與血緣"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 Artifact 與血緣 Artifact 與血緣 建立 名稱 狀態 風險 種類 版本 SIZE (MB) HASH 負責人 更新時間 stg_001 model v3.2.0 已部署 高 MODEL 3.2.0 84.2 sha256:9f3a…b21c ai_trainer 7/1/2026, 4:50:27 AM FX Carry gating dataset 已核准 中 DATASET 1.0.0 312.4 sha256:1a2b…77e0 dan 6/29/2026, 2:50:27 PM stg_002 container v1.0.4 已部署 中 CONTAINER 1.0.4 1,024 sha256:5d44…ff10 ops 6/30/2026, 11:50:27 PM Q1 2026 performance report 已核准 低 REPORT 1.0",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/lineage",
+      "kind": "nav",
+      "finalUrl": "/management/lineage",
+      "problems": [],
+      "headings": [
+        "血緣瀏覽"
+      ],
+      "buttons": [
+        "Strategy",
+        "Persona",
+        "Artifact",
+        "CapitalPool",
+        "Experiment"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 5,
+        "enabledButtons": 5,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 2,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 血緣瀏覽 血緣瀏覽 跨物件血緣，可依型別篩選。選一個根節點追蹤上下游。 根節點 篩選 型別 Strategy Persona Artifact CapitalPool Experiment No lineage available.",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/loops",
+      "kind": "nav",
+      "finalUrl": "/management/loops",
+      "problems": [],
+      "headings": [
+        "閉環執行"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 閉環執行 閉環執行 研究 / 執行 / 最佳化三條閉環的執行紀錄。 主體 類別 狀態 下一步 Momentum Quant Alpha execution failed automatic Cross-Sector Mean Reversion execution idle automatic Asia Tech Long-Short execution idle automatic Synthetic Strategy 7 execution idle automatic Synthetic Strategy 8 execution idle automatic Synthetic Strategy 9 execution idle automatic Synthetic Strategy 11 execution idle automatic Synthetic Strat",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/deployments",
+      "kind": "nav",
+      "finalUrl": "/management/deployments",
+      "problems": [],
+      "headings": [
+        "部署"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 部署 部署 建立 名稱 狀態 風險 目標 版本 負責人 更新時間 stg_001 → live v3.2.0 已部署 高 LIVE 3.2.0 ops 7/1/2026, 5:50:27 AM stg_002 → paper v1.0.4 已部署 中 PAPER 1.0.4 ops 6/30/2026, 11:50:27 PM stg_003 → live v2.4.1 已部署 低 LIVE 2.4.1 ops 6/29/2026, 6:50:27 PM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/runtimes",
+      "kind": "nav",
+      "finalUrl": "/management/runtimes",
+      "problems": [],
+      "headings": [
+        "執行環境"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 6,
+        "enabledButtons": 6,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 執行環境 執行環境 Executor、MCP 伺服器、排程與資料攝取的即時運維視圖。 名稱 種類 環境 狀態 CPU MEMORY P95 LATENCY UPTIME 區域 executor-us-east-1 EXECUTOR LIVE 執行中 62% 71% 142ms 99.97% us-east-1 executor-eu-west-1 EXECUTOR PAPER 執行中 41% 55% 88ms 99.99% eu-west-1 mcp-server-alpha MCP LIVE 警告 78% 83% 2150ms 99.40% us-east-1 scheduler-primary SCHEDULER LIVE 執行中 22% 34% 30ms 99.99% us-east-1 market-ingest INGEST LIVE 執行中 49% 52% 64ms",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/risk",
+      "kind": "nav",
+      "finalUrl": "/management/risk",
+      "problems": [],
+      "headings": [
+        "風險中心"
+      ],
+      "buttons": [
+        "資金",
+        "策略",
+        "Persona",
+        "執行環境",
+        "工具 / MCP / 技能",
+        "事件與原始警報"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 6,
+        "enabledButtons": 6,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 風險中心 風險中心 整合資金、策略、Persona、Runtime 與能力的風險視圖。 未結案事件 7 執行環境警示 1 資金池超用 (>90%) 1 回撤超限 1 極高風險物件 7 高風險物件 15 風險矩陣 類型 低 中 高 極高 策略 6 7 6 5 資金 1 2 2 1 執行環境 5 — 1 — 工具 5 4 2 1 資金 策略 Persona 執行環境 工具 / MCP / 技能 事件與原始警報 名稱 持倉 使用率 限額 風險 Alpha Pool 25.0M USD 74% 4.0% 中 Beta Pool 12.0M USD 60% 6.0% 高 Tactical Pool 5.0M USDT 96% 8.0% 極高 Synthetic Pool 1 2.0M USD 40% 3.0% 低 Synthetic Pool 2 3.0M USDT 53% 4.0% 中",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/incidents",
+      "kind": "nav",
+      "finalUrl": "/management/incidents",
+      "problems": [],
+      "headings": [
+        "事件（Incidents）"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 事件（Incidents） 事件（Incidents） 事件（Incidents）：已成立且需協調追蹤的正式問題。每個事件設有指揮官與時間軸。 嚴重度 標題 狀態 開啟時間 極高 Live order rejected by exchange 執行中 7/1/2026, 5:50:27 AM 低 Synthetic incident #1 警告 7/1/2026, 6:20:27 AM 中 Synthetic incident #2 執行中 7/1/2026, 5:08:27 AM 高 Synthetic incident #3 成功 7/1/2026, 3:56:27 AM 極高 Synthetic incident #4 警告 7/1/2026, 2:44:27 AM 低 Synthetic incident #5 執行中 7/1/2026, 1:32:27 AM 中 Sy",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/jobs",
+      "kind": "nav",
+      "finalUrl": "/management/jobs",
+      "problems": [],
+      "headings": [
+        "工作佇列"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 工作佇列 工作佇列 工作佇列：追蹤 jobs / workflow 的執行狀態；載入頁面後新增 0 筆串流事件。 編號 種類 狀態 負責人 開始時間 job_8821 backtest 執行中 alice 7/1/2026, 6:40:02 AM job_8820 rebalance.simulate 成功 capital 7/1/2026, 5:52:02 AM job_8819 training.eval 失敗 ai_trainer 7/1/2026, 4:52:02 AM job_8818 ingest.market 執行中 ops 7/1/2026, 6:49:02 AM job_g1 backtest 待處理 alice 7/1/2026, 6:46:02 AM job_g2 ingest.market 執行中 ops 7/1/2026, 6:16:02 AM job",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/alerts",
+      "kind": "nav",
+      "finalUrl": "/management/alerts",
+      "problems": [],
+      "headings": [
+        "原始警報"
+      ],
+      "buttons": [
+        "確認",
+        "確認",
+        "確認",
+        "確認",
+        "確認",
+        "確認",
+        "確認",
+        "確認",
+        "確認",
+        "確認",
+        "確認",
+        "確認",
+        "確認"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 13,
+        "enabledButtons": 13,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 原始警報 原始警報 原始警報：monitor 或 threshold 直接觸發的 raw signal。確認代表接手；需要跨人協調時升級為事件。 嚴重度 標題 來源 開啟時間 狀態 高 stg_004 drawdown breach -13% risk 7/1/2026, 6:20:27 AM 未處理 確認 中 MCP server tool latency p95 > 2s runtime 7/1/2026, 4:50:27 AM 未處理 確認 低 Daily ingest delayed 3m ops 7/1/2026, 12:50:27 AM ✓ 已確認 低 Synthetic alert #1 risk 7/1/2026, 6:44:27 AM ✓ 已確認 中 Synthetic alert #2 runtime 7/1/2026, 6:14:27 AM 未處理 確認 ",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/sentinel",
+      "kind": "nav",
+      "finalUrl": "/management/sentinel",
+      "problems": [],
+      "headings": [
+        "風險 Findings"
+      ],
+      "buttons": [
+        "all",
+        "critical",
+        "warning",
+        "watch",
+        "info",
+        "列表",
+        "時間軸",
+        "stg_004 drawdown breach -13% warning 未處理 FX Carry Tactical breached the −10% drawdown threshold defined in its risk policy. 信心度: 76% 來源: alert 建議動作: 3",
+        "MCP server tool latency p95 > 2s watch 未處理 mcp-server-alpha p95 latency exceeded SLA for 5 consecutive minutes. 信心度: 62% 來源: alert 建議動作: 2",
+        "Daily ingest delayed 3m info 已接手 Market ingest completed 3 minutes after schedule. 信心度: 45% 來源: alert 建議動作: 2",
+        "Synthetic alert #1 info 已接手 Synthetic alert #1 信心度: 45% 來源: alert 建議動作: 2",
+        "Synthetic alert #2 watch 未處理 Synthetic alert #2 信心度: 62% 來源: alert 建議動作: 2",
+        "Synthetic alert #3 warning 未處理 Synthetic alert #3 信心度: 76% 來源: alert 建議動作: 2",
+        "Synthetic alert #4 critical 已接手 Synthetic alert #4 信心度: 88% 來源: alert 建議動作: 2",
+        "Synthetic alert #5 info 未處理 Synthetic alert #5 信心度: 45% 來源: alert 建議動作: 2",
+        "Synthetic alert #6 watch 未處理 Synthetic alert #6 信心度: 62% 來源: alert 建議動作: 2",
+        "Synthetic alert #7 warning 已接手 Synthetic alert #7 信心度: 76% 來源: alert 建議動作: 2",
+        "Synthetic alert #8 critical 未處理 Synthetic alert #8 信心度: 88% 來源: alert 建議動作: 2",
+        "Synthetic alert #9 info 未處理 Synthetic alert #9 信心度: 45% 來源: alert 建議動作: 2",
+        "Synthetic alert #10 watch 已接手 Synthetic alert #10 信心度: 62% 來源: alert 建議動作: 2",
+        "Synthetic alert #11 warning 未處理 Synthetic alert #11 信心度: 76% 來源: alert 建議動作: 2",
+        "Synthetic alert #12 critical 未處理 Synthetic alert #12 信心度: 88% 來源: alert 建議動作: 2",
+        "Synthetic alert #13 info 已接手 Synthetic alert #13 信心度: 45% 來源: alert 建議動作: 2",
+        "Synthetic alert #14 watch 未處理 Synthetic alert #14 信心度: 62% 來源: alert 建議動作: 2",
+        "Synthetic alert #15 warning 未處理 Synthetic alert #15 信心度: 76% 來源: alert 建議動作: 2",
+        "Synthetic alert #16 critical 已接手 Synthetic alert #16 信心度: 88% 來源: alert 建議動作: 2",
+        "Synthetic alert #17 info 未處理 Synthetic alert #17 信心度: 45% 來源: alert 建議動作: 2",
+        "Live order rejected by exchange critical 緩解中 Exchange returned RATE_LIMIT errors on Live orders for stg_001 between 14:02–14:08 UTC. 信心度: 95% 來源: incident 建議動作: 2",
+        "Synthetic incident #1 info 未處理 Synthetic incident #1 信心度: 45% 來源: incident 建議動作: 2",
+        "Synthetic incident #2 watch 緩解中 Synthetic incident #2 信心度: 62% 來源: incident 建議動作: 2"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 37,
+        "enabledButtons": 37,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 1,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 風險 Findings 風險 Findings Sentinel 風險 findings 調查台：檢視異常、證據、影響範圍與治理交接。 未處理 Findings 16 嚴重 Findings 7 緩解中 4 Findings 總數 30 all critical warning watch info 列表 時間軸 stg_004 drawdown breach -13% warning 未處理 FX Carry Tactical breached the −10% drawdown threshold defined in its risk policy. 信心度: 76% 來源: alert 建議動作: 3 MCP server tool latency p95 > 2s watch 未處理 mcp-server-alpha p95 latency exceeded SLA ",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/interventions",
+      "kind": "nav",
+      "finalUrl": "/management/interventions",
+      "problems": [],
+      "headings": [
+        "人為介入佇列"
+      ],
+      "buttons": [
+        "all",
+        "approval",
+        "sentinel",
+        "incident",
+        "policy_exception",
+        "emergency_review"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 6,
+        "enabledButtons": 6,
+        "disabledButtons": 0,
+        "links": 2,
+        "inputs": 28,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 人為介入佇列 人為介入佇列 彙整 approvals、gate、風險 finding、事件與政策例外的單一介入入口。 舊版 Approvals → 佇列項目 26 嚴重 Findings 7 來自 Approvals 3 來自風險 Findings 16 舊版 Approvals 頁面持續保留供深入流程使用。 all approval sentinel incident policy_exception emergency_review 主體 來源 狀態 建議決策 所需角色 更新時間 Approval — deploy.live Hotfix for slippage estimator under high-vol regimes. approval critical approve risk, capital, ops 7/1/2026, 6:32:27 AM Approv",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/approvals",
+      "kind": "nav",
+      "finalUrl": "/management/approvals",
+      "problems": [],
+      "headings": [
+        "審批"
+      ],
+      "buttons": [
+        "待處理",
+        "全部"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 2,
+        "enabledButtons": 2,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 審批 審批 多階段治理收件匣。高風險動作需輸入確認字串。 待處理 全部 種類 主題 申請人 風險 狀態 建立時間 deploy.live stg_001 v3.2.1 alice 極高 待處理 7/1/2026, 6:32:27 AM rebalance.apply Q2 2026 Rebalance capital 高 待處理 7/1/2026, 4:50:27 AM skill.publish skill: macro_briefing v2 ai_trainer 中 待處理 7/1/2026, 2:50:27 AM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/governance",
+      "kind": "nav",
+      "finalUrl": "/management/governance",
+      "problems": [],
+      "headings": [
+        "治理審批"
+      ],
+      "buttons": [
+        "待處理",
+        "全部",
+        "select ap_301",
+        "select ap_302",
+        "select ap_303"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 5,
+        "enabledButtons": 5,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 治理審批 治理審批 從審批收件匣拆分出的待審治理項目，點擊進入審查表面。 待處理 全部 種類 主題 申請人 風險 狀態 審批階段 SLA 通過門檻 建立時間 deploy.live stg_001 v3.2.1 alice 極高 待處理 risk capital ops 剩 3h 46m 1/2 2-fam 7/1/2026, 6:32:27 AM rebalance.apply Q2 2026 Rebalance capital 高 待處理 risk committee ops 已升級 0/2 7/1/2026, 4:50:27 AM skill.publish skill: macro_briefing v2 ai_trainer 中 待處理 trainer-lead 剩 7h 58m 0/1 7/1/2026, 2:50:27 AM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/governance/policies",
+      "kind": "nav",
+      "finalUrl": "/management/governance/policies",
+      "problems": [],
+      "headings": [
+        "路由策略"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 2,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 治理審批 路由策略 路由策略 Persona → tool/MCP/skill 的路由規則，含版本與審批。 名稱 PERSONA 版本 條規則 狀態 風險 更新時間 Quant Architect Routing v2 rp_quant_v2 Quant Architect v2 4 已部署 中 7/1/2026 Macro Strategist Routing v1 rp_macro_v1 Macro Strategist v1 2 已部署 低 6/29/2026 Risk Officer Routing v1 rp_risk_v1 Risk Officer Bot v1 2 已部署 低 6/26/2026",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/governance/permissions",
+      "kind": "nav",
+      "finalUrl": "/management/governance/permissions",
+      "problems": [],
+      "headings": [
+        "權限矩陣"
+      ],
+      "buttons": [
+        "Persona × Tool",
+        "Persona × MCP",
+        "Persona × Skill",
+        "Persona × 生命週期動作"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 4,
+        "enabledButtons": 4,
+        "disabledButtons": 0,
+        "links": 2,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 治理審批 權限矩陣 權限矩陣 Persona × Tool / MCP / Skill / 生命週期動作。點選 cell 編輯授權等級。 Persona × Tool Persona × MCP Persona × Skill Persona × 生命週期動作 目前沒有資料。",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/governance/memory",
+      "kind": "nav",
+      "finalUrl": "/management/governance/memory",
+      "problems": [],
+      "headings": [
+        "記憶治理"
+      ],
+      "buttons": [
+        "待處理 (0)",
+        "衝突 (0)",
+        "歷史 (0)"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 3,
+        "enabledButtons": 3,
+        "disabledButtons": 0,
+        "links": 2,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 治理審批 記憶治理 記憶治理 審查、核准、駁回或合併 Persona 記憶更新提案。 待審 0 衝突 0 已決議 0 待處理 (0) 衝突 (0) 歷史 (0) 目前沒有資料。",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/governance/consult",
+      "kind": "nav",
+      "finalUrl": "/management/governance/consult",
+      "problems": [],
+      "headings": [
+        "協作規則"
+      ],
+      "buttons": [
+        "新增規則",
+        "送審"
+      ],
+      "disabledButtons": [
+        "新增規則",
+        "送審"
+      ],
+      "counts": {
+        "buttons": 2,
+        "enabledButtons": 0,
+        "disabledButtons": 2,
+        "links": 2,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 治理審批 協作規則 協作規則 設定 Persona 在特定情境下必須先諮詢另一個 Persona。 新增規則 送審 規則總數 0 已啟用 0 阻擋型 0 目前沒有資料。",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/knowledge",
+      "kind": "nav",
+      "finalUrl": "/management/knowledge",
+      "problems": [],
+      "headings": [
+        "知識收件匣"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 知識收件匣 知識收件匣 從營運活動匯集的洞察。可升級為 Artifact、Postmortem 或研究任務。 收件匣已清空。 請選一筆洞察。",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/postmortems",
+      "kind": "nav",
+      "finalUrl": "/management/postmortems",
+      "problems": [],
+      "headings": [
+        "事後檢討知識庫"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 1,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 事後檢討知識庫 事後檢討知識庫 可搜尋的事件 Postmortem 知識庫,可回連至原事件。 編號 嚴重度 標題 事件 作者 結案時間 pm_001 高 Binance perp API cascading rejects inc_201 ops-commander 4/22/2026, 3:11:00 AM pm_002 中 Capital pool drift breach inc_198 risk-lead 4/15/2026, 10:48:00 AM pm_003 低 Persona regression after skill update inc_188 trainer-lead 4/2/2026, 2:00:00 PM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/tools",
+      "kind": "nav",
+      "finalUrl": "/management/tools",
+      "problems": [],
+      "headings": [
+        "工具"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [
+        "建立"
+      ],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 0,
+        "disabledButtons": 1,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 工具 工具 建立 名稱 狀態 風險 分類 版本 輸入 被使用於 負責人 更新時間 market.data.fetch 已部署 低 data 2.4.0 4 23 ops 6/28/2026, 6:50:27 AM execution.order.submit 已部署 極高 execution 1.8.2 7 6 ops 6/29/2026, 6:50:27 PM research.news.search 已部署 低 research 3.1.0 3 18 research 6/26/2026, 6:50:27 AM communication.slack.post 已部署 中 communication 1.0.4 2 9 ops 6/22/2026, 10:50:27 PM analysis.factor.attribute 審查中 中 analysis 0.9.1 5 12",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/mcp",
+      "kind": "nav",
+      "finalUrl": "/management/mcp",
+      "problems": [],
+      "headings": [
+        "MCP 伺服器"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [
+        "建立"
+      ],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 0,
+        "disabledButtons": 1,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 MCP 伺服器 MCP 伺服器 建立 名稱 狀態 風險 端點 區域 工具數 環境 負責人 更新時間 mcp-server-alpha 已部署 高 https://mcp-alpha.pantheon.internal us-east-1 24 RESEARCH PAPER LIVE ops 7/1/2026, 6:44:27 AM mcp-server-beta 已部署 中 https://mcp-beta.pantheon.internal eu-west-1 18 RESEARCH PAPER ops 7/1/2026, 4:50:27 AM mcp-research-sandbox 已部署 低 https://mcp-rsb.pantheon.internal us-west-2 41 RESEARCH research 7/1/2026, 1:50:27 AM synt",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/skills",
+      "kind": "nav",
+      "finalUrl": "/management/skills",
+      "problems": [],
+      "headings": [
+        "技能"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [
+        "建立"
+      ],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 0,
+        "disabledButtons": 1,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 技能 技能 建立 名稱 狀態 風險 ARCHETYPE 版本 模式 評估分數 PERSONA 數 負責人 更新時間 macro_briefing 審查中 中 Macro 2.0 Draft 0.86 0 ai_trainer 7/1/2026, 2:50:27 AM signal_review 已部署 低 Quant 1.4 Published 0.91 3 ai_trainer 6/28/2026, 6:50:27 AM redteam_attack 草稿 高 RedTeam 0.3 Draft 0.62 0 ai_trainer 6/30/2026, 10:50:27 AM capital_summary 已部署 低 Capital 3.1 Published 0.94 2 ai_trainer 6/10/2026, 10:50:27 AM synthetic_skill_",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/workflows",
+      "kind": "nav",
+      "finalUrl": "/management/workflows",
+      "problems": [],
+      "headings": [
+        "工作流模板"
+      ],
+      "buttons": [
+        "新建模板"
+      ],
+      "disabledButtons": [
+        "新建模板"
+      ],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 0,
+        "disabledButtons": 1,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 工作流模板 工作流模板 可重用的工作流模板,各自定義有序步驟與必要輸入。 新建模板 編號 名稱 分類 步驟 已執行 上次執行 負責人 —",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/hooks",
+      "kind": "nav",
+      "finalUrl": "/management/hooks",
+      "problems": [],
+      "headings": [
+        "排程與 Hook"
+      ],
+      "buttons": [
+        "新建規則",
+        "排程任務",
+        "事件 Hook"
+      ],
+      "disabledButtons": [
+        "新建規則"
+      ],
+      "counts": {
+        "buttons": 3,
+        "enabledButtons": 2,
+        "disabledButtons": 1,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 排程與 Hook 排程與 Hook 排程 (cron) 與事件觸發 (hook),驅動工作流。 新建規則 排程任務 事件 Hook 編號 名稱 排程 目標 上次執行 下次執行 啟用 —",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/channels",
+      "kind": "nav",
+      "finalUrl": "/management/channels",
+      "problems": [],
+      "headings": [
+        "通道"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [
+        "建立"
+      ],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 0,
+        "disabledButtons": 1,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 通道 通道 建立 名稱 狀態 風險 種類 目的地 訂閱者 過濾條件 負責人 更新時間 #alerts-pantheon 已部署 中 slack slack://T01/C-alerts-pantheon 14 severity in (high, critical) ops 6/29/2026, 6:50:27 AM Capital Daily Digest 已部署 低 email capital@pantheon.internal 6 kind=capital.daily capital 6/26/2026, 6:50:27 AM Audit Forwarder 已部署 低 webhook https://siem.internal/ingest 1 all ops 6/22/2026, 10:50:27 PM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/llm-provider-auth",
+      "kind": "nav",
+      "finalUrl": "/management/llm-provider-auth",
+      "problems": [],
+      "headings": [
+        "LLM Provider Auth",
+        "LLM Provider Auth"
+      ],
+      "buttons": [
+        "Add Provider",
+        "Refresh LLM provider auth"
+      ],
+      "disabledButtons": [
+        "Refresh LLM provider auth"
+      ],
+      "counts": {
+        "buttons": 2,
+        "enabledButtons": 1,
+        "disabledButtons": 1,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "LLM Provider Auth Assistant provider auth, OpenClaw adapter status, quota, and reauth status. LLM Provider Auth active=unknown · kernel unknown Add Provider control inactive checking auth Checking LLM provider auth status. Loading provider usage history.",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/data-sources",
+      "kind": "nav",
+      "finalUrl": "/management/data-sources",
+      "problems": [],
+      "headings": [
+        "資料源管理"
+      ],
+      "buttons": [
+        "重新整理"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "資料源管理 共用 provider、credential、readback、ingestion 與 side-effect 狀態。 重新整理 資料源 0 可讀 0/0 異常 0 Credential 缺口 0 消費 persona 0 市場 — 目前沒有 live 資料源資料 此頁不顯示 demo、seed 或非正式資料源列。",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/audit",
+      "kind": "nav",
+      "finalUrl": "/management/audit",
+      "problems": [],
+      "headings": [
+        "稽核日誌"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 3,
+        "switches": 0
+      },
+      "textSample": "管理控制台 稽核日誌 稽核日誌 平台所有動作的不可竄改日誌。 篩選 全部執行者 admin alice capital ops 全部動作 approval.sla_escalate deployment.promote rebalance.propose strategy.update 全部結果 已套用 已拒絕 5 / 5 時間 操作者 動作 目標 結果 7/1/2026, 6:50:29 AM admin approval.sla_escalate ap_302 OK 7/1/2026, 6:50:29 AM admin approval.sla_escalate ap_302 OK 7/1/2026, 6:26:27 AM alice strategy.update stg_001 OK 7/1/2026, 5:38:27 AM ops deployment.promote dp_00",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/settings",
+      "kind": "nav",
+      "finalUrl": "/management/settings",
+      "problems": [],
+      "headings": [
+        "系統設定"
+      ],
+      "buttons": [
+        "個人",
+        "工作區",
+        "整合",
+        "API 金鑰",
+        "語言",
+        "功能旗標",
+        "Break-Glass",
+        "儲存"
+      ],
+      "disabledButtons": [
+        "儲存"
+      ],
+      "counts": {
+        "buttons": 8,
+        "enabledButtons": 7,
+        "disabledButtons": 1,
+        "links": 1,
+        "inputs": 2,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 系統設定 系統設定 個人偏好、工作區、整合、語言、佈景與功能旗標。 個人 工作區 整合 API 金鑰 語言 功能旗標 Break-Glass 個人資料 顯示名稱 電子郵件 儲存",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/loops/execution",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/loops/execution",
+      "problems": [
+        "mock-visible"
+      ],
+      "headings": [
+        "執行迴圈",
+        "執行紀錄",
+        "Persona 健康度矩陣"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 2,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 閉環執行 執行迴圈 執行迴圈 即時執行迴圈、Persona 路由健康度與 v0-mock timeout 政策。 執行中迴圈 0 卡住迴圈 0 失敗迴圈 1 Timeout 政策 v0-mock 警告: 15m · 升級: 60m 執行紀錄 一個 active strategy 對應一條 run。階段點顯示 pipeline 進度。 主體 狀態 階段 下一步 更新時間 Momentum Quant Alpha alice failed automatic 7/1/2026, 4:50:27 AM Cross-Sector Mean Reversion bob idle automatic 7/1/2026, 1:50:27 AM Asia Tech Long-Short carol idle automatic 6/30/2026, 6:50:27 PM Synthetic S",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/loops/optimization",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/loops/optimization",
+      "problems": [],
+      "headings": [
+        "最佳化迴圈",
+        "最佳化執行"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 5,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 閉環執行 最佳化迴圈 最佳化迴圈 一個 pending rebalance 對應一條 run，approval 為門檻階段。 執行中迴圈 1 卡住迴圈 0 待核准 1 已完成 0 最佳化執行 一個 pending rebalance 對應一條 run，approval 為門檻階段。 主體 狀態 階段 下一步 核准單 更新時間 Q2 2026 Rebalance capital running Propose → Review → Apply Approval ap_302 ap_302 7/1/2026, 2:50:27 AM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/loops/research",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/loops/research",
+      "problems": [],
+      "headings": [
+        "研究迴圈執行",
+        "迴圈執行"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 20,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 閉環執行 研究迴圈 研究迴圈執行 研究迴圈執行與審查佇列。 執行中迴圈 11 卡住迴圈 0 待審查 5 已完成 0 迴圈執行 每一列為一次研究迴圈執行。 主體 狀態 階段 下一步 更新時間 Asia Tech earnings drift carol running Design → Collect → Analyze → Review automatic 7/1/2026, 5:20:27 AM Cross-asset momentum blend alice idle Design → Collect → Analyze → Review Awaiting collection 7/1/2026, 6:26:27 AM Synthetic Experiment 1 alice idle Design → Collect → Analyze → Review Awaiting",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity",
+      "problems": [],
+      "headings": [
+        "無法載入收件匣項目"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "無法載入收件匣項目 readiness_blocker:persona:persona-tw-equity ← 收件匣 目前無法取得此項目的 live 詳情；請回到收件匣重新開啟。",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/evidence/evref-demo-readiness-001",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/evidence/evref-demo-readiness-001",
+      "problems": [
+        "mock-visible"
+      ],
+      "headings": [
+        "Readiness evidence unavailable in mock mode",
+        "Packet 內容",
+        "可信度",
+        "可解析性",
+        "關聯物件",
+        "關聯決策"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Readiness evidence unavailable in mock mode evref-demo-readiness-001 證據庫 Packet 內容 來源類型 unknown 關聯類型 supporting evidence 擷取時間 6/15/2026, 1:02:00 PM 擷取者 — 預覽 不可用 建立時間 6/15/2026, 1:02:00 PM 摘錄 沒有可顯示的摘錄。 可信度 等級 unverified 已驗證 否 最後驗證 — 驗證方式 — 可解析性 可用性 unavailable unavailable Source unavailable 關聯物件 標題 Mock readiness gate 實體 readiness:mock-readiness 關聯決策 此證據參照沒有 BFF 關聯決策。",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/evidence?ref_id=evref-demo-readiness-001",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/evidence?ref_id=evref-demo-readiness-001",
+      "problems": [
+        "mock-visible"
+      ],
+      "headings": [
+        "Readiness evidence unavailable in mock mode",
+        "Packet 內容",
+        "可信度",
+        "可解析性",
+        "關聯物件",
+        "關聯決策"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Readiness evidence unavailable in mock mode evref-demo-readiness-001 證據庫 Packet 內容 來源類型 unknown 關聯類型 supporting evidence 擷取時間 6/15/2026, 1:02:00 PM 擷取者 — 預覽 不可用 建立時間 6/15/2026, 1:02:00 PM 摘錄 沒有可顯示的摘錄。 可信度 等級 unverified 已驗證 否 最後驗證 — 驗證方式 — 可解析性 可用性 unavailable unavailable Source unavailable 關聯物件 標題 Mock readiness gate 實體 readiness:mock-readiness 關聯決策 此證據參照沒有 BFF 關聯決策。",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/persona-intent/trace-001",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/persona-intent/trace-001",
+      "problems": [],
+      "headings": [
+        "Persona 意圖稽核",
+        "Rebalance momentum sleeve toward higher beta names.",
+        "[redacted by policy]",
+        "受限意圖紀錄"
+      ],
+      "buttons": [],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 0,
+        "enabledButtons": 0,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Persona 意圖稽核 彙整 persona trace、訓練 session、Agora session 的交易意圖稽核軌。內容維持政策保護；此頁只顯示安全摘要、來源、風險旗標與證據覆蓋。 紀錄 3 已遮蔽 1 受限 1 風險旗標 2 證據引用 2 未知來源 · 狀態未知 Rebalance momentum sleeve toward higher beta names. Persona: persona:alpha-trader 紀錄: trace-001 摘要 5/20/2026, 9:15:00 AM 來源 未知來源 保護層級 摘要 風險旗標 1 證據引用 1 詮釋：Increase momentum sleeve gross to 1.2x; rotate into TSMC, NVDA. 工具：screener.momentum, risk.var-projection b",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/strategies/stg_001",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/strategies/stg_001",
+      "problems": [
+        "mock-visible"
+      ],
+      "headings": [
+        "Momentum Quant Alpha",
+        "身分",
+        "監看者",
+        "決策日誌"
+      ],
+      "buttons": [
+        "返回",
+        "Inspect",
+        "執行參數掃描",
+        "mark_degraded → degraded",
+        "replace_strategy → replaced",
+        "retire_live → retired",
+        "rollback_to_paper → paper",
+        "archive → archived",
+        "總覽",
+        "規格與參數",
+        "資料與特徵",
+        "成本與滑價",
+        "績效",
+        "研究與實驗",
+        "Paper-Live",
+        "風險與告警",
+        "事件（Incidents）",
+        "Artifact 與血緣",
+        "演化方向",
+        "治理審批",
+        "血緣",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 25,
+        "enabledButtons": 25,
+        "disabledButtons": 0,
+        "links": 5,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "stg_001 Momentum Quant Alpha 已部署 中 alpha_mq_v3 · stg_001 負責人: alice 更新時間: 7/1/2026, 4:50:27 AM 返回 Inspect 執行參數掃描 mark_degraded → degraded replace_strategy → replaced retire_live → retired rollback_to_paper → paper archive → archived 總覽 規格與參數 資料與特徵 成本與滑價 績效 研究與實驗 Paper-Live 風險與告警 事件（Incidents） Artifact 與血緣 演化方向 治理審批 血緣 稽核日誌 生命週期 發現 建檔 重現 核准 模擬 6 正式 7 退役 8 封存 STRATEGY STATE · LIFECYCLE × REVIEW × DE",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/personas/per_quant",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/personas/per_quant",
+      "problems": [],
+      "headings": [],
+      "buttons": [
+        "Persona"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "找不到 Persona per_quant。 Persona",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/personas/per_quant/onboarding",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/personas/per_quant/onboarding",
+      "problems": [],
+      "headings": [
+        "Persona 上線精靈",
+        "升級 Persona 到 PAPER_OWNER"
+      ],
+      "buttons": [
+        "進階：手動操作",
+        "1. Persona 升級",
+        "2. Capital Binding",
+        "3. Deployment Plan",
+        "4. 治理審核",
+        "5. Runtime 啟動",
+        "升級 Lifecycle"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 7,
+        "enabledButtons": 7,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 1,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Persona 上線精靈 從 draft 串到 runtime，共 5 步；每步皆走治理授權的單一寫入動作。 per_quant · 1/5 進階：手動操作 1. Persona 升級 → 2. Capital Binding → 3. Deployment Plan → 4. 治理審核 → 5. Runtime 啟動 升級 Persona 到 PAPER_OWNER 升級後此 persona 可 sponsor paper 部署。需要 confirm token。 升級備註（≥ 8 字） 升級 Lifecycle",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/capital/cp_alpha",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/capital/cp_alpha",
+      "problems": [
+        "mock-visible"
+      ],
+      "headings": [
+        "Alpha Pool",
+        "PACK D · 違限評估"
+      ],
+      "buttons": [
+        "返回",
+        "編輯",
+        "Adjust Risk Budget",
+        "總覽",
+        "策略與 Alpha",
+        "章程",
+        "風險預算",
+        "綁定",
+        "配置上限",
+        "凍結",
+        "績效",
+        "排名輸入",
+        "模擬",
+        "血緣",
+        "Risk",
+        "季度調倉",
+        "治理",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 21,
+        "enabledButtons": 21,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "cp_alpha Alpha Pool 已部署 中 USD · cp_alpha 負責人: capital 更新時間: 7/1/2026, 5:50:27 AM 返回 編輯 Adjust Risk Budget 總覽 策略與 Alpha 章程 風險預算 綁定 配置上限 凍結 績效 排名輸入 模擬 血緣 Risk 季度調倉 治理 稽核日誌 持倉 USD 25,000,000 Capital utilization (%) 73.60% USD 18,400,000 限額 4.00% PACK D · 違限評估 CRITICAL risk_budget_usage_pct=200.00% · riskBudgetUsage>1.25 0 25,000,000",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/ranking/formulas",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/ranking/formulas",
+      "problems": [],
+      "headings": [
+        "排序公式"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 排序儀表板 排序公式 建立 名稱 狀態 風險 參數 關聯物件 負責人 更新時間 Sharpe-Adjusted Drawdown v3 已部署 低 0.6*sharpe - 0.4*|dd| 12 alice 6/28/2026, 6:50:27 AM Capacity-Weighted Alpha 審查中 中 alpha * sqrt(capacity) 5 bob 6/26/2026, 6:50:27 AM Synthetic Formula 3 已部署 低 w0*sharpe - 1*drawdown 1 alice 6/30/2026, 6:50:27 AM Synthetic Formula 4 審查中 低 w1*sharpe - 2*drawdown 2 alice 6/29/2026, 6:50:27 AM Synthetic Formula 5 已部署 低 w2",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/ranking/formulas/rf_001",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/ranking/formulas/rf_001",
+      "problems": [],
+      "headings": [
+        "Sharpe-Adjusted Drawdown v3"
+      ],
+      "buttons": [
+        "返回",
+        "編輯",
+        "Activate",
+        "總覽",
+        "分數",
+        "歷程",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 10,
+        "enabledButtons": 10,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "rf_001 Sharpe-Adjusted Drawdown v3 已部署 低 rf_001 負責人: alice 更新時間: 6/28/2026, 6:50:27 AM 返回 編輯 Activate 總覽 分數 歷程 稽核日誌 APPLIED TO 12 strategies 狀態 deployed 負責人 alice 公式 0.6*sharpe - 0.4*|dd|",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/rebalance/rb_q2_2026",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/rebalance/rb_q2_2026",
+      "problems": [
+        "mock-visible"
+      ],
+      "headings": [
+        "Q2 2026 Rebalance",
+        "備註"
+      ],
+      "buttons": [
+        "返回",
+        "Export",
+        "發佈報告",
+        "approve_rebalance → 已核准",
+        "cancel → 已取消",
+        "總覽",
+        "持倉",
+        "風險",
+        "模擬",
+        "限制檢查",
+        "工作流",
+        "凍結指標",
+        "手動覆寫",
+        "審批",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 18,
+        "enabledButtons": 18,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "rb_q2_2026 Q2 2026 Rebalance 審查中 高 2026-Q2 · target cp_alpha 負責人: capital 更新時間: 7/1/2026, 2:50:27 AM 返回 Export 發佈報告 approve_rebalance → 已核准 cancel → 已取消 總覽 持倉 風險 模擬 限制檢查 工作流 凍結指標 手動覆寫 審批 稽核日誌 生命週期 草稿 凍結指標中 指標已凍結 排序完成 模擬完成 6 審查中 7 已核准 8 已排程 9 已套用 資金池 Alpha Pool Proposed Δ 12.0% Sharpe 1.92 回撤 -3.8% 備註 Rotates capital from FX Carry into Vol Surface Arb based on Q1 backtest.",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/evolution/ev_001",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/evolution/ev_001",
+      "problems": [],
+      "headings": [
+        "Momentum α Evolution",
+        "世代進度",
+        "生命週期"
+      ],
+      "buttons": [
+        "返回",
+        "恢復",
+        "Stop Program",
+        "總覽",
+        "方向",
+        "血緣",
+        "適應度",
+        "變異",
+        "執行",
+        "候選",
+        "升級",
+        "世代凍結",
+        "限制",
+        "告警",
+        "審批",
+        "Config",
+        "研究與實驗",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 21,
+        "enabledButtons": 21,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "ev_001 Momentum α Evolution 已部署 中 Parent: alpha_mq_v3 負責人: ai_trainer 更新時間: 7/1/2026, 6:02:27 AM 返回 恢復 Stop Program 總覽 方向 血緣 適應度 變異 執行 候選 升級 世代凍結 限制 告警 審批 Config 研究與實驗 稽核日誌 Generation G14 Population 64 Best Fitness 1.830 Progress 72% 世代進度 生命週期 草稿 審查中 3 啟用中 4 完成 5 退役",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/experiments/rx_201",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/experiments/rx_201",
+      "problems": [],
+      "headings": [
+        "Asia Tech earnings drift",
+        "假設"
+      ],
+      "buttons": [
+        "返回",
+        "重新執行",
+        "Promote to Strategy",
+        "總覽",
+        "指標",
+        "Artifacts",
+        "參數",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 8,
+        "enabledButtons": 8,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "rx_201 Asia Tech earnings drift 審查中 低 rx_201 負責人: carol 更新時間: 7/1/2026, 5:20:27 AM 返回 重新執行 Promote to Strategy 總覽 指標 Artifacts 參數 稽核日誌 狀態 RUNNING IR 0.680 負責人 carol Artifact — 假設 Post-earnings drift > 4d on Asia Tech",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/artifacts/art_stg001_v320",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/artifacts/art_stg001_v320",
+      "problems": [],
+      "headings": [
+        "stg_001 model v3.2.0",
+        "雜湊值"
+      ],
+      "buttons": [
+        "返回",
+        "下載",
+        "Retire",
+        "總覽",
+        "差異",
+        "血緣",
+        "回滾",
+        "部署",
+        "Metadata",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 13,
+        "enabledButtons": 13,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "art_stg001_v320 stg_001 model v3.2.0 已部署 高 model · v3.2.0 負責人: ai_trainer 更新時間: 7/1/2026, 4:50:27 AM 返回 下載 Retire 總覽 差異 血緣 回滾 部署 Metadata 稽核日誌 Kind MODEL 版本 3.2.0 Size 84.2 MB 負責人 ai_trainer 雜湊值 sha256:9f3a…b21c",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/deployments/dp_001",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/deployments/dp_001",
+      "problems": [],
+      "headings": [
+        "stg_001 → live v3.2.0",
+        "關聯對象"
+      ],
+      "buttons": [
+        "返回",
+        "降低配置",
+        "回滾",
+        "總覽",
+        "階段",
+        "執行環境",
+        "審批",
+        "稽核日誌",
+        "stg_001",
+        "art_stg001_v320"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 13,
+        "enabledButtons": 13,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "dp_001 stg_001 → live v3.2.0 已部署 高 LIVE · 3.2.0 負責人: ops 更新時間: 7/1/2026, 5:50:27 AM 返回 降低配置 回滾 總覽 階段 執行環境 審批 稽核日誌 目標 LIVE 版本 3.2.0 Previous 3.1.4 Promoted 7/1/2026, 5:50:27 AM 關聯對象 STRATEGY stg_001 ARTIFACT art_stg001_v320 負責人 ops",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/incidents/in_021",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/incidents/in_021",
+      "problems": [],
+      "headings": [
+        "Live order rejected by exchange"
+      ],
+      "buttons": [
+        "返回",
+        "檢視 rollback saga",
+        "暫停受影響策略",
+        "關閉事件",
+        "時間軸",
+        "影響範圍",
+        "根因",
+        "緩解",
+        "事後檢討",
+        "訓練回饋",
+        "演化限制",
+        "稽核"
+      ],
+      "disabledButtons": [
+        "暫停受影響策略"
+      ],
+      "counts": {
+        "buttons": 12,
+        "enabledButtons": 11,
+        "disabledButtons": 1,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 事件（Incidents） Live order rejected by exchange in_021 · critical · mitigating 返回 檢視 rollback saga 暫停受影響策略 關閉事件 指揮官 ops 開啟時間 7/1/2026, 5:50:27 AM 嚴重度 critical 狀態 mitigating 事件摘要 Exchange returned RATE_LIMIT errors on Live orders for stg_001 between 14:02–14:08 UTC. 時間軸 影響範圍 根因 緩解 事後檢討 訓練回饋 演化限制 稽核 7/1/2026, 5:50:27 AM system Incident auto-opened from alert al_502 7/1/2026, 5:56:27 AM ops Throt",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/governance/ap_301",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/governance/ap_301",
+      "problems": [],
+      "headings": [
+        "stg_001 v3.2.1"
+      ],
+      "buttons": [
+        "返回",
+        "核准本階段",
+        "駁回",
+        "核准",
+        "要求修改",
+        "駁回",
+        "升級",
+        "凍結目標"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 9,
+        "enabledButtons": 8,
+        "disabledButtons": 1,
+        "links": 5,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 治理審批 stg_001 v3.2.1 ap_301 · deploy.live 返回 請求 極高 待處理 類型 deploy.live 請求者 alice 建立時間 7/1/2026, 6:32:27 AM 審批階段 風險審 carol · 7/1/2026, 6:38:27 AM 剩 3h 38m VAR within bounds 2 資金審 剩 3h 44m 核准本階段 駁回 Ops 審 3 Ops 審 尚未開始 · 6h 理由 Hotfix for slippage estimator under high-vol regimes. 變更摘要 +1 module, +84 LoC, model hash 9f3a→7c11 證據與驗證結果 Q1 backtest report backtest 成功 Risk policy diff policy 警告 Evaluat",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/governance/policies/rp_quant_v2",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/governance/policies/rp_quant_v2",
+      "problems": [],
+      "headings": [
+        "Quant Architect Routing v2"
+      ],
+      "buttons": [
+        "返回",
+        "編輯器",
+        "版本 (2)",
+        "差異",
+        "審批流程",
+        "重設",
+        "送審",
+        "視覺化",
+        "JSON",
+        "RESEARCH",
+        "PAPER",
+        "LIVE",
+        "刪除",
+        "RESEARCH",
+        "PAPER",
+        "LIVE",
+        "刪除",
+        "RESEARCH",
+        "PAPER",
+        "LIVE",
+        "刪除",
+        "RESEARCH"
+      ],
+      "disabledButtons": [
+        "重設",
+        "送審",
+        "RESEARCH",
+        "PAPER",
+        "LIVE",
+        "刪除",
+        "RESEARCH",
+        "PAPER",
+        "LIVE",
+        "刪除",
+        "RESEARCH",
+        "PAPER",
+        "LIVE",
+        "刪除"
+      ],
+      "counts": {
+        "buttons": 34,
+        "enabledButtons": 7,
+        "disabledButtons": 27,
+        "links": 2,
+        "inputs": 12,
+        "textareas": 0,
+        "selects": 4,
+        "switches": 0
+      },
+      "textSample": "管理控制台 治理審批 路由策略 Quant Architect Routing v2 v2 · Quant Architect 返回 狀態 已部署 風險 中 負責人 ai_trainer 發佈時間 7/1/2026, 12:50:27 AM 版本 v2 編輯器 版本 (2) 差異 審批流程 Quant Architect Routing v2 rp_quant_v2 · v2 · 4 條規則 重設 送審 視覺化 JSON #10 意圖 類型 tool mcp skill 目標 環境範圍 RESEARCH PAPER LIVE 守則 MCP #20 意圖 類型 tool mcp skill 目標 環境範圍 RESEARCH PAPER LIVE 守則 MCP #30 意圖 類型 tool mcp skill 目標 環境範圍 RESEARCH PAPER LIVE 守則 SKILL #40 意",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/tools/tl_market_data",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/tools/tl_market_data",
+      "problems": [],
+      "headings": [
+        "market.data.fetch",
+        "說明",
+        "SCHEMA"
+      ],
+      "buttons": [
+        "返回",
+        "限制",
+        "標記淘汰",
+        "封鎖",
+        "設定速率上限",
+        "分類風險",
+        "總覽",
+        "Schema",
+        "沙箱",
+        "活動",
+        "策略與 Alpha",
+        "稽核日誌"
+      ],
+      "disabledButtons": [
+        "設定速率上限",
+        "分類風險"
+      ],
+      "counts": {
+        "buttons": 15,
+        "enabledButtons": 13,
+        "disabledButtons": 2,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "tl_market_data market.data.fetch 已部署 低 data · v2.4.0 負責人: ops 更新時間: 6/28/2026, 6:50:27 AM 返回 限制 標記淘汰 封鎖 設定速率上限 分類風險 總覽 Schema 沙箱 活動 策略與 Alpha 稽核日誌 生命週期 draft testing 3 active 4 deprecated 5 retired Category DATA 版本 2.4.0 Inputs 4 Used by 23 說明 Fetch normalized OHLCV data from the canonical market warehouse. SCHEMA TOOL ID tl_market_data 負責人 ops",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/mcp/mcp_alpha",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/mcp/mcp_alpha",
+      "problems": [],
+      "headings": [
+        "mcp-server-alpha",
+        "設定"
+      ],
+      "buttons": [
+        "返回",
+        "測試連線",
+        "健康檢查",
+        "停用",
+        "退役",
+        "總覽",
+        "Tools (3)",
+        "註冊",
+        "活動",
+        "Health",
+        "權限",
+        "血緣",
+        "Schema",
+        "金鑰",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 18,
+        "enabledButtons": 18,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "mcp_alpha mcp-server-alpha 已部署 高 https://mcp-alpha.pantheon.internal 負責人: ops 更新時間: 7/1/2026, 6:44:27 AM 返回 測試連線 健康檢查 停用 退役 總覽 Tools (3) 註冊 活動 Health 權限 血緣 Schema 金鑰 稽核日誌 生命週期 1 草稿 2 已連線 3 健康 4 已退役 分支狀態： 降級 狀態 WARNING 工具 24 區域 us-east-1 Envs 3 設定 URL https://mcp-alpha.pantheon.internal 環境 RESEARCH PAPER LIVE",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/mcp-tools/mt_001",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/mcp-tools/mt_001",
+      "problems": [],
+      "headings": [
+        "alpha.factor.compute",
+        "說明",
+        "MCP 伺服器"
+      ],
+      "buttons": [
+        "返回",
+        "總覽",
+        "稽核日誌",
+        "mcp_alpha"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 4,
+        "enabledButtons": 4,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "mt_001 alpha.factor.compute 已部署 低 MCP tool · read 負責人: research 更新時間: 7/1/2026, 4:50:27 AM 返回 總覽 稽核日誌 權限 READ Calls 24h 8,421 Envs 3 狀態 deployed 說明 Streaming factor computation across the universe. MCP 伺服器 MCP 伺服器 mcp_alpha 環境 RESEARCH PAPER LIVE",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/skills/sk_macro_brief",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/skills/sk_macro_brief",
+      "problems": [],
+      "headings": [
+        "macro_briefing",
+        "說明",
+        "中繼資料"
+      ],
+      "buttons": [
+        "返回",
+        "發佈",
+        "總覽",
+        "提示詞與規格",
+        "沙盒",
+        "風險",
+        "評估",
+        "訓練資料",
+        "Persona",
+        "血緣",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 14,
+        "enabledButtons": 14,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "sk_macro_brief macro_briefing 審查中 中 Macro · v2.0 負責人: ai_trainer 更新時間: 7/1/2026, 2:50:27 AM 返回 發佈 總覽 提示詞與規格 沙盒 風險 評估 訓練資料 Persona 血緣 稽核日誌 生命週期 1 draft 2 sandboxed 3 validated 4 approved 5 active 6 deprecated 7 retired 狀態 草稿 績效 0.86 Persona 0 版本 2.0 說明 Generates a daily macro briefing with grounded citations and regime tags. 中繼資料 類型 Macro 建立時間 —",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/channels/ch_slack_alerts",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/channels/ch_slack_alerts",
+      "problems": [],
+      "headings": [
+        "#alerts-pantheon",
+        "路由"
+      ],
+      "buttons": [
+        "返回",
+        "Send test",
+        "總覽",
+        "歷程",
+        "稽核日誌"
+      ],
+      "disabledButtons": [
+        "Send test"
+      ],
+      "counts": {
+        "buttons": 8,
+        "enabledButtons": 7,
+        "disabledButtons": 1,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "ch_slack_alerts #alerts-pantheon 已部署 中 SLACK · 14 subscribers 負責人: ops 更新時間: 6/29/2026, 6:50:27 AM 返回 Send test 總覽 歷程 稽核日誌 Kind SLACK Subscribers 14 負責人 ops 狀態 deployed 路由 DESTINATION slack://T01/C-alerts-pantheon FILTERS severity in (high, critical)",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/control-room",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/cockpit",
+      "problems": [],
+      "headings": [
+        "Pathreon Management 駕駛艙",
+        "LLM Provider Auth",
+        "資金總覽",
+        "Persona 聯賽",
+        "季度排名倒數",
+        "資料源健康",
+        "OODA LOOP FLOW",
+        "PERSONA × OODA"
+      ],
+      "buttons": [
+        "💬 詢問 AI Management",
+        "Refresh LLM provider auth"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 2,
+        "enabledButtons": 2,
+        "disabledButtons": 0,
+        "links": 39,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Pathreon Management 駕駛艙 整個 AI 交易組織健康嗎？誰需要我？ 💬 詢問 AI Management Autonomy guarded Human pending 3 Critical findings 1 Persona owners 4 Personas 4 Broker live ready Capital bound blocked Strict publish ok BFF HA ok LLM Provider Auth active=unknown · kernel unavailable control inactive auth unknown Failed to fetch No LLM provider auth status returned. Open provider auth 資金總覽 開啟詳情 → 總 NAV $22,400,000 ",
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers' from origin 'http://127.0.0.1:4175' has been blocked by CORS ",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/orchestrator/status' from origin 'http://127.0.0.1:4175' has been blocke",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/mode' from origin 'http://127.0.0.1:4175' has been blocked by CORS polic",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers/usage-summary?auth_probe=false&window_hours=168&limit=500' fro",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers?auth_probe=true' from origin 'http://127.0.0.1:4175' has been ",
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "path": "/management/one-ring",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/cockpit",
+      "problems": [],
+      "headings": [
+        "Pathreon Management 駕駛艙",
+        "LLM Provider Auth",
+        "資金總覽",
+        "Persona 聯賽",
+        "季度排名倒數",
+        "資料源健康",
+        "OODA LOOP FLOW",
+        "PERSONA × OODA"
+      ],
+      "buttons": [
+        "💬 詢問 AI Management",
+        "Refresh LLM provider auth"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 2,
+        "enabledButtons": 2,
+        "disabledButtons": 0,
+        "links": 39,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Pathreon Management 駕駛艙 整個 AI 交易組織健康嗎？誰需要我？ 💬 詢問 AI Management Autonomy guarded Human pending 3 Critical findings 1 Persona owners 4 Personas 4 Broker live ready Capital bound blocked Strict publish ok BFF HA ok LLM Provider Auth active=unknown · kernel unavailable control inactive auth unknown Failed to fetch No LLM provider auth status returned. Open provider auth 資金總覽 開啟詳情 → 總 NAV $22,400,000 ",
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers' from origin 'http://127.0.0.1:4175' has been blocked by CORS ",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/mode' from origin 'http://127.0.0.1:4175' has been blocked by CORS polic",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/orchestrator/status' from origin 'http://127.0.0.1:4175' has been blocke",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers/usage-summary?auth_probe=false&window_hours=168&limit=500' fro",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers?auth_probe=true' from origin 'http://127.0.0.1:4175' has been ",
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "path": "/management/overview",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/cockpit",
+      "problems": [],
+      "headings": [
+        "Pathreon Management 駕駛艙",
+        "LLM Provider Auth",
+        "資金總覽",
+        "Persona 聯賽",
+        "季度排名倒數",
+        "資料源健康",
+        "OODA LOOP FLOW",
+        "PERSONA × OODA"
+      ],
+      "buttons": [
+        "💬 詢問 AI Management",
+        "Refresh LLM provider auth"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 2,
+        "enabledButtons": 2,
+        "disabledButtons": 0,
+        "links": 39,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Pathreon Management 駕駛艙 整個 AI 交易組織健康嗎？誰需要我？ 💬 詢問 AI Management Autonomy guarded Human pending 3 Critical findings 1 Persona owners 4 Personas 4 Broker live ready Capital bound blocked Strict publish ok BFF HA ok LLM Provider Auth active=unknown · kernel unavailable control inactive auth unknown Failed to fetch No LLM provider auth status returned. Open provider auth 資金總覽 開啟詳情 → 總 NAV $22,400,000 ",
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers' from origin 'http://127.0.0.1:4175' has been blocked by CORS ",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers/usage-summary?auth_probe=false&window_hours=168&limit=500' fro",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/orchestrator/status' from origin 'http://127.0.0.1:4175' has been blocke",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/mode' from origin 'http://127.0.0.1:4175' has been blocked by CORS polic",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers?auth_probe=true' from origin 'http://127.0.0.1:4175' has been ",
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "path": "/management/command-center",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/cockpit",
+      "problems": [],
+      "headings": [
+        "Pathreon Management 駕駛艙",
+        "LLM Provider Auth",
+        "資金總覽",
+        "Persona 聯賽",
+        "季度排名倒數",
+        "資料源健康",
+        "OODA LOOP FLOW",
+        "PERSONA × OODA"
+      ],
+      "buttons": [
+        "💬 詢問 AI Management",
+        "Refresh LLM provider auth"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 2,
+        "enabledButtons": 2,
+        "disabledButtons": 0,
+        "links": 39,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "Pathreon Management 駕駛艙 整個 AI 交易組織健康嗎？誰需要我？ 💬 詢問 AI Management Autonomy guarded Human pending 3 Critical findings 1 Persona owners 4 Personas 4 Broker live ready Capital bound blocked Strict publish ok BFF HA ok LLM Provider Auth active=unknown · kernel unavailable control inactive auth unknown Failed to fetch No LLM provider auth status returned. Open provider auth 資金總覽 開啟詳情 → 總 NAV $22,400,000 ",
+      "pageErrors": [],
+      "consoleErrors": [
+        "[useV5Live] loader failed Error: Persona Fleet requires live BFF data; demo fallback is disabled.\n    at h5t (http://127.0.0.1:4175/assets/index-LvKjPFMP.js:726",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers' from origin 'http://127.0.0.1:4175' has been blocked by CORS ",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/orchestrator/status' from origin 'http://127.0.0.1:4175' has been blocke",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers/usage-summary?auth_probe=false&window_hours=168&limit=500' fro",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/mode' from origin 'http://127.0.0.1:4175' has been blocked by CORS polic",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/assistant/providers?auth_probe=true' from origin 'http://127.0.0.1:4175' has been ",
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "path": "/management/risk-center",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/risk",
+      "problems": [],
+      "headings": [
+        "風險中心"
+      ],
+      "buttons": [
+        "資金",
+        "策略",
+        "Persona",
+        "執行環境",
+        "工具 / MCP / 技能",
+        "事件與原始警報"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 6,
+        "enabledButtons": 6,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 風險中心 風險中心 整合資金、策略、Persona、Runtime 與能力的風險視圖。 未結案事件 7 執行環境警示 1 資金池超用 (>90%) 1 回撤超限 1 極高風險物件 7 高風險物件 15 風險矩陣 類型 低 中 高 極高 策略 6 7 6 5 資金 1 2 2 1 執行環境 5 — 1 — 工具 5 4 2 1 資金 策略 Persona 執行環境 工具 / MCP / 技能 事件與原始警報 名稱 持倉 使用率 限額 風險 Alpha Pool 25.0M USD 74% 4.0% 中 Beta Pool 12.0M USD 60% 6.0% 高 Tactical Pool 5.0M USDT 96% 8.0% 極高 Synthetic Pool 1 2.0M USD 40% 3.0% 低 Synthetic Pool 2 3.0M USDT 53% 4.0% 中",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/capital-pools",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/capital",
+      "problems": [],
+      "headings": [
+        "資金池"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 資金池 資金池 建立 名稱 狀態 風險 值 持倉 使用率 限額 負責人 更新時間 Alpha Pool 已部署 中 USD 25,000,000 18,400,000 4.0% capital 7/1/2026, 5:50:27 AM Beta Pool 已部署 高 USD 12,000,000 7,200,000 6.0% capital 7/1/2026, 12:50:27 AM Tactical Pool 已部署 極高 USDT 5,000,000 4,800,000 8.0% capital 6/30/2026, 8:50:27 PM Synthetic Pool 1 已部署 低 USD 2,000,000 800,000 3.0% capital 7/1/2026, 1:50:27 AM Synthetic Pool 2 已部署 中 USDT 3,000,000 1,",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/ranking-formulas",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/ranking/formulas",
+      "problems": [],
+      "headings": [
+        "排序公式"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 排序儀表板 排序公式 建立 名稱 狀態 風險 參數 關聯物件 負責人 更新時間 Sharpe-Adjusted Drawdown v3 已部署 低 0.6*sharpe - 0.4*|dd| 12 alice 6/28/2026, 6:50:27 AM Capacity-Weighted Alpha 審查中 中 alpha * sqrt(capacity) 5 bob 6/26/2026, 6:50:27 AM Synthetic Formula 3 已部署 低 w0*sharpe - 1*drawdown 1 alice 6/30/2026, 6:50:27 AM Synthetic Formula 4 審查中 低 w1*sharpe - 2*drawdown 2 alice 6/29/2026, 6:50:27 AM Synthetic Formula 5 已部署 低 w2",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/rebalances",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/rebalance",
+      "problems": [],
+      "headings": [
+        "季度調倉"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 季度調倉 季度調倉 建立 名稱 狀態 風險 優先度 變更摘要 負責人 更新時間 Q2 2026 Rebalance 審查中 高 2026-Q2 12.0% capital 7/1/2026, 2:50:27 AM Q1 2026 Rebalance 已部署 中 2026-Q1 4.0% capital 4/2/2026, 6:50:27 AM Synthetic Rebalance 1 已部署 中 2025-Q3 5.0% capital 5/2/2026, 6:50:27 AM Synthetic Rebalance 2 已部署 中 2025-Q4 5.0% capital 4/2/2026, 6:50:27 AM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/research",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/experiments",
+      "problems": [],
+      "headings": [
+        "研究與實驗"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 研究與實驗 研究與實驗 建立 名稱 狀態 風險 狀態 指標 值 負責人 更新時間 Asia Tech earnings drift 審查中 低 RUNNING IR 0.68 carol 7/1/2026, 5:20:27 AM FX Carry regime gating 已核准 中 CONCLUDED Sharpe Δ 0.31 dan 6/29/2026, 2:50:27 PM Cross-asset momentum blend 草稿 低 QUEUED Sharpe 0.00 alice 7/1/2026, 6:26:27 AM Synthetic Experiment 1 草稿 低 QUEUED IR 0.00 alice 7/1/2026, 5:50:27 AM Synthetic Experiment 2 審查中 中 RUNNING Sharpe 0.05 bob",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/deployment",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/deployments",
+      "problems": [],
+      "headings": [
+        "部署"
+      ],
+      "buttons": [
+        "建立"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 1,
+        "enabledButtons": 1,
+        "disabledButtons": 0,
+        "links": 1,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "管理控制台 部署 部署 建立 名稱 狀態 風險 目標 版本 負責人 更新時間 stg_001 → live v3.2.0 已部署 高 LIVE 3.2.0 ops 7/1/2026, 5:50:27 AM stg_002 → paper v1.0.4 已部署 中 PAPER 1.0.4 ops 6/30/2026, 11:50:27 PM stg_003 → live v2.4.1 已部署 低 LIVE 2.4.1 ops 6/29/2026, 6:50:27 PM",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/capital-pools/cp_alpha",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/capital-pools/cp_alpha",
+      "problems": [
+        "mock-visible"
+      ],
+      "headings": [
+        "Alpha Pool",
+        "PACK D · 違限評估"
+      ],
+      "buttons": [
+        "返回",
+        "編輯",
+        "Adjust Risk Budget",
+        "總覽",
+        "策略與 Alpha",
+        "章程",
+        "風險預算",
+        "綁定",
+        "配置上限",
+        "凍結",
+        "績效",
+        "排名輸入",
+        "模擬",
+        "血緣",
+        "Risk",
+        "季度調倉",
+        "治理",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 21,
+        "enabledButtons": 21,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "cp_alpha Alpha Pool 已部署 中 USD · cp_alpha 負責人: capital 更新時間: 7/1/2026, 5:50:27 AM 返回 編輯 Adjust Risk Budget 總覽 策略與 Alpha 章程 風險預算 綁定 配置上限 凍結 績效 排名輸入 模擬 血緣 Risk 季度調倉 治理 稽核日誌 持倉 USD 25,000,000 Capital utilization (%) 73.60% USD 18,400,000 限額 4.00% PACK D · 違限評估 CRITICAL risk_budget_usage_pct=200.00% · riskBudgetUsage>1.25 0 25,000,000",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/ranking-formulas/rf_001",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/ranking-formulas/rf_001",
+      "problems": [],
+      "headings": [
+        "Sharpe-Adjusted Drawdown v3"
+      ],
+      "buttons": [
+        "返回",
+        "編輯",
+        "Activate",
+        "總覽",
+        "分數",
+        "歷程",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 10,
+        "enabledButtons": 10,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "rf_001 Sharpe-Adjusted Drawdown v3 已部署 低 rf_001 負責人: alice 更新時間: 6/28/2026, 6:50:27 AM 返回 編輯 Activate 總覽 分數 歷程 稽核日誌 APPLIED TO 12 strategies 狀態 deployed 負責人 alice 公式 0.6*sharpe - 0.4*|dd|",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/rebalances/rb_q2_2026",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/rebalances/rb_q2_2026",
+      "problems": [
+        "mock-visible"
+      ],
+      "headings": [
+        "Q2 2026 Rebalance",
+        "備註"
+      ],
+      "buttons": [
+        "返回",
+        "Export",
+        "發佈報告",
+        "approve_rebalance → 已核准",
+        "cancel → 已取消",
+        "總覽",
+        "持倉",
+        "風險",
+        "模擬",
+        "限制檢查",
+        "工作流",
+        "凍結指標",
+        "手動覆寫",
+        "審批",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 18,
+        "enabledButtons": 18,
+        "disabledButtons": 0,
+        "links": 3,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "rb_q2_2026 Q2 2026 Rebalance 審查中 高 2026-Q2 · target cp_alpha 負責人: capital 更新時間: 7/1/2026, 2:50:27 AM 返回 Export 發佈報告 approve_rebalance → 已核准 cancel → 已取消 總覽 持倉 風險 模擬 限制檢查 工作流 凍結指標 手動覆寫 審批 稽核日誌 生命週期 草稿 凍結指標中 指標已凍結 排序完成 模擬完成 6 審查中 7 已核准 8 已排程 9 已套用 資金池 Alpha Pool Proposed Δ 12.0% Sharpe 1.92 回撤 -3.8% 備註 Rotates capital from FX Carry into Vol Surface Arb based on Q1 backtest.",
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "path": "/management/research/rx_201",
+      "kind": "detail-or-alias",
+      "finalUrl": "/management/research/rx_201",
+      "problems": [],
+      "headings": [
+        "Asia Tech earnings drift",
+        "假設"
+      ],
+      "buttons": [
+        "返回",
+        "重新執行",
+        "Promote to Strategy",
+        "總覽",
+        "指標",
+        "Artifacts",
+        "參數",
+        "稽核日誌"
+      ],
+      "disabledButtons": [],
+      "counts": {
+        "buttons": 8,
+        "enabledButtons": 8,
+        "disabledButtons": 0,
+        "links": 0,
+        "inputs": 0,
+        "textareas": 0,
+        "selects": 0,
+        "switches": 0
+      },
+      "textSample": "rx_201 Asia Tech earnings drift 審查中 低 rx_201 負責人: carol 更新時間: 7/1/2026, 5:20:27 AM 返回 重新執行 Promote to Strategy 總覽 指標 Artifacts 參數 稽核日誌 狀態 RUNNING IR 0.680 負責人 carol Artifact — 假設 Post-earnings drift > 4d on Asia Tech",
+      "pageErrors": [],
+      "consoleErrors": []
+    }
+  ]
+}
