@@ -110,3 +110,15 @@ def test_persona_fleet_requires_authentication() -> None:
             assert error["code"] in {"AUTH_REQUIRED", "AUTH_REQUIRED"}
         finally:
             bff_main.read_store = original
+
+
+def test_legacy_management_fleet_alias_is_not_registered() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/fleet", headers=OPERATOR_HEADERS)
+
+            assert resp.status_code == 404, resp.text
+        finally:
+            bff_main.read_store = original

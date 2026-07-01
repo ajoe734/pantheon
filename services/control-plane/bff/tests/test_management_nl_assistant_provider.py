@@ -52,6 +52,45 @@ class FakeProviderClient:
             "capabilities": {"read": True, "repairWrite": True},
         }
 
+    def list_assistant_providers(self, *, auth_probe: bool = False) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "data": [
+                {
+                    "provider": "codex_cli",
+                    "provider_name": "Codex CLI",
+                    "runtime": "openclaw_gateway_cli_mount",
+                    "ready": True,
+                    "status": "ready",
+                    "auth_status": "ready" if auth_probe else "not_checked",
+                    "usage": {
+                        "status": "captured",
+                        "source": "provider_snapshot",
+                        "remaining": 12,
+                        "remaining_percent": 24,
+                        "limit": 50,
+                        "used": 38,
+                        "unit": "requests",
+                        "reset_at": "2026-06-30T00:00:00Z",
+                    },
+                },
+                {
+                    "provider": "claude",
+                    "provider_name": "Claude CLI",
+                    "runtime": "openclaw_gateway_cli_mount",
+                    "ready": False,
+                    "status": "degraded",
+                    "auth_status": "failed" if auth_probe else "not_checked",
+                    "usage": {
+                        "status": "unknown",
+                        "source": "not_configured",
+                        "reason": "provider_usage_source_not_configured",
+                    },
+                },
+            ],
+            "meta": {"auth_probe": auth_probe},
+        }
+
     def get_tool_policy(self) -> dict[str, Any]:
         return {
             "allowed_tools": ["assistant.command"],
@@ -454,6 +493,54 @@ def test_openclaw_client_reads_assistant_provider_readiness_with_auth_probe(monk
     assert recorded["timeout"] == 1.5
 
 
+def test_openclaw_client_lists_assistant_providers_with_auth_probe(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": [
+                    {"provider": "codex_cli", "ready": True, "auth_status": "ready"},
+                    {"provider": "claude", "ready": False, "auth_status": "failed"},
+                ],
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).list_assistant_providers(auth_probe=True)
+
+    assert result["data"][0]["provider"] == "codex_cli"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers?auth_probe=true"
+    )
+    assert recorded["timeout"] == 1.5
+
+
+def test_openclaw_client_provider_list_auth_probe_uses_assistant_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    monkeypatch.setenv("PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS", "2.0")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "12.5")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["timeout"] = timeout
+        return FakeHttpResponse({"status": "ok", "data": []})
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient().list_assistant_providers(auth_probe=True)
+
+    assert result["status"] == "ok"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers?auth_probe=true"
+    )
+    assert recorded["timeout"] == 12.5
+
+
 def test_openclaw_client_starts_provider_reauth_device_flow(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
     monkeypatch.setenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "4.0")
@@ -495,6 +582,49 @@ def test_openclaw_client_starts_provider_reauth_device_flow(monkeypatch) -> None
     assert recorded["timeout"] == 4.0
 
 
+def test_openclaw_client_starts_claude_provider_reauth_device_flow(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "4.0")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "claude_reauth_1",
+                    "provider": "claude",
+                    "status": "pending",
+                    "verification_uri": "https://claude.ai/login",
+                    "user_code": None,
+                },
+            },
+            status_code=202,
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).start_assistant_provider_reauth(
+            provider="claude",
+            payload={"reason": "expired"},
+            operator_id="operator-1",
+            trace_id="trace-claude-reauth-1",
+        )
+
+    assert result["status"] == "ok"
+    assert result["data"]["reauth_session_id"] == "claude_reauth_1"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/claude/reauth"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+    assert recorded["headers"]["X-trace-id"] == "trace-claude-reauth-1"
+    assert recorded["body"] == {"reason": "expired", "provider": "claude"}
+    assert recorded["timeout"] == 4.0
+
+
 def test_openclaw_client_reads_provider_reauth_status(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
     recorded: dict[str, Any] = {}
@@ -525,6 +655,136 @@ def test_openclaw_client_reads_provider_reauth_status(monkeypatch) -> None:
         "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/codex/reauth/codex_reauth_1"
     )
     assert recorded["headers"]["X-operator-id"] == "operator-1"
+
+
+def test_openclaw_client_reads_claude_provider_reauth_status(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "claude_reauth_1",
+                    "provider": "claude",
+                    "status": "completed",
+                    "readiness": {"ready": True},
+                },
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).get_assistant_provider_reauth_status(
+            provider="claude",
+            session_id="claude_reauth_1",
+            operator_id="operator-1",
+        )
+
+    assert result["data"]["status"] == "completed"
+    assert result["data"]["provider"] == "claude"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/claude/reauth/claude_reauth_1"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+
+
+def test_openclaw_client_submits_claude_provider_reauth_code(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "4.0")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "claude_reauth_1",
+                    "provider": "claude",
+                    "status": "code_submitted",
+                    "code_submitted_at": "2026-07-01T00:00:00Z",
+                },
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).submit_assistant_provider_reauth_code(
+            provider="claude",
+            session_id="claude_reauth_1",
+            code="claude-oauth-code-123",
+            operator_id="operator-1",
+            trace_id="trace-claude-code-1",
+        )
+
+    assert result["data"]["status"] == "code_submitted"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/claude"
+        "/reauth/claude_reauth_1/code"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+    assert recorded["headers"]["X-trace-id"] == "trace-claude-code-1"
+    assert recorded["headers"]["X-assistant-mode"] == "user"
+    assert recorded["headers"]["X-operator-role"] == "operator"
+    assert recorded["body"] == {
+        "provider": "claude",
+        "code": "claude-oauth-code-123",
+        "mode": "user",
+        "operator_role": "operator",
+        "confirmed": True,
+        "control_mode": {"active": False, "mode": "user", "activation_id": None},
+    }
+    assert recorded["timeout"] == 4.0
+
+
+def test_openclaw_client_registers_assistant_provider_metadata(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "provider": "gemini_cli",
+                    "provider_name": "Gemini CLI",
+                    "status": "registered",
+                    "ready": False,
+                },
+            },
+            status_code=201,
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).register_assistant_provider(
+            {
+                "provider": "gemini_cli",
+                "providerName": "Gemini CLI",
+                "model": "gemini-2.5-pro",
+                "mode": "kernel_debug",
+                "operator_role": "operator",
+            },
+            operator_id="operator-1",
+            trace_id="trace-provider-register-1",
+        )
+
+    assert result["status"] == "ok"
+    assert recorded["url"] == "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers"
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+    assert recorded["headers"]["X-trace-id"] == "trace-provider-register-1"
+    assert recorded["headers"]["X-operator-role"] == "operator"
+    assert recorded["headers"]["X-assistant-mode"] == "kernel_debug"
+    assert recorded["body"]["provider"] == "gemini_cli"
+    assert recorded["body"]["model"] == "gemini-2.5-pro"
 
 
 def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_path, monkeypatch) -> None:
@@ -1476,6 +1736,89 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
+
+
+def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path, monkeypatch) -> None:
+    fake = FakeProviderClient()
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+    client = _seeded_client(tmp_path, monkeypatch)
+    bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+
+    bff_main._management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.started",
+            "recorded_at": "2026-06-29T10:00:00Z",
+            "session_id": "usage-session",
+            "message_id": "usage-message",
+            "trace_id": "usage-trace",
+            "provider_run_id": "usage-run-codex",
+            "provider": "codex_cli",
+            "mode": "user",
+            "prompt_bytes": 1200,
+        }
+    )
+    bff_main._management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.completed",
+            "recorded_at": "2026-06-29T10:00:03Z",
+            "session_id": "usage-session",
+            "message_id": "usage-message",
+            "trace_id": "usage-trace",
+            "provider_run_id": "usage-run-codex",
+            "provider": "codex_cli",
+            "provider_state": "completed",
+            "duration_ms": 2500,
+            "output_summary": {
+                "model": "gpt-5-codex",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 4,
+                    "total_tokens": 14,
+                },
+            },
+        }
+    )
+    bff_main._management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.failed",
+            "recorded_at": "2026-06-29T10:01:00Z",
+            "session_id": "usage-session",
+            "message_id": "usage-message-2",
+            "trace_id": "usage-trace-2",
+            "provider_run_id": "usage-run-claude",
+            "provider": "claude",
+            "duration_ms": 900,
+            "error_code": "CLAUDE_AUTH_UNAVAILABLE",
+        }
+    )
+
+    resp = client.get(
+        "/bff/assistant/providers/usage-summary?auth_probe=true&limit=50&window_hours=24",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "ok"
+    data = body["data"]
+    assert data["totals"]["calls"] == 2
+    assert data["totals"]["successCount"] == 1
+    assert data["totals"]["failedCount"] == 1
+    providers = {row["provider"]: row for row in data["providers"]}
+    codex = providers["codex_cli"]
+    assert codex["liveAuth"] is True
+    assert codex["quota"]["source"] == "provider_snapshot"
+    assert codex["quota"]["remaining"] == 12
+    assert codex["quota"]["used"] == 38
+    assert codex["observedUsage"]["totalTokens"] == 14
+    assert codex["models"][0]["model"] == "gpt-5-codex"
+    assert codex["models"][0]["inputTokens"] == 10
+    claude = providers["claude"]
+    assert claude["liveAuth"] is False
+    assert claude["failedCount"] == 1
+    assert claude["quota"]["source"] == "not_configured"
+    assert data["quota"]["missingSourceMeans"] == "quota remaining is unknown, not zero"
 
 
 def test_management_ai_conversation_reader_returns_full_session_and_ignores_trace_filter(

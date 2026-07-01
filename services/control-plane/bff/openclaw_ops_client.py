@@ -458,6 +458,42 @@ class OpenClawOpsClient:
             headers={"X-Operator-Id": operator_id},
         )
 
+    def submit_assistant_provider_reauth_code(
+        self,
+        *,
+        provider: str = "claude",
+        session_id: str,
+        code: str,
+        operator_id: str,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized = str(provider or "claude").strip().lower()
+        headers: Dict[str, str] = {
+            "X-Operator-Id": operator_id,
+            "X-Assistant-Mode": "user",
+            "X-Operator-Role": "operator",
+        }
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        return self._request(
+            "POST",
+            (
+                f"/api/openclaw-adapter/assistant/providers/{urllib.parse.quote(normalized)}"
+                f"/reauth/{urllib.parse.quote(session_id)}/code"
+            ),
+            body={
+                "provider": normalized,
+                "code": code,
+                "mode": "user",
+                "operator_role": "operator",
+                "confirmed": True,
+                "control_mode": {"active": False, "mode": "user", "activation_id": None},
+            },
+            headers=headers,
+            expected_status={200},
+            timeout_seconds=_assistant_reauth_timeout_seconds(),
+        )
+
     def create_session(
         self,
         *,
@@ -549,10 +585,51 @@ class OpenClawOpsClient:
     # Assistant provider surfaces
     # ------------------------------------------------------------------
 
+    def list_assistant_providers(self, *, auth_probe: bool = False) -> Dict[str, Any]:
+        """Return readiness metadata for all assistant providers."""
+        query = {"auth_probe": "true"} if auth_probe else None
+        return self._request(
+            "GET",
+            "/api/openclaw-adapter/assistant/providers",
+            query=query,
+            timeout_seconds=self._assistant_timeout_seconds() if auth_probe else None,
+        )
+
+    def register_assistant_provider(
+        self,
+        payload: Dict[str, Any],
+        *,
+        operator_id: str,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Register assistant provider metadata through the OpenClaw gateway adapter."""
+        headers: Dict[str, str] = {"X-Operator-Id": operator_id}
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        operator_role = str(payload.get("operator_role") or payload.get("operatorRole") or "").strip()
+        if operator_role:
+            headers["X-Operator-Role"] = operator_role
+        mode = str(payload.get("mode") or "").strip()
+        if mode:
+            headers["X-Assistant-Mode"] = mode
+        return self._request(
+            "POST",
+            "/api/openclaw-adapter/assistant/providers",
+            body=payload,
+            headers=headers,
+            expected_status={201},
+            timeout_seconds=self._assistant_timeout_seconds(),
+        )
+
     def get_assistant_readiness(self, provider: str = "codex", *, auth_probe: bool = False) -> Dict[str, Any]:
         """Return readiness metadata for an assistant provider."""
         query = {"auth_probe": "true"} if auth_probe else None
-        return self._request("GET", f"/api/openclaw-adapter/assistant/readiness/{provider}", query=query)
+        return self._request(
+            "GET",
+            f"/api/openclaw-adapter/assistant/readiness/{provider}",
+            query=query,
+            timeout_seconds=self._assistant_timeout_seconds() if auth_probe else None,
+        )
 
     def invoke_assistant(
         self,

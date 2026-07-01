@@ -18,6 +18,8 @@ DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
 DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
+DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
+DEV_BFF_ALLOWED_TENANTS="${DEV_BFF_ALLOWED_TENANTS:-${DEV_BFF_TENANT_ID},pantheon-dev}"
 DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"
 DEV_ASSISTANT_CONTROL_MODE_STORE_PATH="${DEV_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"
 DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"
@@ -37,6 +39,7 @@ DEV_MANAGEMENT_AI_DATABASE_URL="${DEV_MANAGEMENT_AI_DATABASE_URL:-}"
 DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
 PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-true}"
+PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}"
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-lupin-staging-control}"
@@ -84,6 +87,7 @@ Environment overrides:
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
   DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB
+  DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
   DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS
   DEV_ASSISTANT_REPAIR_REPO_URL DEV_ASSISTANT_REPAIR_REMOTE_URL
@@ -317,6 +321,8 @@ ssh_bash() {
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
+  command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}")"
@@ -328,6 +334,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_STATUS_ROOT_HOST=$(shell_quote "${PANTHEON_STATUS_ROOT_HOST:-}")"
   command_prefix+=" PANTHEON_STATUS_ROOT_CONTAINER=$(shell_quote "${PANTHEON_STATUS_ROOT_CONTAINER:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}")"
   command_prefix+=" MANAGEMENT_AI_STORE_BACKEND=$(shell_quote "${MANAGEMENT_AI_STORE_BACKEND:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_SCHEMA=$(shell_quote "${MANAGEMENT_AI_STORE_SCHEMA:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
@@ -762,6 +769,90 @@ SQL
 REMOTE_DB
 }
 
+prune_dev_management_ai_telemetry_for_disk() {
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
+    return
+  fi
+  if [[ "${MANAGEMENT_AI_STORE_BACKEND:-}" != "postgres" ]]; then
+    info "Management AI telemetry prune skipped: backend=${MANAGEMENT_AI_STORE_BACKEND:-}"
+    return
+  fi
+  if [[ "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}" != "true" ]]; then
+    info "dev Postgres telemetry prune disabled before root deploy"
+    return
+  fi
+
+  local mgmt_db="${PANTHEON_MANAGEMENT_AI_DB_NAME:-pantheon}"
+  local mgmt_schema="${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
+
+  info "pruning dev Postgres telemetry_events before root deploy: db=${mgmt_db} schema=${mgmt_schema}"
+  COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
+    docker compose -p pantheon -f docker-compose.yml up -d postgres
+
+  local i
+  for ((i = 1; i <= 30; i++)); do
+    if docker compose -p pantheon -f docker-compose.yml exec -T postgres \
+      pg_isready -U "${POSTGRES_USER:-postgres}" -d "${mgmt_db}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+
+  docker compose -p pantheon -f docker-compose.yml exec -T \
+    -e MGMT_AI_DB_NAME="${mgmt_db}" \
+    -e MGMT_AI_SCHEMA="${mgmt_schema}" \
+    postgres sh -s <<'REMOTE_DB'
+set -euo pipefail
+
+psql -v ON_ERROR_STOP=1 \
+  --username "${POSTGRES_USER:-postgres}" \
+  --dbname "${MGMT_AI_DB_NAME}" \
+  -v mgmt_schema="${MGMT_AI_SCHEMA}" <<'SQL'
+SELECT n.nspname AS schema,
+       c.relname AS table,
+       pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'telemetry_events'
+  AND c.relkind IN ('r', 'p')
+ORDER BY pg_total_relation_size(c.oid) DESC;
+
+SELECT set_config('pantheon.mgmt_ai_schema', :'mgmt_schema', false);
+
+DO $prune$
+DECLARE
+  item record;
+  target_schema text := current_setting('pantheon.mgmt_ai_schema');
+BEGIN
+  FOR item IN
+    SELECT n.nspname AS schema_name, c.relname AS table_name
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'telemetry_events'
+      AND c.relkind IN ('r', 'p')
+      AND n.nspname IN (target_schema, 'public')
+  LOOP
+    RAISE NOTICE 'truncating %.%', item.schema_name, item.table_name;
+    EXECUTE format('TRUNCATE TABLE %I.%I', item.schema_name, item.table_name);
+  END LOOP;
+END
+$prune$;
+
+VACUUM;
+
+SELECT n.nspname AS schema,
+       c.relname AS table,
+       pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'telemetry_events'
+  AND c.relkind IN ('r', 'p')
+ORDER BY pg_total_relation_size(c.oid) DESC;
+SQL
+REMOTE_DB
+  docker_storage_diagnostics "after dev Postgres telemetry prune"
+}
+
 dump_dev_root_failure_diagnostics() {
   info "dev root compose ps after failure"
   docker compose -p pantheon -f docker-compose.yml ps || true
@@ -826,6 +917,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-ingest-scheduler,source-search-bounded}"
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
+    prune_dev_management_ai_telemetry_for_disk
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     prune_dev_docker_storage_for_build
@@ -836,6 +928,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     BROKER_PAPER_ENABLED=true \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
+    PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
     PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
     PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
@@ -868,6 +962,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     BROKER_PAPER_ENABLED=true \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
+    PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
     PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
     PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \

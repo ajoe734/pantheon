@@ -1,5 +1,6 @@
 """Tests for assistant_claude_provider — Claude Code CLI provider."""
 
+import io
 import json
 import subprocess
 import sys
@@ -12,7 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from assistant_claude_provider import (
     AssistantClaudeProvider,
+    ClaudeProviderError,
     ClaudeProviderResult,
+    _extract_auth_fields,
     _normalize_output,
     invoke_claude,
 )
@@ -218,6 +221,110 @@ def _mock_mounts_auth_failed(status="missing_host_mount"):
     mounts.validate_mounts.return_value = {"claude": validation}
     mounts._contracts.return_value = []
     return mounts
+
+
+class _FakeLoginProcess:
+    def __init__(self):
+        self.stdout = io.StringIO("Open https://console.anthropic.com/login\nCode: WXYZ-1234\n")
+        self.stderr = io.StringIO("")
+        self.stdin = io.StringIO()
+        self.terminated = False
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_start_device_reauth_runs_claude_auth_login_and_captures_url():
+    fake_process = _FakeLoginProcess()
+    popen_calls = []
+
+    def fake_popen(*args, **kwargs):
+        popen_calls.append((args, kwargs))
+        return fake_process
+
+    provider = AssistantClaudeProvider(
+        mounts=_mock_mounts_ready(),
+        popen_func=fake_popen,
+    )
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch.object(provider, "readiness", return_value={"ready": True, "auth_status": "ready"}),
+    ):
+        result = provider.start_device_reauth(
+            operator_id="op-1",
+            reason="expired",
+            capture_timeout_seconds=2,
+            poll_interval_seconds=1,
+            max_wait_seconds=30,
+        )
+
+    assert result["provider"] == "claude"
+    assert result["status"] in {"pending", "completed"}
+    assert result["verification_uri"] == "https://console.anthropic.com/login"
+    assert result["user_code"] == "WXYZ-1234"
+    assert popen_calls[0][0][0] == ["/usr/bin/claude", "auth", "login"]
+    assert popen_calls[0][1]["stdin"] == subprocess.PIPE
+    assert popen_calls[0][1]["env"]["CLAUDE_CONFIG_DIR"] == "/home/pantheon-assistant/.claude"
+
+
+def test_claude_auth_url_code_true_is_not_treated_as_user_code():
+    fields = _extract_auth_fields(
+        "Open https://console.anthropic.com/oauth/authorize?client_id=abc&code=true to continue"
+    )
+
+    assert fields["verification_uri_complete"].startswith("https://console.anthropic.com/oauth/authorize")
+    assert "user_code" not in fields
+
+
+def test_submit_reauth_code_writes_to_live_claude_auth_process():
+    fake_process = _FakeLoginProcess()
+    fake_process.stdout = io.StringIO(
+        "Open https://console.anthropic.com/oauth/authorize?client_id=abc&code=true\n"
+    )
+
+    provider = AssistantClaudeProvider(
+        mounts=_mock_mounts_ready(),
+        popen_func=lambda *args, **kwargs: fake_process,
+    )
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch.object(provider, "readiness", return_value={"ready": False, "auth_status": "failed"}),
+    ):
+        started = provider.start_device_reauth(
+            operator_id="op-1",
+            capture_timeout_seconds=2,
+            poll_interval_seconds=30,
+            max_wait_seconds=30,
+        )
+        result = provider.submit_reauth_code(
+            started["reauth_session_id"],
+            code="claude-auth-code-123",
+            operator_id="op-1",
+        )
+
+    assert fake_process.stdin.getvalue() == "claude-auth-code-123\n"
+    assert result["status"] == "code_submitted"
+    assert result["code_submitted_at"]
+    rendered = repr(result)
+    assert "claude-auth-code-123" not in rendered
+    assert result.get("user_code") is None
+
+
+def test_start_device_reauth_requires_writable_claude_mount():
+    provider = AssistantClaudeProvider(mounts=_mock_mounts_ready())
+    provider._mounts.validate_mounts.return_value = {  # noqa: SLF001
+        "claude": _validation(ready=True, mount_mode="ro")
+    }
+    with patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"):
+        with pytest.raises(ClaudeProviderError) as exc:
+            provider.start_device_reauth(operator_id="op-1")
+    assert exc.value.code == "CLAUDE_REAUTH_MOUNT_READ_ONLY"
 
 
 def test_invoke_claude_binary_not_found():

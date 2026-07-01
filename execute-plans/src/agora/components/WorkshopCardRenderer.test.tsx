@@ -53,6 +53,45 @@ const researchResultCard: WorkshopCard = {
   created_at: "2026-06-22T10:00:00Z",
 };
 
+const servantReconstructionCard: WorkshopCard = {
+  spec_version: "1.0",
+  card_id: "card-src-001",
+  card_type: "servant_reconstruction",
+  workshop_id: "ws-001",
+  sequence_no: 2,
+  status: "completed",
+  title: "Winner Branch Reconstruction",
+  summary: "Servant reconstructed the dense strategy description.",
+  payload: {
+    strategy_title: "贏家分點策略族",
+    explicit_definitions: [
+      "識別具有持續獲利能力或資訊領先特徵的券商分點群組。",
+      "Winner Branch Score",
+      "Branch Migration Risk",
+    ],
+    causal_chain: [
+      {
+        step_id: "step-1",
+        premise: "關係人持股變化",
+        mechanism: "對照分點淨買賣與事件時序",
+        expected_observation: "估計關係人與分點的可能對應關係",
+        confidence: 0.76,
+      },
+    ],
+    servant_inferences: [
+      {
+        statement: "分點 cluster 應以同券商與歷史共現先行推定。",
+        confidence: 0.68,
+        needs_confirmation: true,
+      },
+    ],
+    uncertainties: ["公開資料只能建立資訊領先代理。"],
+    contradictions: ["公告後才可見的資料不能宣稱為事前訊號。"],
+    proposed_next_actions: ["裁示 Winner Branch Score 的主要目標。"],
+  },
+  created_at: "2026-06-22T10:00:00Z",
+};
+
 describe("WorkshopCardRenderer — research_progress wiring", () => {
   it("renders ResearchRunCard (not inline ResearchProgressCard) for research_progress", () => {
     render(<WorkshopCardRenderer card={researchProgressCard} />);
@@ -85,5 +124,29 @@ describe("WorkshopCardRenderer — research_result wiring", () => {
     expect(
       screen.getByTestId("backtest-result-card-card-bt-rend-001-outcome").textContent
     ).toBe("pass");
+  });
+});
+
+describe("WorkshopCardRenderer — V10 Strategy Reconstruction", () => {
+  it("renders servant_reconstruction as a Strategy Reconstruction Card", () => {
+    render(<WorkshopCardRenderer card={servantReconstructionCard} />);
+
+    expect(screen.getByTestId("strategy-reconstruction-card-card-src-001")).toBeDefined();
+    expect(screen.getByText("策略重構卡 · Strategy Reconstruction")).toBeDefined();
+    expect(screen.getByTestId("strategy-reconstruction-card-card-src-001-core").textContent).toContain(
+      "識別具有持續獲利能力",
+    );
+    expect(screen.getByTestId("workshop-card-servant-card-src-001-chain").textContent).toContain(
+      "估計關係人與分點",
+    );
+    expect(screen.getByTestId("workshop-card-servant-card-src-001-inferences").textContent).toContain(
+      "分點 cluster",
+    );
+    expect(screen.getByTestId("strategy-reconstruction-card-card-src-001-limitations").textContent).toContain(
+      "不能作身份或違法行為認定",
+    );
+    expect(screen.getByTestId("workshop-card-servant-card-src-001-contradictions").textContent).toContain(
+      "不能宣稱為事前訊號",
+    );
   });
 });

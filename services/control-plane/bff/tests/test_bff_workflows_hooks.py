@@ -79,7 +79,9 @@ def test_bff_workflows_returns_canonical_list_envelope() -> None:
     assert body["data"] == body["items"]
     assert body["data"][0]["workflow_id"] == "pantheon.review"
     assert body["page_info"]["total"] == 1
+    assert body["page_info"]["page_size"] == 100
     assert body["page_info"]["returned"] == 1
+    assert body["page_info"]["has_more"] is False
     assert body["meta"]["surfaces"]["workflow_templates"]["status"] == "ok"
     assert body["meta"]["surfaces"]["workflow_templates"]["source"] == "service_store"
 
@@ -102,7 +104,9 @@ def test_bff_hooks_returns_canonical_list_envelope() -> None:
     assert body["data"] == body["items"]
     assert body["data"][0]["hook_id"] == "cron.pantheon.deploy"
     assert body["page_info"]["total"] == 1
+    assert body["page_info"]["page_size"] == 100
     assert body["page_info"]["returned"] == 1
+    assert body["page_info"]["has_more"] is False
     assert body["meta"]["surfaces"]["hook_registry"]["status"] == "ok"
     assert body["meta"]["surfaces"]["hook_registry"]["source"] == "service_store"
 
@@ -119,7 +123,9 @@ def test_bff_workflows_hooks_missing_store_returns_degraded_envelope() -> None:
             assert body["data"] == []
             assert body["items"] == []
             assert body["page_info"]["total"] == 0
+            assert body["page_info"]["page_size"] == 100
             assert body["page_info"]["returned"] == 0
+            assert body["page_info"]["has_more"] is False
             surface = body["meta"]["surfaces"][surface_key]
             assert surface["status"] == "unavailable"
             assert surface["source"] == "missing"

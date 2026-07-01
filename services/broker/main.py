@@ -22,11 +22,41 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from paper_simulation import PaperSimulationStore, SimulationError, simulate_paper_order
+from quote_pricing import QuotePricer
+from streaming_quotes import StreamingQuoteManager
+from sinopac.adapter import ShioajiBrokerAdapter, ShioajiBrokerError
 
 _PAPER_ENABLED = os.getenv("BROKER_PAPER_ENABLED", "").lower() in {"1", "true", "yes"}
 _LIVE_ENABLED = False  # never enabled; kept explicit for telemetry clarity
 
 _STORE = PaperSimulationStore()
+
+_SHIOAJI_SANDBOX_ENABLED = os.getenv("BROKER_SHIOAJI_SANDBOX_ENABLED", "").lower() in {"1", "true", "yes"}
+_TW_QUOTE_SEED = [s.strip() for s in os.getenv("BROKER_TW_QUOTE_SEED", "2330,2317,2454").split(",") if s.strip()]
+
+
+def _build_quote_pricer() -> QuotePricer:
+    """Authoritative live-quote pricer: Shioaji streaming tick primary (when the
+    sandbox session is enabled and credentials are set), TWSE MIS fallback.
+
+    The streaming manager subscribes the seed TW execution universe and grows the
+    quote list (報價列, <= 500) as the broker prices new symbols.
+    """
+    manager = None
+    if _SHIOAJI_SANDBOX_ENABLED:
+        api_key = os.getenv("BROKER_SHIOAJI_API_KEY", "")
+        secret_key = os.getenv("BROKER_SHIOAJI_SECRET_KEY", "")
+        if api_key and secret_key:
+            try:
+                manager = StreamingQuoteManager(
+                    api_key, secret_key, seed_symbols=_TW_QUOTE_SEED
+                )
+            except Exception:  # pragma: no cover - never block paper pricing on quote setup
+                manager = None
+    return QuotePricer(streaming_manager=manager)
+
+
+_QUOTE_PRICER = _build_quote_pricer()
 
 app = FastAPI(
     title="Pantheon Broker Sidecar",
@@ -86,6 +116,7 @@ class PaperOrderRequest(BaseModel):
     side: str
     order_type: str = "market"
     limit_price: Optional[float] = None
+    market_price: Optional[float] = None
 
 
 @app.post("/api/broker/paper/orders")
@@ -93,6 +124,9 @@ def submit_paper_order(req: PaperOrderRequest) -> JSONResponse:
     gate = _paper_gate_check()
     if gate is not None:
         return gate
+    market_price = req.market_price
+    if req.order_type == "market" and (market_price is None or market_price <= 0):
+        market_price = _QUOTE_PRICER.market_price(req.symbol)
     try:
         order = simulate_paper_order(
             capital_pool_id=req.capital_pool_id,
@@ -102,11 +136,30 @@ def submit_paper_order(req: PaperOrderRequest) -> JSONResponse:
             side=req.side,
             order_type=req.order_type,
             limit_price=req.limit_price,
+            market_price=market_price,
         )
         _STORE.submit(order)
         return JSONResponse(status_code=201, content={"status": "ok", "order": order.to_dict()})
     except SimulationError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+
+
+@app.get("/api/broker/quote-debug")
+def quote_debug() -> JSONResponse:
+    """Read-only streaming quote diagnostics: session health, subscription list
+    (報價列), live tick price map, reconnect count. Used to verify the live
+    tick feed during market hours."""
+    mgr = getattr(_QUOTE_PRICER, "_streaming", None)
+    if mgr is None:
+        return JSONResponse(status_code=200, content={"streaming": "disabled"})
+    return JSONResponse(status_code=200, content={
+        "streaming": "enabled",
+        "session_ok": bool(mgr.session_ok),
+        "quote_list": mgr.quote_list,
+        "quote_list_size": len(mgr.quote_list),
+        "reconnect_count": mgr.reconnect_count,
+        "prices": mgr.prices_snapshot(),
+    })
 
 
 @app.get("/api/broker/paper/orders")

@@ -165,6 +165,15 @@ class RejectBody(BaseModel):
     rejected_at: Optional[str] = None
 
 
+class ShadowEvalTickBody(BaseModel):
+    tick_id: Optional[str] = None
+    eval_type: str = "shadow"
+    dataset_refs: List[Dict[str, Any]] = Field(default_factory=list)
+    max_datasets: Optional[int] = None
+    actor_id: str = "scheduler"
+    ticked_at: Optional[str] = None
+
+
 def _proposal_text(body: ProposalBody) -> str:
     parts = [body.adapter, body.requested_mode, body.objective]
     parts.extend(str(ref.get("type") or "") for ref in body.source_refs)
@@ -396,3 +405,100 @@ def reject_job(job_id: str, body: RejectBody) -> Dict[str, Any]:
     job["rejection"] = {"reason": body.reason, "rejected_at": timestamp, "rejected_by": body.actor_id}
     job["events"] = events
     return store.put_job(job)
+
+
+def _next_candidate_id(timestamp: str, existing: set) -> str:
+    prefix = timestamp[:10].replace("-", "")
+    index = len(existing) + 1
+    candidate = f"sic-{prefix}-{index:03d}"
+    while candidate in existing:
+        index += 1
+        candidate = f"sic-{prefix}-{index:03d}"
+    return candidate
+
+
+@app.post("/api/policy-learning/shadow-eval-tick", status_code=201)
+def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
+    """Schedule a shadow / imitation evaluation tick over trace datasets.
+
+    Produces gated ShadowImitationCandidate records in proposed state.
+    Production training and artifact mutation remain fail-closed until a
+    separate experiment approval gate is explicitly activated.
+    """
+    timestamp = body.ticked_at or utc_now()
+    tick_id = body.tick_id or f"shadow-tick-{timestamp[:10].replace('-', '')}"
+    eval_type = body.eval_type.strip().lower() if body.eval_type else "shadow"
+
+    existing_candidates = store.list_candidates()
+    already_seen = {
+        str((c.get("dataset_ref") or {}).get("id") or (c.get("dataset_ref") or {}).get("dataset_id") or "")
+        for c in existing_candidates
+        if c.get("tick_id") == tick_id
+    }
+
+    dataset_refs = body.dataset_refs or []
+    if body.max_datasets is not None and len(dataset_refs) > body.max_datasets:
+        dataset_refs = dataset_refs[: body.max_datasets]
+
+    existing_ids = {str(c.get("candidate_id") or "") for c in existing_candidates}
+    created_ids: List[str] = []
+    skipped_ids: List[str] = []
+
+    for ref in dataset_refs:
+        ref_id = str(ref.get("id") or ref.get("dataset_id") or "")
+        if ref_id and ref_id in already_seen:
+            skipped_ids.append(ref_id)
+            continue
+        candidate_id = _next_candidate_id(timestamp, existing_ids | set(created_ids))
+        candidate = {
+            "id": candidate_id,
+            "candidate_id": candidate_id,
+            "tick_id": tick_id,
+            "eval_type": eval_type,
+            "dataset_ref": ref,
+            "status": "proposed",
+            "production_training": "fail_closed",
+            "experiment_approval_gate": "required",
+            "gate_note": "Candidate requires experiment approval and deployment gate before any production training.",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": body.actor_id,
+        }
+        store.put_candidate(candidate)
+        created_ids.append(candidate_id)
+
+    return {
+        "status": "ok",
+        "tick_id": tick_id,
+        "eval_type": eval_type,
+        "candidate_count": len(created_ids),
+        "skipped_count": len(skipped_ids),
+        "skipped_ids": skipped_ids,
+        "candidate_ids": created_ids,
+        "production_training": "fail_closed",
+        "ticked_at": timestamp,
+    }
+
+
+@app.get("/api/policy-learning/candidates")
+def list_candidates(
+    tick_id: Optional[str] = Query(default=None),
+    eval_type: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+) -> List[Dict[str, Any]]:
+    candidates = store.list_candidates()
+    if tick_id:
+        candidates = [c for c in candidates if c.get("tick_id") == tick_id]
+    if eval_type:
+        candidates = [c for c in candidates if str(c.get("eval_type") or "").lower() == eval_type.lower()]
+    if status:
+        candidates = [c for c in candidates if str(c.get("status") or "").lower() == status.lower()]
+    return candidates
+
+
+@app.get("/api/policy-learning/candidates/{candidate_id}")
+def get_candidate(candidate_id: str) -> Dict[str, Any]:
+    candidate = store.get_candidate(candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="shadow imitation candidate not found")
+    return candidate

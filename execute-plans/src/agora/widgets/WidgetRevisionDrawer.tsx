@@ -119,12 +119,12 @@ function summarizeWidgetChanges(before: WidgetSpecV2, after: WidgetSpecV2): Diff
 function ValidationBadge({ validation }: { validation?: AgoraWidgetValidationResult }) {
   if (!validation) return null;
   return validation.valid ? (
-    <Badge className="border-emerald-300 bg-emerald-50 text-emerald-800" variant="outline">
+    <Badge className="border-primary bg-primary/10 text-primary" variant="outline">
       <CheckCircle2 className="mr-1 h-3 w-3" />
       validated
     </Badge>
   ) : (
-    <Badge className="border-red-300 bg-red-50 text-red-800" variant="outline">
+    <Badge className="border-destructive bg-destructive/10 text-destructive" variant="outline">
       <XCircle className="mr-1 h-3 w-3" />
       invalid
     </Badge>
@@ -134,7 +134,7 @@ function ValidationBadge({ validation }: { validation?: AgoraWidgetValidationRes
 function ValidationIssues({ validation }: { validation?: AgoraWidgetValidationResult }) {
   if (!validation || validation.valid) return null;
   return (
-    <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900" data-testid="widget-validation-errors">
+    <div className="rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive" data-testid="widget-validation-errors">
       <div className="flex items-center gap-2 font-semibold">
         <AlertTriangle className="h-4 w-4" />
         Validation failed
@@ -155,15 +155,15 @@ function ValidationIssues({ validation }: { validation?: AgoraWidgetValidationRe
 function DiffTable({ rows }: { rows: DiffRow[] }) {
   if (!rows.length) {
     return (
-      <div className="rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-600" data-testid="widget-diff-empty">
+      <div className="rounded-md border border-border bg-card p-3 text-sm text-muted-foreground" data-testid="widget-diff-empty">
         No visible WidgetSpec field changes.
       </div>
     );
   }
   return (
-    <div className="overflow-hidden rounded-md border border-slate-200" data-testid="widget-diff-table">
+    <div className="overflow-hidden rounded-md border border-border" data-testid="widget-diff-table">
       <table className="w-full border-collapse text-left text-xs">
-        <thead className="bg-slate-100 text-slate-600">
+        <thead className="bg-muted text-muted-foreground">
           <tr>
             <th className="w-36 px-3 py-2 font-semibold">Field</th>
             <th className="px-3 py-2 font-semibold">Before</th>
@@ -172,10 +172,10 @@ function DiffTable({ rows }: { rows: DiffRow[] }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr className="border-t border-slate-200 align-top" key={row.label}>
-              <td className="px-3 py-2 font-medium text-slate-700">{row.label}</td>
-              <td className="break-words px-3 py-2 text-slate-600">{row.before}</td>
-              <td className="break-words px-3 py-2 text-slate-950">{row.after}</td>
+            <tr className="border-t border-border align-top" key={row.label}>
+              <td className="px-3 py-2 font-medium text-foreground">{row.label}</td>
+              <td className="break-words px-3 py-2 text-muted-foreground">{row.before}</td>
+              <td className="break-words px-3 py-2 text-foreground">{row.after}</td>
             </tr>
           ))}
         </tbody>
@@ -320,7 +320,7 @@ export function WidgetRevisionDrawer({
             </div>
             <button
               aria-label="Close widget revision drawer"
-              className="rounded-md border border-slate-300 bg-white p-2 text-slate-600 hover:bg-slate-100"
+              className="rounded-md border border-border bg-card p-2 text-muted-foreground hover:bg-muted"
               onClick={() => onOpenChange(false)}
               type="button"
             >
@@ -338,11 +338,11 @@ export function WidgetRevisionDrawer({
         ) : (
           <div className="mt-5 space-y-5 text-sm" data-testid="widget-revision-drawer-body">
             <form className="space-y-3" onSubmit={submitRevision}>
-              <label className="block text-xs font-semibold uppercase text-slate-500" htmlFor="widget-revision-instruction">
+              <label className="block text-xs font-semibold uppercase text-muted-foreground" htmlFor="widget-revision-instruction">
                 Instruction
               </label>
               <textarea
-                className="min-h-24 w-full rounded-md border border-slate-300 bg-white p-3 text-sm text-slate-950 outline-none focus:border-slate-700 focus:ring-2 focus:ring-slate-200"
+                className="min-h-24 w-full rounded-md border border-border bg-card p-3 text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30"
                 id="widget-revision-instruction"
                 onChange={(event) => setInstruction(event.target.value)}
                 placeholder="Example: show the candidate score as a table and put evidence links first"
@@ -358,8 +358,8 @@ export function WidgetRevisionDrawer({
                   className={cn(
                     "inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold",
                     canSubmit
-                      ? "border-slate-900 bg-slate-950 text-white hover:bg-slate-800"
-                      : "border-slate-200 bg-slate-100 text-slate-400",
+                      ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
+                      : "border-border bg-muted text-muted-foreground",
                   )}
                   disabled={!canSubmit}
                   type="submit"
@@ -371,22 +371,22 @@ export function WidgetRevisionDrawer({
             </form>
 
             {error ? (
-              <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900" role="alert">
+              <div className="rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive" role="alert">
                 {error}
               </div>
             ) : null}
             <ValidationIssues validation={validation} />
 
             {assistantMessage || changeReason ? (
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+              <div className="rounded-md border border-border bg-muted p-3 text-sm text-foreground">
                 {assistantMessage ? <p>{assistantMessage}</p> : null}
-                {changeReason ? <p className="mt-2 font-medium text-slate-950">{changeReason}</p> : null}
+                {changeReason ? <p className="mt-2 font-medium text-foreground">{changeReason}</p> : null}
               </div>
             ) : null}
 
             <div className="grid gap-4 lg:grid-cols-2" data-testid="widget-before-after-preview">
               <section className="space-y-2">
-                <h3 className="text-sm font-semibold text-slate-950">Before</h3>
+                <h3 className="text-sm font-semibold text-foreground">Before</h3>
                 <WidgetRenderer
                   allowedSensitivities={allowedSensitivities}
                   data={data}
@@ -394,7 +394,7 @@ export function WidgetRevisionDrawer({
                 />
               </section>
               <section className="space-y-2">
-                <h3 className="text-sm font-semibold text-slate-950">After</h3>
+                <h3 className="text-sm font-semibold text-foreground">After</h3>
                 {canPreview && proposal ? (
                   <WidgetRenderer
                     allowedSensitivities={allowedSensitivities}
@@ -402,7 +402,7 @@ export function WidgetRevisionDrawer({
                     widget={proposal}
                   />
                 ) : (
-                  <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+                  <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed border-border bg-muted p-4 text-sm text-muted-foreground">
                     {phase === "requesting" ? "Waiting for validated WidgetSpec." : "No validated revision yet."}
                   </div>
                 )}
@@ -411,9 +411,9 @@ export function WidgetRevisionDrawer({
 
             {proposal ? <DiffTable rows={diffRows} /> : null}
 
-            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 pt-4">
+            <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
               <button
-                className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:text-slate-400"
+                className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground hover:bg-muted disabled:text-muted-foreground"
                 disabled={!proposal || !onReject || decisionBusy === "reject"}
                 onClick={rejectProposal}
                 type="button"
@@ -422,7 +422,7 @@ export function WidgetRevisionDrawer({
                 Reject
               </button>
               <button
-                className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:text-slate-400"
+                className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground hover:bg-muted disabled:text-muted-foreground"
                 disabled={!decision || !onKeepBoth || decisionBusy === "keepBoth"}
                 onClick={() => runDecision("keepBoth", onKeepBoth)}
                 type="button"
@@ -431,7 +431,7 @@ export function WidgetRevisionDrawer({
                 Keep both
               </button>
               <button
-                className="inline-flex items-center gap-2 rounded-md border border-emerald-700 bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                className="inline-flex items-center gap-2 rounded-md border border-primary bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
                 disabled={!decision || !onAccept || decisionBusy === "accept"}
                 onClick={() => runDecision("accept", onAccept)}
                 type="button"

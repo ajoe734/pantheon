@@ -1,0 +1,66 @@
+{
+  "task_id": "LOOP-AUTO-RT-005",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "generated_at": "2026-06-27T14:41:34Z",
+  "verification": {
+    "command": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/execution/lean_runtime/test_signal_isolation.py services/execution/lean_runtime/test_signal_consumer.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q",
+    "exit_code": 0,
+    "result": "114 passed in 39.28s"
+  },
+  "coverage": [
+    {
+      "acceptance": "stack_restart_recovery",
+      "status": "pass",
+      "evidence": [
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetReconcilerAcceptanceCriteria::test_stack_restart_recreates_workers_for_all_active_bindings",
+        "docker-compose.yml::paper-fleet-reconciler"
+      ],
+      "note": "Fresh reconciler over active desired state starts one worker per active binding; compose service is restart-enabled. Full Docker Compose restart was not executed."
+    },
+    {
+      "acceptance": "kill_one_worker_recovery",
+      "status": "pass",
+      "evidence": [
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetReconcilerAcceptanceCriteria::test_killing_one_worker_restarts_only_that_worker"
+      ],
+      "note": "Simulated exit 137 restarts only the killed binding and leaves the other worker untouched."
+    },
+    {
+      "acceptance": "retire_binding_stop",
+      "status": "pass",
+      "evidence": [
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetReconcilerAcceptanceCriteria::test_retired_binding_stops_its_worker",
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetReconcilerExcludedBindings"
+      ],
+      "note": "Excluded paused/retired bindings terminate tracked workers and are not restarted when dead."
+    },
+    {
+      "acceptance": "heartbeat_recovery",
+      "status": "pass",
+      "evidence": [
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetReconcilerMonitoringSessions::test_stale_heartbeat_ends_session_and_restarts_worker",
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetReconcilerMonitoringSessions::test_stale_persisted_zombie_session_is_closed_on_restart",
+        "services/control-plane/bff/test_pkt010_runtime_state_board_contract.py",
+        "services/control-plane/bff/test_read_store_service_clients.py"
+      ],
+      "note": "Stale heartbeat sessions become terminal, stale workers are stopped, replacement sessions are opened, and terminal reasons are visible in BFF/read-store contracts."
+    },
+    {
+      "acceptance": "signal_isolation",
+      "status": "pass",
+      "evidence": [
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetReconcilerSignalQueueIsolation",
+        "services/execution/lean_runtime/test_signal_isolation.py",
+        "services/execution/lean_runtime/test_signal_consumer.py"
+      ],
+      "note": "Workers receive binding-scoped queue keys; consumers reject mismatched binding, runtime, and capital-pool signals and route rejects to DLQ where supported."
+    }
+  ],
+  "boundaries": [
+    "No Docker Compose full-stack restart was executed.",
+    "No dev VM or production paper fleet was mutated.",
+    "No live-capital execution was performed.",
+    "No maturity increase is claimed by this packet."
+  ]
+}

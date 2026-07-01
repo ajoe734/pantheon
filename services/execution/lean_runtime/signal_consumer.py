@@ -60,6 +60,8 @@ class SignalConsumer:
         schema_path: str | pathlib.Path | None = None,
         rebalance_timeout_bars: int = _REBALANCE_TIMEOUT_BARS,
         binding_id: str | None = None,
+        runtime_id: str | None = None,
+        capital_pool_id: str | None = None,
     ) -> None:
         self._store = store_client
         self._schema = self._load_schema(schema_path)
@@ -67,6 +69,10 @@ class SignalConsumer:
         # When set, signals whose binding_id field doesn't match are discarded
         # as a defense-in-depth layer on top of queue-key isolation.
         self._binding_id: str | None = str(binding_id).strip() if binding_id else None
+        # Runtime-level isolation: reject signals addressed to a different runtime.
+        self._runtime_id: str | None = str(runtime_id).strip() if runtime_id else None
+        # Capital-pool isolation: reject signals scoped to a different pool.
+        self._capital_pool_id: str | None = str(capital_pool_id).strip() if capital_pool_id else None
 
         # run_id → {"signals": [...], "bars_waited": int}
         self._rebalance_buffer: dict[str, dict] = defaultdict(
@@ -119,6 +125,34 @@ class SignalConsumer:
                         "signal_binding_id": str(signal.get("binding_id") or "").strip(),
                     },
                 )
+                self._enqueue_dlq(signal, "binding_mismatch")
+                continue
+            if self._is_wrong_runtime(signal):
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "runtime_mismatch",
+                    extra_metadata={
+                        "expected_runtime_id": self._runtime_id,
+                        "signal_runtime_id": str(signal.get("runtime_id") or "").strip(),
+                    },
+                )
+                self._enqueue_dlq(signal, "runtime_mismatch")
+                continue
+            if self._is_wrong_capital_pool(signal):
+                signal_pool = str(
+                    (signal.get("metadata") or {}).get("capital_pool_id") or ""
+                ).strip()
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "capital_pool_mismatch",
+                    extra_metadata={
+                        "expected_capital_pool_id": self._capital_pool_id,
+                        "signal_capital_pool_id": signal_pool,
+                    },
+                )
+                self._enqueue_dlq(signal, "capital_pool_mismatch")
                 continue
             if signal.get("run_id"):
                 self._buffer_rebalance(signal)
@@ -302,6 +336,64 @@ class SignalConsumer:
             signal.get("signal_id", "<unknown>"), self._binding_id, signal_binding,
         )
         return True
+
+    def _is_wrong_runtime(self, signal: dict) -> bool:
+        """Reject signals addressed to a different runtime instance.
+
+        Only active when this consumer was constructed with a *runtime_id*.
+        Signals without a ``runtime_id`` field are unrouted legacy signals and
+        pass through to preserve backward compatibility.
+        """
+        if not self._runtime_id:
+            return False
+        signal_runtime = str(signal.get("runtime_id") or "").strip()
+        if not signal_runtime:
+            return False
+        if signal_runtime == self._runtime_id:
+            return False
+        log.warning(
+            "[%s] Runtime mismatch: expected %s, got %s — discarding",
+            signal.get("signal_id", "<unknown>"), self._runtime_id, signal_runtime,
+        )
+        return True
+
+    def _is_wrong_capital_pool(self, signal: dict) -> bool:
+        """Reject signals scoped to a different capital pool.
+
+        Only active when this consumer was constructed with a *capital_pool_id*.
+        Signals whose metadata carries no ``capital_pool_id`` pass through —
+        they predate the field and must not be silently dropped.
+        """
+        if not self._capital_pool_id:
+            return False
+        signal_pool = str(
+            (signal.get("metadata") or {}).get("capital_pool_id") or ""
+        ).strip()
+        if not signal_pool:
+            return False
+        if signal_pool == self._capital_pool_id:
+            return False
+        log.warning(
+            "[%s] Capital pool mismatch: expected %s, got %s — discarding",
+            signal.get("signal_id", "<unknown>"), self._capital_pool_id, signal_pool,
+        )
+        return True
+
+    def _enqueue_dlq(self, signal: dict, reason: str) -> None:
+        """Best-effort: send an isolation-rejected signal to the store's DLQ.
+
+        Adds a ``dlq_reason`` marker to the payload copy so operators can
+        identify why the signal was dead-lettered without re-parsing logs.
+        """
+        enqueue_dlq = getattr(self._store, "enqueue_dlq", None)
+        if not callable(enqueue_dlq):
+            return
+        try:
+            dlq_payload = {**signal, "_dlq_reason": reason}
+            enqueue_dlq(dlq_payload)
+        except Exception as exc:  # noqa: BLE001 - DLQ write must never break the signal path
+            log.warning("[%s] DLQ enqueue failed (%s): %s",
+                        signal.get("signal_id", "<unknown>"), reason, exc)
 
     # ------------------------------------------------------------------
     # Conflict resolution (same symbol, different signals)

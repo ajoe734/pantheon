@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Dark AGORA base theme.
+ * CSS custom properties follow the shadcn/ui convention so that
+ * Tailwind utility classes like bg-background, text-foreground, etc.
+ * resolve to the correct dark AGORA palette.
+ *
+ * All hsl() values use space-separated channel notation compatible with
+ * the Tailwind theme extension (hsl(var(--background))).
+ */
+@layer base {
+  :root {
+    /* Main shell — near-black dark */
+    --background: 215 13% 8%;
+    --foreground: 38 40% 92%;
+
+    /* Card / elevated surfaces */
+    --card: 218 15% 11%;
+    --card-foreground: 38 40% 92%;
+
+    /* Popover / tooltip */
+    --popover: 218 15% 11%;
+    --popover-foreground: 38 40% 92%;
+
+    /* Primary — AGORA amber */
+    --primary: 38 76% 67%;
+    --primary-foreground: 215 13% 8%;
+
+    /* Secondary — slightly elevated dark */
+    --secondary: 220 14% 15%;
+    --secondary-foreground: 38 40% 92%;
+
+    /* Muted — dimmed surface */
+    --muted: 220 14% 18%;
+    --muted-foreground: 215 15% 58%;
+
+    /* Accent — dark highlight surface */
+    --accent: 218 15% 13%;
+    --accent-foreground: 38 40% 92%;
+
+    /* Destructive — warning red */
+    --destructive: 0 65% 70%;
+    --destructive-foreground: 38 40% 92%;
+
+    /* Border / input ring */
+    --border: 218 14% 20%;
+    --input: 218 14% 20%;
+    --ring: 38 76% 67%;
+
+    /* Border radius token */
+    --radius: 0.5rem;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family:
+    "Noto Sans TC",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar — subtle dark thumb */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(218 14% 25%);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(218 14% 35%);
+}

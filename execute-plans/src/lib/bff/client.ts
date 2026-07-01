@@ -75,6 +75,7 @@ import type {
   Incident,
   ApprovalRequest,
   AuditEvent,
+  LoopHealthEntry,
 } from "@/lib/bff/types";
 
 export type PersonaFleetHealthStatus = "healthy" | "degraded" | "critical";
@@ -247,6 +248,73 @@ function emptyOodaPacketList(): ListEnvelope<OodaLoopPacket> {
           status: "unavailable",
           source: "mock",
           reason: "OODA packets are served only by the Pantheon OODA read surface.",
+        },
+      },
+    },
+  };
+}
+
+function emptyLoopHealthList(): ListEnvelope<LoopHealthEntry> {
+  return {
+    items: [],
+    cursor: {},
+    pageSize: 0,
+    totalCountExact: true,
+    estimatedTotal: 0,
+    meta: {
+      surfaces: {
+        loop_health: {
+          status: "unavailable",
+          source: "mock_seed",
+          truth_level: "seed_fixture",
+          note: "No loop health liveness proof is available from frontend seed data.",
+        },
+      },
+      truth_labels: {
+        seed_fixture: {
+          truth_level: "seed_fixture",
+          truth_bucket: "seed_fixture",
+          source_type: "seed_fixture",
+          rank: 0,
+          label: "Seed / fixture",
+          description: "Frontend seed data is never accepted as liveness proof.",
+          accepted_as_live: false,
+        },
+        snapshot_fallback: {
+          truth_level: "snapshot_fallback",
+          truth_bucket: "snapshot",
+          source_type: "snapshot",
+          rank: 0,
+          label: "Snapshot fallback",
+          description: "BFF local snapshot fallback is not live proof.",
+          accepted_as_live: false,
+        },
+        registry_metadata: {
+          truth_level: "registry_metadata",
+          truth_bucket: "registry",
+          source_type: "registry",
+          rank: 1,
+          label: "Registry metadata",
+          description: "Durable static loop catalog metadata.",
+          accepted_as_live: false,
+        },
+        scheduled_tick: {
+          truth_level: "scheduled_tick",
+          truth_bucket: "scheduled",
+          source_type: "scheduled",
+          rank: 2,
+          label: "Scheduled tick",
+          description: "Scheduler or worker tick evidence without reconciliation proof.",
+          accepted_as_live: false,
+        },
+        reconciled_live_proof: {
+          truth_level: "reconciled_live_proof",
+          truth_bucket: "live_truth",
+          source_type: "live_truth",
+          rank: 3,
+          label: "Reconciled live truth",
+          description: "Accepted live truth requires a non-snapshot reconciliation proof.",
+          accepted_as_live: true,
         },
       },
     },
@@ -675,6 +743,14 @@ function adaptOodaPacketDetail(body: unknown): OodaPacketDetail | undefined {
     packet,
     meta: Object.keys(meta).length > 0 ? meta : undefined,
   };
+}
+
+function adaptLoopHealthDetail(body: unknown): LoopHealthEntry | undefined {
+  const raw = strictDataFrom(body) ?? body;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const item = raw as LoopHealthEntry;
+  const id = String(item.loop_id ?? item.id ?? "").trim();
+  return id ? { ...item, id, loop_id: id } : undefined;
 }
 
 function adaptPersonaFleetAggregate(body: unknown): PersonaFleetAggregate {
@@ -1399,6 +1475,22 @@ const audit = {
   list:  bffV1Lists.audit as () => Promise<ListEnvelope<AuditEvent>>,
 };
 
+const loopHealth = {
+  list: (): Promise<ListEnvelope<LoopHealthEntry>> =>
+    withStrictLiveOrMock<ListEnvelope<LoopHealthEntry>, unknown>(
+      { method: "GET", path: paths.v5LoopHealth() },
+      async () => emptyLoopHealthList(),
+      (data) => normalizeLiveListResponse<LoopHealthEntry>(data, "loopHealth"),
+    ),
+  get: (id: string): Promise<LoopHealthEntry | undefined> =>
+    withStrictLiveOrMock<LoopHealthEntry | undefined, unknown>(
+      { method: "GET", path: paths.v5LoopHealthEntry(id) },
+      async () => undefined,
+      adaptLoopHealthDetail,
+      strictNotFoundAsUndefined,
+    ),
+};
+
 const oodaPackets = {
   list: (query?: OodaPacketListQuery): Promise<ListEnvelope<OodaLoopPacket>> =>
     oodaPacketList(paths.oodaPackets(), query),
@@ -1585,6 +1677,7 @@ export const managementClient = {
   incidents,
   approvals,
   audit,
+  loopHealth,
   oodaPackets,
   personaLeague,
   managementFleet,
@@ -1606,7 +1699,7 @@ export const MANAGEMENT_FAMILIES: readonly ManagementFamily[] = [
   "rebalances", "deployments", "evolution", "research", "artifacts",
   "tools", "mcpServers", "mcpTools", "skills", "channels",
   "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-  "oodaPackets", "personaLeague", "personaFleet", "humanInbox",
+  "loopHealth", "oodaPackets", "personaLeague", "personaFleet", "humanInbox",
   "tradingPulse", "evidenceExplorer", "evolutionJournal", "personaIntent",
 ] as const;
 

@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-06-15",
+    "snapshot_date": "2026-07-01",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 505,
+    "total_routes": 599,
     "status_values": [
       "implemented",
       "alias",
@@ -18,6 +18,12 @@
     ]
   },
   "entries": [
+    {
+      "method": "DELETE",
+      "path": "/bff/agora/candidate-pools/{param}/members/{param}/monitor",
+      "family": "agora-core",
+      "status": "implemented"
+    },
     {
       "method": "GET",
       "path": "/bff/agora/alerts/triage",
@@ -38,6 +44,60 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/candidate-pools",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/candidate-pools/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/candidate-pools/{param}/discussions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/candidate-pools/{param}/members",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/candidate-pools/{param}/members/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/candidate-pools/{param}/members/{param}/discussions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/candidate-pools/{param}/monitoring",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/candidate-pools/{param}/score",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/capabilities",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/committee-sessions",
       "family": "agora-core",
       "status": "implemented"
@@ -45,6 +105,24 @@
     {
       "method": "GET",
       "path": "/bff/agora/daily",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/dashboard-recipes/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/dashboard-recipes/{param}/versions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/datasets/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -86,6 +164,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/interaction-evidence/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/journal",
       "family": "agora-core",
       "status": "implemented"
@@ -99,6 +183,12 @@
     {
       "method": "GET",
       "path": "/bff/agora/markets",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/me",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -122,7 +212,43 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/research-plans/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/research-plans/{param}/runs",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/research-runs/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/research-runs/{param}/artifacts",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/research-tasks",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/servant/sessions/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/servant/sessions/{param}/stream",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -164,6 +290,66 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/strategies/{param}/dashboard-recipes",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/strategies/{param}/trading-room/proposals/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-intents/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/strategies/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/stream",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/{param}/versions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/training-examples",
       "family": "agora-core",
       "status": "implemented"
@@ -176,13 +362,79 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/workshops",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/{param}/completeness",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/{param}/events",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/{param}/research-plans",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/{param}/stream",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/{param}/versions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/research/tasks",
       "family": "agora-core",
       "status": "implemented"
     },
     {
       "method": "PATCH",
+      "path": "/bff/agora/dashboard-recipes/{param}/layout",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
       "path": "/bff/agora/journal/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/{param}/layout",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/{param}/views/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/{param}/widgets/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -206,6 +458,60 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/candidate-pools",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/candidate-pools/{param}/discussions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/candidate-pools/{param}/members/{param}/discussions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/candidate-pools/{param}/members/{param}/monitor",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/candidate-pools/{param}/members/{param}/review",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/candidate-pools/{param}/score",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/dashboard-recipes/{param}/accept",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/dashboard-recipes/{param}/feedback",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/dashboard-recipes/{param}/rollback",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/feedback",
       "family": "agora-core",
       "status": "implemented"
@@ -224,7 +530,19 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/interaction-evidence",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/journal",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/management/consult-bundle",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -243,6 +561,54 @@
     {
       "method": "POST",
       "path": "/bff/agora/notes",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/research-plans/{param}/approve",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/research-plans/{param}/cancel",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/research-plans/{param}/runs",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/research-runs/{param}/cancel",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/servant/ensure",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/servant/sessions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/servant/sessions/{param}/messages",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/servant/sessions/{param}/terminate",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -272,7 +638,139 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/strategies/{param}/dashboard-recipes/proposals",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/strategies/{param}/trading-room/proposals",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/strategies/{param}/trading-room/proposals/{param}/accept",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-intents/{param}/handoffs",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-intents/{param}/withdraw",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/decision-events/{param}/decisions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/widget-revision-proposals/{param}/accept",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/versions/{param}/rollback",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/views",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/widgets",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/widgets/{param}/revision-proposals",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/training-examples",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/widgets/propose-plugin",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/widgets/validate",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/widgets/{param}/feedback",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{param}/conclude",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{param}/consultations",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{param}/messages",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{param}/research-plans",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{param}/research-runs",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{param}/versions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{param}/versions/{param}/select",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -1319,6 +1817,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/v5/downstream-health",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/v5/execution/persona-health",
       "family": "execute-plans-cutover-smoke",
       "status": "implemented"
@@ -1326,6 +1830,30 @@
     {
       "method": "GET",
       "path": "/bff/v5/execution/strategy-health",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-health",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-health/{param}",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-inventory",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-inventory/{param}",
       "family": "execute-plans-cutover-smoke",
       "status": "implemented"
     },
@@ -2504,6 +3032,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/alpha-factory",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/assistant/control-mode",
       "family": "unknown",
       "status": "implemented"
@@ -2534,6 +3068,18 @@
     },
     {
       "method": "GET",
+      "path": "/bff/assistant/providers",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/assistant/providers/usage-summary",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/assistant/sessions/{param}",
       "family": "unknown",
       "status": "implemented"
@@ -2553,6 +3099,12 @@
     {
       "method": "GET",
       "path": "/bff/knowledge",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/lineage",
       "family": "unknown",
       "status": "implemented"
     },
@@ -2613,12 +3165,6 @@
     {
       "method": "GET",
       "path": "/bff/management/evolution-journal",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/fleet",
       "family": "unknown",
       "status": "implemented"
     },
@@ -2937,6 +3483,18 @@
     },
     {
       "method": "POST",
+      "path": "/bff/assistant/provider/reauth/{param}/code",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/providers",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/assistant/repair-worktrees/prepare",
       "family": "unknown",
       "status": "implemented"
@@ -2986,6 +3544,12 @@
     {
       "method": "POST",
       "path": "/bff/management/nl/ask",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/nl/ask/stream",
       "family": "unknown",
       "status": "implemented"
     },

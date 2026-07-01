@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import APIRouter, Header, Query
 
 from ._envelope import _gov_list_envelope
+from .contracts import ManagementRecordsEnvelope
 
 _DATASET = "governance_permissions"
 _SURFACE_KEY = "governance_permissions"
@@ -18,7 +19,10 @@ def create_permissions_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    @router.get("/bff/management/permissions")
+    @router.get(
+        "/bff/management/permissions",
+        response_model=ManagementRecordsEnvelope,
+    )
     def bff_management_permissions(
         page_token: Optional[str] = Query(default=None),
         page_size: int = Query(default=50, ge=1, le=200),

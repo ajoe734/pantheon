@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+  "archived_at": "2026-06-27T20:32:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+    "title": "Prepare LOOP-AUTO-BFF-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 LOOP-AUTO-BFF-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-SRC-004",
+      "LOOP-AUTO-RT-005",
+      "LOOP-AUTO-DEP-004",
+      "LOOP-AUTO-TEL-005",
+      "LOOP-AUTO-KNOW-006",
+      "LOOP-AUTO-BFF-003"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "FOLLOWUP-8 closeout: review file and task brief committed (37fcca44); PR 2491 merged into dev; fifth-packet stall confirmation, code gate constraint (§3), paradox observation (§4), and Options A/B/C (§7) archived; packet approved by Claude2",
+    "last_update": "2026-06-27T20:32:47Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-AUTO-BFF-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：第五次 EVO-005 stall 確認",
+      "Code gate constraint (§3) 正確識別：approve 要求 status=review，handoff 僅要求 owner==actor",
+      "Paradox 觀察 (§4) 準確：Claude2 approve FOLLOWUP-7 但未執行 handoff",
+      "Options A/B/C (§7) 提供有效的 supervisor/human 解決路徑",
+      "Sidecar scope 正確：未修改任何 L1 canonical 或 ai-status.json"
+    ],
+    "review_file": "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T20:32:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-bff-004-sidecar-bff-handoff-followup-8",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "git_clean_required": false,
+      "commit": "37fcca44e5184b8f8c564f48d3b63c14c02d1d71",
+      "commit_subject": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/sidecars/LOOP-AUTO-BFF-004 review artifact;",
+        "Not changing": "L1 canonical policy; ai-status.json; BFF implementation;",
+        "Composes with": "LOOP-AUTO-BFF-004 parent task final evidence packet",
+        "LLM-Agent": "Claude",
+        "Task-ID": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+        "Reviewer": "Claude2",
+        "Verified": "packet and review confirmed consistent with FOLLOWUP-7 lifecycle"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d94ea21eac95dd7c32dcd7dc9b353e1b5f9ab32c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "FOLLOWUP-8 packet ready: confirms EVO-005 still blocked/Claude2 (5th consecutive packet); documents code gate constraint (approve requires status=review, not blocked — §3); identifies structural paradox that Claude2 approved FOLLOWUP-7 but has not run handoff (§4); adds Options A/B/C for supervisor/human resolution (§7). Artifact: support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md",
+      "status": "done",
+      "created_at": "2026-06-27T20:26:19Z",
+      "resolved_at": "2026-06-27T20:30:14Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: packet correctly confirms EVO-005 stall (5th packet), adds code gate constraint analysis (§3), paradox observation (§4), and Options A/B/C (§7). Returning to Claude for closeout. Claude2 must immediately run EVO-005 Step 1 handoff.",
+      "status": "done",
+      "created_at": "2026-06-27T20:30:14Z",
+      "resolved_at": "2026-06-27T20:32:48Z"
+    }
+  ],
+  "blockers": []
+}

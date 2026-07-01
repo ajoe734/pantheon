@@ -3,6 +3,27 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
+def _surface_state(
+    *,
+    status: str,
+    source: str,
+    snapshot_at: str,
+    message: Optional[str] = None,
+) -> Dict[str, Any]:
+    surface: Dict[str, Any] = {
+        "status": status,
+        "source": source,
+    }
+    if message:
+        surface["message"] = message
+    if status == "unavailable":
+        surface["staleness"] = {
+            "served_from": "unverifiable" if source == "missing" else source,
+            "last_known_at": snapshot_at,
+        }
+    return surface
+
+
 def _gov_list_envelope(
     *,
     items: List[Dict[str, Any]],
@@ -25,9 +46,21 @@ def _gov_list_envelope(
         next_page_token = str(start + page_size)
 
     if source == "missing":
-        surface_status: Dict[str, Any] = {"status": "unavailable", "source": "missing"}
+        status = "unavailable"
+        surface_status = _surface_state(
+            status=status,
+            source="missing",
+            snapshot_at=snapshot_at,
+            message=f"{surface_key} has no readable source records.",
+        )
     else:
-        surface_status = {"status": "ok", "source": source}
+        status = "ok" if items else "degraded"
+        surface_status = _surface_state(
+            status=status,
+            source=source,
+            snapshot_at=snapshot_at,
+            message=f"{surface_key} source is readable but currently empty." if status == "degraded" else None,
+        )
 
     return {
         "data": page_items,
@@ -35,13 +68,26 @@ def _gov_list_envelope(
         "page_info": {
             "next_page_token": next_page_token,
             "total": len(items),
-            "page_size": len(page_items),
+            "page_size": page_size,
+            "returned": len(page_items),
+            "has_more": next_page_token is not None,
         },
         "meta": {
             "snapshot_at": snapshot_at,
+            "status": status,
+            "source": source,
             "surfaces": {
                 surface_key: surface_status,
             },
+            **(
+                {
+                    "degradation": {
+                        "reason": f"{surface_key.replace('_', ' ')} is currently unavailable.",
+                    },
+                }
+                if status == "unavailable"
+                else {}
+            ),
         },
     }
 

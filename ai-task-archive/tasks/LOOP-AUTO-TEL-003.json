@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-TEL-003",
+  "archived_at": "2026-06-27T14:46:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-TEL-003",
+    "title": "Add incident-triggered reconciliation listener",
+    "summary_zh": "新增 anomaly/incident-trigger listener，讓 heartbeat loss、order rejection spike 等事件立即觸發 reconciliation。",
+    "phase": "Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-TEL-002"
+    ],
+    "artifacts": [
+      "services/reconciliation-drift",
+      "services/telemetry",
+      "services/incidents",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Runtime anomaly triggers reconciliation without manual POST",
+      "Listener is idempotent for duplicate anomaly events",
+      "Trigger path records source event and reason"
+    ],
+    "next": "Owner finalized approved task after PR #2439 delivery and PR #2444 closeout artifact merged; validation passed: reconciliation-drift tests 24 passed, incidents routes 27 passed.",
+    "last_update": "2026-06-27T14:46:11Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "telemetry_reconciliation"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "telemetry anomaly event"
+    ],
+    "actual_state_sources": [
+      "reconciliation evaluation",
+      "incident request"
+    ],
+    "wave_id": "Wave 4 Telemetry Reconciliation Incident",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：接受標準全部滿足，PR #2439 已合併，觸發路徑冪等性、事件與原因記錄均驗證，無需修改"
+    ],
+    "review_file": "/tmp/loop-auto-tel-003-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T14:46:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-tel-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-TEL-003",
+      "git_clean_required": false,
+      "commit": "c5ac854c79f6842547ee1d89d21efe3a2e39d8a7",
+      "commit_subject": "LOOP-AUTO-TEL-003: finalize closeout brief",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout brief for incident-triggered reconciliation listener.",
+        "Not changing": "service behavior, compose wiring, incident authority, telemetry schema, or live-capital behavior.",
+        "Composes with": "merged delivery PR #2439 and central status closeout for LOOP-AUTO-TEL-003.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "LOOP-AUTO-TEL-003",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/reconciliation-drift/tests/ -q (24 passed); python3 -m pytest services/incidents/test_main_routes.py -q (27 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-TEL-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4a274b050610bbd353aece4e85e17a489783577d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-TEL-003",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-27T14:23:48Z",
+      "resolved_at": "2026-06-27T14:24:04Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-TEL-003",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation complete and PR #2439 opened with auto-merge enabled. Evidence: docs/deployment/evidence/loop-auto-tel-003-incident-triggered-reconciliation-listener.md. Validation: reconciliation-drift tests 24/24 and incidents route tests 27/27 pass on latest origin/dev base. Please review incident-triggered reconciliation listener and approve or reopen.",
+      "status": "done",
+      "created_at": "2026-06-27T14:34:05Z",
+      "resolved_at": "2026-06-27T14:38:08Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-TEL-003",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: all acceptance criteria met, PR #2439 already merged. Returned to owner Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T14:38:08Z",
+      "resolved_at": "2026-06-27T14:46:12Z"
+    }
+  ],
+  "blockers": []
+}

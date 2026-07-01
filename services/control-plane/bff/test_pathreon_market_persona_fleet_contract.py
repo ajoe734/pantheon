@@ -93,6 +93,10 @@ def test_default_read_store_has_us_tw_crypto_persona_execution_chain() -> None:
 
         tw_persona = store.get_persona("persona-tw-equity")
         assert tw_persona is not None
+        required_sources = {source["dataset"]: source for source in tw_persona["required_data_sources"]}
+        assert required_sources["tw_price_daily"]["source_class"] == "live_pull"
+        assert required_sources["tw_broker_top"]["source_class"] == "live_push"
+        assert "tw-finmind-broker-daily-report" in required_sources["tw_broker_top"]["connector_candidates"]
         tw_metadata = tw_persona["metadata"]
         assert tw_metadata["data_source_status"]["state"] == "partial_readback"
         assert tw_metadata["data_source_status"]["live_ingestion_enabled"] is False
@@ -133,6 +137,52 @@ def test_persona_catalog_and_health_expose_market_fields() -> None:
         assert row["metrics"]["violation_count"] == 0
 
 
+def test_management_persona_fleet_hydrates_live_persona_market_context() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        for persona_id, name in (
+            ("persona-20260528-04688755", "Crypto-Alt-Hunter"),
+            ("persona-20260528-5937dea1", "TW-Index-Arbitrage"),
+            ("persona-20260528-597cbad2", "US-Macro-Hedger"),
+        ):
+            store.create_persona(
+                persona_id=persona_id,
+                name=name,
+                actor_id="pantheon-dev-browser",
+                created_at="2026-05-28T00:00:00Z",
+                lifecycle_state="deployed",
+                metadata={},
+            )
+        with _client_with_store(store) as client:
+            response = client.get("/bff/management/persona-fleet?page_size=50", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    rows = {item["persona_id"]: item for item in response.json()["items"]}
+    crypto = rows["persona-20260528-04688755"]
+    assert crypto["name"] == "Crypto-Alt-Hunter"
+    assert crypto["owner"] == "pantheon-dev-browser"
+    assert crypto["data_source_status"]["state"] == "datasource_smoke_ok"
+    assert crypto["data_source_status"]["provider_statuses"]["kraken"] == "datasource_smoke_ok"
+    assert crypto["data_sources"][0]["provider_key"] == "kraken"
+    assert crypto["current_research_projects"][0]["project_id"] == "research-crypto-paper-001"
+    assert crypto["research_status"]["frameworks"] == ["vectorbt", "statsmodels", "finrl-rllib"]
+    assert crypto["current_work"] == "paper broker sandbox readback and funding-rate stress review"
+    assert crypto["perf_delta"] > 0
+
+    tw = rows["persona-20260528-5937dea1"]
+    assert tw["data_source_status"]["provider_statuses"]["shioaji"] == "read_ok"
+    assert tw["current_research_projects"][0]["project_id"] == "MGMT-QLIB-006"
+    assert tw["research_status"]["stage"] == "management_review_linked"
+
+    us = rows["persona-20260528-597cbad2"]
+    assert us["data_source_status"]["provider_statuses"]["ibkr"] == "read_ok"
+    assert us["current_research_projects"][0]["project_id"] == "research-us-paper-001"
+    assert us["current_work"] == "paper observation and OOS cost review"
+
+
 def test_persona_league_filters_and_requires_governance_for_rank_actions() -> None:
     with _fleet_client() as client:
         all_rows = client.get("/bff/persona-league", headers=HEADERS)
@@ -155,9 +205,9 @@ def test_persona_league_filters_and_requires_governance_for_rank_actions() -> No
     assert detail.json()["data"]["recommendation"] == "prepare_canary_packet"
 
 
-def test_management_fleet_composes_personas_ooda_capital_runtime_and_human_gate() -> None:
+def test_management_persona_fleet_composes_personas_ooda_capital_runtime_and_human_gate() -> None:
     with _fleet_client() as client:
-        response = client.get("/bff/management/fleet", headers=HEADERS)
+        response = client.get("/bff/management/persona-fleet", headers=HEADERS)
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -235,7 +285,7 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     }
 
 
-def test_management_fleet_keeps_market_personas_with_live_dev_overlay_only() -> None:
+def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_only() -> None:
     with tempfile.TemporaryDirectory() as td:
         store = ReadSurfaceStore(
             str(Path(td) / "read_surfaces.json"),
@@ -257,7 +307,7 @@ def test_management_fleet_keeps_market_personas_with_live_dev_overlay_only() -> 
         }
 
         with _client_with_store(store) as client:
-            response = client.get("/bff/management/fleet", headers=HEADERS)
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS)
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -390,3 +440,330 @@ def test_overlay_live_finmind_health_noop_when_unavailable(monkeypatch):
     )
     assert out_dss["provider_statuses"]["finmind"] == "read_unavailable"
     assert out_dss["state"] == "partial_readback"
+
+
+def test_source_health_truth_overlay_projects_connector_panel_fields(monkeypatch):
+    dss = {
+        "state": "partial_readback",
+        "provider_statuses": {
+            "finmind": "read_unavailable",
+            "twse": "read_unavailable",
+            "tpex": "read_unavailable",
+        },
+    }
+    sources = [
+        {"provider_key": "finmind", "status": "read_unavailable"},
+        {"provider_key": "twse", "status": "read_unavailable"},
+        {"provider_key": "tpex", "status": "read_unavailable"},
+    ]
+    required_sources = [
+        {
+            "dataset": "tw_broker_top",
+            "market": "TW",
+            "cadence": "daily",
+            "source_class": "live_push",
+            "connector_candidates": ["tw-finmind-broker-daily-report"],
+        }
+    ]
+    monkeypatch.setattr(
+        bff_main,
+        "_source_ingest_truth_by_connector",
+        lambda: {
+            "tw-finmind-broker-daily-report": {
+                "health": {
+                    "source_id": "tw-finmind-broker-daily-report",
+                    "status": "failed",
+                    "last_success_at": "2026-06-27T05:00:00Z",
+                    "last_failure_at": "2026-06-27T06:00:00Z",
+                    "latest_watermark": "2026-06-26",
+                    "row_count_last_run": 0,
+                    "metadata": {"source_error": "FinMind quota exhausted"},
+                },
+                "connector": {
+                    "connector_id": "tw-finmind-broker-daily-report",
+                    "status": "enabled",
+                    "schedule": {
+                        "configured": True,
+                        "enabled": True,
+                        "interval_seconds": 86400,
+                    },
+                    "freshness": {
+                        "status": "degraded",
+                        "latest_run": {
+                            "ingest_run_id": "run-finmind-001",
+                            "status": "failed",
+                            "finished_at": "2026-06-27T06:00:00Z",
+                        },
+                    },
+                    "health_metrics": {"source_error": "FinMind quota exhausted"},
+                },
+            },
+            "tw-twse-tpex-official-market": {
+                "health": {
+                    "source_id": "tw-twse-tpex-official-market",
+                    "status": "ok",
+                    "last_success_at": "2026-06-27T04:30:00Z",
+                    "row_count_last_run": 42,
+                    "metadata": {},
+                },
+                "connector": {
+                    "connector_id": "tw-twse-tpex-official-market",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "fresh", "last_success_at": "2026-06-27T04:30:00Z"},
+                    "health_metrics": {},
+                },
+            },
+        },
+    )
+
+    out_dss, out_sources, bindings = bff_main._overlay_source_health_truth(
+        dss,
+        sources,
+        required_data_sources=required_sources,
+    )
+
+    assert out_dss["source_health_source"] == "source_ingest"
+    assert out_dss["live_ingestion_enabled"] is True
+    assert out_dss["provider_statuses"]["finmind"] == "source_health_failed"
+    assert out_dss["provider_statuses"]["twse"] == "read_ok"
+    by_provider = {source["provider_key"]: source for source in out_sources}
+    finmind = by_provider["finmind"]
+    assert finmind["health_source"] == "source_ingest"
+    assert finmind["connectorSchedule"]["enabled"] is True
+    assert finmind["lastFetchAt"] == "2026-06-27T06:00:00Z"
+    assert finmind["lastPushAt"] == "2026-06-27T05:00:00Z"
+    assert finmind["failureReason"] == "FinMind quota exhausted"
+    assert bindings[0]["source_class"] == "live_push"
+    assert bindings[0]["selectedConnectorId"] == "tw-finmind-broker-daily-report"
+    assert bindings[0]["failureReason"] == "FinMind quota exhausted"
+
+
+def test_overlay_preserves_credential_unavailable_when_health_degraded(monkeypatch):
+    """polygon/alphavantage must stay credential_unavailable when source-ingest
+    reports degraded health (missing key).  The only valid upgrade path is
+    health.status=ok.  Regression probe for SRCLIVE-002 review issue (1)."""
+    dss = {
+        "state": "partial_readback",
+        "provider_statuses": {
+            "polygon": "credential_unavailable",
+            "alphavantage": "credential_unavailable",
+        },
+    }
+    sources = [
+        {
+            "provider_key": "polygon",
+            "status": "credential_unavailable",
+            "reason": "API key not configured; set env://POLYGON_API_KEY",
+            "secret_ref": "env://POLYGON_API_KEY",
+        },
+        {
+            "provider_key": "alphavantage",
+            "status": "credential_unavailable",
+            "reason": "API key not configured; set env://ALPHA_VANTAGE_API_KEY",
+            "secret_ref": "env://ALPHA_VANTAGE_API_KEY",
+        },
+    ]
+    monkeypatch.setattr(
+        bff_main,
+        "_source_ingest_truth_by_connector",
+        lambda: {
+            "us-polygon-daily-ohlcv": {
+                "health": {
+                    "source_id": "us-polygon-daily-ohlcv",
+                    "status": "degraded",
+                    "metadata": {"credential_status": "credential_unavailable"},
+                },
+                "connector": {
+                    "connector_id": "us-polygon-daily-ohlcv",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "degraded"},
+                    "health_metrics": {},
+                },
+            },
+            "us-alpha-vantage-daily-ohlcv": {
+                "health": {
+                    "source_id": "us-alpha-vantage-daily-ohlcv",
+                    "status": "degraded",
+                    "metadata": {"credential_status": "credential_unavailable"},
+                },
+                "connector": {
+                    "connector_id": "us-alpha-vantage-daily-ohlcv",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "degraded"},
+                    "health_metrics": {},
+                },
+            },
+        },
+    )
+
+    out_dss, out_sources, _bindings = bff_main._overlay_source_health_truth(dss, sources)
+
+    by_provider = {s["provider_key"]: s for s in out_sources}
+
+    polygon = by_provider["polygon"]
+    assert polygon["status"] == "credential_unavailable", (
+        "polygon must not be projected as source_health_degraded when credential is missing"
+    )
+    assert polygon.get("secret_ref") == "env://POLYGON_API_KEY"
+    assert "POLYGON_API_KEY" in (polygon.get("reason") or "")
+
+    alphavantage = by_provider["alphavantage"]
+    assert alphavantage["status"] == "credential_unavailable", (
+        "alphavantage must not be projected as source_health_degraded when credential is missing"
+    )
+    assert alphavantage.get("secret_ref") == "env://ALPHA_VANTAGE_API_KEY"
+    assert "ALPHA_VANTAGE_API_KEY" in (alphavantage.get("reason") or "")
+
+    assert out_dss["provider_statuses"]["polygon"] == "credential_unavailable"
+    assert out_dss["provider_statuses"]["alphavantage"] == "credential_unavailable"
+
+
+def test_overlay_upgrades_credential_unavailable_when_health_ok(monkeypatch):
+    """When source-ingest confirms health.status=ok (key is now present and working),
+    credential_unavailable must be upgraded to read_ok."""
+    dss = {
+        "state": "partial_readback",
+        "provider_statuses": {"polygon": "credential_unavailable"},
+    }
+    sources = [
+        {
+            "provider_key": "polygon",
+            "status": "credential_unavailable",
+            "reason": "API key not configured; set env://POLYGON_API_KEY",
+            "secret_ref": "env://POLYGON_API_KEY",
+        },
+    ]
+    monkeypatch.setattr(
+        bff_main,
+        "_source_ingest_truth_by_connector",
+        lambda: {
+            "us-polygon-daily-ohlcv": {
+                "health": {
+                    "source_id": "us-polygon-daily-ohlcv",
+                    "status": "ok",
+                    "last_success_at": "2026-06-28T01:00:00Z",
+                    "row_count_last_run": 500,
+                    "metadata": {},
+                },
+                "connector": {
+                    "connector_id": "us-polygon-daily-ohlcv",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "fresh", "last_success_at": "2026-06-28T01:00:00Z"},
+                    "health_metrics": {},
+                },
+            },
+        },
+    )
+
+    out_dss, out_sources, _bindings = bff_main._overlay_source_health_truth(dss, sources)
+
+    by_provider = {s["provider_key"]: s for s in out_sources}
+    polygon = by_provider["polygon"]
+    assert polygon["status"] == "read_ok", (
+        "polygon must be read_ok when source-ingest confirms health.status=ok"
+    )
+    assert out_dss["provider_statuses"]["polygon"] == "read_ok"
+
+
+def test_source_health_truth_overlay_maps_yahoo_and_preserves_fred_key_gate(monkeypatch):
+    dss = {
+        "state": "partial_readback",
+        "provider_statuses": {
+            "yahoo": "read_unavailable",
+            "fred": "credential_unavailable",
+        },
+    }
+    sources = [
+        {"provider_key": "yahoo", "status": "read_unavailable"},
+        {
+            "provider_key": "fred",
+            "status": "credential_unavailable",
+            "reason": "FRED_API_KEY is not configured",
+            "secret_ref": "env://FRED_API_KEY",
+        },
+    ]
+    monkeypatch.setattr(
+        bff_main,
+        "_source_ingest_truth_by_connector",
+        lambda: {
+            "us-yahoo-daily-ohlcv": {
+                "health": {
+                    "source_id": "us-yahoo-daily-ohlcv",
+                    "status": "ok",
+                    "last_success_at": "2026-06-28T01:00:00Z",
+                    "row_count_last_run": 3,
+                    "metadata": {"provider": "Yahoo Finance"},
+                },
+                "connector": {
+                    "connector_id": "us-yahoo-daily-ohlcv",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "fresh", "last_success_at": "2026-06-28T01:00:00Z"},
+                    "health_metrics": {},
+                },
+            },
+            "us-fred-macro": {
+                "health": {
+                    "source_id": "us-fred-macro",
+                    "status": "degraded",
+                    "metadata": {"credential_status": "credential_unavailable"},
+                },
+                "connector": {
+                    "connector_id": "us-fred-macro",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "degraded"},
+                    "health_metrics": {},
+                },
+            },
+        },
+    )
+
+    out_dss, out_sources, _bindings = bff_main._overlay_source_health_truth(dss, sources)
+
+    by_provider = {s["provider_key"]: s for s in out_sources}
+    assert by_provider["yahoo"]["status"] == "read_ok"
+    assert by_provider["yahoo"]["connectorId"] == "us-yahoo-daily-ohlcv"
+    assert by_provider["fred"]["status"] == "credential_unavailable"
+    assert by_provider["fred"]["secret_ref"] == "env://FRED_API_KEY"
+    assert out_dss["provider_statuses"]["yahoo"] == "read_ok"
+    assert out_dss["provider_statuses"]["fred"] == "credential_unavailable"
+
+
+def test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector(monkeypatch):
+    dss = {"state": "datasource_smoke_ok", "provider_statuses": {"coingecko": "read_unavailable"}}
+    sources = [{"provider_key": "coingecko", "status": "read_unavailable"}]
+    monkeypatch.setattr(
+        bff_main,
+        "_source_ingest_truth_by_connector",
+        lambda: {
+            "crypto-coingecko-spot": {
+                "health": {
+                    "source_id": "crypto-coingecko-spot",
+                    "status": "ok",
+                    "last_success_at": "2026-06-27T05:00:00Z",
+                    "latest_watermark": "2026-06-27",
+                    "row_count_last_run": 2,
+                    "metadata": {"provider": "CoinGecko", "market": "CRYPTO"},
+                },
+                "connector": {
+                    "connector_id": "crypto-coingecko-spot",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "fresh", "last_success_at": "2026-06-27T05:00:00Z"},
+                    "health_metrics": {},
+                },
+            }
+        },
+    )
+
+    out_dss, out_sources, _ = bff_main._overlay_source_health_truth(dss, sources)
+
+    assert out_dss["provider_statuses"]["coingecko"] == "read_ok"
+    assert out_dss["live_source_connector_ids"] == ["crypto-coingecko-spot"]
+    assert out_sources[0]["connectorId"] == "crypto-coingecko-spot"
+    assert out_sources[0]["sourceHealthAvailable"] is True

@@ -41,12 +41,21 @@ Output shape (EvolutionDecisionProposal dict or None)
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Mapping, Optional
 
 # Valid proposed actions the bridge can emit.
 # Governance maps these to EvolutionActionType when admitting the proposal.
 PROPOSED_ACTIONS = frozenset(
-    {"rollback", "retrain", "revalidate", "redeploy", "retire", "freeze"}
+    {
+        "rollback",
+        "retrain",
+        "revalidate",
+        "redeploy",
+        "retire",
+        "freeze",
+        "flag_for_review",
+    }
 )
 
 VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
@@ -66,6 +75,11 @@ _SEVERITY_COOLDOWN_HOURS: Dict[str, int] = {
 
 _CORRECTIVE_ACTION = "retrain"
 _CORRECTIVE_COOLDOWN_HOURS = 24
+_POSTMORTEM_SOURCE = "postmortem_published_bridge"
+_BRIDGE_CREATED_BY_ID = "postmortem-bridge"
+_BRIDGE_CREATED_BY_ROLE = "evolution_controller"
+_DEFAULT_TARGET_TYPE = "candidate_artifact"
+_VALID_FREEZE_STAGES = frozenset({"paper", "canary", "live"})
 
 _REQUIRED_FIELDS = (
     "postmortem_id",
@@ -186,6 +200,112 @@ def build_evolution_learn_feedback_writeback(
     }
 
 
+def postmortem_bridge_key(
+    postmortem: Mapping[str, Any] | Any,
+    incident: Mapping[str, Any] | Any,
+    *,
+    target_type: str = _DEFAULT_TARGET_TYPE,
+) -> str:
+    """Return the idempotency key for a published postmortem bridge event."""
+    pm = _payload(postmortem, "postmortem")
+    inc = _payload(incident, "incident")
+    _validate_postmortem_incident_pair(pm, inc, require_published=False)
+    cluster = _incident_cluster_key(pm, inc)
+    return f"{target_type}:{pm['artifact_id']}:incident_cluster:{cluster}"
+
+
+def decision_id_for_published_postmortem(
+    postmortem: Mapping[str, Any] | Any,
+    incident: Mapping[str, Any] | Any,
+    *,
+    target_type: str = _DEFAULT_TARGET_TYPE,
+) -> str:
+    """Return the deterministic EvolutionDecision id for a bridge key."""
+    key = postmortem_bridge_key(postmortem, incident, target_type=target_type)
+    return f"evo-pm-{_safe_id(key)}"
+
+
+def build_published_postmortem_proposal_request(
+    postmortem: Mapping[str, Any] | Any,
+    incident: Mapping[str, Any] | Any,
+    *,
+    decision_id: str | None = None,
+    publish_event_id: str | None = None,
+    created_by_id: str = _BRIDGE_CREATED_BY_ID,
+    created_by_role: str = _BRIDGE_CREATED_BY_ROLE,
+) -> Dict[str, Any]:
+    """
+    Build a ProposeRequest-compatible payload from a published postmortem.
+
+    This is the admission bridge used by the evolution service. Unlike the
+    legacy pure event filter above, every published postmortem produces a
+    review-gated proposal keyed by target and incident cluster. Duplicate
+    publish events therefore resolve to the same deterministic decision id.
+    """
+    pm = _payload(postmortem, "postmortem")
+    inc = _payload(incident, "incident")
+    _validate_postmortem_incident_pair(pm, inc, require_published=True)
+
+    target_type = _DEFAULT_TARGET_TYPE
+    bridge_key = postmortem_bridge_key(pm, inc, target_type=target_type)
+    resolved_decision_id = decision_id or decision_id_for_published_postmortem(
+        pm,
+        inc,
+        target_type=target_type,
+    )
+    action_type = _canonical_action_type(pm, inc)
+    incident_cluster_id = _incident_cluster_key(pm, inc)
+    target_stage = str(pm.get("deployment_stage") or inc.get("deployment_stage") or "").strip() or None
+
+    metadata = {
+        "task_id": "LOOP-AUTO-EVO-002",
+        "source": _POSTMORTEM_SOURCE,
+        "trigger_source": "postmortem.published",
+        "source_postmortem_id": pm["postmortem_id"],
+        "source_incident_id": inc["incident_id"],
+        "source_trace_id": pm.get("trace_id") or inc.get("trace_id"),
+        "postmortem_bridge_key": bridge_key,
+        "idempotency_scope": "target_type+target_id+incident_cluster",
+        "incident_cluster_id": incident_cluster_id,
+        "runtime_binding_id": pm.get("binding_id") or inc.get("binding_id"),
+        "deployment_plan_id": pm.get("deployment_plan_id") or inc.get("deployment_plan_id"),
+        "persona_capital_binding_id": pm.get("persona_capital_binding_id")
+        or inc.get("persona_capital_binding_id"),
+        "runtime_id": pm.get("runtime_id") or inc.get("runtime_id"),
+        "deployment_stage_snapshot": target_stage,
+        "bridge_legacy_proposed_action": _legacy_proposed_action(pm, inc),
+        "proposal_only": True,
+        "review_gate_state": "awaiting_review",
+        "review_required": True,
+        "live_mutation_allowed": False,
+        "runtime_binding_mutation_allowed": False,
+        "broker_order_allowed": False,
+        "capital_binding_mutation_allowed": False,
+    }
+    if publish_event_id:
+        metadata["publish_event_id"] = publish_event_id
+    if metadata["bridge_legacy_proposed_action"] == "rollback":
+        metadata["rollback_is_followthrough"] = True
+
+    return {
+        "decision_id": resolved_decision_id,
+        "target_type": target_type,
+        "target_id": pm["artifact_id"],
+        "target_version": pm["artifact_version"],
+        "action_type": action_type,
+        "rationale": _published_postmortem_rationale(pm, inc, action_type),
+        "created_by_id": created_by_id,
+        "created_by_role": created_by_role,
+        "target_stage": target_stage,
+        "capital_pool_id": pm.get("capital_pool_id") or inc.get("capital_pool_id"),
+        "linked_incident_id": inc["incident_id"],
+        "linked_postmortem_id": pm["postmortem_id"],
+        "evidence_refs": _published_postmortem_evidence_refs(pm, inc),
+        "threshold_snapshots": [_published_postmortem_threshold_snapshot(pm, inc)],
+        "metadata": metadata,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -246,3 +366,212 @@ def _build_proposal(
         "created_by_id": "postmortem-bridge",
         "created_by_role": "evolution_controller",
     }
+
+
+def _payload(value: Mapping[str, Any] | Any, name: str) -> Dict[str, Any]:
+    if hasattr(value, "to_dict"):
+        value = value.to_dict()
+    if not isinstance(value, Mapping):
+        raise PostmortemBridgeError(f"{name} must be a mapping")
+    return dict(value)
+
+
+def _validate_postmortem_incident_pair(
+    postmortem: Mapping[str, Any],
+    incident: Mapping[str, Any],
+    *,
+    require_published: bool,
+) -> None:
+    missing_pm = [
+        field
+        for field in (
+            "postmortem_id",
+            "incident_id",
+            "status",
+            "artifact_id",
+            "artifact_version",
+            "deployment_stage",
+        )
+        if not postmortem.get(field)
+    ]
+    missing_incident = [
+        field
+        for field in ("incident_id", "severity")
+        if not incident.get(field)
+    ]
+    if missing_pm or missing_incident:
+        details = []
+        if missing_pm:
+            details.append(f"postmortem missing {missing_pm}")
+        if missing_incident:
+            details.append(f"incident missing {missing_incident}")
+        raise PostmortemBridgeError("; ".join(details))
+    if str(postmortem["incident_id"]) != str(incident["incident_id"]):
+        raise PostmortemBridgeError(
+            "postmortem incident_id must match incident.incident_id: "
+            f"{postmortem['incident_id']!r} != {incident['incident_id']!r}"
+        )
+    severity = str(incident["severity"])
+    if severity not in VALID_SEVERITIES:
+        raise PostmortemBridgeError(
+            f"Invalid incident severity {severity!r}. Must be one of {sorted(VALID_SEVERITIES)}."
+        )
+    if require_published and postmortem.get("status") != "published":
+        raise PostmortemBridgeError(
+            f"postmortem must be published before bridge admission: {postmortem.get('status')!r}"
+        )
+    if require_published and not postmortem.get("published_at"):
+        raise PostmortemBridgeError("published postmortem must carry published_at")
+
+
+def _incident_cluster_key(
+    postmortem: Mapping[str, Any],
+    incident: Mapping[str, Any],
+) -> str:
+    return str(
+        postmortem.get("incident_cluster_id")
+        or incident.get("incident_cluster_id")
+        or incident["incident_id"]
+    )
+
+
+def _safe_id(value: str, *, max_len: int = 96) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-._")
+    return (safe or "postmortem")[:max_len]
+
+
+def _has_corrective_action(postmortem: Mapping[str, Any]) -> bool:
+    return bool(postmortem.get("corrective_action_required")) or bool(postmortem.get("action_items"))
+
+
+def _canonical_action_type(
+    postmortem: Mapping[str, Any],
+    incident: Mapping[str, Any],
+) -> str:
+    severity = str(incident["severity"])
+    stage = str(postmortem.get("deployment_stage") or incident.get("deployment_stage") or "")
+    if severity == "critical" and stage in _VALID_FREEZE_STAGES:
+        return "freeze"
+    if severity == "high":
+        return "flag_for_review"
+    if _has_corrective_action(postmortem):
+        return "retrain"
+    return "flag_for_review"
+
+
+def _legacy_proposed_action(
+    postmortem: Mapping[str, Any],
+    incident: Mapping[str, Any],
+) -> str:
+    severity = str(incident["severity"])
+    if severity == "critical":
+        return "freeze"
+    if severity == "high":
+        return "rollback"
+    if _has_corrective_action(postmortem):
+        return "retrain"
+    return "flag_for_review"
+
+
+def _published_postmortem_evidence_refs(
+    postmortem: Mapping[str, Any],
+    incident: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    refs: List[Dict[str, Any]] = []
+    _append_ref(
+        refs,
+        ref_type="manual_review_ticket",
+        ref_id=str(postmortem["postmortem_id"]),
+        storage_ref={"backend": "incident_store", "object_type": "Postmortem"},
+        note="Published Postmortem evidence for derived EvolutionDecision proposal.",
+    )
+    _append_ref(
+        refs,
+        ref_type="manual_review_ticket",
+        ref_id=str(incident["incident_id"]),
+        storage_ref={"backend": "incident_store", "object_type": "IncidentCase"},
+        note="Parent IncidentCase evidence for derived EvolutionDecision proposal.",
+    )
+    for event_id in postmortem.get("telemetry_event_ids") or incident.get("telemetry_event_ids") or []:
+        _append_ref(
+            refs,
+            ref_type="telemetry_summary",
+            ref_id=str(event_id),
+            storage_ref={"backend": "telemetry", "object_type": "TelemetryEvent"},
+            note="Telemetry event cited by the postmortem.",
+        )
+    for reconciliation_id in postmortem.get("reconciliation_ids") or incident.get("reconciliation_ids") or []:
+        _append_ref(
+            refs,
+            ref_type="drift_report",
+            ref_id=str(reconciliation_id),
+            storage_ref={"backend": "reconciliation", "object_type": "ReconciliationReport"},
+            note="Reconciliation or drift evidence cited by the postmortem.",
+        )
+    return refs
+
+
+def _append_ref(
+    refs: List[Dict[str, Any]],
+    *,
+    ref_type: str,
+    ref_id: str,
+    storage_ref: Dict[str, Any],
+    note: str,
+) -> None:
+    if not ref_id:
+        return
+    if any(item["ref_type"] == ref_type and item["ref_id"] == ref_id for item in refs):
+        return
+    refs.append(
+        {
+            "ref_type": ref_type,
+            "ref_id": ref_id,
+            "storage_ref": storage_ref,
+            "note": note,
+        }
+    )
+
+
+def _published_postmortem_threshold_snapshot(
+    postmortem: Mapping[str, Any],
+    incident: Mapping[str, Any],
+) -> Dict[str, Any]:
+    severity = str(incident["severity"])
+    if severity == "critical":
+        metric_name = "severity1_incident_count"
+        signal_type = "governance_incident"
+        note = "Critical incident postmortem opens the high-risk freeze proposal path."
+    elif severity == "high":
+        metric_name = "severity2_postmortem_published"
+        signal_type = "governance_incident"
+        note = "High-severity postmortem requires explicit evolution review."
+    else:
+        metric_name = "postmortem_published_followup_required"
+        signal_type = "manual_review"
+        note = "Published postmortem requires an explicit evolution review decision."
+    return {
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+        "signal_type": signal_type,
+        "metric_name": metric_name,
+        "comparator": "gte",
+        "observed_value": 1,
+        "threshold_value": 1,
+        "window": "postmortem-published",
+        "breached": True,
+        "note": note,
+    }
+
+
+def _published_postmortem_rationale(
+    postmortem: Mapping[str, Any],
+    incident: Mapping[str, Any],
+    action_type: str,
+) -> str:
+    cluster = _incident_cluster_key(postmortem, incident)
+    return (
+        f"Create a review-gated {action_type} proposal from published postmortem "
+        f"{postmortem['postmortem_id']} for incident {incident['incident_id']} "
+        f"(cluster {cluster}). The proposal is idempotent by target and incident "
+        "cluster and does not mutate runtime, broker, or capital-binding state."
+    )

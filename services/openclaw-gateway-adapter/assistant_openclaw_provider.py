@@ -32,6 +32,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional
 
+from assistant_provider_usage import provider_usage_snapshot
+
 
 OPENCLAW_PROVIDER = "openclaw"
 OPENCLAW_PROVIDER_ID = "openclaw"
@@ -127,12 +129,15 @@ class AssistantOpenClawProvider:
         return self._which(DEFAULT_OPENCLAW_BIN)
 
     def readiness(self, *, auth_probe: bool = False) -> Dict[str, Any]:
+        usage = provider_usage_snapshot(OPENCLAW_PROVIDER_ID, OPENCLAW_PROVIDER)
         base: Dict[str, Any] = {
             "provider": OPENCLAW_PROVIDER,
             "provider_id": OPENCLAW_PROVIDER_ID,
             "runtime": PROVIDER_RUNTIME,
             "agent_id": self._agent_id,
             "gateway_url_configured": bool(self._gateway_url),
+            "usage": usage,
+            "quota": usage,
         }
         if not self._gateway_url:
             return {

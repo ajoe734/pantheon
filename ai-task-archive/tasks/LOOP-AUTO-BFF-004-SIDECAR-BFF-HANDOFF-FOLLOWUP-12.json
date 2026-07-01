@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+  "archived_at": "2026-06-27T23:34:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+    "title": "Prepare LOOP-AUTO-BFF-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 LOOP-AUTO-BFF-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-SRC-004",
+      "LOOP-AUTO-RT-005",
+      "LOOP-AUTO-DEP-004",
+      "LOOP-AUTO-TEL-005",
+      "LOOP-AUTO-EVO-005",
+      "LOOP-AUTO-KNOW-006",
+      "LOOP-AUTO-BFF-003"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar closeout complete: PR #2503 merged at 1def2f0b02a8df2b12e7726724959fba6f724248; Claude approved the support packet; artifacts remain support-only with no canonical/runtime/frontend changes.",
+    "last_update": "2026-06-27T23:34:10Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-AUTO-BFF-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T23:34:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-bff-004-sidecar-bff-handoff-followup-12",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "git_clean_required": false,
+      "commit": "dbc152703eb078f723329f09712756ca92dd6862",
+      "commit_subject": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "owner closeout note in the FOLLOWUP-12 sidecar support packet.",
+        "Not changing": "L1 canonical truth, BFF/frontend/runtime implementation, registries, parent BFF-004 acceptance, or generated status state.",
+        "Composes with": "Claude review approval and PR #2503 merge into dev before sidecar done.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+        "Reviewer": "Claude",
+        "Verified": "AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12; git diff --check HEAD"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1def2f0b02a8df2b12e7726724959fba6f724248",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet ready in PR #2503: post-review BFF-004 finalization handoff; no canonical/runtime changes; preserves reconciled maturity and notes parent PR #2500 must merge before parent done.",
+      "status": "done",
+      "created_at": "2026-06-27T23:20:08Z",
+      "resolved_at": "2026-06-27T23:23:06Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "APPROVED: packet accurately records BFF-004 review_approved state, confirms all 7 direct deps archived done, preserves reconciled maturity boundary without proven-live drift, respects sidecar scope constraints; Claude must await PR #2500 merge before parent done",
+      "status": "done",
+      "created_at": "2026-06-27T23:23:06Z",
+      "resolved_at": "2026-06-27T23:34:11Z"
+    }
+  ],
+  "blockers": []
+}

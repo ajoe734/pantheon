@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-SRC-004",
+  "archived_at": "2026-06-27T15:36:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-SRC-004",
+    "title": "Wire SourceHealth truth into persona panels",
+    "summary_zh": "讓 persona/BFF 面板讀 SourceHealth truth，而不是 twse/tpex/finmind 靜態 metadata label。",
+    "phase": "Global Loop Autopilot / Wave 1 Source Persona Search",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-SRC-002",
+      "LOOP-AUTO-SRC-003"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/control-plane/persona",
+      "services/source_ingestion",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Persona panel shows connector schedule last fetch last push and failure reason",
+      "FinMind payload-push sources report truthful non-static health",
+      "Static source labels are visibly not live health"
+    ],
+    "next": "Done: PR #2452 merge 059b88910190aef172f4091de41d28e07c0d848a is merged into dev; SourceHealth truth projection evidence is recorded in docs/deployment/evidence/loop-auto-src-004/README.md.",
+    "last_update": "2026-06-27T15:36:23Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "source_ingestion",
+      "bff_health_monitoring"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "proven-live",
+    "desired_state_sources": [
+      "Persona.required_data_sources"
+    ],
+    "actual_state_sources": [
+      "SourceHealth",
+      "BFF source connector read model"
+    ],
+    "wave_id": "Wave 1 Source Persona Search",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex2 review approved: PR #2452 merge commit 059b88910190aef172f4091de41d28e07c0d848a and branch head 9daf8404a3a631a02f5d85e1c5ae0c6abdbb8c5a verified. Source-ingest registry and health usage truth now enrich persona DTOs, BFF health rows, and required source bindings; static metadata fallback is explicitly labeled. Local reviewer validation passed: 62 related tests and 25 BFF smoke tests."
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-src-004/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T15:36:23Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-src-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-SRC-004",
+      "git_clean_required": false,
+      "commit": "9daf8404a3a631a02f5d85e1c5ae0c6abdbb8c5a",
+      "commit_subject": "LOOP-AUTO-SRC-004: record rebase validation",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "rebase-after-validation note in task evidence.",
+        "Not changing": "runtime code, task scope, SourceHealth projection behavior, or status lifecycle.",
+        "Composes with": "rebased task commits 798d7f65 and e6459c68.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "LOOP-AUTO-SRC-004",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest -q services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py services/control-plane/bff/test_source_connector_service_client.py services/control-plane/bff/tests/test_bff_management_data_sources_contract.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_usage_health.py; python3 -m pytest -q services/control-plane/bff/smoke_test.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-SRC-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "52b91a73e33b65b87bb8c2574a163897cc3ce881",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-SRC-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned LOOP-AUTO-SRC-004 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-27T12:36:38Z",
+      "resolved_at": "2026-06-27T15:13:38Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-SRC-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-27T15:13:38Z",
+      "resolved_at": "2026-06-27T15:13:50Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-SRC-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #2452 merged into dev at 059b88910190aef172f4091de41d28e07c0d848a; head 9daf8404a3a631a02f5d85e1c5ae0c6abdbb8c5a. Evidence: docs/deployment/evidence/loop-auto-src-004/README.md. Verified: 62 related tests passed after rebase; BFF smoke 25 passed. Please review/approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T15:26:58Z",
+      "resolved_at": "2026-06-27T15:32:14Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-SRC-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: PR #2452 merge 059b889 verified; SourceHealth truth projection satisfies acceptance; local 62-test and 25-smoke suites pass. Owner Codex should finalize to done.",
+      "status": "done",
+      "created_at": "2026-06-27T15:32:14Z",
+      "resolved_at": "2026-06-27T15:36:24Z"
+    }
+  ],
+  "blockers": []
+}
