@@ -82,6 +82,7 @@ PrepareRepairWorktree = Callable[[Dict[str, Any], str, Optional[str]], Dict[str,
 ProviderRegister = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 ProviderReauth = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 ProviderReauthStatus = Callable[[str, str, str], Dict[str, Any]]
+ProviderReauthCode = Callable[[str, str, str, str, Optional[str]], Dict[str, Any]]
 
 ASSISTANT_SA_SD_GENERATE_SKILL_ID = "assistant.sa_sd.generate"
 
@@ -120,6 +121,7 @@ def create_assistant_router(
     provider_register: Optional[ProviderRegister] = None,
     provider_reauth: Optional[ProviderReauth] = None,
     provider_reauth_status: Optional[ProviderReauthStatus] = None,
+    provider_reauth_code: Optional[ProviderReauthCode] = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/bff/assistant", tags=["assistant"])
 
@@ -661,6 +663,68 @@ def create_assistant_router(
         return {
             "data": _sanitize_provider_reauth_payload(
                 status,
+                mode=AssistantMode.USER.value,
+                bff_error=bff_error,
+            )
+        }
+
+    @router.post("/provider/reauth/{session_id}/code")
+    async def submit_assistant_provider_reauth_code(
+        session_id: str,
+        payload: dict = Body(default_factory=dict),
+        provider: str = "claude",
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        _require_provider_reauth_operator(identity, bff_error=bff_error)
+        if provider_reauth_code is None:
+            _raise_error(
+                bff_error,
+                503,
+                ErrorCode.PRECONDITION_FAILED,
+                "Assistant provider reauth code submission is not configured",
+                "OpenClaw adapter provider reauth code submission is not configured for this BFF.",
+                field="openclaw_adapter",
+            )
+
+        request_payload = dict(payload or {})
+        requested_provider = str(request_payload.get("provider") or provider or "claude").strip().lower() or "claude"
+        code = str(
+            request_payload.get("code")
+            or request_payload.get("authorizationCode")
+            or request_payload.get("authorization_code")
+            or ""
+        ).strip()
+        if not code:
+            _raise_error(
+                bff_error,
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Assistant provider reauth requires an authorization code",
+                "The authorization code field is required.",
+                field="authorization_code",
+            )
+
+        trace_id = str(request_payload.get("traceId") or request_payload.get("trace_id") or "").strip() or None
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        submitted = provider_reauth_code(requested_provider, session_id, code, actor_id, trace_id)
+        if isinstance(submitted, dict) and isinstance(submitted.get("data"), dict):
+            safe_data = _sanitize_provider_reauth_payload(
+                submitted["data"],
+                mode=AssistantMode.USER.value,
+                bff_error=bff_error,
+            )
+            return {
+                "data": safe_data,
+                "meta": {
+                    "openclawAdapterStatus": submitted.get("status"),
+                    "openclaw_adapter_status": submitted.get("status"),
+                },
+            }
+        return {
+            "data": _sanitize_provider_reauth_payload(
+                submitted,
                 mode=AssistantMode.USER.value,
                 bff_error=bff_error,
             )

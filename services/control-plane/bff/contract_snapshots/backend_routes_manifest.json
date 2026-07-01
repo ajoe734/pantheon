@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-06-29",
+    "snapshot_date": "2026-07-01",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 598,
+    "total_routes": 599,
     "status_values": [
       "implemented",
       "alias",
@@ -3170,12 +3170,6 @@
     },
     {
       "method": "GET",
-      "path": "/bff/management/fleet",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
       "path": "/bff/management/governance-ledger",
       "family": "unknown",
       "status": "implemented"
@@ -3484,6 +3478,18 @@
     {
       "method": "POST",
       "path": "/bff/assistant/provider/reauth",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/provider/reauth/{param}/code",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/providers",
       "family": "unknown",
       "status": "implemented"
     },

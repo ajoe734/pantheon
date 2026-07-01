@@ -271,6 +271,7 @@ class AssistantClaudeProvider:
         try:
             process = self._popen(
                 [binary, "auth", "login"],
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -295,6 +296,8 @@ class AssistantClaudeProvider:
                 retryable=True,
                 details={"error_type": type(exc).__name__, "errno": getattr(exc, "errno", None)},
             ) from exc
+
+        self._update_reauth_session(session_id, _process=process)
 
         captured = threading.Event()
         for stream_name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
@@ -338,6 +341,107 @@ class AssistantClaudeProvider:
             daemon=True,
         ).start()
         return self.reauth_status(session_id)
+
+    def submit_reauth_code(
+        self,
+        session_id: str,
+        *,
+        code: str,
+        operator_id: str,
+    ) -> dict[str, Any]:
+        """Submit the browser-returned Claude authorization code to the live CLI."""
+        clean_operator = str(operator_id or "").strip()
+        if not clean_operator:
+            raise ClaudeProviderError(
+                "OPERATOR_REQUIRED",
+                "Claude provider reauth code submission requires X-Operator-Id.",
+                status_code=401,
+                retryable=False,
+            )
+        clean_session_id = str(session_id or "").strip()
+        clean_code = _normalize_submitted_auth_code(code)
+        if not clean_code:
+            raise ClaudeProviderError(
+                "CLAUDE_REAUTH_CODE_REQUIRED",
+                "Claude provider reauth requires an authorization code.",
+                status_code=422,
+                retryable=False,
+            )
+
+        with self._reauth_lock:
+            session = self._reauth_sessions.get(clean_session_id)
+            if not session:
+                raise ClaudeProviderError(
+                    "CLAUDE_REAUTH_SESSION_NOT_FOUND",
+                    "Claude provider reauth session was not found.",
+                    status_code=404,
+                    retryable=False,
+                )
+            status = str(session.get("status") or "").strip().lower()
+            process = session.get("_process")
+
+        if status in {"completed", "failed", "timeout", "cancelled", "expired"}:
+            raise ClaudeProviderError(
+                "CLAUDE_REAUTH_SESSION_NOT_ACTIVE",
+                "Claude provider reauth session is not accepting authorization codes.",
+                status_code=409,
+                retryable=status not in {"completed"},
+                details={"session_status": status or "unknown"},
+            )
+        if process is None:
+            raise ClaudeProviderError(
+                "CLAUDE_REAUTH_PROCESS_UNAVAILABLE",
+                "Claude auth login process is not available for this reauth session.",
+                status_code=409,
+                retryable=False,
+            )
+        if process.poll() is not None:
+            self._mark_reauth_failed(
+                clean_session_id,
+                "CLAUDE_REAUTH_PROCESS_EXITED",
+                "Claude auth login exited before the authorization code was submitted.",
+            )
+            raise ClaudeProviderError(
+                "CLAUDE_REAUTH_PROCESS_EXITED",
+                "Claude auth login exited before the authorization code was submitted.",
+                status_code=409,
+                retryable=True,
+            )
+
+        stdin = getattr(process, "stdin", None)
+        if stdin is None:
+            raise ClaudeProviderError(
+                "CLAUDE_REAUTH_STDIN_UNAVAILABLE",
+                "Claude auth login process is not accepting authorization code input.",
+                status_code=503,
+                retryable=True,
+            )
+        try:
+            stdin.write(f"{clean_code}\n")
+            stdin.flush()
+        except (BrokenPipeError, OSError) as exc:
+            self._mark_reauth_failed(
+                clean_session_id,
+                "CLAUDE_REAUTH_CODE_WRITE_FAILED",
+                "Claude auth login process rejected the authorization code input.",
+            )
+            raise ClaudeProviderError(
+                "CLAUDE_REAUTH_CODE_WRITE_FAILED",
+                "Claude auth login process rejected the authorization code input.",
+                status_code=409,
+                retryable=True,
+                details={"error_type": type(exc).__name__},
+            ) from exc
+
+        submitted_at = self._clock().isoformat().replace("+00:00", "Z")
+        self._update_reauth_session(
+            clean_session_id,
+            status="code_submitted",
+            updated_at=submitted_at,
+            code_submitted_at=submitted_at,
+            message="Claude authorization code submitted; waiting for readiness probe.",
+        )
+        return self.reauth_status(clean_session_id)
 
     def reauth_status(self, session_id: str) -> dict[str, Any]:
         clean_session_id = str(session_id or "").strip()
@@ -404,6 +508,20 @@ class AssistantClaudeProvider:
 
             returncode = process.poll()
             if returncode is not None:
+                readiness = self._readiness_after_process_exit()
+                if readiness.get("ready") is True:
+                    completed_at = self._clock().isoformat().replace("+00:00", "Z")
+                    self._update_reauth_session(
+                        session_id,
+                        status="completed",
+                        updated_at=completed_at,
+                        completed_at=completed_at,
+                        readiness=readiness,
+                        error_code=None,
+                        message=None,
+                        returncode=returncode,
+                    )
+                    return
                 self._update_reauth_session(
                     session_id,
                     status="failed",
@@ -425,6 +543,17 @@ class AssistantClaudeProvider:
             error_code="CLAUDE_REAUTH_TIMEOUT",
             message="Claude auth login did not complete before the reauth timeout.",
         )
+
+    def _readiness_after_process_exit(self) -> dict[str, Any]:
+        readiness = self.readiness(auth_probe=True)
+        if readiness.get("ready") is True:
+            return readiness
+        for _ in range(3):
+            time.sleep(1)
+            readiness = self.readiness(auth_probe=True)
+            if readiness.get("ready") is True:
+                return readiness
+        return readiness
 
     def _update_reauth_session(self, session_id: str, **fields: Any) -> None:
         with self._reauth_lock:
@@ -612,19 +741,21 @@ def _extract_auth_json(line: str) -> dict[str, Any]:
 def _extract_auth_text(line: str) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     url_match = re.search(r"https?://[^\s)>\]\"']+", line)
+    code_source = line
     if url_match:
         url = url_match.group(0).rstrip(".,;")
         key = "verification_uri_complete" if "code=" in url or "token=" in url else "verification_uri"
         fields[key] = url
+        code_source = f"{line[:url_match.start()]} {line[url_match.end():]}"
     code_match = re.search(
         r"(?:login\s*code|verification\s*code|user\s*code|code)\s*[:=]\s*([A-Z0-9][A-Z0-9-]{3,})",
-        line,
+        code_source,
         re.IGNORECASE,
     )
     if code_match is None:
         code_match = re.search(
             r"enter\s+(?:the\s+)?(?:code\s+)?([A-Z0-9][A-Z0-9-]{3,})",
-            line,
+            code_source,
             re.IGNORECASE,
         )
     if code_match:
@@ -654,6 +785,8 @@ def _reauth_public_payload(session: Mapping[str, Any]) -> dict[str, Any]:
         "startedAt": session.get("started_at"),
         "updated_at": session.get("updated_at"),
         "updatedAt": session.get("updated_at"),
+        "code_submitted_at": session.get("code_submitted_at"),
+        "codeSubmittedAt": session.get("code_submitted_at"),
         "completed_at": session.get("completed_at"),
         "completedAt": session.get("completed_at"),
         "verification_uri": session.get("verification_uri"),
@@ -691,8 +824,23 @@ def _reauth_credential_exchange_metadata() -> dict[str, Any]:
         "frontendHandlesCredentials": False,
         "provider_cli_writes_mount": True,
         "providerCliWritesMount": True,
-        "returned_fields": ["verification_uri", "user_code"],
+        "requires_authorization_code": True,
+        "requiresAuthorizationCode": True,
+        "code_submit_to_bff": True,
+        "codeSubmitToBff": True,
+        "returned_fields": ["verification_uri", "verification_uri_complete", "user_code"],
     }
+
+
+def _normalize_submitted_auth_code(code: Any) -> str:
+    raw = str(code or "").strip()
+    if not raw:
+        return ""
+    lines = [line.strip() for line in raw.replace("\r", "\n").split("\n") if line.strip()]
+    if len(lines) != 1:
+        return ""
+    clean = lines[0]
+    return clean if len(clean) <= 4096 else ""
 
 
 def _terminate_process(process: Any) -> None:

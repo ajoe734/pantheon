@@ -57,6 +57,7 @@ def _control_mode_client(
     provider_register=None,
     provider_reauth=None,
     provider_reauth_status=None,
+    provider_reauth_code=None,
 ) -> TestClient:
     identity = _AssistantSecurityIdentity(
         roles=roles,
@@ -75,6 +76,7 @@ def _control_mode_client(
         prepare_repair_worktree=prepare_repair_worktree,
         provider_reauth=provider_reauth,
         provider_reauth_status=provider_reauth_status,
+        provider_reauth_code=provider_reauth_code,
     )
     app = FastAPI()
     app.add_exception_handler(bff_main.StarletteHTTPException, bff_main._bff_http_exception_handler)
@@ -721,6 +723,53 @@ def test_provider_reauth_delegates_claude_to_openclaw_adapter(monkeypatch) -> No
     assert status_resp.json()["data"]["status"] == "completed"
     assert status_resp.json()["data"]["provider"] == "claude"
     assert status_calls == [("claude", "claude_reauth_1", "op-security")]
+
+
+def test_provider_reauth_code_delegates_claude_code_to_openclaw_adapter(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    code_calls = []
+
+    def reauth_code(provider, session_id, code, operator_id, trace_id):
+        code_calls.append((provider, session_id, code, operator_id, trace_id))
+        return {
+            "status": "ok",
+            "data": {
+                "reauth_session_id": session_id,
+                "provider": provider,
+                "status": "code_submitted",
+                "authorization_code": code,
+                "code_submitted_at": "2026-07-01T00:00:00Z",
+            },
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=[],
+        mfa_verified=True,
+        provider_reauth_code=reauth_code,
+    )
+
+    resp = client.post(
+        "/bff/assistant/provider/reauth/claude_reauth_1/code?provider=claude",
+        json={
+            "provider": "claude",
+            "code": "claude-oauth-code-123",
+            "traceId": "trace-claude-code-1",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert code_calls == [
+        ("claude", "claude_reauth_1", "claude-oauth-code-123", "op-security", "trace-claude-code-1")
+    ]
+    assert resp.json()["data"]["reauth_session_id"] == "claude_reauth_1"
+    assert resp.json()["data"]["status"] == "code_submitted"
+    rendered = repr(resp.json())
+    assert "claude-oauth-code-123" not in rendered
+    assert "[REDACTED_TOKEN]" in rendered
 
 
 def test_provider_registration_requires_control_and_delegates(monkeypatch) -> None:

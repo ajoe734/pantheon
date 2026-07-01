@@ -96,6 +96,22 @@ def test_redact_payload_keeps_reauth_tracking_id_but_not_general_session_id() ->
     assert result.value["access_token"] == "[REDACTED_TOKEN]"
 
 
+def test_redact_payload_masks_submitted_authorization_code_but_keeps_user_code() -> None:
+    payload = {
+        "reauth_session_id": "claude_reauth_123",
+        "authorization_code": "oauth-code-should-redact",
+        "authCode": "auth-code-should-redact",
+        "user_code": "ABCD-EFGH",
+    }
+
+    result = redact_payload(payload)
+
+    assert result.value["reauth_session_id"] == "claude_reauth_123"
+    assert result.value["authorization_code"] == "[REDACTED_TOKEN]"
+    assert result.value["authCode"] == "[REDACTED_TOKEN]"
+    assert result.value["user_code"] == "ABCD-EFGH"
+
+
 class BrokenMapping(dict):
     def items(self):  # type: ignore[override]
         raise RuntimeError("cannot iterate")

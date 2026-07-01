@@ -88,6 +88,7 @@ _SENSITIVE_KEY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(broker.*(credential|secret|token|key)|shioaji|broker_account)$", re.IGNORECASE), "broker_credential"),
     (re.compile(r"(account[_-]?(number|id)|broker[_-]?account)$", re.IGNORECASE), "account_number"),
     (re.compile(r"(api[_-]?key|x-api-key)$", re.IGNORECASE), "api_key"),
+    (re.compile(r"(authorization[_-]?code|auth[_-]?code)$", re.IGNORECASE), "token"),
     (re.compile(r"(access[_-]?token|refresh[_-]?token|id[_-]?token|bearer|token)$", re.IGNORECASE), "token"),
     (re.compile(r"(secret|password|passwd|pwd)$", re.IGNORECASE), "env_value"),
     (re.compile(r"(private[_-]?key|pem)$", re.IGNORECASE), "private_key"),

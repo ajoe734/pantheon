@@ -458,6 +458,31 @@ class OpenClawOpsClient:
             headers={"X-Operator-Id": operator_id},
         )
 
+    def submit_assistant_provider_reauth_code(
+        self,
+        *,
+        provider: str = "claude",
+        session_id: str,
+        code: str,
+        operator_id: str,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized = str(provider or "claude").strip().lower()
+        headers: Dict[str, str] = {"X-Operator-Id": operator_id}
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        return self._request(
+            "POST",
+            (
+                f"/api/openclaw-adapter/assistant/providers/{urllib.parse.quote(normalized)}"
+                f"/reauth/{urllib.parse.quote(session_id)}/code"
+            ),
+            body={"provider": normalized, "code": code},
+            headers=headers,
+            expected_status={200},
+            timeout_seconds=_assistant_reauth_timeout_seconds(),
+        )
+
     def create_session(
         self,
         *,

@@ -15,6 +15,7 @@ from assistant_claude_provider import (
     AssistantClaudeProvider,
     ClaudeProviderError,
     ClaudeProviderResult,
+    _extract_auth_fields,
     _normalize_output,
     invoke_claude,
 )
@@ -226,6 +227,7 @@ class _FakeLoginProcess:
     def __init__(self):
         self.stdout = io.StringIO("Open https://console.anthropic.com/login\nCode: WXYZ-1234\n")
         self.stderr = io.StringIO("")
+        self.stdin = io.StringIO()
         self.terminated = False
 
     def poll(self):
@@ -267,7 +269,51 @@ def test_start_device_reauth_runs_claude_auth_login_and_captures_url():
     assert result["verification_uri"] == "https://console.anthropic.com/login"
     assert result["user_code"] == "WXYZ-1234"
     assert popen_calls[0][0][0] == ["/usr/bin/claude", "auth", "login"]
+    assert popen_calls[0][1]["stdin"] == subprocess.PIPE
     assert popen_calls[0][1]["env"]["CLAUDE_CONFIG_DIR"] == "/home/pantheon-assistant/.claude"
+
+
+def test_claude_auth_url_code_true_is_not_treated_as_user_code():
+    fields = _extract_auth_fields(
+        "Open https://console.anthropic.com/oauth/authorize?client_id=abc&code=true to continue"
+    )
+
+    assert fields["verification_uri_complete"].startswith("https://console.anthropic.com/oauth/authorize")
+    assert "user_code" not in fields
+
+
+def test_submit_reauth_code_writes_to_live_claude_auth_process():
+    fake_process = _FakeLoginProcess()
+    fake_process.stdout = io.StringIO(
+        "Open https://console.anthropic.com/oauth/authorize?client_id=abc&code=true\n"
+    )
+
+    provider = AssistantClaudeProvider(
+        mounts=_mock_mounts_ready(),
+        popen_func=lambda *args, **kwargs: fake_process,
+    )
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch.object(provider, "readiness", return_value={"ready": False, "auth_status": "failed"}),
+    ):
+        started = provider.start_device_reauth(
+            operator_id="op-1",
+            capture_timeout_seconds=2,
+            poll_interval_seconds=30,
+            max_wait_seconds=30,
+        )
+        result = provider.submit_reauth_code(
+            started["reauth_session_id"],
+            code="claude-auth-code-123",
+            operator_id="op-1",
+        )
+
+    assert fake_process.stdin.getvalue() == "claude-auth-code-123\n"
+    assert result["status"] == "code_submitted"
+    assert result["code_submitted_at"]
+    rendered = repr(result)
+    assert "claude-auth-code-123" not in rendered
+    assert result.get("user_code") is None
 
 
 def test_start_device_reauth_requires_writable_claude_mount():
