@@ -35,10 +35,17 @@ operator-product quality, payload discipline, and durable command depth.
 - The remaining work is not "make production pass"; it is to reduce operator
   repetition, improve list/read contracts, deepen real command paths, and make
   repeated management surfaces feel domain-specific.
-- The 2026-07-02 list-contract audit found 233 existing smells: 79 P0 and
-  154 P1. The proven live hotspot is `/bff/management/persona-fleet`, which
-  returned about 16.8 MB JSON for a table whose first visible rows appeared at
-  about 5.0 s.
+- The initial 2026-07-02 list-contract audit found 233 existing smells: 79 P0
+  and 154 P1. After the `MGMT-LIST-CONTRACT-*` burn-down through
+  `MGMT-LIST-CONTRACT-018`, the current guardrail is 65 existing smells:
+  0 P0 and 65 P1.
+- The original live hotspot was `/bff/management/persona-fleet`, which returned
+  about 16.8 MB JSON for a table whose first visible rows appeared at about
+  5.0 s. That route has since been slimmed; the remaining work is now casing
+  consistency and page-before-projection, not P0 duplicate envelopes.
+- The re-run inventory separates mounted UI, typed fetchers, BFF routes, and
+  historical hosted route crawls. The current repo-mounted Management UI is a
+  three-panel shell, not dozens of active pages.
 - The final closeout carries one low-severity follow-up: 22 of 34
   `toast.success(` call sites lacked an obvious governed/receipt signal within
   the source-scan heuristic window.

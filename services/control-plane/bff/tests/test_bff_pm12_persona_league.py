@@ -54,16 +54,21 @@ def test_pm12_persona_league_returns_composed_table() -> None:
 
             rows = {row["id"]: row for row in body["data"]["items"]}
             row = rows["persona-alpha"]
-            assert row["personaId"] == "persona-alpha"
-            assert row["routePolicy"]["ruleCount"] >= 0
-            assert row["capabilities"]["skillCount"] >= 0
-            assert row["bindings"]["total"] >= 1
-            assert row["sessions"]["total"] >= 1
-            assert row["evaluations"]["total"] >= 1
-            assert row["memory"]["total"] >= 0
-            assert row["health"]["health"] in {"healthy", "degraded"}
+            assert row["persona_id"] == "persona-alpha"
+            assert row["route_policy_summary"]["rule_count"] >= 0
+            assert row["capability_summary"]["skill_count"] >= 0
+            assert row["binding_summary"]["total"] >= 1
+            assert row["session_summary"]["total"] >= 1
+            assert row["evaluation_summary"]["total"] >= 1
+            assert row["memory_summary"]["total"] >= 0
+            assert row["health_summary"]["health"] in {"healthy", "degraded"}
             assert row["links"]["detail"] == "/bff/personas/persona-alpha"
-            assert "allowedActions" in row
+            assert row["links"]["route_policy"] == "/bff/personas/persona-alpha/route-policy"
+            assert "allowed_action_summary" in row
+            assert "personaId" not in row
+            assert "routePolicy" not in row
+            assert "capabilities" not in row
+            assert "allowedActions" not in row
         finally:
             bff_main.read_store = original
 
@@ -110,9 +115,17 @@ def test_pm12_persona_league_rankings_returns_computed_blocks() -> None:
             summary = body["data"]["summary"]
             assert [block["criteria"] for block in items] == ["overall", "pnl"]
             assert items[0]["items"][0]["rank"] == 1
-            assert items[0]["items"][0]["personaId"]
-            assert "overallScore" in items[0]["items"][0]
-            assert summary["personaCount"] >= 1
+            assert items[0]["items"][0]["persona_id"]
+            assert "overall_score" in items[0]["items"][0]
+            assert summary["persona_count"] >= 1
+            assert "rankingId" not in items[0]
+            assert "formulaVersion" not in items[0]
+            assert "rankedCount" not in items[0]
+            assert "personaId" not in items[0]["items"][0]
+            assert "overallScore" not in items[0]["items"][0]
+            assert "scoreField" not in items[0]["items"][0]
+            assert "personaCount" not in summary
+            assert "topPersonaId" not in summary
             assert body["meta"]["surfaces"]["persona_league_rankings"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/persona-league" in body["meta"]["composition_sources"]
         finally:
@@ -137,20 +150,28 @@ def test_pm12_persona_league_movers_returns_current_snapshot_movers() -> None:
             summary = body["data"]["summary"]
             assert "movers" not in body
             assert "movers" not in body["data"]
-            assert summary["personaCount"] >= 1
-            assert summary["moverCount"] >= 1
-            assert summary["returnedCount"] == 1
+            assert summary["persona_count"] >= 1
+            assert summary["mover_count"] >= 1
+            assert summary["returned_count"] == 1
             assert summary["direction"] == "new"
-            assert summary["baselineStatus"] == "unavailable"
-            assert summary["newCount"] == summary["personaCount"]
-            assert items[0]["currentRank"] == 1
-            assert items[0]["previousRank"] is None
-            assert items[0]["rankDelta"] is None
-            assert items[0]["scoreDelta"] is None
+            assert summary["baseline_status"] == "unavailable"
+            assert summary["new_count"] == summary["persona_count"]
+            assert items[0]["current_rank"] == 1
+            assert items[0]["previous_rank"] is None
+            assert items[0]["rank_delta"] is None
+            assert items[0]["score_delta"] is None
             assert items[0]["direction"] == "new"
-            assert items[0]["baselineStatus"] == "unavailable"
+            assert items[0]["baseline_status"] == "unavailable"
             assert items[0]["movement"]["basis"] == "current_persona_league_snapshot_no_historical_baseline"
-            assert body["page_info"]["total"] == summary["moverCount"]
+            assert body["page_info"]["total"] == summary["mover_count"]
+            assert "personaCount" not in summary
+            assert "moverCount" not in summary
+            assert "returnedCount" not in summary
+            assert "baselineStatus" not in summary
+            assert "currentRank" not in items[0]
+            assert "previousRank" not in items[0]
+            assert "rankDelta" not in items[0]
+            assert "scoreDelta" not in items[0]
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["surfaces"]["persona_league_movers"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/persona-league/rankings" in body["meta"]["composition_sources"]
@@ -192,11 +213,74 @@ def test_pm12_persona_league_tiers_returns_config_and_current_assignments() -> N
             summary = body["data"]["summary"]
             assignments = body["data"]["related"]["assignments"]
             assert len(items) == 4
-            assert items[0]["tierId"] == "tier-1"
-            assert summary["formulaVersion"] == "pm12-default-v1"
-            assert summary["personaCount"] == len(assignments)
+            assert items[0]["tier_id"] == "tier-1"
+            assert summary["formula_version"] == "pm12-default-v1"
+            assert summary["persona_count"] == len(assignments)
+            assert "tierId" not in items[0]
+            assert "formulaVersion" not in summary
+            assert "personaCount" not in summary
+            assert "minScore" not in items[0]
+            assert "governancePosture" not in items[0]
+            assert "personaIds" not in items[0]
+            assert "personaId" not in assignments[0]
+            assert "overallScore" not in assignments[0]
+            assert "byTier" not in summary
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["surfaces"]["persona_league_tiers"]["status"] in {"ok", "degraded"}
+        finally:
+            bff_main.read_store = original
+
+
+def test_pm12_persona_league_heatmap_uses_snake_case_rows() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/persona-league/heatmap",
+                headers=HEADERS,
+                params={"bucket": "day", "bucket_count": 2, "limit": 1},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert set(body) == {"data", "page_info", "meta"}
+            data = body["data"]
+            summary = data["summary"]
+            row = data["items"][0]
+            bucket = data["buckets"][0]
+            cell = row["cells"][0]
+
+            assert data["heatmap_id"] == "persona-league-heatmap"
+            assert data["formula_version"] == "pm12-default-v1"
+            assert summary["returned_persona_count"] == 1
+            assert summary["bucket_count"] == 2
+            assert row["persona_id"]
+            assert row["runtime_ids"]
+            assert bucket["bucket_id"]
+            assert bucket["start_at"]
+            assert bucket["end_exclusive_at"]
+            assert cell["persona_id"] == row["persona_id"]
+            assert cell["bucket_id"] == bucket["bucket_id"]
+            assert cell["composite_score"] >= 0
+            assert cell["formula_version"] == "pm12-default-v1"
+            assert cell["observed_telemetry_count"] >= 0
+
+            assert "heatmapId" not in data
+            assert "formulaVersion" not in data
+            assert "returnedPersonaCount" not in summary
+            assert "bucketId" not in bucket
+            assert "startAt" not in bucket
+            assert "endExclusiveAt" not in bucket
+            assert "personaId" not in row
+            assert "tierId" not in row
+            assert "latestScore" not in row
+            assert "runtimeIds" not in row
+            assert "personaId" not in cell
+            assert "bucketId" not in cell
+            assert "overallScore" not in cell
+            assert "formulaVersion" not in cell
+            assert "observedTelemetryCount" not in cell
         finally:
             bff_main.read_store = original
 
@@ -229,7 +313,7 @@ def test_pm12_quarterly_ranking_returns_formula_window_and_evidence() -> None:
             assert body["page_info"]["total"] >= 1
             assert items[0]["rank"] == 1
             assert items[0]["quarter"] == "2026-Q1"
-            assert items[0]["score_field"] == "overallScore"
+            assert items[0]["score_field"] == "overall_score"
             assert data["evidence_refs"]
             assert summary["evidence_ref_count"] == len(data["evidence_refs"])
             assert "quarterWindow" not in data
@@ -261,6 +345,7 @@ def test_pm12_quarterly_ranking_formula_returns_weights_and_governance_trace() -
             body = response.json()
             assert body["data"] == body["formula"]
             assert body["formula"]["formula_version"] == "pm12-default-v1"
+            assert body["formula"]["score_field"] == "overall_score"
             assert body["formula"]["weights"] == {
                 "pnl": 0.35,
                 "risk": 0.25,
@@ -431,6 +516,75 @@ def test_pm12_quarterly_ranking_rejects_invalid_quarter() -> None:
             bff_main.read_store = original
 
 
+def test_pm12_performance_attribution_pages_before_projection_and_uses_snake_case() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        original_projector = bff_main._pm12_performance_attribution_rows
+        projected_entry_counts: list[int] = []
+        try:
+            client = _fresh_client(td)
+
+            def recording_projector(entries, *args, **kwargs):
+                projected_entry_counts.append(len(entries))
+                return original_projector(entries, *args, **kwargs)
+
+            bff_main._pm12_performance_attribution_rows = recording_projector
+            response = client.get(
+                "/bff/management/performance-attribution",
+                headers=HEADERS,
+                params={
+                    "dimension": "persona,strategy,pool,asset,broker,runtime,regime",
+                    "page_size": 1,
+                },
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert set(body) == {"data", "page_info", "meta"}
+            data = body["data"]
+            summary = data["summary"]
+            items = data["items"]
+            assert "items" not in body
+            assert "rows" not in body
+            assert "summary" not in body
+            assert "rows" not in data
+            assert body["page_info"]["page_size"] == 1
+            assert body["page_info"]["total"] == summary["row_count"]
+            assert summary["returned_row_count"] == len(items) == 1
+            assert projected_entry_counts == [1]
+            assert summary["supported_dimensions"]
+            assert summary["runtime_count"] >= 1
+            assert "supportedDimensions" not in summary
+            assert "rowCount" not in summary
+            assert "returnedRowCount" not in summary
+            assert "runtimeCount" not in summary
+            assert "totalPnl" not in summary
+
+            item = items[0]
+            assert item["dimension_key"]
+            assert item["runtime_count"] >= 1
+            assert item["holding_count"] >= 1
+            assert "dimensionKey" not in item
+            assert "totalPnl" not in item
+            assert "runtimeCount" not in item
+            assert "holdingCount" not in item
+            assert "sourceRefs" not in item
+            assert "capitalPool" not in item["links"]
+            assert "runtime_ids" in item["source_refs"]
+            assert "runtimeIds" not in item["source_refs"]
+
+            metrics = item["metrics"]
+            assert "total_pnl" in metrics
+            assert "runtime_count" in metrics
+            assert "pnl_contribution_pct" in metrics
+            assert "totalPnl" not in metrics
+            assert "runtimeCount" not in metrics
+            assert "pnlContributionPct" not in metrics
+        finally:
+            bff_main._pm12_performance_attribution_rows = original_projector
+            bff_main.read_store = original_store
+
+
 def test_pm12_persona_league_requires_auth() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
@@ -448,6 +602,9 @@ def test_pm12_persona_league_requires_auth() -> None:
 
             tiers = client.get("/bff/management/persona-league/tiers")
             assert tiers.status_code == 401, tiers.text
+
+            heatmap = client.get("/bff/management/persona-league/heatmap")
+            assert heatmap.status_code == 401, heatmap.text
 
             quarterly = client.get("/bff/management/quarterly-ranking")
             assert quarterly.status_code == 401, quarterly.text

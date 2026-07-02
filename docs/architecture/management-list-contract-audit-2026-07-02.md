@@ -5,7 +5,7 @@
 | Scope | Static audit of `services/control-plane/bff/main.py` Management list/table/board contracts |
 | Tool | `scripts/audit_management_list_contract.py` |
 | Baseline | `docs/architecture/management-list-contract-baseline.json` |
-| Result | 91 existing contract smells after `MGMT-LIST-CONTRACT-017`: 0 P0, 91 P1 |
+| Result | 65 existing contract smells after `MGMT-LIST-CONTRACT-018`: 0 P0, 65 P1 |
 
 ## Trigger
 
@@ -53,7 +53,10 @@ summary casing mirrors, `MGMT-LIST-CONTRACT-016` hardened frontend live
 transport so live-mode tests must prove they call the configured BFF URL
 instead of silently returning mock data, and `MGMT-LIST-CONTRACT-017` removed PM12 quarterly
 ranking row, drilldown, recommendation row, and HumanGate command fixture
-casing mirrors while slimming drilldown source breakdowns:
+casing mirrors while slimming drilldown source breakdowns, and
+`MGMT-LIST-CONTRACT-018` removed PM12 performance attribution casing mirrors,
+moved row DTO projection behind page slicing, and aligned the adjacent PM12
+persona-league DTOs and tests to the same snake_case-only wire contract:
 
 | Category | Count | Severity | Meaning |
 |---|---:|---|---|
@@ -62,9 +65,9 @@ casing mirrors while slimming drilldown source breakdowns:
 | `source-record-in-list-dto` | 0 | P0 | Raw source record/document fields appear in list DTO helpers |
 | `embedded-aggregate-payload` | 0 | P0 | List/board payload embeds related aggregate collections |
 | `board-pack-full-child-payloads` | 0 | P0 | Board pack nests complete child endpoint responses |
-| `camel-snake-duplicate` | 84 | P1 | DTOs return both casing variants for the same fields |
-| `project-before-page` | 5 | P1 | Endpoint/helper projects broad aggregates before page slicing |
-| `heavy-row-helper` | 2 | P1 | Row helper includes detail-grade nested policy/session/memory/source data |
+| `camel-snake-duplicate` | 61 | P1 | DTOs return both casing variants for the same fields |
+| `project-before-page` | 4 | P1 | Endpoint/helper projects broad aggregates before page slicing |
+| `heavy-row-helper` | 0 | P1 | Row helper includes detail-grade nested policy/session/memory/source data |
 
 The complete machine-readable list is in
 `docs/architecture/management-list-contract-baseline.json`.
@@ -76,9 +79,9 @@ The complete machine-readable list is in
 | Persona Fleet | Remediated in `MGMT-LIST-CONTRACT-002`: `/bff/management/persona-fleet` now returns `data.items`, `data.summary`, top-level `page_info`, and `meta.related` links only | Keep source/research health detail on detail/health endpoints and require server-side filters such as `deployment_stage` |
 | Board Pack | Remediated in `MGMT-LIST-CONTRACT-003`: `_management_board_pack_response` now returns section summaries, counts, status, and hrefs without child endpoint payloads | Keep board-pack summary-only; fetch full child sections from their dedicated routes |
 | Portfolio Book Family | Remediated across `MGMT-LIST-CONTRACT-004` and `MGMT-LIST-CONTRACT-005`: core, pools, exposure, holdings, and positions now use one envelope and snake_case rows | Keep the family on `data.items`/`data.summary` and move future row expansion to detail routes |
-| PM12 Analytics Tables | Remediated in `MGMT-LIST-CONTRACT-006`: performance attribution, strategy allocation, capital flow, risk radar, incident timeline, and loop throughput now use one list envelope | Continue removing row-level casing duplicates and project/page order issues in follow-up slices |
-| Persona League Family | Remediated in `MGMT-LIST-CONTRACT-007`: league, rankings, movers, tiers, heatmap, quarterly ranking, recommendations, typed client contracts, and the legacy `/bff/persona-league` helper now use one `data.items`/`data.summary` envelope. `MGMT-LIST-CONTRACT-007B` removed the shadowed legacy `/bff/management/persona-league` decorator. | Continue removing row-level casing duplicates in a follow-up slice |
-| Performance And Cost Attribution | Cost Attribution duplicate list aliases were remediated in `MGMT-LIST-CONTRACT-008`; remaining risk is row projection before page slicing and casing duplication | Filter and page before row expansion; continue removing row-level casing duplicates |
+| PM12 Analytics Tables | Remediated in `MGMT-LIST-CONTRACT-006`: performance attribution, strategy allocation, capital flow, risk radar, incident timeline, and loop throughput now use one list envelope. `MGMT-LIST-CONTRACT-018` removed performance-attribution row/summary/metrics/source-ref casing mirrors and pages before row DTO projection | Continue row-level casing cleanup in Strategy Allocation, Capital Flow, Risk Radar, Incident Timeline, Loop Throughput, and Cost Attribution |
+| Persona League Family | Remediated in `MGMT-LIST-CONTRACT-007`: league, rankings, movers, tiers, heatmap, quarterly ranking, recommendations, typed client contracts, and the legacy `/bff/persona-league` helper now use one `data.items`/`data.summary` envelope. `MGMT-LIST-CONTRACT-007B` removed the shadowed legacy `/bff/management/persona-league` decorator. `MGMT-LIST-CONTRACT-018` aligned the PM12 persona-league row, ranking, mover, tier, heatmap, quarterly score-field, typed-contract, and focused-test DTOs to snake_case-only output while keeping detail-grade policy/session/memory data out of list rows. | Keep PM12 on one canonical wire contract; avoid rebuilding duplicate first-level UI pages for every PM12 endpoint |
+| Performance And Cost Attribution | Cost Attribution duplicate list aliases were remediated in `MGMT-LIST-CONTRACT-008`; Performance Attribution casing and page-before-projection were remediated in `MGMT-LIST-CONTRACT-018` | Continue Cost Attribution casing and page-before-projection cleanup |
 | Human Inbox And Governance Ledger | Remediated in `MGMT-LIST-CONTRACT-010`: Human Inbox and Governance Ledger list contracts now return canonical `data.items`/`data.summary` envelopes and omit raw source records | Keep raw source/debug payloads on detail endpoints only |
 | Human/Ops Wire Casing | Remediated across `MGMT-LIST-CONTRACT-012` and `MGMT-LIST-CONTRACT-013`: HIQ Backlog, Intervention Stream, Governance Ledger, and Human Inbox readiness/summary casing mirrors were removed | Continue the same casing cleanup for other Management families |
 | NL/AI Management Surfaces | Remediated in `MGMT-LIST-CONTRACT-009`: AI audit, conversation list/detail, Evolution Journal, Persona Intent, Python tests, and typed client adapters no longer expose top-level list aliases | Continue removing row-level casing duplicates in Management AI helper payloads |
@@ -146,10 +149,18 @@ The complete machine-readable list is in
     command fixture reads now use snake_case wire keys; drilldown source
     breakdowns now expose lightweight summaries/counts instead of nested
     capability/session/memory helper payloads.
-16. Remove camel/snake duplicates from the remaining migrated endpoints and
-    delete retired fingerprints from the baseline.
-17. Fix remaining project-before-page and heavy-row-helper findings so large
-    list endpoints filter and page before detail-grade projection.
+16. Done in `MGMT-LIST-CONTRACT-018`: PM12 performance attribution metrics,
+    rows, source refs, summaries, typed contracts, and focused tests now use
+    snake_case wire keys; row DTO projection now happens after page slicing.
+    The adjacent PM12 persona-league DTOs and focused tests now also assert
+    snake_case-only league rows, ranking rows, movers, tiers, heatmap cells, and
+    quarterly score fields without detail-grade row helper payloads.
+17. Remove camel/snake duplicates from the remaining migrated endpoints:
+    Management AI/NL, Strategy Allocation, Capital Flow, Risk Radar, Incident
+    Timeline, Loop Throughput, and Cost Attribution.
+18. Fix remaining project-before-page findings so Human Inbox, Cost
+    Attribution, Portfolio Exposure, and Portfolio Holdings filter and page
+    before detail-grade projection.
 
 ## Enforcement
 
