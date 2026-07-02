@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-07-02 23:10:36
+Last updated: 2026-07-02 23:29:04
 
 ## Objective
 
@@ -27,7 +27,7 @@ Implement the paper-first persona lifecycle: create persona directly into paper 
 
 - `Claude`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Assignment created
+- `Codex`: integration, status-system, schema, acceptance; next: Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: Assignment created
@@ -42,7 +42,7 @@ Implement the paper-first persona lifecycle: create persona directly into paper 
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `PPLG-001` | EPIC PPLG / contracts | Canonical persona paper/live state and contract alignment | Codex | todo | - | 鎖定 paper-first persona lifecycle, schema, endpoint contract, 舊 onboarding spec supersession。建立完成必須是 paper runtime 或 setup_failed。 |
+| `PPLG-001` | EPIC PPLG / contracts | Canonical persona paper/live state and contract alignment | Codex | review | - | 鎖定 paper-first persona lifecycle, schema, endpoint contract, 舊 onboarding spec supersession。建立完成必須是 paper runtime 或 setup_failed。 |
 | `PPLG-002` | EPIC PPLG / paper launch | Idempotent create-to-paper persona launch workflow | Claude | todo | `PPLG-001` | 實作 POST /bff/management/personas/paper-launch，一次完成 persona、paper pool binding、paper plan、paper approval、RuntimeBinding、paper runtime startup。 |
 | `PPLG-003` | EPIC PPLG / fleet read model | Persona Fleet readiness projection and payload cleanup | Codex2 | todo | `PPLG-001` | 補 Fleet readiness/competition projection 並移除重複大 payload，讓 row 在同一 cohort 顯示 paper challengers、canary challengers、live incumbents。 |
 | `PPLG-004` | EPIC PPLG / evaluation ranking | Paper eligibility and unified competition ranking engine | Claude2 | todo | `PPLG-001` | 實作 paper hard gates、promotion_score、paper/canary/live 同 cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。 |
@@ -89,7 +89,7 @@ Implement the paper-first persona lifecycle: create persona directly into paper 
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `PPLG-001` | EPIC PPLG / contracts | Canonical persona paper/live state and contract alignment | 鎖定 paper-first persona lifecycle, schema, endpoint contract, 舊 onboarding spec supersession。建立完成必須是 paper runtime 或 setup_failed。 | Codex | Claude | todo | - | 2026-07-02 21:47:28 | Assignment created |
+| `PPLG-001` | EPIC PPLG / contracts | Canonical persona paper/live state and contract alignment | 鎖定 paper-first persona lifecycle, schema, endpoint contract, 舊 onboarding spec supersession。建立完成必須是 paper runtime 或 setup_failed。 | Codex | Claude | review | - | 2026-07-02 23:29:04 | Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review. |
 | `PPLG-002` | EPIC PPLG / paper launch | Idempotent create-to-paper persona launch workflow | 實作 POST /bff/management/personas/paper-launch，一次完成 persona、paper pool binding、paper plan、paper approval、RuntimeBinding、paper runtime startup。 | Claude | Codex | todo | `PPLG-001` | 2026-07-02 21:47:50 | Assignment created |
 | `PPLG-003` | EPIC PPLG / fleet read model | Persona Fleet readiness projection and payload cleanup | 補 Fleet readiness/competition projection 並移除重複大 payload，讓 row 在同一 cohort 顯示 paper challengers、canary challengers、live incumbents。 | Codex2 | Claude2 | todo | `PPLG-001` | 2026-07-02 21:48:00 | Assignment created |
 | `PPLG-004` | EPIC PPLG / evaluation ranking | Paper eligibility and unified competition ranking engine | 實作 paper hard gates、promotion_score、paper/canary/live 同 cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。 | Claude2 | Codex | todo | `PPLG-001` | 2026-07-02 21:48:10 | Assignment created |
@@ -102,7 +102,7 @@ Implement the paper-first persona lifecycle: create persona directly into paper 
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `PPLG-001` | Codex | Claude | Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review. | pending | 2026-07-02 23:29:04 |
 
 ## Blockers
 
@@ -144,8 +144,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:26 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:26 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:28 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:31 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
@@ -164,3 +162,5 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
+- 2026-07-02 23:28:55 Codex: `PPLG-001` Implementing canonical persona paper/live schema, BFF contract, and regression tests.
+- 2026-07-02 23:29:04 Codex: `PPLG-001` Handoff to Claude: Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.

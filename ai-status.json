@@ -3,7 +3,7 @@
   "sprint": "2026-07-02-persona-paper-live-gap",
   "sprint_started_at": "2026-07-02T00:00:00Z",
   "objective": "Implement the paper-first persona lifecycle: create persona directly into paper runtime, evaluate paper cohorts, require human approval for canary, live, and quarterly allocation changes, and enforce automatic risk guardrails that can pause, reduce, risk-off, or freeze immediately.",
-  "updated_at": "2026-07-02T15:10:36Z",
+  "updated_at": "2026-07-02T15:29:04Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -125,13 +125,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "reviewing",
       "current_task_ids": [
         "PPLG-001"
       ],
       "branch": "task/ASST-OCGW-001",
-      "next": "Assignment created",
-      "last_update": "2026-07-02T13:47:28Z"
+      "next": "Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.",
+      "last_update": "2026-07-02T15:29:04Z"
     },
     {
       "name": "Codex2",
@@ -247,7 +247,7 @@
       "phase": "EPIC PPLG / contracts",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
@@ -258,8 +258,8 @@
       "acceptance": [
         "contract docs state create-to-paper invariant;paper canary live share one cohort competition model with competition_track;canary live quarterly require human decision;automatic guardrails cannot promote or increase allocation;schema/contract tests cover enums"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-07-02T13:47:28Z",
+      "next": "Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.",
+      "last_update": "2026-07-02T15:29:04Z",
       "source_packet": "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
       "task_packet_dir": "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap",
       "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
@@ -489,6 +489,14 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
+    },
+    {
+      "task_id": "PPLG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.",
+      "status": "pending",
+      "created_at": "2026-07-02T15:29:04Z"
     }
   ],
   "blockers": [],
@@ -561,12 +569,12 @@
     },
     "Codex": {
       "total": 2,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 2
+      "todo": 1
     },
     "Codex2": {
       "total": 2,
