@@ -2013,30 +2013,19 @@ export interface ManagementPerformanceAttributionResponse {
 
 export interface ManagementEvidenceItem {
   id: string;
-  refId: string;
   ref_id: string;
   title?: string;
-  displayLabel?: string;
   display_label?: string;
-  sourceType?: string;
   source_type?: string;
-  sourceRef?: string;
   source_ref?: string;
-  capturedAt?: string;
   captured_at?: string;
-  linkType?: string;
   link_type?: string;
   credibility?: Record<string, unknown>;
-  linkedObjectSummary?: Record<string, unknown>;
   linked_object_summary?: Record<string, unknown>;
-  resolvedLink?: Record<string, unknown>;
   resolved_link?: Record<string, unknown>;
-  routeHref?: string;
   route_href?: string;
-  managementHref?: string;
   management_href?: string;
   kind?: string;
-  requiredCapability?: string;
   required_capability?: string;
   reason?: string;
   redacted?: boolean;
@@ -2044,21 +2033,13 @@ export interface ManagementEvidenceItem {
 }
 
 export interface ManagementEvidenceSummary {
-  totalEvidence: number;
   total_evidence: number;
-  returnedEvidence: number;
   returned_evidence: number;
-  visibleEvidence: number;
   visible_evidence: number;
-  redactedEvidence: number;
   redacted_evidence: number;
-  verifiedEvidence: number;
   verified_evidence: number;
-  bySourceType: Record<string, number>;
   by_source_type: Record<string, number>;
-  byLinkType: Record<string, number>;
   by_link_type: Record<string, number>;
-  byCredibilityTier: Record<string, number>;
   by_credibility_tier: Record<string, number>;
   [key: string]: unknown;
 }
@@ -2069,11 +2050,8 @@ export interface ManagementEvidenceResponse {
     items: ManagementEvidenceItem[];
     summary: ManagementEvidenceSummary;
     facets: {
-      sourceTypes?: Record<string, number>;
       source_types?: Record<string, number>;
-      linkTypes?: Record<string, number>;
       link_types?: Record<string, number>;
-      credibilityTiers?: Record<string, number>;
       credibility_tiers?: Record<string, number>;
       [key: string]: unknown;
     };

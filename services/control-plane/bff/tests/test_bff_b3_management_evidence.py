@@ -138,7 +138,8 @@ def _evidence_client() -> Iterator[TestClient]:
                 os.path.join(td, "read_surfaces.json"),
                 allow_local_snapshot_fallback=True,
             )
-            yield TestClient(bff_main.app)
+            with TestClient(bff_main.app) as client:
+                yield client
         finally:
             bff_main.read_store = original_store
             for key, value in tracked_env.items():
@@ -167,20 +168,24 @@ def test_management_evidence_composes_explorer_envelope_with_filters() -> None:
         summary = payload["data"]["summary"]
         facets = payload["data"]["facets"]
         assert payload["page_info"]["total"] == 1
-        assert summary["totalEvidence"] == 1
-        assert summary["returnedEvidence"] == 1
-        assert summary["bySourceType"] == {"metric": 1}
-        assert facets["credibilityTiers"] == {"primary": 1}
+        assert summary["total_evidence"] == 1
+        assert summary["returned_evidence"] == 1
+        assert summary["by_source_type"] == {"metric": 1}
+        assert facets["credibility_tiers"] == {"primary": 1}
         assert payload["meta"]["surfaces"]["management_evidence"]["source"] == "bff_composed"
         assert payload["meta"]["surfaces"]["evidence_refs"]["status"] in {"ok", "degraded"}
 
         item = items[0]
         assert item["id"] == "evref-b3-metric-001"
-        assert item["refId"] == "evref-b3-metric-001"
-        assert item["sourceType"] == "metric"
-        assert item["linkedObjectSummary"]["entity_ref"] == "exp-b3-alpha"
-        assert item["routeHref"] == "/knowledge/evidence/evref-b3-metric-001"
+        assert item["ref_id"] == "evref-b3-metric-001"
+        assert item["source_type"] == "metric"
+        assert item["linked_object_summary"]["entity_ref"] == "exp-b3-alpha"
+        assert item["route_href"] == "/knowledge/evidence/evref-b3-metric-001"
         assert item["redacted"] is False
+        assert "refId" not in item
+        assert "sourceType" not in item
+        assert "linkedObjectSummary" not in item
+        assert "routeHref" not in item
 
 
 def test_management_evidence_preserves_artifact_manifest_from_store() -> None:
@@ -196,8 +201,7 @@ def test_management_evidence_preserves_artifact_manifest_from_store() -> None:
 
         item = payload["data"]["items"][0]
         assert item["overall"] == "pass"
-        assert item["artifactManifest"] == item["artifact_manifest"]
-        manifest = item["artifactManifest"]
+        manifest = item["artifact_manifest"]
         assert manifest["file_count"] == 2
         assert manifest["total_bytes"] == 88
         assert manifest["limits"]["max_files"] == 32
@@ -208,6 +212,7 @@ def test_management_evidence_preserves_artifact_manifest_from_store() -> None:
         assert all(entry["current_run_allowed"] is True for entry in manifest["files"])
         assert item["criteria"]["rbac_matrix"]["status"] == "pass"
         assert item["criteria"]["current_run_only"]["note"] == "2 artifact file(s); current-run scope only"
+        assert "artifactManifest" not in item
 
 
 @contextmanager
@@ -226,7 +231,8 @@ def _current_run_evidence_client(verifier_path: Path) -> Iterator[TestClient]:
             str(verifier_path.parent / "read_surfaces.json"),
             allow_local_snapshot_fallback=False,
         )
-        yield TestClient(bff_main.app)
+        with TestClient(bff_main.app) as client:
+            yield client
     finally:
         bff_main.read_store = original_store
         for key, value in tracked_env.items():
@@ -322,23 +328,26 @@ def test_management_evidence_projects_current_run_verifier_when_store_missing(tm
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["page_info"]["total"] == 1
-    assert payload["data"]["summary"]["bySourceType"] == {"workflow_artifact": 1}
-    assert payload["data"]["facets"]["linkTypes"] == {"provenance": 1}
+    assert payload["data"]["summary"]["by_source_type"] == {"workflow_artifact": 1}
+    assert payload["data"]["facets"]["link_types"] == {"provenance": 1}
     assert payload["meta"]["surfaces"]["evidence_refs"]["source"] == "bff_current_run_artifact"
     assert payload["meta"]["surfaces"]["management_evidence"]["source"] == "bff_composed"
 
     item = payload["data"]["items"][0]
     assert item["id"] == "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY"
-    assert item["sourceType"] == "workflow_artifact"
-    assert item["linkType"] == "provenance"
+    assert item["source_type"] == "workflow_artifact"
+    assert item["link_type"] == "provenance"
     assert item["credibility"] == {"tier": "primary", "verified": True}
-    assert item["linkedObjectSummary"]["entity_type"] == "artifact"
+    assert item["linked_object_summary"]["entity_type"] == "artifact"
     assert item["overall"] == "pass"
-    assert item["artifactManifest"] == manifest
     assert item["artifact_manifest"] == manifest
     assert item["criteria"]["rbac_matrix"]["status"] == "fail"
     assert item["criteria"]["rbac_matrix"]["note"] == "missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON"
     assert item["criteria"]["current_run_only"]["status"] == "pass"
+    assert "sourceType" not in item
+    assert "linkType" not in item
+    assert "linkedObjectSummary" not in item
+    assert "artifactManifest" not in item
 
 
 def test_management_evidence_ignores_malformed_current_run_verifier(tmp_path: Path) -> None:
@@ -364,14 +373,15 @@ def test_management_evidence_preserves_capability_redaction() -> None:
 
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert payload["data"]["summary"]["redactedEvidence"] == 1
+        assert payload["data"]["summary"]["redacted_evidence"] == 1
         assert payload["meta"]["redacted_evidence_count"] == 1
 
         item = payload["data"]["items"][0]
         assert item["id"] == "evref-b3-metric-001"
         assert item["redacted"] is True
-        assert item["requiredCapability"] == "metric.read"
+        assert item["required_capability"] == "metric.read"
         assert item["reason"] == "insufficient_capability"
+        assert "requiredCapability" not in item
 
 
 def test_knowledge_evidence_detail_exposes_linked_object_summary() -> None:

@@ -403,44 +403,29 @@ describe("managementClient — Evidence Explorer aggregate live adapter", () => 
           items: [
             {
               id: "evref-b3-metric-001",
-              refId: "evref-b3-metric-001",
               ref_id: "evref-b3-metric-001",
               title: "Runtime performance window",
-              sourceType: "metric",
               source_type: "metric",
-              linkType: "supporting_evidence",
               link_type: "supporting_evidence",
               credibility: { tier: "primary", verified: true },
-              linkedObjectSummary: { entity_type: "experiment", entity_ref: "exp-b3-alpha" },
               linked_object_summary: { entity_type: "experiment", entity_ref: "exp-b3-alpha" },
-              routeHref: "/knowledge/evidence/evref-b3-metric-001",
+              route_href: "/knowledge/evidence/evref-b3-metric-001",
               redacted: false,
             },
           ],
           summary: {
-            totalEvidence: 1,
             total_evidence: 1,
-            returnedEvidence: 1,
             returned_evidence: 1,
-            visibleEvidence: 1,
             visible_evidence: 1,
-            redactedEvidence: 0,
             redacted_evidence: 0,
-            verifiedEvidence: 1,
             verified_evidence: 1,
-            bySourceType: { metric: 1 },
             by_source_type: { metric: 1 },
-            byLinkType: { supporting_evidence: 1 },
             by_link_type: { supporting_evidence: 1 },
-            byCredibilityTier: { primary: 1 },
             by_credibility_tier: { primary: 1 },
           },
           facets: {
-            sourceTypes: { metric: 1 },
             source_types: { metric: 1 },
-            linkTypes: { supporting_evidence: 1 },
             link_types: { supporting_evidence: 1 },
-            credibilityTiers: { primary: 1 },
             credibility_tiers: { primary: 1 },
           },
         },
@@ -468,9 +453,10 @@ describe("managementClient — Evidence Explorer aggregate live adapter", () => 
     expect("items" in aggregate).toBe(false);
     expect("summary" in aggregate).toBe(false);
     expect("facets" in aggregate).toBe(false);
-    expect(aggregate.data.items[0].refId).toBe("evref-b3-metric-001");
-    expect(aggregate.data.summary.totalEvidence).toBe(1);
-    expect(aggregate.data.facets.sourceTypes).toEqual({ metric: 1 });
+    expect(aggregate.data.items[0].ref_id).toBe("evref-b3-metric-001");
+    expect("refId" in aggregate.data.items[0]).toBe(false);
+    expect(aggregate.data.summary.total_evidence).toBe(1);
+    expect(aggregate.data.facets.source_types).toEqual({ metric: 1 });
     expect(aggregate.meta.redacted_evidence_count).toBe(0);
     expect(aggregate.meta.surfaces.management_evidence.source).toBe("bff_composed");
   });

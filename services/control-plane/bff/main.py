@@ -8831,12 +8831,9 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
         required_capability = item.get("required_capability")
         return {
             "id": ref_id,
-            "refId": ref_id,
             "ref_id": ref_id,
-            "displayLabel": display_label,
             "display_label": display_label,
             "kind": item.get("kind"),
-            "requiredCapability": required_capability,
             "required_capability": required_capability,
             "reason": item.get("reason"),
             "redacted": True,
@@ -8858,34 +8855,23 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     title = source_document.get("title") or item.get("title") or display_label
     public_item = {
         "id": ref_id,
-        "refId": ref_id,
         "ref_id": ref_id,
         "title": title,
-        "displayLabel": display_label,
         "display_label": display_label,
-        "sourceType": source_type,
         "source_type": source_type,
-        "sourceRef": source_ref,
         "source_ref": source_ref,
-        "capturedAt": captured_at,
         "captured_at": captured_at,
-        "linkType": link_type,
         "link_type": link_type,
         "credibility": json.loads(json.dumps(credibility)),
-        "linkedObjectSummary": json.loads(json.dumps(linked_summary)),
         "linked_object_summary": json.loads(json.dumps(linked_summary)),
-        "resolvedLink": json.loads(json.dumps(resolved_link)),
         "resolved_link": json.loads(json.dumps(resolved_link)),
-        "routeHref": route_href,
         "route_href": route_href,
-        "managementHref": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
         "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
         "redacted": False,
     }
     artifact_manifest = item.get("artifact_manifest")
     if isinstance(artifact_manifest, dict):
         cloned_manifest = _management_json_clone(artifact_manifest)
-        public_item["artifactManifest"] = cloned_manifest
         public_item["artifact_manifest"] = cloned_manifest
     criteria = item.get("criteria")
     if isinstance(criteria, dict):
@@ -9026,21 +9012,13 @@ def _management_evidence_summary(
     by_link_type = _management_count_by(visible_items, "link_type")
     by_credibility_tier = _management_count_by_nested(visible_items, "credibility", "tier")
     return {
-        "totalEvidence": filtered_total,
         "total_evidence": filtered_total,
-        "returnedEvidence": len(page_items),
         "returned_evidence": len(page_items),
-        "visibleEvidence": len(visible_items),
         "visible_evidence": len(visible_items),
-        "redactedEvidence": redacted_count,
         "redacted_evidence": redacted_count,
-        "verifiedEvidence": verified_count,
         "verified_evidence": verified_count,
-        "bySourceType": by_source_type,
         "by_source_type": by_source_type,
-        "byLinkType": by_link_type,
         "by_link_type": by_link_type,
-        "byCredibilityTier": by_credibility_tier,
         "by_credibility_tier": by_credibility_tier,
     }
 
@@ -9050,11 +9028,8 @@ def _management_evidence_degraded_payload(*, page_size: int) -> Dict[str, Any]:
     snapshot_at = utc_now()
     summary = _management_evidence_summary(filtered_total=0, page_items=[], redacted_count=0)
     facets = {
-        "sourceTypes": summary["bySourceType"],
         "source_types": summary["by_source_type"],
-        "linkTypes": summary["byLinkType"],
         "link_types": summary["by_link_type"],
-        "credibilityTiers": summary["byCredibilityTier"],
         "credibility_tiers": summary["by_credibility_tier"],
     }
     meta = _snapshot_meta(snapshot_at)
@@ -9201,11 +9176,8 @@ def _build_management_evidence_payload(
         redacted_count=redacted_count,
     )
     facets = {
-        "sourceTypes": summary["bySourceType"],
         "source_types": summary["by_source_type"],
-        "linkTypes": summary["byLinkType"],
         "link_types": summary["by_link_type"],
-        "credibilityTiers": summary["byCredibilityTier"],
         "credibility_tiers": summary["by_credibility_tier"],
     }
     meta = _snapshot_meta(snapshot_at)

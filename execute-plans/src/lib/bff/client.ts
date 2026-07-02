@@ -546,29 +546,18 @@ function emptyManagementEvidenceAggregate(): ManagementEvidenceResponse {
       id: "management-evidence",
       items: [],
       summary: {
-        totalEvidence: 0,
         total_evidence: 0,
-        returnedEvidence: 0,
         returned_evidence: 0,
-        visibleEvidence: 0,
         visible_evidence: 0,
-        redactedEvidence: 0,
         redacted_evidence: 0,
-        verifiedEvidence: 0,
         verified_evidence: 0,
-        bySourceType: {},
         by_source_type: {},
-        byLinkType: {},
         by_link_type: {},
-        byCredibilityTier: {},
         by_credibility_tier: {},
       },
       facets: {
-        sourceTypes: {},
         source_types: {},
-        linkTypes: {},
         link_types: {},
-        credibilityTiers: {},
         credibility_tiers: {},
       },
     },
@@ -639,6 +628,59 @@ function emptyManagementReadinessAggregate(id: string): ManagementReadinessRespo
       },
     },
   };
+}
+
+const MANAGEMENT_EVIDENCE_ITEM_CAMEL_KEYS = new Set([
+  "refId",
+  "displayLabel",
+  "sourceType",
+  "sourceRef",
+  "capturedAt",
+  "linkType",
+  "linkedObjectSummary",
+  "resolvedLink",
+  "routeHref",
+  "managementHref",
+  "requiredCapability",
+  "artifactManifest",
+]);
+
+function applySnakeFallback(
+  target: Record<string, unknown>,
+  raw: Record<string, unknown>,
+  snakeKey: string,
+  camelKey: string,
+): void {
+  const value = raw[snakeKey] ?? raw[camelKey];
+  if (value !== undefined) {
+    target[snakeKey] = value;
+  }
+}
+
+function normalizeManagementEvidenceItem(raw: Record<string, unknown>): ManagementEvidenceItem {
+  const item: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!MANAGEMENT_EVIDENCE_ITEM_CAMEL_KEYS.has(key)) {
+      item[key] = value;
+    }
+  }
+
+  const refId = raw.ref_id ?? raw.refId ?? raw.id ?? "";
+  item.id = String(raw.id ?? refId);
+  item.ref_id = String(refId);
+  applySnakeFallback(item, raw, "display_label", "displayLabel");
+  applySnakeFallback(item, raw, "source_type", "sourceType");
+  applySnakeFallback(item, raw, "source_ref", "sourceRef");
+  applySnakeFallback(item, raw, "captured_at", "capturedAt");
+  applySnakeFallback(item, raw, "link_type", "linkType");
+  applySnakeFallback(item, raw, "linked_object_summary", "linkedObjectSummary");
+  applySnakeFallback(item, raw, "resolved_link", "resolvedLink");
+  applySnakeFallback(item, raw, "route_href", "routeHref");
+  applySnakeFallback(item, raw, "management_href", "managementHref");
+  applySnakeFallback(item, raw, "required_capability", "requiredCapability");
+  applySnakeFallback(item, raw, "artifact_manifest", "artifactManifest");
+
+  return item as ManagementEvidenceItem;
 }
 
 function emptyManagementEvolutionJournalAggregate(): ManagementEvolutionJournalResponse {
@@ -959,7 +1001,9 @@ function adaptManagementEvidenceAggregate(body: unknown): ManagementEvidenceResp
       : Array.isArray(envelope.data)
         ? envelope.data
         : [];
-  const items = rawItems.filter((item) => item && typeof item === "object") as ManagementEvidenceItem[];
+  const items = rawItems
+    .filter((item) => item && typeof item === "object")
+    .map((item) => normalizeManagementEvidenceItem(item as Record<string, unknown>));
   const summary = Object.keys(asObject(dataEnvelope.summary)).length > 0
     ? asObject(dataEnvelope.summary)
     : asObject(envelope.summary);
@@ -973,24 +1017,20 @@ function adaptManagementEvidenceAggregate(body: unknown): ManagementEvidenceResp
       id: String(dataEnvelope.id ?? "management-evidence"),
       items,
       summary: {
-        totalEvidence: Number(summary.totalEvidence ?? summary.total_evidence ?? items.length),
         total_evidence: Number(summary.total_evidence ?? summary.totalEvidence ?? items.length),
-        returnedEvidence: Number(summary.returnedEvidence ?? summary.returned_evidence ?? items.length),
         returned_evidence: Number(summary.returned_evidence ?? summary.returnedEvidence ?? items.length),
-        visibleEvidence: Number(summary.visibleEvidence ?? summary.visible_evidence ?? items.length),
         visible_evidence: Number(summary.visible_evidence ?? summary.visibleEvidence ?? items.length),
-        redactedEvidence: Number(summary.redactedEvidence ?? summary.redacted_evidence ?? 0),
         redacted_evidence: Number(summary.redacted_evidence ?? summary.redactedEvidence ?? 0),
-        verifiedEvidence: Number(summary.verifiedEvidence ?? summary.verified_evidence ?? 0),
         verified_evidence: Number(summary.verified_evidence ?? summary.verifiedEvidence ?? 0),
-        bySourceType: asObject(summary.bySourceType ?? summary.by_source_type) as Record<string, number>,
         by_source_type: asObject(summary.by_source_type ?? summary.bySourceType) as Record<string, number>,
-        byLinkType: asObject(summary.byLinkType ?? summary.by_link_type) as Record<string, number>,
         by_link_type: asObject(summary.by_link_type ?? summary.byLinkType) as Record<string, number>,
-        byCredibilityTier: asObject(summary.byCredibilityTier ?? summary.by_credibility_tier) as Record<string, number>,
         by_credibility_tier: asObject(summary.by_credibility_tier ?? summary.byCredibilityTier) as Record<string, number>,
       },
-      facets: facets as ManagementEvidenceResponse["data"]["facets"],
+      facets: {
+        source_types: asObject(facets.source_types ?? facets.sourceTypes) as Record<string, number>,
+        link_types: asObject(facets.link_types ?? facets.linkTypes) as Record<string, number>,
+        credibility_tiers: asObject(facets.credibility_tiers ?? facets.credibilityTiers) as Record<string, number>,
+      },
     },
     page_info: {
       next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,

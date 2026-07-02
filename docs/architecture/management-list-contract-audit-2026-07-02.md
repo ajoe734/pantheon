@@ -5,7 +5,7 @@
 | Scope | Static audit of `services/control-plane/bff/main.py` Management list/table/board contracts |
 | Tool | `scripts/audit_management_list_contract.py` |
 | Baseline | `docs/architecture/management-list-contract-baseline.json` |
-| Result | 122 existing contract smells after the first twelve remediation slices: 0 P0, 122 P1 |
+| Result | 118 existing contract smells after `MGMT-LIST-CONTRACT-014`: 0 P0, 118 P1 |
 
 ## Trigger
 
@@ -40,7 +40,9 @@ Management, Evolution Journal, and Persona Intent duplicate envelopes, and
 Human Inbox, Evidence Explorer, HIQ Backlog, Intervention Stream, Governance
 Ledger, and Sentinel Pulse helpers, and `MGMT-LIST-CONTRACT-012` retired the
 first Human/Ops wire-casing duplicate cluster. `MGMT-LIST-CONTRACT-013` then
-removed the remaining Human Inbox readiness/summary wire-casing mirrors:
+removed the remaining Human Inbox readiness/summary wire-casing mirrors.
+`MGMT-LIST-CONTRACT-014` removed the Evidence Explorer public item, summary,
+facet, and degraded-envelope wire-casing mirrors:
 
 | Category | Count | Severity | Meaning |
 |---|---:|---|---|
@@ -49,7 +51,7 @@ removed the remaining Human Inbox readiness/summary wire-casing mirrors:
 | `source-record-in-list-dto` | 0 | P0 | Raw source record/document fields appear in list DTO helpers |
 | `embedded-aggregate-payload` | 0 | P0 | List/board payload embeds related aggregate collections |
 | `board-pack-full-child-payloads` | 0 | P0 | Board pack nests complete child endpoint responses |
-| `camel-snake-duplicate` | 114 | P1 | DTOs return both casing variants for the same fields |
+| `camel-snake-duplicate` | 110 | P1 | DTOs return both casing variants for the same fields |
 | `project-before-page` | 5 | P1 | Endpoint/helper projects broad aggregates before page slicing |
 | `heavy-row-helper` | 3 | P1 | Row helper includes detail-grade nested policy/session/memory/source data |
 
@@ -70,7 +72,8 @@ The complete machine-readable list is in
 | Human/Ops Wire Casing | Remediated across `MGMT-LIST-CONTRACT-012` and `MGMT-LIST-CONTRACT-013`: HIQ Backlog, Intervention Stream, Governance Ledger, and Human Inbox readiness/summary casing mirrors were removed | Continue the same casing cleanup for other Management families |
 | NL/AI Management Surfaces | Remediated in `MGMT-LIST-CONTRACT-009`: AI audit, conversation list/detail, Evolution Journal, Persona Intent, Python tests, and typed client adapters no longer expose top-level list aliases | Continue removing row-level casing duplicates in Management AI helper payloads |
 | Remaining P0 Cluster | Remediated in `MGMT-LIST-CONTRACT-010`: Evidence Explorer, HIQ Backlog, Intervention Stream, Sentinel Pulse, Human Inbox, and Governance Ledger no longer expose duplicate list envelopes, embedded child aggregates, or raw source records in list DTOs | Keep source/debug payloads on detail endpoints and enforce canonical `data.items` list envelopes |
-| Frontend Consumption Pattern | Remediated contracts now reject top-level aliases in focused tests; Human Inbox and Evidence adapters return canonical `data.items`/`data.summary` shapes | Frontend must request server filters/page and adapt one canonical envelope only |
+| Evidence Explorer Wire Casing | Remediated in `MGMT-LIST-CONTRACT-014`: Evidence Explorer rows, summaries, facets, degraded envelopes, typed contracts, and focused frontend fixtures now use snake_case wire keys without camelCase mirrors | Keep temporary frontend fallback reads only at adapter boundaries while formal Management DTOs remain single-casing |
+| Frontend Consumption Pattern | Remediated contracts now reject top-level aliases in focused tests; Human Inbox and Evidence adapters return canonical `data.items`/`data.summary` shapes, and Evidence typed consumers now read snake_case fields | Frontend must request server filters/page and adapt one canonical envelope only |
 
 ## Remediation Order
 
@@ -108,9 +111,12 @@ The complete machine-readable list is in
    camelCase mirrors.
 10. Done in `MGMT-LIST-CONTRACT-013`: Human Inbox readiness blocker rows and
    Human Inbox summary fields now avoid camelCase wire mirrors.
-11. Remove camel/snake duplicates from migrated endpoints and delete retired
+11. Done in `MGMT-LIST-CONTRACT-014`: Evidence Explorer public rows, summary
+   counts, facets, degraded timeout envelope, and focused frontend fixtures now
+   use snake_case wire keys without camelCase mirrors.
+12. Remove camel/snake duplicates from migrated endpoints and delete retired
    fingerprints from the baseline.
-12. Fix remaining project-before-page and heavy-row-helper findings so large
+13. Fix remaining project-before-page and heavy-row-helper findings so large
     list endpoints filter and page before detail-grade projection.
 
 ## Enforcement
