@@ -81,6 +81,43 @@ def _evidence_client() -> Iterator[TestClient]:
                             "availability": "available",
                             "route_href": "/alerts/risk-alpha",
                         },
+                        "linked_decisions": [
+                            {
+                                "entity_type": "decision",
+                                "entity_ref": "dec-b3-alpha",
+                                "display_label": "Approve runtime artifact",
+                                "route_href": "/management/decisions/dec-b3-alpha",
+                                "link_type": "corroboration",
+                                "relationship_note": "Alert packet was reviewed during artifact approval.",
+                            },
+                            {
+                                "entity_type": "readiness",
+                                "entity_ref": "broker-live",
+                                "display_label": "Broker Live readiness",
+                                "route_href": "/management/readiness/broker-live",
+                                "link_type": "readiness_evidence",
+                                "relationship_note": "Alert packet is part of broker-live readiness review.",
+                            },
+                            {
+                                "entity_type": "assertion",
+                                "entity_ref": "assert-no-real-capital",
+                                "display_label": "No real capital assertion",
+                                "link_type": "assertion_support",
+                                "relationship_note": "Alert packet supports no-real-capital safety assertion.",
+                            },
+                        ],
+                        "source_note_context": {
+                            "note_id": "note-b3-alert",
+                            "title": "Risk alpha alert note",
+                            "excerpt": "Operator note for the risk alpha alert packet.",
+                            "route_href": "/knowledge/notes/note-b3-alert",
+                        },
+                        "source_memory_context": {
+                            "entry_id": "mem-b3-alert",
+                            "headline": "Runtime alert memory",
+                            "excerpt": "Institutional memory entry for this alert pattern.",
+                            "route_href": "/knowledge/memory/mem-b3-alert",
+                        },
                         "route_href": "/knowledge/evidence/evref-b3-alert-001",
                         "created_at": "2026-05-23T09:05:00Z",
                     },
@@ -262,9 +299,121 @@ def test_management_evidence_preserves_capability_redaction() -> None:
         assert item["reason"] == "insufficient_capability"
 
 
+def test_management_evidence_detail_composes_operations_relationships_and_chain() -> None:
+    with _evidence_client() as client:
+        response = client.get(
+            "/bff/management/evidence/evref-b3-alert-001",
+            headers=ADMIN_HEADERS,
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+        assert payload["id"] == "evref-b3-alert-001"
+        assert payload["sourceDocument"]["source_type"] == "alert"
+        assert payload["resolvedLink"]["route_href"] == "/alerts/risk-alpha"
+        assert payload["linkedObjectLink"] == {
+            "availability": "available",
+            "route_href": "/management/artifacts/artifact-b3-alpha",
+            "display_label": "Runtime artifact",
+            "entity_type": "artifact",
+            "entity_ref": "artifact-b3-alpha",
+        }
+        assert payload["actionability"]["state"] == "traceable"
+        assert payload["allowedActions"]["canOpenSource"] is True
+        assert payload["allowedActions"]["canOpenLinkedObject"] is True
+        assert payload["allowedActions"]["canInspectChain"] is True
+        assert payload["allowedActions"]["canMarkStale"] is False
+        assert "not implemented yet" in payload["disabledActionReasons"]["canRequestEvidence"]
+
+        relationships = payload["relationships"]
+        assert relationships["artifacts"][0]["entity_ref"] == "artifact-b3-alpha"
+        assert relationships["artifacts"][0]["route_href"] == "/management/artifacts/artifact-b3-alpha"
+        assert relationships["decisions"][0]["entity_ref"] == "dec-b3-alpha"
+        assert relationships["readiness"][0]["route_href"] == "/management/readiness/broker-live"
+        assert relationships["assertions"][0]["entity_ref"] == "assert-no-real-capital"
+        assert relationships["notes"][0]["entity_ref"] == "note-b3-alert"
+        assert relationships["memory"][0]["entity_ref"] == "mem-b3-alert"
+
+        chain = payload["chain"]
+        assert chain["empty_reason"] is None
+        assert chain["degraded_reasons"] == []
+        node_ids = {node["id"] for node in chain["nodes"]}
+        assert "evidence:evref-b3-alert-001" in node_ids
+        assert "artifact:artifact-b3-alpha" in node_ids
+        assert "readiness:broker-live" in node_ids
+        evidence_node = next(
+            node for node in chain["nodes"] if node["id"] == "evidence:evref-b3-alert-001"
+        )
+        assert evidence_node["route_href"] == "/management/evidence?ref_id=evref-b3-alert-001"
+        assert any(edge["to"] == "artifact:artifact-b3-alpha" for edge in chain["edges"])
+
+        assert payload["operation"]["status"] == "none"
+        assert payload["tasks"] == []
+        assert payload["auditEvents"] == []
+        assert payload["meta"]["surfaces"]["management_evidence_detail"]["source"] == "bff_composed"
+        assert payload["meta"]["surfaces"]["relationships"]["status"] == "ok"
+        assert payload["meta"]["surfaces"]["chain"]["status"] == "ok"
+        assert payload["meta"]["surfaces"]["assertions"]["status"] == "ok"
+        assert payload["meta"]["surfaces"]["readiness_relationships"]["status"] == "ok"
+        assert payload["meta"]["surfaces"]["operation_state"]["status"] == "degraded"
+        assert payload["meta"]["performance"]["row_count"] == 1
+
+
+def test_management_evidence_detail_marks_untraceable_producer_row() -> None:
+    with _evidence_client() as client:
+        response = client.get(
+            "/bff/management/evidence/evref-b3-producer-001",
+            headers=ADMIN_HEADERS,
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+        assert payload["id"] == "evref-b3-producer-001"
+        assert payload["credibility"]["verified"] is True
+        assert payload["actionability"]["state"] == "unresolved_source"
+        assert payload["linkedObjectLink"]["route_href"] == "/management/artifacts/rart-20260615-002"
+        assert payload["relationships"]["artifacts"][0]["entity_ref"] == "rart-20260615-002"
+        assert payload["relationships"]["readiness"] == []
+        assert payload["relationships"]["assertions"] == []
+        assert payload["chain"]["empty_reason"] is None
+        assert "resolved_link_unavailable" in payload["chain"]["degraded_reasons"]
+        assert payload["meta"]["surfaces"]["assertions"]["status"] == "unavailable"
+        assert payload["meta"]["surfaces"]["readiness_relationships"]["status"] == "unavailable"
+
+
+def test_management_evidence_detail_preserves_capability_redaction() -> None:
+    with _evidence_client() as client:
+        response = client.get(
+            "/bff/management/evidence/evref-b3-metric-001",
+            headers=OPERATOR_HEADERS,
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+        assert payload["id"] == "evref-b3-metric-001"
+        assert payload["redacted"] is True
+        assert payload["actionability"]["state"] == "redacted"
+        assert payload["allowedActions"]["canOpenSource"] is False
+        assert payload["allowedActions"]["canInspectChain"] is False
+        assert payload["relationships"]["artifacts"] == []
+        assert payload["chain"]["empty_reason"] == "redacted"
+        assert payload["meta"]["redacted_evidence_count"] == 1
+
+
 def test_management_evidence_requires_read_authentication() -> None:
     with _evidence_client() as client:
         response = client.get("/bff/management/evidence")
+
+        assert response.status_code == 401, response.text
+        assert response.json()["error"]["code"] == "AUTH_REQUIRED"
+
+
+def test_management_evidence_detail_requires_read_authentication() -> None:
+    with _evidence_client() as client:
+        response = client.get("/bff/management/evidence/evref-b3-alert-001")
 
         assert response.status_code == 401, response.text
         assert response.json()["error"]["code"] == "AUTH_REQUIRED"

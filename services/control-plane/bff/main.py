@@ -9167,6 +9167,555 @@ def _management_evidence_disabled_action_reasons(
     return reasons
 
 
+_MANAGEMENT_EVIDENCE_RELATIONSHIP_KEYS = (
+    "artifacts",
+    "readiness",
+    "decisions",
+    "assertions",
+    "notes",
+    "memory",
+    "insights",
+    "strategy_specs",
+    "experiments",
+)
+
+
+_MANAGEMENT_EVIDENCE_RELATIONSHIP_BUCKETS = {
+    "artifact": "artifacts",
+    "readiness": "readiness",
+    "readiness_gate": "readiness",
+    "readiness_blocker": "readiness",
+    "decision": "decisions",
+    "approval": "decisions",
+    "approval_decision": "decisions",
+    "assertion": "assertions",
+    "safety_assertion": "assertions",
+    "validation_assertion": "assertions",
+    "research_note": "notes",
+    "note": "notes",
+    "memory_entry": "memory",
+    "memory": "memory",
+    "insight_card": "insights",
+    "insight": "insights",
+    "strategy_spec": "strategy_specs",
+    "experiment": "experiments",
+}
+
+
+def _management_evidence_empty_relationships() -> Dict[str, List[Dict[str, Any]]]:
+    return {key: [] for key in _MANAGEMENT_EVIDENCE_RELATIONSHIP_KEYS}
+
+
+def _management_evidence_relationship_bucket(entity_type: Optional[str]) -> Optional[str]:
+    return _MANAGEMENT_EVIDENCE_RELATIONSHIP_BUCKETS.get(
+        str(entity_type or "").strip().lower()
+    )
+
+
+def _management_evidence_relationship_item(
+    *,
+    entity_type: Optional[str],
+    entity_ref: Optional[str],
+    display_label: Optional[str],
+    route_href: Optional[str],
+    link_type: Optional[str],
+    relationship_note: Optional[str] = None,
+    source: str,
+) -> Optional[Dict[str, Any]]:
+    clean_type = str(entity_type or "").strip()
+    clean_ref = str(entity_ref or "").strip()
+    if not clean_type or not clean_ref:
+        return None
+    return {
+        "entity_type": clean_type,
+        "entity_ref": clean_ref,
+        "display_label": display_label or clean_ref,
+        "route_href": route_href,
+        "link_type": link_type,
+        "relationship_note": relationship_note,
+        "source": source,
+    }
+
+
+def _management_evidence_add_relationship(
+    relationships: Dict[str, List[Dict[str, Any]]],
+    item: Optional[Dict[str, Any]],
+) -> None:
+    if not item:
+        return
+    bucket = _management_evidence_relationship_bucket(item.get("entity_type"))
+    if not bucket:
+        return
+    key = (
+        str(item.get("entity_type") or ""),
+        str(item.get("entity_ref") or ""),
+        str(item.get("source") or ""),
+    )
+    existing = {
+        (
+            str(candidate.get("entity_type") or ""),
+            str(candidate.get("entity_ref") or ""),
+            str(candidate.get("source") or ""),
+        )
+        for candidate in relationships[bucket]
+    }
+    if key not in existing:
+        relationships[bucket].append(item)
+
+
+def _management_evidence_detail_relationships(
+    evidence_ref: Dict[str, Any],
+    *,
+    linked_object_link: Dict[str, Any],
+) -> Dict[str, List[Dict[str, Any]]]:
+    relationships = _management_evidence_empty_relationships()
+    link_type = evidence_ref.get("link_type")
+    linked_summary = (
+        evidence_ref.get("linked_object_summary")
+        if isinstance(evidence_ref.get("linked_object_summary"), dict)
+        else {}
+    )
+    _management_evidence_add_relationship(
+        relationships,
+        _management_evidence_relationship_item(
+            entity_type=linked_summary.get("entity_type"),
+            entity_ref=linked_summary.get("entity_ref"),
+            display_label=linked_summary.get("display_label"),
+            route_href=linked_object_link.get("route_href"),
+            link_type=link_type,
+            source="linked_object_summary",
+        ),
+    )
+    for decision in evidence_ref.get("linked_decisions") or []:
+        if not isinstance(decision, dict) or decision.get("redacted"):
+            continue
+        _management_evidence_add_relationship(
+            relationships,
+            _management_evidence_relationship_item(
+                entity_type=decision.get("entity_type"),
+                entity_ref=decision.get("entity_ref"),
+                display_label=decision.get("display_label"),
+                route_href=decision.get("route_href"),
+                link_type=decision.get("link_type") or link_type,
+                relationship_note=decision.get("relationship_note"),
+                source="linked_decisions",
+            ),
+        )
+    source_note_context = evidence_ref.get("source_note_context")
+    if isinstance(source_note_context, dict):
+        _management_evidence_add_relationship(
+            relationships,
+            _management_evidence_relationship_item(
+                entity_type="research_note",
+                entity_ref=source_note_context.get("note_id"),
+                display_label=source_note_context.get("title"),
+                route_href=source_note_context.get("route_href"),
+                link_type="source_context",
+                relationship_note=source_note_context.get("excerpt"),
+                source="source_note_context",
+            ),
+        )
+    source_memory_context = evidence_ref.get("source_memory_context")
+    if isinstance(source_memory_context, dict):
+        _management_evidence_add_relationship(
+            relationships,
+            _management_evidence_relationship_item(
+                entity_type="memory_entry",
+                entity_ref=source_memory_context.get("entry_id"),
+                display_label=source_memory_context.get("headline")
+                or source_memory_context.get("title"),
+                route_href=source_memory_context.get("route_href"),
+                link_type="source_context",
+                relationship_note=source_memory_context.get("excerpt"),
+                source="source_memory_context",
+            ),
+        )
+    return relationships
+
+
+def _management_evidence_chain(
+    evidence_ref: Dict[str, Any],
+    *,
+    linked_object_link: Dict[str, Any],
+    relationships: Dict[str, List[Dict[str, Any]]],
+    actionability: Dict[str, Any],
+) -> Dict[str, Any]:
+    ref_id = str(evidence_ref.get("ref_id") or "").strip()
+    source_document = (
+        evidence_ref.get("source_document")
+        if isinstance(evidence_ref.get("source_document"), dict)
+        else {}
+    )
+    resolved_link = (
+        evidence_ref.get("resolved_link")
+        if isinstance(evidence_ref.get("resolved_link"), dict)
+        else {}
+    )
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+
+    source_ref = str(source_document.get("source_ref") or "").strip()
+    source_node_id = f"source:{source_ref or ref_id}"
+    if source_document:
+        nodes.append(
+            {
+                "id": source_node_id,
+                "type": source_document.get("source_type") or "source_document",
+                "label": source_document.get("title") or source_ref or "Source",
+                "route_href": resolved_link.get("route_href"),
+                "availability": resolved_link.get("availability") or "unavailable",
+            }
+        )
+
+    evidence_node_id = f"evidence:{ref_id}"
+    nodes.append(
+        {
+            "id": evidence_node_id,
+            "type": "evidence_ref",
+            "label": source_document.get("title") or evidence_ref.get("display_label") or ref_id,
+            "route_href": f"/management/evidence?ref_id={quote(ref_id, safe='')}" if ref_id else None,
+        }
+    )
+    if source_document:
+        edges.append(
+            {
+                "from": source_node_id,
+                "to": evidence_node_id,
+                "relationship": "captured_as_evidence",
+                "degraded": not bool(actionability.get("can_open_source")),
+            }
+        )
+
+    relationship_items = [
+        item
+        for bucket in relationships.values()
+        for item in bucket
+        if isinstance(item, dict)
+    ]
+    seen_nodes = {node["id"] for node in nodes}
+    for item in relationship_items:
+        node_id = f"{item.get('entity_type')}:{item.get('entity_ref')}"
+        if node_id not in seen_nodes:
+            nodes.append(
+                {
+                    "id": node_id,
+                    "type": item.get("entity_type"),
+                    "label": item.get("display_label") or item.get("entity_ref"),
+                    "route_href": item.get("route_href"),
+                }
+            )
+            seen_nodes.add(node_id)
+        edges.append(
+            {
+                "from": evidence_node_id,
+                "to": node_id,
+                "relationship": item.get("link_type") or "related_to",
+                "source": item.get("source"),
+            }
+        )
+
+    degraded_reasons = list(actionability.get("reasons") or [])
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "empty_reason": None if edges else "no_chain_recorded",
+        "degraded_reasons": degraded_reasons,
+    }
+
+
+def _management_evidence_kind_for_redaction(evidence_ref: Dict[str, Any]) -> str:
+    ev_kind_raw = str(evidence_ref.get("evidence_type") or "").strip()
+    if ev_kind_raw:
+        return ev_kind_raw
+    source_document = evidence_ref.get("source_document")
+    if isinstance(source_document, dict):
+        source_type = str(source_document.get("source_type") or "").strip()
+        return SOURCE_TYPE_TO_EVIDENCE_KIND.get(source_type, "")
+    return ""
+
+
+def _management_evidence_redacted_linked_decisions(
+    *,
+    identity: OperatorIdentity,
+    linked_decisions: List[Dict[str, Any]],
+    capabilities: Optional[List[str]],
+) -> Tuple[List[Dict[str, Any]], int]:
+    annotated_decisions: List[Dict[str, Any]] = []
+    for decision in linked_decisions:
+        entity_type = str(decision.get("entity_type") or "").strip()
+        ev_kind = _ENTITY_TYPE_EVIDENCE_KIND.get(entity_type)
+        if ev_kind:
+            decision_copy = dict(decision)
+            decision_copy["evidence_type"] = ev_kind
+            if not decision_copy.get("ref_id") and not decision_copy.get("id"):
+                decision_copy["ref_id"] = decision_copy.get("entity_ref") or ""
+            annotated_decisions.append(decision_copy)
+        else:
+            annotated_decisions.append(decision)
+
+    processed_decisions, redacted_count = redact_evidence_refs(
+        identity,
+        annotated_decisions,
+        capabilities=capabilities,
+    )
+    redacted_linked_decisions: List[Dict[str, Any]] = []
+    for original, processed in zip(linked_decisions, processed_decisions):
+        if processed.get("redacted"):
+            redacted_linked_decisions.append(processed)
+        else:
+            redacted_linked_decisions.append(original)
+    return redacted_linked_decisions, redacted_count
+
+
+def _management_evidence_unavailable_surface(
+    *,
+    snapshot_at: str,
+    source: str,
+    message: str,
+) -> Dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "source": source,
+        "message": message,
+        "staleness": {
+            "served_from": "unverifiable",
+            "last_known_at": snapshot_at,
+        },
+    }
+
+
+def _management_evidence_detail_surfaces(
+    *,
+    snapshot_at: str,
+    evidence_surface: Dict[str, Any],
+    relationships: Dict[str, List[Dict[str, Any]]],
+    chain: Dict[str, Any],
+) -> Dict[str, Any]:
+    management_surface = _aggregate_group_surface(
+        "management_evidence_detail",
+        [evidence_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Management evidence detail aggregate unavailable.",
+        degraded_message="Management evidence detail aggregate is available, but the evidence read surface is degraded.",
+    )
+    relationships_surface = _composed_surface_status(snapshot_at=snapshot_at)
+    chain_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=bool(chain.get("edges")),
+        missing_message="No source/evidence/downstream chain is recorded for this evidence ref.",
+    )
+    assertions_surface = (
+        _composed_surface_status(snapshot_at=snapshot_at)
+        if relationships.get("assertions")
+        else _management_evidence_unavailable_surface(
+            snapshot_at=snapshot_at,
+            source="not_projected",
+            message="No canonical assertion relationship projection is available for this evidence ref.",
+        )
+    )
+    readiness_surface = (
+        _composed_surface_status(snapshot_at=snapshot_at)
+        if relationships.get("readiness")
+        else _management_evidence_unavailable_surface(
+            snapshot_at=snapshot_at,
+            source="not_projected",
+            message="No readiness relationship projection is available for this evidence ref.",
+        )
+    )
+    operation_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=False,
+        missing_message="Evidence operation projection is not implemented yet.",
+    )
+    return {
+        "management_evidence_detail": management_surface,
+        "evidence_ref_detail": evidence_surface,
+        "resolved_link": evidence_surface,
+        "linked_decisions": evidence_surface,
+        "relationships": relationships_surface,
+        "chain": chain_surface,
+        "assertions": assertions_surface,
+        "readiness_relationships": readiness_surface,
+        "operation_state": operation_surface,
+        "tasks": operation_surface,
+        "audit_events": operation_surface,
+    }
+
+
+def _build_management_evidence_detail_payload(
+    *,
+    identity: OperatorIdentity,
+    ref_id: str,
+) -> Dict[str, Any]:
+    total_started_at = time.monotonic()
+    snapshot_at = utc_now()
+    clean_ref_id = str(ref_id or "").strip()
+    evidence_ref = read_store.get_evidence_ref_detail(clean_ref_id)
+    if not evidence_ref:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Evidence reference not found",
+            f"Evidence reference {clean_ref_id} does not exist",
+        )
+
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+
+    ev_kind_raw = _management_evidence_kind_for_redaction(evidence_ref)
+    if ev_kind_raw:
+        [self_processed], _ = redact_evidence_refs(
+            identity,
+            [{"ref_id": clean_ref_id, "evidence_type": ev_kind_raw}],
+            capabilities=capabilities,
+        )
+        if self_processed.get("redacted"):
+            public_item = _management_evidence_public_item(self_processed)
+            relationships = _management_evidence_empty_relationships()
+            chain = {
+                "nodes": [],
+                "edges": [],
+                "empty_reason": "redacted",
+                "degraded_reasons": ["redacted"],
+            }
+            meta = _snapshot_meta(snapshot_at)
+            meta["surfaces"] = _management_evidence_detail_surfaces(
+                snapshot_at=snapshot_at,
+                evidence_surface=evidence_surface,
+                relationships=relationships,
+                chain=chain,
+            )
+            meta["redacted_evidence_count"] = 1
+            meta["performance"] = {
+                "timings_ms": {"total": _management_timing_ms(total_started_at)},
+                "row_count": 1,
+            }
+            return {
+                **public_item,
+                "relationships": relationships,
+                "chain": chain,
+                "tasks": [],
+                "auditEvents": [],
+                "audit_events": [],
+                "meta": meta,
+            }
+
+    raw_linked_decisions = json.loads(json.dumps(evidence_ref.get("linked_decisions") or []))
+    linked_decisions, redacted_count = _management_evidence_redacted_linked_decisions(
+        identity=identity,
+        linked_decisions=raw_linked_decisions,
+        capabilities=capabilities,
+    )
+    evidence_ref = json.loads(json.dumps(evidence_ref))
+    evidence_ref["linked_decisions"] = linked_decisions
+    linked_summary = (
+        evidence_ref.get("linked_object_summary")
+        if isinstance(evidence_ref.get("linked_object_summary"), dict)
+        else {}
+    )
+    linked_object_link = _management_evidence_linked_object_link(linked_summary)
+    actionability = _management_evidence_actionability(
+        evidence_ref,
+        linked_object_link=linked_object_link,
+    )
+    allowed_actions = _management_evidence_allowed_actions(
+        actionability,
+        linked_object_link=linked_object_link,
+    )
+    disabled_reasons = _management_evidence_disabled_action_reasons(
+        actionability,
+        linked_object_link=linked_object_link,
+        mutation_reason="Evidence operation commands are not implemented yet.",
+    )
+    relationships = _management_evidence_detail_relationships(
+        evidence_ref,
+        linked_object_link=linked_object_link,
+    )
+    chain = _management_evidence_chain(
+        evidence_ref,
+        linked_object_link=linked_object_link,
+        relationships=relationships,
+        actionability=actionability,
+    )
+    source_document = (
+        evidence_ref.get("source_document")
+        if isinstance(evidence_ref.get("source_document"), dict)
+        else {}
+    )
+    credibility = (
+        evidence_ref.get("credibility")
+        if isinstance(evidence_ref.get("credibility"), dict)
+        else {}
+    )
+    resolved_link = (
+        evidence_ref.get("resolved_link")
+        if isinstance(evidence_ref.get("resolved_link"), dict)
+        else {}
+    )
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = _management_evidence_detail_surfaces(
+        snapshot_at=snapshot_at,
+        evidence_surface=evidence_surface,
+        relationships=relationships,
+        chain=chain,
+    )
+    meta["redacted_evidence_count"] = redacted_count
+    meta["performance"] = {
+        "timings_ms": {"total": _management_timing_ms(total_started_at)},
+        "row_count": 1,
+    }
+    title = source_document.get("title") or evidence_ref.get("display_label") or clean_ref_id
+    return {
+        "id": clean_ref_id,
+        "refId": clean_ref_id,
+        "ref_id": clean_ref_id,
+        "title": title,
+        "sourceDocument": json.loads(json.dumps(source_document)),
+        "source_document": json.loads(json.dumps(source_document)),
+        "linkType": evidence_ref.get("link_type"),
+        "link_type": evidence_ref.get("link_type"),
+        "credibility": json.loads(json.dumps(credibility)),
+        "resolvedLink": json.loads(json.dumps(resolved_link)),
+        "resolved_link": json.loads(json.dumps(resolved_link)),
+        "linkedObjectSummary": json.loads(json.dumps(linked_summary)),
+        "linked_object_summary": json.loads(json.dumps(linked_summary)),
+        "linkedObjectLink": json.loads(json.dumps(linked_object_link)),
+        "linked_object_link": json.loads(json.dumps(linked_object_link)),
+        "linkedDecisions": json.loads(json.dumps(linked_decisions)),
+        "linked_decisions": json.loads(json.dumps(linked_decisions)),
+        "sourceNoteContext": json.loads(json.dumps(evidence_ref.get("source_note_context"))),
+        "source_note_context": json.loads(json.dumps(evidence_ref.get("source_note_context"))),
+        "sourceMemoryContext": json.loads(json.dumps(evidence_ref.get("source_memory_context"))),
+        "source_memory_context": json.loads(json.dumps(evidence_ref.get("source_memory_context"))),
+        "createdAt": evidence_ref.get("created_at"),
+        "created_at": evidence_ref.get("created_at"),
+        "routeHref": evidence_ref.get("route_href"),
+        "route_href": evidence_ref.get("route_href"),
+        "managementHref": f"/management/evidence?ref_id={quote(clean_ref_id, safe='')}",
+        "management_href": f"/management/evidence?ref_id={quote(clean_ref_id, safe='')}",
+        "actionability": actionability,
+        "operation": _management_evidence_default_operation(),
+        "relationships": json.loads(json.dumps(relationships)),
+        "chain": json.loads(json.dumps(chain)),
+        "tasks": [],
+        "auditEvents": [],
+        "audit_events": [],
+        "allowedActions": allowed_actions,
+        "allowed_actions": allowed_actions,
+        "disabledActionReasons": disabled_reasons,
+        "disabled_action_reasons": disabled_reasons,
+        "redacted": False,
+        "meta": meta,
+    }
+
+
 def _management_count_by_nested(
     records: List[Dict[str, Any]],
     *fields: str,
@@ -36091,6 +36640,20 @@ async def bff_management_evidence(
         verified=verified,
         page_token=page_token,
         page_size=page_size,
+    )
+
+
+@app.get("/bff/management/evidence/{ref_id}")
+async def bff_management_evidence_detail(
+    ref_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose one evidence ref into the Management Evidence Operations detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_evidence_detail_payload(
+        identity=identity,
+        ref_id=ref_id,
     )
 
 
