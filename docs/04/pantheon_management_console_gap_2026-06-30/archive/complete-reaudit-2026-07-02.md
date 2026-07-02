@@ -202,6 +202,20 @@ issues=187 new=0 retired=13
 The baseline file was updated by the merged remediation, so the current
 guardrail result is `issues=187 new=0 retired=0`.
 
+## Post-007 Remediation Note
+
+`MGMT-LIST-CONTRACT-007` followed this re-audit by normalizing the Persona
+League and Quarterly Ranking list-family envelopes, including the legacy
+`/bff/persona-league` list helper. The current guardrail result after that
+slice is:
+
+```text
+source=services/control-plane/bff/main.py baseline=docs/architecture/management-list-contract-baseline.json issues=169 new=0 retired=0
+```
+
+The remaining Persona League and Quarterly Ranking findings are P1 casing
+duplicates and detail-grade row-helper work, not duplicate list-envelope P0s.
+
 ## Validation
 
 Frontend validation attempted in the clean worktree:
@@ -281,7 +295,8 @@ Interpretation:
 
 ## Priority Order
 
-1. Normalize Persona League and Quarterly Ranking family.
+1. Done in `MGMT-LIST-CONTRACT-007`: normalize Persona League and Quarterly
+   Ranking list envelopes.
 2. Slim Human Inbox, HiQ Backlog, Intervention Stream, and Governance Ledger.
 3. Add paging and envelope cleanup for Management AI audit/conversation
    surfaces.

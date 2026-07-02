@@ -186,18 +186,19 @@ def test_persona_league_heatmap() -> None:
             data = body["data"]
 
             assert set(body) >= {"data", "meta"}
-            assert body["items"] == data["rows"]
-            assert body["rows"] == data["rows"]
-            assert body["buckets"] == data["buckets"]
-            assert body["cells"] == data["cells"]
+            assert "items" not in body
+            assert "rows" not in body
+            assert "buckets" not in body
+            assert "cells" not in body
+            assert "rows" not in data
             assert len(data["buckets"]) == 3
-            assert body["summary"]["bucket"] == "day"
-            assert body["summary"]["cellCount"] == len(body["rows"]) * len(body["buckets"])
+            assert data["summary"]["bucket"] == "day"
+            assert data["summary"]["cellCount"] == len(data["items"]) * len(data["buckets"])
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["surfaces"]["persona_league_heatmap"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/persona-league" in body["meta"]["composition_sources"]
 
-            alpha = next(row for row in body["rows"] if row["personaId"] == "persona-alpha")
+            alpha = next(row for row in data["items"] if row["personaId"] == "persona-alpha")
             assert len(alpha["cells"]) == 3
             latest_cell = alpha["cells"][-1]
             assert isinstance(latest_cell["compositeScore"], (int, float))
