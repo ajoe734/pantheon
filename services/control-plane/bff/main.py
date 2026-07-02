@@ -8155,29 +8155,17 @@ def _trading_pulse_coverage_summary(
     row_health_status_counts = _trading_pulse_status_counts(rows)
     metric_coverage = _trading_pulse_metric_coverage(rows)
     return {
-        "runtimeCount": len(rows),
         "runtime_count": len(rows),
-        "paperRuntimeCount": len(paper_rows),
         "paper_runtime_count": len(paper_rows),
-        "telemetryCoverageCount": len(telemetry_runtime_ids),
         "telemetry_coverage_count": len(telemetry_runtime_ids),
-        "monitoringCoverageCount": len(monitoring_runtime_ids),
         "monitoring_coverage_count": len(monitoring_runtime_ids),
-        "baselineComparisonCount": len(baseline_runtime_ids),
         "baseline_comparison_count": len(baseline_runtime_ids),
-        "missingTelemetryRuntimeIds": missing_telemetry_runtime_ids,
         "missing_telemetry_runtime_ids": missing_telemetry_runtime_ids,
-        "missingMonitoringRuntimeIds": missing_monitoring_runtime_ids,
         "missing_monitoring_runtime_ids": missing_monitoring_runtime_ids,
-        "missingBaselineRuntimeIds": missing_baseline_runtime_ids,
         "missing_baseline_runtime_ids": missing_baseline_runtime_ids,
-        "rowHealthStatusCounts": row_health_status_counts,
         "row_health_status_counts": row_health_status_counts,
-        "rowHealthDegradedCount": len(degraded_runtime_ids),
         "row_health_degraded_count": len(degraded_runtime_ids),
-        "degradedRuntimeIds": degraded_runtime_ids,
         "degraded_runtime_ids": degraded_runtime_ids,
-        "metricCoverage": metric_coverage,
         "metric_coverage": metric_coverage,
     }
 
@@ -8334,9 +8322,7 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
                 "last_updated_at": row.get("last_updated_at"),
                 "baseline_comparison_status": baseline_comparison.get("status"),
                 "breached_metric_count": baseline_comparison.get("breached_metric_count"),
-                "rowHealthStatus": _trading_pulse_row_health_status(row),
                 "row_health_status": _trading_pulse_row_health_status(row),
-                "rowHealthDegradedChecks": _trading_pulse_row_degraded_checks(row),
                 "row_health_degraded_checks": _trading_pulse_row_degraded_checks(row),
             }
         )
@@ -8344,7 +8330,7 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         key=lambda item: (
             _management_number(item.get("pnl")) is not None,
             _management_number(item.get("pnl")) or 0.0,
-            str(item.get("runtimeId") or ""),
+            str(item.get("runtime_id") or ""),
         ),
         reverse=True,
     )
@@ -8380,8 +8366,8 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "paper_runtime_monitoring_sessions",
         snapshot_at=snapshot_at,
     )
-    paper_runtime_count = int(coverage.get("paperRuntimeCount") or 0)
-    monitoring_coverage_count = int(coverage.get("monitoringCoverageCount") or 0)
+    paper_runtime_count = int(coverage.get("paper_runtime_count") or 0)
+    monitoring_coverage_count = int(coverage.get("monitoring_coverage_count") or 0)
     if paper_runtime_count == 0:
         monitoring_surface = {
             "status": "ok",
@@ -8457,19 +8443,12 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "baseline_breached_count": baseline_breached_count,
         "baseline_watch_count": baseline_watch_count,
         "by_baseline_status": by_baseline_status,
-        "rowHealthDegradedCount": coverage["rowHealthDegradedCount"],
         "row_health_degraded_count": coverage["row_health_degraded_count"],
-        "rowHealthStatusCounts": coverage["rowHealthStatusCounts"],
         "row_health_status_counts": coverage["row_health_status_counts"],
-        "monitoringCoverageCount": coverage["monitoringCoverageCount"],
         "monitoring_coverage_count": coverage["monitoring_coverage_count"],
-        "missingTelemetryRuntimeIds": coverage["missingTelemetryRuntimeIds"],
         "missing_telemetry_runtime_ids": coverage["missing_telemetry_runtime_ids"],
-        "missingMonitoringRuntimeIds": coverage["missingMonitoringRuntimeIds"],
         "missing_monitoring_runtime_ids": coverage["missing_monitoring_runtime_ids"],
-        "missingBaselineRuntimeIds": coverage["missingBaselineRuntimeIds"],
         "missing_baseline_runtime_ids": coverage["missing_baseline_runtime_ids"],
-        "metricCoverage": coverage["metricCoverage"],
         "metric_coverage": coverage["metric_coverage"],
         "coverage": coverage,
     }
@@ -8658,22 +8637,16 @@ def _build_management_trading_pulse_ranking_block(
     )
     missing_runtime_ids = _trading_pulse_ranking_missing_runtime_ids(rankings, metric)
     block: Dict[str, Any] = {
-        "blockId": block_id,
         "block_id": block_id,
         "label": label,
         "metric": metric,
-        "sortOrder": "desc" if descending else "asc",
         "sort_order": "desc" if descending else "asc",
         "items": items,
-        "eligibleItemCount": len(rankings) - len(missing_runtime_ids),
         "eligible_item_count": len(rankings) - len(missing_runtime_ids),
-        "missingMetricCount": len(missing_runtime_ids),
         "missing_metric_count": len(missing_runtime_ids),
-        "missingMetricRuntimeIds": missing_runtime_ids,
         "missing_metric_runtime_ids": missing_runtime_ids,
     }
     if secondary_metric:
-        block["secondaryMetric"] = secondary_metric
         block["secondary_metric"] = secondary_metric
     return block
 
@@ -8753,11 +8726,11 @@ def _build_management_trading_pulse_rankings_payload(
     top_item = (blocks[0].get("items") or [None])[0] if blocks else None
     ranked_item_count = sum(len(block.get("items") or []) for block in blocks)
     missing_metric_item_count = sum(
-        int(block.get("missingMetricCount") or block.get("missing_metric_count") or 0)
+        int(block.get("missing_metric_count") or 0)
         for block in blocks
     )
     eligible_item_count = sum(
-        int(block.get("eligibleItemCount") or block.get("eligible_item_count") or 0)
+        int(block.get("eligible_item_count") or 0)
         for block in blocks
     )
     if missing_metric_item_count and surfaces["management_trading_pulse_rankings"].get("status") == "ok":
@@ -8769,9 +8742,7 @@ def _build_management_trading_pulse_rankings_payload(
         "runtime_count": int((trading_pulse.get("summary") or {}).get("runtime_count") or 0),
         "ranking_block_count": len(blocks),
         "ranked_item_count": ranked_item_count,
-        "eligibleItemCount": eligible_item_count,
         "eligible_item_count": eligible_item_count,
-        "missingMetricItemCount": missing_metric_item_count,
         "missing_metric_item_count": missing_metric_item_count,
         "criteria": [str(block.get("metric") or "") for block in blocks],
         "limit": limit,
