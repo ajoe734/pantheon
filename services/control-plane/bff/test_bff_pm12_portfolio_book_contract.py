@@ -263,11 +263,13 @@ def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> Non
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    summary = payload["summary"]
+    assert set(payload) == {"data", "page_info", "meta"}
+    assert set(payload["data"]) == {"id", "items", "summary"}
+    assert "items" not in payload
+    assert "exposures" not in payload
+    assert "summary" not in payload
+    summary = payload["data"]["summary"]
     assert payload["data"]["id"] == "pm12-portfolio-book-exposure"
-    assert payload["items"] == payload["exposures"] == payload["data"]["items"]
-    assert payload["data"]["exposures"] == payload["items"]
-    assert payload["data"]["summary"] == payload["summary"]
     assert summary["exposure_count"] == 2
     assert summary["returned_exposure_count"] == 2
     assert summary["risk_budget_total"] == 150.0
@@ -279,19 +281,26 @@ def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> Non
     assert summary["unknown_exposure_count"] == 0
     assert summary["telemetry_runtime_count"] == 2
     assert summary["total_pnl"] == 8.0
+    assert "currentExposureTotal" not in summary
+    assert "riskBudgetUtilization" not in summary
+    assert "returnedExposureCount" not in summary
     assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 20}
 
-    alpha = payload["items"][0]
+    alpha = payload["data"]["items"][0]
     assert alpha["pool_id"] == "pool-alpha"
-    assert alpha["capitalPoolId"] == "pool-alpha"
+    assert alpha["capital_pool_id"] == "pool-alpha"
+    assert "capitalPoolId" not in alpha
     assert alpha["risk_budget"] == 100.0
     assert alpha["current_exposure"] == 40.0
     assert alpha["risk_budget_utilization"] == 0.4
     assert alpha["risk_state"] == "within_budget"
     assert alpha["available_budget"] == 60.0
     assert alpha["exposure"]["source"] == "capital_pool"
-    assert alpha["sourceRefs"]["runtimeIds"] == ["runtime-alpha", "runtime-alpha-live"]
-    assert alpha["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
+    assert alpha["source_refs"]["runtime_ids"] == ["runtime-alpha", "runtime-alpha-live"]
+    assert "sourceRefs" not in alpha
+    assert "runtimeIds" not in alpha["source_refs"]
+    assert alpha["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
+    assert "capitalPool" not in alpha["links"]
     assert payload["meta"]["surfaces"]["portfolio_book_exposure"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["capital_pools"]["source"] == "canonical"
     assert payload["meta"]["policy"] == "read_only_portfolio_exposure"
@@ -309,12 +318,12 @@ def test_portfolio_book_exposure_filters_by_capital_pool(monkeypatch) -> None:
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["summary"]["exposure_count"] == 1
-    assert payload["summary"]["risk_budget_total"] == 50.0
-    assert payload["summary"]["current_exposure_total"] == 20.0
-    assert payload["summary"]["telemetry_runtime_count"] == 0
-    assert payload["summary"]["total_pnl"] is None
-    assert payload["items"][0]["pool_id"] == "pool-beta"
+    assert payload["data"]["summary"]["exposure_count"] == 1
+    assert payload["data"]["summary"]["risk_budget_total"] == 50.0
+    assert payload["data"]["summary"]["current_exposure_total"] == 20.0
+    assert payload["data"]["summary"]["telemetry_runtime_count"] == 0
+    assert payload["data"]["summary"]["total_pnl"] is None
+    assert payload["data"]["items"][0]["pool_id"] == "pool-beta"
 
 
 def test_portfolio_book_exposure_requires_read_auth(monkeypatch) -> None:
@@ -349,7 +358,12 @@ def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> 
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    summary = payload["summary"]
+    assert set(payload) == {"data", "page_info", "meta"}
+    assert set(payload["data"]) == {"items", "summary"}
+    assert "items" not in payload
+    assert "holdings" not in payload
+    assert "summary" not in payload
+    summary = payload["data"]["summary"]
     assert summary["holding_count"] == 3
     assert summary["returned_holding_count"] == 3
     assert summary["active_holding_count"] == 2
@@ -364,21 +378,24 @@ def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> 
     assert summary["total_pnl"] == 8
     assert summary["latest_mark_at"] == "2026-05-23T08:05:00Z"
 
-    alpha = payload["items"][0]
+    alpha = payload["data"]["items"][0]
     assert alpha["holding_id"] == "runtime-alpha:pos-alpha-txf"
     assert alpha["runtime_id"] == "runtime-alpha"
     assert alpha["capital_pool_id"] == "pool-alpha"
+    assert "capitalPoolId" not in alpha
     assert alpha["persona_id"] == "persona-alpha"
+    assert "personaId" not in alpha
     assert alpha["strategy_id"] == "strategy-alpha"
+    assert "strategyId" not in alpha
     assert alpha["symbol"] == "TXF"
     assert alpha["quantity"] == 2
     assert alpha["mark_price"] == 15300
+    assert "markPrice" not in alpha
     assert alpha["market_value"] == 30600
+    assert "marketValue" not in alpha
     assert alpha["links"]["runtime"] == "/bff/runtimes/runtime-alpha"
-    assert alpha["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
-    assert payload["data"]["items"] == payload["items"]
-    assert payload["data"]["holdings"] == payload["items"]
-    assert payload["data"]["summary"] == payload["summary"]
+    assert alpha["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
+    assert "capitalPool" not in alpha["links"]
     assert payload["page_info"] == {"next_page_token": None, "total": 3}
     assert payload["meta"]["surfaces"]["portfolio_book_holdings"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["runtime_bindings"]["source"] == "canonical"
@@ -395,9 +412,9 @@ def test_portfolio_book_holdings_filters_by_stage(monkeypatch) -> None:
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["summary"]["holding_count"] == 1
-    assert payload["summary"]["live_holding_count"] == 1
-    assert payload["items"][0]["runtime_id"] == "runtime-alpha-live"
+    assert payload["data"]["summary"]["holding_count"] == 1
+    assert payload["data"]["summary"]["live_holding_count"] == 1
+    assert payload["data"]["items"][0]["runtime_id"] == "runtime-alpha-live"
 
 
 def test_portfolio_book_holdings_requires_read_auth(monkeypatch) -> None:
@@ -415,7 +432,12 @@ def test_portfolio_book_positions_composes_global_positions_table(monkeypatch) -
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    summary = payload["summary"]
+    assert set(payload) == {"data", "page_info", "meta"}
+    assert set(payload["data"]) == {"items", "summary"}
+    assert "items" not in payload
+    assert "positions" not in payload
+    assert "summary" not in payload
+    summary = payload["data"]["summary"]
     assert summary["position_count"] == 3
     assert summary["returned_position_count"] == 3
     assert summary["active_position_count"] == 2
@@ -429,12 +451,13 @@ def test_portfolio_book_positions_composes_global_positions_table(monkeypatch) -
     assert summary["total_realized_pnl"] == 12
     assert summary["total_pnl"] == 8
 
-    alpha = payload["items"][0]
+    alpha = payload["data"]["items"][0]
     assert alpha["position_id"] == "runtime-alpha:pos-alpha-txf"
-    assert alpha["positionId"] == "runtime-alpha:pos-alpha-txf"
+    assert "positionId" not in alpha
     assert alpha["holding_id"] == "runtime-alpha:pos-alpha-txf"
     assert alpha["runtime_id"] == "runtime-alpha"
     assert alpha["capital_pool_id"] == "pool-alpha"
+    assert "capitalPoolId" not in alpha
     assert alpha["persona_id"] == "persona-alpha"
     assert alpha["strategy_id"] == "strategy-alpha"
     assert alpha["symbol"] == "TXF"
@@ -442,11 +465,8 @@ def test_portfolio_book_positions_composes_global_positions_table(monkeypatch) -
     assert alpha["mark_price"] == 15300
     assert alpha["market_value"] == 30600
     assert alpha["links"]["runtime"] == "/bff/runtimes/runtime-alpha"
-    assert alpha["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
-    assert payload["positions"] == payload["items"]
-    assert payload["data"]["items"] == payload["items"]
-    assert payload["data"]["positions"] == payload["items"]
-    assert payload["data"]["summary"] == payload["summary"]
+    assert alpha["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
+    assert "capitalPool" not in alpha["links"]
     assert payload["page_info"] == {"next_page_token": None, "total": 3, "page_size": 50}
     assert payload["meta"]["surfaces"]["portfolio_book_positions"]["source"] == "bff_composed"
     assert "portfolio_book_holdings" not in payload["meta"]["surfaces"]
@@ -465,10 +485,10 @@ def test_portfolio_book_positions_filters_by_stage(monkeypatch) -> None:
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["summary"]["position_count"] == 1
-    assert payload["summary"]["live_position_count"] == 1
+    assert payload["data"]["summary"]["position_count"] == 1
+    assert payload["data"]["summary"]["live_position_count"] == 1
     assert payload["page_info"] == {"next_page_token": None, "total": 1, "page_size": 1}
-    assert payload["items"][0]["runtime_id"] == "runtime-alpha-live"
+    assert payload["data"]["items"][0]["runtime_id"] == "runtime-alpha-live"
 
 
 def test_portfolio_book_positions_requires_read_auth(monkeypatch) -> None:
@@ -1010,7 +1030,7 @@ def test_performance_attribution_rejects_invalid_dimension(monkeypatch) -> None:
     assert response.status_code == 422, response.text
     payload = response.json()
     assert "detail" not in payload
-    assert payload["error"]["code"] == "invalid_dimension"
+    assert payload["error"]["code"] == "VALIDATION_FAILED"
     assert payload["field"] == "dimension"
     assert payload["invalid"] == ["desk"]
     assert "persona" in payload["supported"]
@@ -1226,9 +1246,9 @@ def test_portfolio_book_holdings_reports_degraded_telemetry(monkeypatch) -> None
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["summary"]["holding_count"] == 3
-    assert payload["summary"]["telemetry_runtime_count"] == 0
-    assert payload["summary"]["total_pnl"] is None
+    assert payload["data"]["summary"]["holding_count"] == 3
+    assert payload["data"]["summary"]["telemetry_runtime_count"] == 0
+    assert payload["data"]["summary"]["total_pnl"] is None
     assert payload["meta"]["surfaces"]["telemetry_summaries"]["status"] == "unavailable"
     assert payload["meta"]["surfaces"]["portfolio_book_holdings"]["status"] == "degraded"
 
@@ -1240,9 +1260,9 @@ def test_portfolio_book_positions_reports_degraded_telemetry(monkeypatch) -> Non
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["summary"]["position_count"] == 3
-    assert payload["summary"]["telemetry_runtime_count"] == 0
-    assert payload["summary"]["total_pnl"] is None
+    assert payload["data"]["summary"]["position_count"] == 3
+    assert payload["data"]["summary"]["telemetry_runtime_count"] == 0
+    assert payload["data"]["summary"]["total_pnl"] is None
     assert payload["meta"]["surfaces"]["telemetry_summaries"]["status"] == "unavailable"
     assert payload["meta"]["surfaces"]["portfolio_book_positions"]["status"] == "degraded"
 

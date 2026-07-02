@@ -23,9 +23,6 @@
     "1f97defd1d7d932c",
     "e46fae14ae55b10c",
     "f79a740d14a50452",
-    "b15cc6c5c2a1ef28",
-    "59151b64b1821fd5",
-    "a69fd1bb7c547044",
     "b51343fc7f6e396b",
     "acd37100f81e4324",
     "2423d67cfbf0a0da",
@@ -49,9 +46,6 @@
     "e5ee5f0443ff5138",
     "efcdd857ff618eb8",
     "a7eeac6029ee99f4",
-    "8d73f6f04e6bee67",
-    "b2af90902f1f1507",
-    "873f192fea07c207",
     "dafd9d72ba4af8d9",
     "ea7c09fe7fa2353c",
     "e0fb8f200f7367fe",
@@ -119,12 +113,6 @@
     "6b840e6f75fd3e70",
     "9a2a11f2e96e4b08",
     "1ab742d7e4955113",
-    "6049fcc672b527c9",
-    "6bf1b5e95c6c2770",
-    "854890b6a4d8dc98",
-    "f1d578c8176be432",
-    "395c89f9e96ac9d9",
-    "9bc3eaed9e81641f",
     "fbe38ea127a3736d",
     "bd0dd0316210df3c",
     "24669ad56df7d6d7",
@@ -195,7 +183,6 @@
     "2597d48d5e490084",
     "db134ab605478688",
     "f63cdc4d06a59344",
-    "d887e70660e66c87",
     "dccbdea81e0b0a2e",
     "3fe4c526212f409e",
     "46d413a54d94d165",
@@ -214,7 +201,7 @@
     "48f50593677c72cb",
     "508c45878e0837e7"
   ],
-  "issue_count": 213,
+  "issue_count": 200,
   "issues": [
     {
       "category": "duplicate-envelope",
@@ -448,36 +435,6 @@
     },
     {
       "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'exposures', 'items']",
-      "fingerprint": "b15cc6c5c2a1ef28",
-      "function": "bff_management_portfolio_book_exposure",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "/bff/management/portfolio-book/exposure",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items']",
-      "fingerprint": "59151b64b1821fd5",
-      "function": "bff_management_portfolio_book_holdings",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "/bff/management/portfolio-book/holdings",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items', 'positions']",
-      "fingerprint": "a69fd1bb7c547044",
-      "function": "bff_management_portfolio_book_positions",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "/bff/management/portfolio-book/positions",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
       "evidence": "keys=['data', 'items', 'rankings']",
       "fingerprint": "b51343fc7f6e396b",
       "function": "bff_management_quarterly_ranking",
@@ -703,36 +660,6 @@
       "function": "bff_management_persona_league_tiers",
       "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
       "route": "/bff/management/persona-league/tiers",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['exposures', 'items']",
-      "fingerprint": "8d73f6f04e6bee67",
-      "function": "bff_management_portfolio_book_exposure",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "/bff/management/portfolio-book/exposure",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['holdings', 'items']",
-      "fingerprint": "b2af90902f1f1507",
-      "function": "bff_management_portfolio_book_holdings",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "/bff/management/portfolio-book/holdings",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['items', 'positions']",
-      "fingerprint": "873f192fea07c207",
-      "function": "bff_management_portfolio_book_positions",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "/bff/management/portfolio-book/positions",
       "severity": "P0",
       "title": "Same list value is returned under multiple names"
     },
@@ -1401,66 +1328,6 @@
       "evidence": "sessionId+session_id, traceId+trace_id",
       "fingerprint": "1ab742d7e4955113",
       "function": "_management_nl_publish_completed_events",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "availableBudget+available_budget, capitalPoolId+capital_pool_id, currentExposure+current_exposure, exposureAmount+exposure_amount, exposureSource+exposure_source, riskBudget+risk_budget, riskBudgetUtilization+risk_budget_utilization, riskPolicyRef+risk_policy_ref, riskState+risk_state, sourceRefs+source_refs",
-      "fingerprint": "6049fcc672b527c9",
-      "function": "_management_portfolio_book_exposure_item",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "riskBudget+risk_budget, riskBudgetUtilization+risk_budget_utilization, riskState+risk_state",
-      "fingerprint": "6bf1b5e95c6c2770",
-      "function": "_management_portfolio_book_exposure_item",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "bindingIds+binding_ids, capitalPoolIds+capital_pool_ids, deploymentIds+deployment_ids, runtimeIds+runtime_ids",
-      "fingerprint": "854890b6a4d8dc98",
-      "function": "_management_portfolio_book_exposure_item",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "capitalPool+capital_pool",
-      "fingerprint": "f1d578c8176be432",
-      "function": "_management_portfolio_book_exposure_item",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "capitalPoolId+capital_pool_id, deploymentStage+deployment_stage, markPrice+mark_price, marketValue+market_value, personaId+persona_id, strategyId+strategy_id",
-      "fingerprint": "395c89f9e96ac9d9",
-      "function": "_management_portfolio_holding_entry",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "capitalPool+capital_pool",
-      "fingerprint": "9bc3eaed9e81641f",
-      "function": "_management_portfolio_holding_entry",
       "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
       "route": "",
       "severity": "P1",
@@ -2163,16 +2030,6 @@
       "function": "bff_management_persona_league_rankings",
       "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
       "route": "/bff/management/persona-league/rankings",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "activePoolCount+active_pool_count, availableBudgetTotal+available_budget_total, averageFillRate+average_fill_rate, currentExposureTotal+current_exposure_total, exposureCount+exposure_count, latestTelemetryAt+latest_telemetry_at, maxDrawdown+max_drawdown, nearLimitCount+near_limit_count, overBudgetCount+over_budget_count, returnedExposureCount+returned_exposure_count, riskBudgetTotal+risk_budget_total, riskBudgetUtilization+risk_budget_utilization, ... (17 pairs)",
-      "fingerprint": "d887e70660e66c87",
-      "function": "bff_management_portfolio_book_exposure",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "/bff/management/portfolio-book/exposure",
       "severity": "P1",
       "title": "DTO returns camelCase and snake_case copies of fields"
     },
