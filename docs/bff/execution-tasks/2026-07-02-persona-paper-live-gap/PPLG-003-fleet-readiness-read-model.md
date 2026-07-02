@@ -8,13 +8,17 @@ Depends on: `PPLG-001`
 
 ## Goal
 
-Make Persona Fleet show paper setup, paper evaluation, review, capital scope,
-and live status clearly while removing duplicate heavy payload branches.
+Make Persona Fleet show paper setup, unified cohort competition, paper
+evaluation, review, capital scope, and live status clearly while removing
+duplicate heavy payload branches.
 
 ## Required Work
 
 - Add a `PersonaReadinessProjection` to persona fleet rows.
 - Surface:
+  - competition track: paper challenger, canary challenger, live incumbent,
+    watchlist incumbent, or risk-off excluded
+  - cohort id, cohort rank, challenger/incumbent role, and challenger delta score
   - paper runtime status
   - evaluation status
   - review status
@@ -30,6 +34,10 @@ and live status clearly while removing duplicate heavy payload branches.
 ## Acceptance Criteria
 
 - Fleet rows do not label a paper-running persona as needing a startup wizard.
+- Fleet default rows include paper challengers, canary challengers, and live
+  incumbents in one competition projection.
+- Scope filters can narrow `competition_track` or `capital_scope`, but the BFF
+  does not expose separate hidden paper/live fleet datasets as the default.
 - Setup failures show repair action and failed step.
 - Paper, canary, live, quarterly review, risk-off, and frozen states are distinct.
 - Fleet payload is materially smaller than the current duplicated form.

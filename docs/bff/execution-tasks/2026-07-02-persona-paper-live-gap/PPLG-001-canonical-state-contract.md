@@ -17,6 +17,7 @@ the same states, endpoints, DTOs, and old-spec supersession rules.
   - `PaperEvaluationSnapshot`
   - `PromotionScoreSnapshot`
   - `CohortRankingSnapshot`
+  - `CompetitionStandingSnapshot`
   - `HumanReviewRequest`
   - `QuarterlyRebalanceProposal`
   - `RiskGuardrailEvent`
@@ -28,6 +29,8 @@ the same states, endpoints, DTOs, and old-spec supersession rules.
 
 - Contract docs state that user-facing persona creation completes to paper runtime or `setup_failed`.
 - Contracts state canary/live/quarterly changes require human decision records.
+- Contracts state paper, canary, and live personas share one cohort competition
+  model, with `competition_track` distinguishing challenger/incumbent roles.
 - Contracts state automatic guardrails cannot promote or increase allocation.
 - Schema tests or contract tests validate required fields and enum values.
 - No old doc remains ambiguous about normal identity-only persona creation.
