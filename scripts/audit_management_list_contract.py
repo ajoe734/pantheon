@@ -91,9 +91,6 @@ HEAVY_HELPER_HINTS = {
 }
 
 PROJECT_BEFORE_PAGE_FUNCTIONS = {
-    "bff_management_persona_fleet": (
-        "Builds full persona health plus related collections before page slicing."
-    ),
     "_human_inbox_payload": (
         "Collects every inbox source and persona readiness row before filters and page slicing."
     ),
@@ -112,6 +109,21 @@ PROJECT_BEFORE_PAGE_FUNCTIONS = {
     "bff_management_portfolio_book_exposure": (
         "Builds all exposure rows before page slicing."
     ),
+}
+
+DETAIL_GRADE_LIST_HELPER_CALLS = {
+    "bff_management_persona_fleet": {
+        "_build_persona_health_items": (
+            "Persona fleet list route must use the slim list DTO; "
+            "_build_persona_health_items hydrates source-health and research detail."
+        ),
+        "_project_persona_fleet_item": (
+            "Persona fleet list route must not use the detail aggregate projection."
+        ),
+        "_project_persona_fleet_payload": (
+            "Persona fleet list route must not return the legacy aggregate payload."
+        ),
+    },
 }
 
 
@@ -192,6 +204,7 @@ def is_management_function(function: ast.AsyncFunctionDef | ast.FunctionDef, rou
         (
             "_management_",
             "_pm12_",
+            "_persona_fleet_",
             "_project_persona_league",
             "_human_inbox",
             "_governance_ledger",
@@ -210,6 +223,18 @@ def iter_dicts(function: ast.AsyncFunctionDef | ast.FunctionDef) -> Iterable[ast
 
 def keys_for_dict(node: ast.Dict) -> list[str]:
     return [key for key in (string_key(key_node) for key_node in node.keys) if key]
+
+
+def is_href_only_link_dict(node: ast.Dict) -> bool:
+    if not node.keys:
+        return False
+    for value_node in node.values:
+        if not isinstance(value_node, ast.Dict):
+            return False
+        nested_keys = set(keys_for_dict(value_node))
+        if nested_keys != {"href"}:
+            return False
+    return True
 
 
 def issue(
@@ -346,20 +371,21 @@ def audit_dict(
 
     embedded_keys = sorted(key_set & EMBEDDED_AGGREGATE_KEYS)
     if len(embedded_keys) >= 2:
-        found.append(issue(
-            severity="P0",
-            category="embedded-aggregate-payload",
-            function_name=function_name,
-            route=route,
-            line=line,
-            title="List or board payload embeds related aggregate collections",
-            evidence=f"keys={embedded_keys}",
-            recommendation=(
-                "Return summary counts, health, and hrefs. Fetch related aggregates "
-                "from dedicated endpoints only when the user opens the detail/section."
-            ),
-            evidence_key="embedded=" + ",".join(embedded_keys),
-        ))
+        if not is_href_only_link_dict(node):
+            found.append(issue(
+                severity="P0",
+                category="embedded-aggregate-payload",
+                function_name=function_name,
+                route=route,
+                line=line,
+                title="List or board payload embeds related aggregate collections",
+                evidence=f"keys={embedded_keys}",
+                recommendation=(
+                    "Return summary counts, health, and hrefs. Fetch related aggregates "
+                    "from dedicated endpoints only when the user opens the detail/section."
+                ),
+                evidence_key="embedded=" + ",".join(embedded_keys),
+            ))
 
     heavy_keys = sorted(key_set & HEAVY_HELPER_HINTS)
     if len(heavy_keys) >= 4:
@@ -436,6 +462,24 @@ def audit_function(
                 "detail-grade hydration. Use a detail endpoint for row expansion."
             ),
             evidence_key=function.name,
+        ))
+
+    for helper_name, message in DETAIL_GRADE_LIST_HELPER_CALLS.get(function.name, {}).items():
+        if f"{helper_name}(" not in function_source:
+            continue
+        found.append(issue(
+            severity="P1",
+            category="project-before-page",
+            function_name=function.name,
+            route=route,
+            line=getattr(function, "lineno", 0),
+            title="Management list route calls a detail-grade aggregate helper",
+            evidence=message,
+            recommendation=(
+                "Use a dedicated slim list DTO for table rows, and fetch full source "
+                "health/research/aggregate details from detail endpoints."
+            ),
+            evidence_key=f"{function.name}:{helper_name}",
         ))
 
     if function.name == "_management_board_pack_response":

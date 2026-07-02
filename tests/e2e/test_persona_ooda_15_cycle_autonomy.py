@@ -230,7 +230,7 @@ def test_every_current_management_persona_completes_15_real_ooda_cycles(monkeypa
 
             fleet = client.get("/bff/management/persona-fleet?page_size=50", headers=HEADERS)
             assert fleet.status_code == 200, fleet.text
-            fleet_ids = {item["persona_id"] for item in fleet.json()["items"]}
+            fleet_ids = {item["persona_id"] for item in fleet.json()["data"]["items"]}
             assert set(persona_ids).issubset(fleet_ids)
         finally:
             bff_main.read_store = original_store

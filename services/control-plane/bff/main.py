@@ -52266,6 +52266,546 @@ def _build_persona_health_items(
     )
 
 
+def _persona_fleet_query_filter(value: Optional[str]) -> Optional[Set[str]]:
+    if not value:
+        return None
+    tokens = {token.strip().lower() for token in value.split(",") if token.strip()}
+    return tokens or None
+
+
+def _persona_fleet_first_binding_from_index(
+    persona_id: str,
+    bindings_by_persona: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    bindings = bindings_by_persona.get(persona_id) or []
+    active = [
+        binding
+        for binding in bindings
+        if str(binding.get("status") or binding.get("validity") or "").lower()
+        in {"active", "ready", "bound"}
+    ]
+    return active[0] if active else (bindings[0] if bindings else {})
+
+
+def _persona_fleet_count_by(items: List[Dict[str, Any]], field: str) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for item in items:
+        value = str(item.get(field) or "unknown").strip().lower() or "unknown"
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+_PERSONA_FLEET_HEALTH_RANK = {"healthy": 0, "degraded": 1, "critical": 2}
+
+
+def _persona_fleet_worst_health(*statuses: Optional[str]) -> str:
+    best_status = "healthy"
+    best_rank = -1
+    for status in statuses:
+        normalized = str(status or "").strip().lower()
+        rank = _PERSONA_FLEET_HEALTH_RANK.get(normalized)
+        if rank is None:
+            continue
+        if rank > best_rank:
+            best_status = normalized
+            best_rank = rank
+    return best_status
+
+
+def _persona_fleet_active_incidents_for_row(
+    *,
+    incidents: List[Dict[str, Any]],
+    persona_id: str,
+    binding_ids: Set[str],
+    capital_pool_ids: Set[str],
+    runtime_ids: Set[str],
+) -> List[Dict[str, Any]]:
+    active_statuses = {"open", "active", "investigating"}
+    return [
+        incident
+        for incident in incidents
+        if str(incident.get("status") or "").lower() in active_statuses
+        and (
+            str(incident.get("persona_id") or "").strip() == persona_id
+            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
+            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
+            or str(incident.get("runtime_id") or "").strip() in runtime_ids
+        )
+    ]
+
+
+def _persona_fleet_list_data_source_summary(
+    *,
+    metadata: Dict[str, Any],
+    persona: Dict[str, Any],
+    context_persona: Dict[str, Any],
+) -> Dict[str, Any]:
+    status = metadata.get("data_source_status") if isinstance(metadata.get("data_source_status"), dict) else {}
+    sources = metadata.get("data_sources") if isinstance(metadata.get("data_sources"), list) else []
+    required_sources = persona.get("required_data_sources") if isinstance(persona.get("required_data_sources"), list) else []
+    if not required_sources and isinstance(context_persona.get("required_data_sources"), list):
+        required_sources = context_persona.get("required_data_sources") or []
+
+    provider_statuses = status.get("provider_statuses") if isinstance(status.get("provider_statuses"), dict) else {}
+    provider_counts: Dict[str, int] = {}
+    for value in provider_statuses.values():
+        normalized = str(value or "unknown").strip().lower() or "unknown"
+        provider_counts[normalized] = provider_counts.get(normalized, 0) + 1
+    if not provider_counts:
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            normalized = str(source.get("status") or "unknown").strip().lower() or "unknown"
+            provider_counts[normalized] = provider_counts.get(normalized, 0) + 1
+
+    healthy_states = {"ok", "read_ok", "datasource_smoke_ok", "source_health_ok"}
+    degraded_count = sum(
+        count for state, count in provider_counts.items()
+        if state not in healthy_states
+    )
+    return {
+        "state": str(status.get("state") or "unknown"),
+        "provider_count": len(provider_statuses) or len(sources),
+        "provider_status_counts": provider_counts,
+        "degraded_provider_count": degraded_count,
+        "required_source_count": len(required_sources),
+        "configured_source_count": len(sources),
+        "live_ingestion_enabled": bool(status.get("live_ingestion_enabled")),
+        "source_health_source": status.get("source_health_source"),
+    }
+
+
+def _persona_fleet_list_research_summary(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    status = metadata.get("research_status") if isinstance(metadata.get("research_status"), dict) else {}
+    refs = metadata.get("research_refs") if isinstance(metadata.get("research_refs"), list) else []
+    projects = (
+        metadata.get("current_research_projects")
+        if isinstance(metadata.get("current_research_projects"), list)
+        else []
+    )
+    frameworks = status.get("frameworks") if isinstance(status.get("frameworks"), list) else []
+    framework = status.get("framework") or (frameworks[0] if frameworks else None)
+    return {
+        "stage": status.get("stage"),
+        "framework": framework,
+        "framework_count": len(frameworks) if frameworks else (1 if framework else 0),
+        "experiment_id": status.get("experiment_id"),
+        "artifact_id": status.get("artifact_id"),
+        "registry_admission_status": status.get("registry_admission_status"),
+        "can_deploy": bool(status.get("can_deploy")),
+        "current_project_count": len(projects),
+        "evidence_ref_count": len(refs),
+    }
+
+
+def _project_persona_fleet_list_row(
+    *,
+    persona: Dict[str, Any],
+    league_entry: Dict[str, Any],
+    binding: Dict[str, Any],
+    runtime: Dict[str, Any],
+    active_incidents: List[Dict[str, Any]],
+    telemetry_summaries: List[Dict[str, Any]],
+    context_metadata: Dict[str, Any],
+    context_persona: Dict[str, Any],
+    snapshot_at: str,
+) -> Optional[Dict[str, Any]]:
+    persona_id = _persona_id(persona)
+    if not persona_id:
+        return None
+
+    raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    league_metrics = league_entry.get("metrics") if isinstance(league_entry.get("metrics"), dict) else {}
+    performance = (
+        context_metadata.get("performance")
+        if isinstance(context_metadata.get("performance"), dict)
+        else {}
+    )
+    metrics = {**performance, **league_metrics}
+    pool_id = (
+        league_entry.get("capital_pool_id")
+        or raw_metadata.get("capital_pool_id")
+        or binding.get("capital_pool_id")
+    )
+    runtime_id = (
+        league_entry.get("runtime_id")
+        or runtime.get("runtime_id")
+        or runtime.get("id")
+        or raw_metadata.get("runtime_binding_id")
+    )
+    deployment_stage = (
+        league_entry.get("deployment_stage")
+        or runtime.get("deployment_stage")
+        or runtime.get("deployment_mode")
+        or raw_metadata.get("deployment_stage")
+        or context_metadata.get("deployment_stage")
+        or "none"
+    )
+    market_scope = list(league_entry.get("market_scope") or context_metadata.get("market_scope") or [])
+    risk_flags = list(league_entry.get("risk_flags") or context_metadata.get("risk_flags") or [])
+    lifecycle_state = str(persona.get("lifecycle_state") or persona.get("status") or "unknown")
+    league_health = _persona_health_status(
+        lifecycle_state=lifecycle_state,
+        league_entry=league_entry,
+        risk_flags=risk_flags,
+    )
+    operational_health = _project_persona_fleet_health(
+        persona=persona,
+        runtime_bindings=[runtime] if runtime else [],
+        telemetry_summaries=telemetry_summaries,
+        active_incidents=active_incidents,
+    )
+    health = _persona_fleet_worst_health(league_health, operational_health.get("status"))
+    governance_required = bool(
+        league_entry.get("governance_required")
+        if "governance_required" in league_entry
+        else context_metadata.get("governance_required", True)
+    )
+    recommendation = (
+        league_entry.get("recommendation")
+        or context_metadata.get("recommended_governance_action")
+        or ""
+    )
+    human_needed = governance_required and str(recommendation).strip().lower() not in {
+        "",
+        "none",
+        "no_change",
+    }
+    persona_status = str(
+        raw_metadata.get("persona_status")
+        or league_entry.get("status")
+        or persona.get("status")
+        or lifecycle_state
+    )
+    updated_at = (
+        league_entry.get("updated_at")
+        or persona.get("updated_at")
+        or persona.get("last_active_at")
+        or snapshot_at
+    )
+    ooda_stage = league_entry.get("ooda_stage") or context_metadata.get("ooda_stage")
+    score = min(
+        _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), 75.0),
+        _as_float(operational_health.get("score"), 100.0),
+    )
+    routed = _routed_strategies_for_persona(persona_id)
+    drill_target = runtime_id or persona_id
+
+    return {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "name": persona.get("name") or persona_id,
+        "owner": raw_metadata.get("owner") or raw_metadata.get("owner_id") or "pathreon-management",
+        "mode": deployment_stage,
+        "status": health,
+        "health": health,
+        "score": score,
+        "ooda": _management_fleet_ooda_label(ooda_stage),
+        "autonomy": _management_fleet_autonomy(
+            deployment_stage=deployment_stage,
+            governance_required=governance_required,
+            human_needed=human_needed,
+        ),
+        "perf_delta": _training_improvement_delta(metrics),
+        "human_needed": human_needed,
+        "last_mutation": str(updated_at)[:10],
+        "state": persona_status,
+        "current_work": context_metadata.get("current_work"),
+        "routed_strategies": routed,
+        "open_findings": len(risk_flags) + int(metrics.get("violation_count") or 0) + len(active_incidents),
+        "market_scope": market_scope,
+        "asset_classes": list(context_metadata.get("asset_classes") or []),
+        "capital_pool_id": pool_id,
+        "runtime_id": runtime_id,
+        "deployment_stage": deployment_stage,
+        "ooda_stage": ooda_stage,
+        "recommendation": recommendation,
+        "governance_required": governance_required,
+        "data_source_summary": _persona_fleet_list_data_source_summary(
+            metadata=context_metadata,
+            persona=persona,
+            context_persona=context_persona,
+        ),
+        "research_summary": _persona_fleet_list_research_summary(context_metadata),
+        "performance_summary": {
+            "pnl": _as_float(metrics.get("pnl")),
+            "sharpe": _as_float(metrics.get("sharpe")),
+            "max_drawdown": _as_float(metrics.get("max_drawdown")),
+            "violation_count": int(metrics.get("violation_count") or 0),
+        },
+        "risk_flag_count": len(risk_flags),
+        "active_incident_count": len(active_incidents),
+        "updated_at": updated_at,
+        "links": {
+            "detail": f"/personas/{persona_id}",
+            "runtime": f"/management/runtimes/{runtime_id}" if runtime_id else None,
+            "source_health": f"/bff/v5/execution/persona-health?persona_id={persona_id}",
+        },
+        "drill_down": {
+            "kind": "runtime" if runtime_id else "persona",
+            "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
+            "runtime_id": runtime_id,
+            "persona_id": persona_id,
+        },
+    }
+
+
+def _persona_fleet_slim_list_payload(
+    *,
+    snapshot_at: str,
+    state: Optional[str],
+    health: Optional[str],
+    deployment_stage: Optional[str],
+    market_scope: Optional[str],
+    q: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    personas = read_store.list_personas(include_market_persona_defaults=True)
+    league = read_store.list_persona_league(include_market_persona_defaults=True)
+    bindings = read_store.list_bindings(include_market_persona_defaults=True)
+    runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
+    pools = read_store.list_capital_pools(include_market_persona_defaults=True)
+    incidents = read_store.list_incidents()
+    context_defaults = _persona_fleet_context_defaults_by_market()
+
+    league_by_persona = {
+        str(item.get("persona_id") or item.get("id") or ""): item
+        for item in league
+    }
+    bindings_by_persona: Dict[str, List[Dict[str, Any]]] = {}
+    for binding in bindings:
+        persona_id = str(binding.get("persona_id") or "").strip()
+        if persona_id:
+            bindings_by_persona.setdefault(persona_id, []).append(binding)
+    runtime_by_pool = {
+        str(runtime.get("capital_pool_id") or ""): runtime
+        for runtime in runtimes
+        if str(runtime.get("capital_pool_id") or "").strip()
+    }
+
+    rows: List[Dict[str, Any]] = []
+    for persona in personas:
+        persona_id = _persona_id(persona)
+        if not persona_id:
+            continue
+        raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        context_metadata, context_persona = _persona_fleet_context_overlay(
+            persona,
+            raw_metadata,
+            context_defaults,
+        )
+        league_entry = league_by_persona.get(persona_id, {})
+        binding = _persona_fleet_first_binding_from_index(persona_id, bindings_by_persona)
+        pool_id = (
+            league_entry.get("capital_pool_id")
+            or raw_metadata.get("capital_pool_id")
+            or binding.get("capital_pool_id")
+        )
+        runtime = runtime_by_pool.get(str(pool_id or ""), {})
+        binding_ids = {
+            str(binding.get("id") or binding.get("binding_id") or "").strip()
+        }
+        binding_ids.discard("")
+        capital_pool_ids = {str(pool_id or "").strip()}
+        capital_pool_ids.discard("")
+        runtime_ids = {
+            str(runtime.get("runtime_id") or runtime.get("runtime_binding_id") or runtime.get("id") or "").strip()
+        }
+        runtime_ids.discard("")
+        active_incidents = _persona_fleet_active_incidents_for_row(
+            incidents=incidents,
+            persona_id=persona_id,
+            binding_ids=binding_ids,
+            capital_pool_ids=capital_pool_ids,
+            runtime_ids=runtime_ids,
+        )
+        telemetry_summaries = [
+            summary
+            for runtime_id in sorted(runtime_ids)
+            for summary in [read_store.get_telemetry_summary(runtime_id)]
+            if summary
+        ]
+        row = _project_persona_fleet_list_row(
+            persona=persona,
+            league_entry=league_entry,
+            binding=binding,
+            runtime=runtime,
+            active_incidents=active_incidents,
+            telemetry_summaries=telemetry_summaries,
+            context_metadata=context_metadata,
+            context_persona=context_persona,
+            snapshot_at=snapshot_at,
+        )
+        if row is not None:
+            rows.append(row)
+
+    rows = sorted(
+        rows,
+        key=lambda item: (
+            -_as_float(item.get("score")),
+            str(item.get("persona_id") or ""),
+        ),
+    )
+    available_personas = len(rows)
+
+    requested_states = _persona_fleet_query_filter(state)
+    if requested_states:
+        rows = [
+            item for item in rows
+            if str(item.get("state") or item.get("status") or "").strip().lower() in requested_states
+        ]
+
+    requested_health = _persona_fleet_query_filter(health)
+    if requested_health:
+        rows = [
+            item for item in rows
+            if str(item.get("health") or item.get("status") or "").strip().lower() in requested_health
+        ]
+
+    requested_stages = _persona_fleet_query_filter(deployment_stage)
+    if requested_stages:
+        rows = [
+            item for item in rows
+            if str(item.get("deployment_stage") or item.get("mode") or "").strip().lower() in requested_stages
+        ]
+
+    requested_markets = {
+        token.strip().upper()
+        for token in (market_scope.split(",") if market_scope else [])
+        if token.strip()
+    }
+    if requested_markets:
+        rows = [
+            item for item in rows
+            if requested_markets.intersection({str(scope).upper() for scope in item.get("market_scope") or []})
+        ]
+
+    search_text = str(q or "").strip().lower()
+    if search_text:
+        rows = [
+            item for item in rows
+            if search_text in " ".join(
+                [
+                    str(item.get("persona_id") or ""),
+                    str(item.get("name") or ""),
+                    str(item.get("owner") or ""),
+                    str(item.get("current_work") or ""),
+                    " ".join(str(scope) for scope in item.get("market_scope") or []),
+                ]
+            ).lower()
+        ]
+
+    total_personas = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    pending_human_gate = [
+        item
+        for item in league
+        if item.get("governance_required")
+        and str(item.get("recommendation") or "").strip()
+    ]
+    capital_totals = _capital_pool_totals(pools)
+    execution_boundary = {
+        "approved_artifacts_only": True,
+        "live_capital_side_effects": False,
+        "human_gate_required_for_capital_changes": True,
+    }
+    summary = {
+        "available_personas": available_personas,
+        "total_personas": total_personas,
+        "returned_personas": len(page_items),
+        "critical_personas": len([item for item in rows if item.get("health") == "critical"]),
+        "degraded_personas": len([item for item in rows if item.get("health") == "degraded"]),
+        "healthy_personas": len([item for item in rows if item.get("health") == "healthy"]),
+        "human_needed_personas": len([item for item in rows if item.get("human_needed")]),
+        "governance_required_personas": len([item for item in rows if item.get("governance_required")]),
+        "by_deployment_stage": _persona_fleet_count_by(rows, "deployment_stage"),
+        "by_market_scope": {
+            market: sum(1 for item in rows if market in {str(scope) for scope in item.get("market_scope") or []})
+            for market in sorted({str(scope) for item in rows for scope in (item.get("market_scope") or [])})
+        },
+        "by_data_source_state": _persona_fleet_count_by(
+            [
+                {"state": (item.get("data_source_summary") or {}).get("state")}
+                for item in rows
+            ],
+            "state",
+        ),
+        "by_research_stage": _persona_fleet_count_by(
+            [
+                {"stage": (item.get("research_summary") or {}).get("stage")}
+                for item in rows
+            ],
+            "stage",
+        ),
+        "capital_summary": {
+            "pool_count": capital_totals["pool_count"],
+            "total_nav": capital_totals["total_nav"],
+            "gross_exposure": capital_totals["gross_exposure"],
+            "net_exposure": capital_totals["net_exposure"],
+        },
+        "human_inbox_summary": {
+            "pending_count": len(pending_human_gate),
+        },
+        "execution_boundary": execution_boundary,
+    }
+    page_info = {
+        "next_page_token": next_page_token,
+        "total": total_personas,
+        "page_size": page_size,
+    }
+    return {
+        "data": {
+            "items": page_items,
+            "summary": summary,
+        },
+        "page_info": page_info,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "persona_fleet": _composed_dataset_surface_status(
+                    "persona_fleet",
+                    rows,
+                    snapshot_at=snapshot_at,
+                    source="bff_composed_slim_list",
+                ),
+                "personas": _composed_dataset_surface_status(
+                    "personas",
+                    personas,
+                    snapshot_at=snapshot_at,
+                    source="composed_market_persona_defaults",
+                ),
+                "persona_league": _composed_dataset_surface_status(
+                    "persona_league",
+                    league,
+                    snapshot_at=snapshot_at,
+                    source="composed_market_persona_defaults",
+                ),
+                "capital_pools": _composed_dataset_surface_status(
+                    "capital_pools",
+                    pools,
+                    snapshot_at=snapshot_at,
+                    source="composed_market_persona_defaults",
+                ),
+                "runtime_bindings": _composed_dataset_surface_status(
+                    "runtime_bindings",
+                    runtimes,
+                    snapshot_at=snapshot_at,
+                    source="composed_market_persona_defaults",
+                ),
+                "ooda_control_room_status": _dataset_surface_status("ooda_packets", snapshot_at=snapshot_at),
+            },
+            "related": {
+                "persona_league": {"href": "/bff/management/persona-league"},
+                "capital_pools": {"href": "/bff/management/capital-pools"},
+                "runtime_bindings": {"href": "/bff/management/runtime-bindings"},
+                "human_inbox": {"href": "/bff/management/human-inbox"},
+                "ooda_status": {"href": "/bff/v5/control-room"},
+            },
+        },
+    }
+
+
 def _capital_pool_totals(pools: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "pool_count": len(pools),
@@ -52358,100 +52898,25 @@ async def bff_persona_league_detail(
 async def bff_management_persona_fleet(
     state: Optional[str] = None,
     health: Optional[str] = None,
+    deployment_stage: Optional[str] = None,
+    market_scope: Optional[str] = None,
+    q: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    snapshot_at = utc_now()
-    pools = read_store.list_capital_pools(include_market_persona_defaults=True)
-    runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
-    league = read_store.list_persona_league(include_market_persona_defaults=True)
-    health_filter = health
-    health_items = _build_persona_health_items(
-        snapshot_at,
-        include_market_persona_defaults=True,
+    return _persona_fleet_slim_list_payload(
+        snapshot_at=utc_now(),
+        state=state,
+        health=health,
+        deployment_stage=deployment_stage,
+        market_scope=market_scope,
+        q=q,
+        page_token=page_token,
+        page_size=page_size,
     )
-    if state:
-        requested_states = {token.strip().lower() for token in state.split(",") if token.strip()}
-        health_items = [
-            item for item in health_items
-            if str(item.get("state") or item.get("status") or "").strip().lower() in requested_states
-        ]
-    if health_filter:
-        requested_health = {token.strip().lower() for token in health_filter.split(",") if token.strip()}
-        health_items = [
-            item for item in health_items
-            if str(item.get("health") or item.get("status") or "").strip().lower() in requested_health
-        ]
-    total_personas = len(health_items)
-    page_items, next_page_token = _page_slice(health_items, page_token, page_size)
-    summary = {
-        "total_personas": total_personas,
-        "returned_personas": len(page_items),
-        "critical_personas": len([item for item in health_items if item.get("health") == "critical"]),
-        "degraded_personas": len([item for item in health_items if item.get("health") == "degraded"]),
-        "healthy_personas": len([item for item in health_items if item.get("health") == "healthy"]),
-    }
-    page_info = {
-        "next_page_token": next_page_token,
-        "total": total_personas,
-        "page_size": page_size,
-    }
-    pending_human_gate = [
-        item
-        for item in league
-        if item.get("governance_required")
-        and str(item.get("recommendation") or "").strip()
-    ]
-    ooda_card = _build_ooda_control_room_status_card(snapshot_at)
-    return {
-        "data": {
-            "items": page_items,
-            "persona_fleet": page_items,
-            "persona_league": league,
-            "capital_pools": pools,
-            "capital_totals": _capital_pool_totals(pools),
-            "runtime_bindings": runtimes,
-            "ooda_status": ooda_card,
-            "human_inbox": {
-                "pending_count": len(pending_human_gate),
-                "items": pending_human_gate,
-            },
-            "execution_boundary": {
-                "approved_artifacts_only": True,
-                "live_capital_side_effects": False,
-                "human_gate_required_for_capital_changes": True,
-            },
-            "summary": summary,
-            "page_info": page_info,
-        },
-        "items": page_items,
-        "summary": summary,
-        "page_info": page_info,
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": {
-                "persona_fleet": _composed_dataset_surface_status(
-                    "persona_fleet",
-                    page_items,
-                    snapshot_at=snapshot_at,
-                    source="bff_composed",
-                ),
-                "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
-                "persona_league": _composed_dataset_surface_status(
-                    "persona_league",
-                    league,
-                    snapshot_at=snapshot_at,
-                    source="composed_market_persona_defaults",
-                ),
-                "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
-                "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
-                "ooda_control_room_status": ooda_card["meta"],
-            },
-        },
-    }
 
 
 def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
