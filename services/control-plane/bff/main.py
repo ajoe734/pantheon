@@ -19976,7 +19976,7 @@ async def submit_command(
         "foundation": _serialize_foundation_context(foundation_context),
     }
 
-    command_store.submit_command(
+    record, active_after_precheck = command_store.submit_command_if_no_active_target(
         command_id=command_id,
         command_type=cmd.command,
         target=cmd.target,
@@ -19985,6 +19985,16 @@ async def submit_command(
         audit_context=audit_record,
         foundation_context=_serialize_foundation_context(foundation_context),
     )
+    if active_after_precheck:
+        error = _bff_error(
+            409, ErrorCode.RESOURCE_CONFLICT,
+            "A command is already in flight for this target",
+            f"Command {active_after_precheck['command_id']} is currently {active_after_precheck['status']}",
+            precondition_failed="concurrent_safety",
+            suggestion="Wait for the in-flight command to complete or time out before retrying",
+        )
+        raise _foundation_bff_error(error, foundation_context=foundation_context)
+    assert record is not None
 
     log.info(
         "Accepted command %s (%s) for %s:%s by operator %s",
@@ -20182,7 +20192,7 @@ def _submit_final_command_admission(
     if audit_extra:
         audit_record.update({key: value for key, value in audit_extra.items() if value is not None})
 
-    command_store.submit_command(
+    record, active_after_precheck = command_store.submit_command_if_no_active_target(
         command_id=command_id,
         command_type=cmd.command,
         target=cmd.target,
@@ -20191,6 +20201,16 @@ def _submit_final_command_admission(
         audit_context=audit_record,
         foundation_context=_serialize_foundation_context(foundation_context),
     )
+    if active_after_precheck:
+        error = _bff_error(
+            409, ErrorCode.RESOURCE_CONFLICT,
+            "A command is already in flight for this target",
+            f"Command {active_after_precheck['command_id']} is currently {active_after_precheck['status']}",
+            precondition_failed="concurrent_safety",
+            suggestion="Wait for the in-flight command to complete or time out before retrying",
+        )
+        raise _foundation_bff_error(error, foundation_context=foundation_context)
+    assert record is not None
 
     log.info(
         "Accepted final-contract command %s (%s) for %s:%s by operator %s",
@@ -43029,7 +43049,7 @@ async def remediate_v5_intervention(
     if precondition_evidence:
         audit_record["precondition_evidence"] = precondition_evidence
 
-    command_store.submit_command(
+    record, active_after_precheck = command_store.submit_command_if_no_active_target(
         command_id=command_id,
         command_type=cmd.command,
         target=cmd.target,
@@ -43038,6 +43058,16 @@ async def remediate_v5_intervention(
         audit_context=audit_record,
         foundation_context=_serialize_foundation_context(foundation_context),
     )
+    if active_after_precheck:
+        error = _bff_error(
+            409, ErrorCode.RESOURCE_CONFLICT,
+            "A remediation command is already in flight for this intervention",
+            f"Command {active_after_precheck['command_id']} is currently {active_after_precheck['status']}",
+            precondition_failed="concurrent_safety",
+            suggestion="Wait for the in-flight command to complete before retrying",
+        )
+        raise _foundation_bff_error(error, foundation_context=foundation_context)
+    assert record is not None
     background_tasks.add_task(_process_command_stub, command_id)
 
     return _project_final_command_response(
@@ -48818,7 +48848,7 @@ def _sem_command_response(
         },
         "audit_action": audit_action.to_dict(),
     }
-    record = command_store.submit_command(
+    record, active = command_store.submit_command_if_no_active_target(
         command_id,
         command_type,
         TargetObject(type=target_type, id=target_id),
@@ -48834,6 +48864,16 @@ def _sem_command_response(
         },
         foundation_ctx,
     )
+    if active:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "A command is already in flight for this target",
+            f"Command {active['command_id']} is currently {active['status']}",
+            precondition_failed="concurrent_safety",
+            suggestion="Wait for the in-flight command to complete or time out before retrying",
+        )
+    assert record is not None
     result = _sem_command_payload_from_record(record, idempotency_key=clean_key, replayed=False)
     _FINAL_CONTRACT_IDEMPOTENCY[cache_key] = {"request_hash": request_hash, "result": result}
     return JSONResponse(status_code=status_code, content=result)
@@ -53083,40 +53123,19 @@ async def bff_approvals_decide(
             precondition_failed="approval_id",
         )
 
-    # Reject body idempotency keys before any side effects (must mirror _sem_command_response order).
-    _reject_body_idempotency_key(payload)
-
-    # Idempotency pre-check: skip SSE publish on command replay to avoid duplicate events.
-    # Replicates the hash key _sem_command_response uses so the check is consistent.
-    _idem_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    _idem_hash = _stable_json_hash({
-        "command": command_type.value,
-        "target_type": ObjectType.APPROVAL_DECISION.value,
-        "target_id": clean_id,
-        "payload": {**payload, "decision_id": clean_id},
-    })
-    _idem_cache_key = _scoped_idempotency_cache_key(_idem_key, identity.operator_id)
-    _existing_idem = _FINAL_CONTRACT_IDEMPOTENCY.get(_idem_cache_key)
-    _is_approval_replay = _existing_idem is not None and _existing_idem.get("request_hash") == _idem_hash
-    # Mirror _sem_command_response: a reused key with a different hash is an idempotency conflict
-    # that will result in a 409 — skip SSE publish to prevent double-publish on the conflict path.
-    _is_idem_conflict = _existing_idem is not None and not _is_approval_replay
-    if not _is_approval_replay and not _is_idem_conflict:
-        # Extend pre-check to durable command_store to match _sem_command_response replay semantics:
-        # if _FINAL_CONTRACT_IDEMPOTENCY was evicted but command_store still holds the record,
-        # _sem_command_response will replay — skip SSE publish here too to prevent double-publish.
-        _durable_record = command_store.get_command_by_idempotency_key(
-            _idem_key,
-            operator_id=identity.operator_id,
-        )
-        if _durable_record:
-            _stored_hash = (_durable_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
-            if _stored_hash == _idem_hash:
-                _is_approval_replay = True
-            elif _stored_hash:
-                _is_idem_conflict = True
-
-    if not _is_approval_replay and not _is_idem_conflict:
+    cmd_response = _sem_command_response(
+        command_type=command_type,
+        target_type=ObjectType.APPROVAL_DECISION,
+        target_id=clean_id,
+        payload={**payload, "decision_id": clean_id},
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+    cmd_body = json.loads(cmd_response.body or b"{}")
+    cmd_meta = cmd_body.get("meta") if isinstance(cmd_body, dict) else {}
+    idempotency_meta = cmd_meta.get("idempotency") if isinstance(cmd_meta, dict) else {}
+    if not bool(cmd_meta.get("dryRun")) and not bool(idempotency_meta.get("replayed")):
         # escalate/freeze are stage transitions; use raw_decision to determine event type
         if raw_decision in _APPROVAL_STAGE_CHANGE_DECISIONS or command_type == CommandType.REQUEST_APPROVAL_REVISION:
             _publish_event(
@@ -53139,15 +53158,7 @@ async def bff_approvals_decide(
                 {"approval_id": clean_id, "outcome": _outcome, "decided_by": identity.operator_id},
             )
 
-    return _sem_command_response(
-        command_type=command_type,
-        target_type=ObjectType.APPROVAL_DECISION,
-        target_id=clean_id,
-        payload={**payload, "decision_id": clean_id},
-        identity=identity,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
-    )
+    return cmd_response
 
 
 _BFF_BATCH_DECIDE_MAX = 50

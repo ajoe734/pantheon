@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
+from command_queue import CommandStore
 
 OPERATOR_HEADERS = {"Authorization": "Bearer ask005-op:operator,approver"}
 APPROVER_HEADERS = {"Authorization": "Bearer ask005-approver:approver"}
@@ -35,17 +36,25 @@ def _idem() -> str:
 
 @pytest.fixture(autouse=True)
 def clear_sse_buffers():
-    bff_main._sse_buffers["ask"].clear()
-    bff_main._sse_subscribers["ask"].clear()
-    bff_main._sse_buffers["approval"].clear()
-    bff_main._sse_subscribers["approval"].clear()
-    bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-    bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-    yield
-    bff_main._sse_buffers["ask"].clear()
-    bff_main._sse_subscribers["ask"].clear()
-    bff_main._sse_buffers["approval"].clear()
-    bff_main._sse_subscribers["approval"].clear()
+    original_command_store = bff_main.command_store
+    with tempfile.TemporaryDirectory() as td:
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._sse_buffers["ask"].clear()
+        bff_main._sse_subscribers["ask"].clear()
+        bff_main._sse_buffers["approval"].clear()
+        bff_main._sse_subscribers["approval"].clear()
+        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+        try:
+            yield
+        finally:
+            bff_main.command_store = original_command_store
+            bff_main._sse_buffers["ask"].clear()
+            bff_main._sse_subscribers["ask"].clear()
+            bff_main._sse_buffers["approval"].clear()
+            bff_main._sse_subscribers["approval"].clear()
+            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
 
 
 # ---------------------------------------------------------------------------

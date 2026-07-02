@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from threading import RLock
 from typing import Any, Dict, List, Optional
 
 from models import CommandStatus, CommandType, ObjectType, TargetObject
@@ -14,29 +15,33 @@ log = logging.getLogger(__name__)
 class CommandStore:
     def __init__(self, file_path: str = "commands.jsonl"):
         self.file_path = file_path
+        self._lock = RLock()
         # Initialize the file if it doesn't exist
         if not os.path.exists(self.file_path):
             with open(self.file_path, "w") as f:
                 pass
 
     def _save_command(self, command: Dict[str, Any]):
-        with open(self.file_path, "a") as f:
-            f.write(json.dumps(command) + "\n")
+        with self._lock:
+            with open(self.file_path, "a") as f:
+                f.write(json.dumps(command) + "\n")
 
     def _get_all_commands(self) -> List[Dict[str, Any]]:
-        commands = []
-        if not os.path.exists(self.file_path):
+        with self._lock:
+            commands = []
+            if not os.path.exists(self.file_path):
+                return commands
+            with open(self.file_path, "r") as f:
+                for line in f:
+                    if line.strip():
+                        commands.append(json.loads(line))
             return commands
-        with open(self.file_path, "r") as f:
-            for line in f:
-                if line.strip():
-                    commands.append(json.loads(line))
-        return commands
 
     def _update_commands(self, commands: List[Dict[str, Any]]):
-        with open(self.file_path, "w") as f:
-            for cmd in commands:
-                f.write(json.dumps(cmd) + "\n")
+        with self._lock:
+            with open(self.file_path, "w") as f:
+                for cmd in commands:
+                    f.write(json.dumps(cmd) + "\n")
 
     def submit_command(
         self,
@@ -62,6 +67,30 @@ class CommandStore:
         }
         self._save_command(record)
         return record
+
+    def submit_command_if_no_active_target(
+        self,
+        command_id: str,
+        command_type: CommandType,
+        target: TargetObject,
+        submitted_at: str,
+        params: Dict[str, Any],
+        audit_context: Dict[str, Any],
+        foundation_context: Optional[Dict[str, Any]] = None,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        with self._lock:
+            active = self.get_active_commands_for_target(target.type.value, target.id)
+            if active:
+                return None, active[0]
+            return self.submit_command(
+                command_id,
+                command_type,
+                target,
+                submitted_at,
+                params,
+                audit_context,
+                foundation_context,
+            ), None
 
     def get_command(self, command_id: str) -> Optional[Dict[str, Any]]:
         for cmd in self._get_all_commands():
