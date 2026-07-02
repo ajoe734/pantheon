@@ -5,7 +5,7 @@
 | Scope | Static audit of `services/control-plane/bff/main.py` Management list/table/board contracts |
 | Tool | `scripts/audit_management_list_contract.py` |
 | Baseline | `docs/architecture/management-list-contract-baseline.json` |
-| Result | 102 existing contract smells after `MGMT-LIST-CONTRACT-015`: 0 P0, 102 P1 |
+| Result | 102 existing contract smells after `MGMT-LIST-CONTRACT-016`: 0 P0, 102 P1 |
 
 ## Trigger
 
@@ -49,7 +49,9 @@ on snake_case typed/frontend consumers and closed the remaining focused fixture
 gaps around public rows, summary counts, facets, and degraded envelopes, and
 `MGMT-LIST-CONTRACT-015` removed PM12 quarterly ranking formula/window,
 governance evidence, ranking summary, formula summary, and recommendation
-summary casing mirrors:
+summary casing mirrors. `MGMT-LIST-CONTRACT-016` hardened frontend live
+transport so live-mode tests must prove they call the configured BFF URL
+instead of silently returning mock data:
 
 | Category | Count | Severity | Meaning |
 |---|---:|---|---|
@@ -82,7 +84,8 @@ The complete machine-readable list is in
 | Evidence Explorer Wire Casing | Remediated in `MGMT-LIST-CONTRACT-014`: Evidence Explorer rows, summaries, facets, degraded envelopes, typed contracts, and focused frontend fixtures now use snake_case wire keys without camelCase mirrors | Keep temporary frontend fallback reads only at adapter boundaries while formal Management DTOs remain single-casing |
 | PM12 Quarterly Ranking Casing | Remediated in `MGMT-LIST-CONTRACT-015`: formula/window/governance evidence helpers plus quarterly ranking/formula/recommendation outer summaries now use snake_case wire keys | Continue with drilldown and recommendation-row casing in separate focused slices |
 | Builder Blind Spot | Remediated in `MGMT-LIST-CONTRACT-011`: `_build_management_*` helpers are now audited, and newly visible Trading Pulse, Sentinel Pulse, Cockpit, Anomalies, EP5 readiness, and Evidence Explorer builder smells were fixed instead of added to the baseline | Keep helper builders under the same list contract as route handlers; no hidden builder aliases |
-| Frontend Consumption Pattern | Remediated contracts now reject top-level aliases in focused tests; Human Inbox, Evidence, Trading Pulse, and Live Evidence adapters consume canonical `data.items`/`data.summary` shapes, and Evidence typed consumers now read snake_case fields | Frontend must request server filters/page and adapt one canonical envelope only |
+| Frontend Live Transport | Hardened in `MGMT-LIST-CONTRACT-016`: frontend live reads now honor `VITE_BFF_MODE`, `VITE_BFF_BASE_URL`, and strict fallback settings instead of silently returning mock data | Live-mode tests must prove they actually call the configured BFF URL |
+| Frontend Consumption Pattern | Remediated contracts now reject top-level aliases in focused tests; Human Inbox, Evidence, Trading Pulse, and Live Evidence adapters consume canonical `data.items`/`data.summary` shapes | Frontend must request server filters/page and adapt one canonical envelope only |
 
 ## Remediation Order
 
@@ -133,9 +136,12 @@ The complete machine-readable list is in
     governance evidence, formula summaries, ranking summaries, and
     recommendation outer summaries now use snake_case wire keys without
     camelCase mirrors.
-14. Remove camel/snake duplicates from the remaining migrated endpoints and
+14. Done in `MGMT-LIST-CONTRACT-016`: frontend live transport now honors live
+    mode/base URL/strict fallback settings instead of silently returning mock
+    data.
+15. Remove camel/snake duplicates from the remaining migrated endpoints and
     delete retired fingerprints from the baseline.
-15. Fix remaining project-before-page and heavy-row-helper findings so large
+16. Fix remaining project-before-page and heavy-row-helper findings so large
     list endpoints filter and page before detail-grade projection.
 
 ## Enforcement

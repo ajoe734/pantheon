@@ -227,9 +227,10 @@ Later remediation slices continued from this re-audit:
   duplicate envelopes, embedded child aggregates, and raw source records in
   Human Inbox, Evidence Explorer, HIQ Backlog, Intervention Stream, Governance
   Ledger, and Sentinel Pulse helpers.
-- `MGMT-LIST-CONTRACT-011` expanded the guardrail to `_build_management_*`
-  builders and retired newly visible builder smells in Trading Pulse, Sentinel
-  Pulse, Cockpit, Anomalies, EP5 readiness links, and Evidence Explorer.
+- `MGMT-LIST-CONTRACT-011` expanded the static guard to `_build_management_*`
+  builders and removed newly visible builder-level duplicate envelopes and
+  casing mirrors in Trading Pulse, Sentinel Pulse, Cockpit, Anomalies, EP5
+  readiness links, and Evidence Explorer.
 - `MGMT-LIST-CONTRACT-012` removed the first Human/Ops P1 wire-casing cluster
   from HIQ Backlog, Intervention Stream, and Governance Ledger rows/summaries.
 - `MGMT-LIST-CONTRACT-013` removed the remaining Human Inbox readiness blocker
@@ -240,8 +241,11 @@ Later remediation slices continued from this re-audit:
 - `MGMT-LIST-CONTRACT-015` removed PM12 quarterly ranking formula/window,
   governance evidence, ranking summary, formula summary, and recommendation
   summary wire-casing mirrors.
+- `MGMT-LIST-CONTRACT-016` hardened frontend live transport mode/base URL and
+  strict fallback handling so live-mode tests prove they call the configured
+  BFF URL instead of silently returning mock data.
 
-The current list-contract guardrail result after `MGMT-LIST-CONTRACT-015` is:
+The current list-contract guardrail result after `MGMT-LIST-CONTRACT-016` is:
 
 ```text
 source=services/control-plane/bff/main.py baseline=docs/architecture/management-list-contract-baseline.json issues=102 new=0 retired=0
@@ -345,20 +349,24 @@ Interpretation:
    Journal, and Persona Intent list envelopes.
 4. Done in `MGMT-LIST-CONTRACT-010`: clear remaining P0 list-contract findings
    in Human/Ops, Evidence, and Sentinel list helpers.
-5. Done in `MGMT-LIST-CONTRACT-012`: remove HIQ Backlog, Intervention Stream,
+5. Done in `MGMT-LIST-CONTRACT-011`: audit `_build_management_*` builders and
+   remove newly visible builder-level list-contract smells.
+6. Done in `MGMT-LIST-CONTRACT-012`: remove HIQ Backlog, Intervention Stream,
    and Governance Ledger camel/snake wire-key mirrors.
-6. Done in `MGMT-LIST-CONTRACT-013`: remove Human Inbox readiness/summary
+7. Done in `MGMT-LIST-CONTRACT-013`: remove Human Inbox readiness/summary
    camel/snake wire-key mirrors.
-7. Done in `MGMT-LIST-CONTRACT-014`: remove Evidence Explorer item, summary,
+8. Done in `MGMT-LIST-CONTRACT-014`: remove Evidence Explorer item, summary,
    facet, and degraded-envelope camel/snake wire-key mirrors.
-8. Done in `MGMT-LIST-CONTRACT-015`: remove PM12 quarterly ranking
+9. Done in `MGMT-LIST-CONTRACT-015`: remove PM12 quarterly ranking
    formula/window, governance evidence, ranking summary, formula summary, and
    recommendation outer-summary camel/snake wire-key mirrors.
-9. Continue casing cleanup and filter/page-before-projection work for the PM12
+10. Done in `MGMT-LIST-CONTRACT-016`: harden frontend live transport mode/base
+   URL and strict fallback handling.
+11. Continue casing cleanup and filter/page-before-projection work for the PM12
    analytics helpers after `MGMT-LIST-CONTRACT-006`.
-10. Decide the frontend product shape: keep the current three-panel shell, or
+12. Decide the frontend product shape: keep the current three-panel shell, or
    deliberately build a smaller workflow-based Management router.
-11. Add payload-size and route-smoke acceptance evidence before exposing more
+13. Add payload-size and route-smoke acceptance evidence before exposing more
    first-level management pages.
 
 ## Bottom Line

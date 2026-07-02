@@ -1,3 +1,5 @@
+import { readBffEnv } from "./runtimeEnv";
+
 export { paths } from "./paths";
 export type { ListEnvelope } from "./lists";
 export { normalizeLiveListResponse } from "./lists";
@@ -32,7 +34,9 @@ export type {
 } from "./agora/types";
 
 export interface LiveStatus {
+  mode?: "mock" | "live";
   effective: "mock" | "live";
+  baseUrl?: string;
   lastError?: string;
   fellBackAt?: number;
 }
@@ -46,7 +50,37 @@ export const liveStatus = {
   set(status: Partial<LiveStatus>): void {
     _liveStatus = { ..._liveStatus, ...status };
   },
+  _reset(status: Partial<LiveStatus> = {}): void {
+    _liveStatus = { effective: "mock", ...status };
+  },
 };
+
+export interface BffErrorPayload {
+  code?: string;
+  message: string;
+  details?: unknown;
+  status?: number;
+}
+
+export class BffError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly details?: unknown;
+  readonly envelope: { error: BffErrorPayload };
+
+  constructor(payload: BffErrorPayload, status = payload.status ?? 500) {
+    super(payload.message);
+    this.name = "BffError";
+    this.status = status;
+    this.code = payload.code;
+    this.details = payload.details;
+    this.envelope = { error: { ...payload, status } };
+  }
+}
+
+export function makeBffError(payload: BffErrorPayload, status = payload.status ?? 500): BffError {
+  return new BffError(payload, status);
+}
 
 export interface BffRequest {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -55,11 +89,65 @@ export interface BffRequest {
   body?: unknown;
 }
 
+function buildBffUrl(path: string, query?: Record<string, string | number | undefined>): string {
+  const baseUrl = readBffEnv().VITE_BFF_BASE_URL?.replace(/\/+$/, "") ?? "";
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const url = baseUrl ? `${baseUrl}${normalizedPath}` : normalizedPath;
+  if (!query) return url;
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) params.set(key, String(value));
+  }
+  const queryString = params.toString();
+  return queryString ? `${url}?${queryString}` : url;
+}
+
+function bffErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 export async function withLiveOrMock<T>(
-  _req: BffRequest,
+  req: BffRequest,
   mockFn: () => Promise<T>,
 ): Promise<T> {
-  return mockFn();
+  const env = readBffEnv();
+  if (env.VITE_BFF_MODE !== "live") {
+    return mockFn();
+  }
+
+  const strict = env.VITE_BFF_FALLBACK === "strict";
+  try {
+    const response = await fetch(buildBffUrl(req.path, req.query), { method: req.method });
+    if (!response.ok) {
+      const error = new BffError(
+        { code: "BFF_HTTP_ERROR", message: `BFF ${req.method} ${req.path}: HTTP ${response.status}` },
+        response.status,
+      );
+      if (response.status >= 500 && !strict) {
+        liveStatus.set({
+          effective: "mock",
+          lastError: error.message,
+          fellBackAt: Date.now(),
+        });
+        return mockFn();
+      }
+      throw error;
+    }
+    liveStatus.set({ mode: "live", effective: "live", baseUrl: env.VITE_BFF_BASE_URL });
+    return await response.json() as T;
+  } catch (error) {
+    if (error instanceof BffError) throw error;
+    if (strict) {
+      throw new BffError({ code: "BFF_TRANSPORT_ERROR", message: bffErrorMessage(error) }, 0);
+    }
+    liveStatus.set({
+      effective: "mock",
+      lastError: bffErrorMessage(error),
+      fellBackAt: Date.now(),
+    });
+    return mockFn();
+  }
 }
 
 import type { ListEnvelope } from "./lists";

@@ -127,6 +127,7 @@ describe("managementClient — OODA packet live adapter", () => {
   const realFetch = globalThis.fetch;
 
   beforeEach(() => {
+    vi.stubEnv("VITE_BFF_MODE", "live");
     vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
     liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
   });
@@ -385,6 +386,7 @@ describe("managementClient — Evidence Explorer aggregate live adapter", () => 
   const realFetch = globalThis.fetch;
 
   beforeEach(() => {
+    vi.stubEnv("VITE_BFF_MODE", "live");
     vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
     liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
   });
@@ -1026,10 +1028,13 @@ describe("managementClient — rankingFormulas live detail URL", () => {
   const realFetch = globalThis.fetch;
 
   beforeEach(() => {
+    vi.stubEnv("VITE_BFF_MODE", "live");
+    vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
     liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
   });
   afterEach(() => {
     globalThis.fetch = realFetch;
+    vi.unstubAllEnvs();
     liveStatus._reset();
   });
 
