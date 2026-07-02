@@ -10,6 +10,14 @@
   - [BINDING_AND_DEPLOYMENT_SEMANTICS.md](../../../BINDING_AND_DEPLOYMENT_SEMANTICS.md)
 - **配套 BFF 改動**: F4 patch — `GET /api/v1/operator/persona-management/{persona_id}` 新增 `data.health` surface（同 `bff/management/persona-fleet` 的 `_project_persona_fleet_health()` 計算）
 
+> 2026-07-02 supersession note:
+> 此文件的五階段 atomic setup 仍可作為底層步驟參考，但「建立後停在 draft,
+> 再由使用者自行啟動 wizard」不再是主要產品語意。新的 user-facing create
+> path 必須完成到 paper runtime，或進入 `setup_failed` / `repair_required`
+> 並顯示可重試修復。實盤 canary/live 與季度重排需人類審核；只有風控保護
+> 可自動 pause/reduce/risk_off/freeze。最新規格見
+> [`Persona Paper-First Live Promotion Gap`](../pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md)。
+
 ---
 
 ## 1. 文件目的
