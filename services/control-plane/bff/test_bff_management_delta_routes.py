@@ -591,29 +591,36 @@ def test_hiq_backlog_composes_open_hiq_interventions_and_findings(monkeypatch) -
         assert response.status_code == 200, response.text
         body = response.json()
         data = body["data"]
-        ids = {item["source_id"] for item in body["items"]}
+        items = data["items"]
+        summary = data["summary"]
+        ids = {item["source_id"] for item in items}
 
         assert data["id"] == "management-hiq-backlog"
-        assert body["items"] == body["rows"] == body["backlog"] == data["items"]
+        assert set(body.keys()) == {"data", "page_info", "meta"}
+        assert "rows" not in data
+        assert "backlog" not in data
         assert ids == {"intv-hiq-critical", "intv-risk-high", "sf-hiq-open-high"}
-        assert body["summary"]["backlog_count"] == 3
-        assert body["summary"]["intervention_count"] == 2
-        assert body["summary"]["sentinel_finding_count"] == 1
-        assert body["summary"]["by_kind"]["hiq_sentinel"] == 2
-        assert body["summary"]["by_kind"]["risk_breach"] == 1
+        assert summary["backlog_count"] == 3
+        assert summary["intervention_count"] == 2
+        assert summary["sentinel_finding_count"] == 1
+        assert summary["by_kind"]["hiq_sentinel"] == 2
+        assert summary["by_kind"]["risk_breach"] == 1
         assert body["meta"]["policy"] == "read_only_hiq_backlog"
         assert body["meta"]["surfaces"]["hiq_backlog"]["source"] == "bff_composed"
         assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
         assert "GET /bff/v5/sentinel/findings" in body["meta"]["composition_sources"]
         assert "GET /bff/management/human-inbox" in body["meta"]["composition_sources"]
 
-        intervention = next(item for item in body["items"] if item["source_id"] == "intv-hiq-critical")
+        intervention = next(item for item in items if item["source_id"] == "intv-hiq-critical")
         assert intervention["priority"] == "critical"
         assert intervention["links"]["source"] == "/bff/v5/interventions/intv-hiq-critical"
-        assert intervention["links"]["humanInbox"] == (
+        assert intervention["links"]["human_inbox"] == (
             "/bff/management/human-inbox/intervention:intv-hiq-critical"
         )
         assert intervention["allowedActions"]["canRemediate"] is True
+        assert "humanInbox" not in intervention["links"]
+        assert "sourceRecord" not in intervention
+        assert "source_record" not in intervention
     finally:
         bff_main.read_store = original_store
         bff_main._V5_INTERVENTIONS_STORE.clear()
@@ -637,8 +644,8 @@ def test_hiq_backlog_filters_and_requires_auth(monkeypatch) -> None:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["summary"]["backlog_count"] == 1
-        assert body["items"][0]["source_id"] == "intv-hiq-critical"
+        assert body["data"]["summary"]["backlog_count"] == 1
+        assert body["data"]["items"][0]["source_id"] == "intv-hiq-critical"
     finally:
         bff_main.read_store = original_store
         bff_main._V5_INTERVENTIONS_STORE.clear()
@@ -759,22 +766,29 @@ def test_intervention_stream_returns_recent_persona_events(monkeypatch) -> None:
         assert response.status_code == 200, response.text
         body = response.json()
         data = body["data"]
+        items = data["items"]
+        summary = data["summary"]
 
         assert data["id"] == "management-intervention-stream"
-        assert body["items"] == body["rows"] == body["events"] == body["stream"] == data["items"]
-        assert [item["intervention_id"] for item in body["items"]] == [
+        assert set(body.keys()) == {"data", "page_info", "meta"}
+        assert "rows" not in data
+        assert "events" not in data
+        assert "stream" not in data
+        assert [item["intervention_id"] for item in items] == [
             "intv-alpha",
             "intv-alpha",
             "intv-beta",
         ]
-        assert [item["stream_sequence"] for item in body["items"]] == [1, 2, 3]
-        assert body["summary"]["event_count"] == 3
-        assert body["summary"]["intervention_count"] == 2
-        assert body["summary"]["persona_count"] == 2
-        assert body["summary"]["by_persona"]["persona-alpha"] == 2
-        assert body["summary"]["by_persona"]["persona-beta"] == 1
-        assert body["summary"]["window_hours"] == 24
-        assert body["summary"]["latest_at"] == "2026-05-24T11:10:00Z"
+        assert [item["stream_sequence"] for item in items] == [1, 2, 3]
+        assert all("sourceRecord" not in item for item in items)
+        assert all("source_record" not in item for item in items)
+        assert summary["event_count"] == 3
+        assert summary["intervention_count"] == 2
+        assert summary["persona_count"] == 2
+        assert summary["by_persona"]["persona-alpha"] == 2
+        assert summary["by_persona"]["persona-beta"] == 1
+        assert summary["window_hours"] == 24
+        assert summary["latest_at"] == "2026-05-24T11:10:00Z"
         assert body["meta"]["policy"] == "read_only_intervention_stream"
         assert body["meta"]["surfaces"]["intervention_stream"]["source"] == "bff_composed"
         assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
@@ -802,9 +816,9 @@ def test_intervention_stream_filters_and_requires_auth(monkeypatch) -> None:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["summary"]["event_count"] == 1
-        assert body["items"][0]["intervention_id"] == "intv-beta"
-        assert body["items"][0]["persona_id"] == "persona-beta"
+        assert body["data"]["summary"]["event_count"] == 1
+        assert body["data"]["items"][0]["intervention_id"] == "intv-beta"
+        assert body["data"]["items"][0]["persona_id"] == "persona-beta"
     finally:
         bff_main.read_store = original_store
         bff_main._V5_INTERVENTIONS_STORE.clear()
@@ -912,8 +926,21 @@ def test_quarterly_ranking_drilldown_accepts_cors_preflight() -> None:
 def test_governance_ledger_unifies_approval_intervention_and_override_sources() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
+        original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
         try:
             client = _fresh_client(td)
+            bff_main._V5_INTERVENTIONS_STORE.clear()
+            bff_main._V5_INTERVENTIONS_STORE.append(
+                {
+                    "intervention_id": "intv-ledger-001",
+                    "kind": "hiq_sentinel",
+                    "status": "pending",
+                    "target_type": "Runtime",
+                    "target_id": "runtime-ledger-001",
+                    "triggered_at": "2026-05-24T13:30:00Z",
+                    "description": "Ledger intervention fixture.",
+                }
+            )
             bff_main.read_store._data.setdefault("governance_audit_events", []).append(
                 {
                     "entry_id": "audit-override-001",
@@ -934,32 +961,36 @@ def test_governance_ledger_unifies_approval_intervention_and_override_sources() 
             response = client.get(
                 "/bff/management/governance-ledger",
                 headers=HEADERS,
-                params={"page_size": 20},
+                params={"page_size": 200},
             )
 
             assert response.status_code == 200, response.text
             body = response.json()
             data = body["data"]
+            items = data["items"]
+            summary = data["summary"]
 
             assert data["id"] == "management-governance-ledger"
-            assert body["items"] == body["entries"] == data["entries"]
-            assert body["ledger"] == body["items"]
-            assert body["summary"] == data["summary"]
-            assert body["page_info"]["total"] == body["summary"]["ledger_count"]
-            assert body["page_info"]["page_size"] == 20
-            assert body["summary"]["approval_count"] >= 1
-            assert body["summary"]["intervention_count"] >= 1
-            assert body["summary"]["override_count"] == 1
-            assert body["summary"]["by_source_type"]["override"] == 1
-            assert body["summary"]["policy"] == "read_only_governance_ledger"
+            assert set(body.keys()) == {"data", "page_info", "meta"}
+            assert "entries" not in data
+            assert "ledger" not in data
+            assert body["page_info"]["total"] == summary["ledger_count"]
+            assert body["page_info"]["page_size"] == 200
+            assert summary["approval_count"] >= 1
+            assert summary["intervention_count"] >= 1
+            assert summary["override_count"] == 1
+            assert summary["by_source_type"]["override"] == 1
+            assert summary["policy"] == "read_only_governance_ledger"
             assert body["meta"]["policy"] == "read_only_governance_ledger"
             assert body["meta"]["surfaces"]["governance_ledger"]["source"] == "bff_composed"
             assert "GET /bff/audit" in body["meta"]["composition_sources"]
             assert "GET /bff/approvals" in body["meta"]["composition_sources"]
             assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
-            assert any(item["source_type"] == "approval" for item in body["items"])
-            assert any(item["source_type"] == "intervention" for item in body["items"])
-            assert any(item["source_type"] == "override" for item in body["items"])
+            assert any(item["source_type"] == "approval" for item in items)
+            assert any(item["source_type"] == "intervention" for item in items)
+            assert any(item["source_type"] == "override" for item in items)
+            assert all("sourceRecord" not in item for item in items)
+            assert all("source_record" not in item for item in items)
 
             override = client.get(
                 "/bff/management/governance-ledger",
@@ -968,10 +999,12 @@ def test_governance_ledger_unifies_approval_intervention_and_override_sources() 
             )
             assert override.status_code == 200, override.text
             override_body = override.json()
-            assert override_body["summary"]["ledger_count"] == 1
-            assert override_body["items"][0]["event_type"] == "ManualRiskOverride"
+            assert override_body["data"]["summary"]["ledger_count"] == 1
+            assert override_body["data"]["items"][0]["event_type"] == "ManualRiskOverride"
         finally:
             bff_main.read_store = original
+            bff_main._V5_INTERVENTIONS_STORE.clear()
+            bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
 
 
 def test_governance_ledger_cors_preflight_and_openapi() -> None:

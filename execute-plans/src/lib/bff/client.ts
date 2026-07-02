@@ -160,16 +160,20 @@ export interface HumanInboxItem {
 }
 
 export interface HumanInboxAggregate {
-  data: HumanInboxItem[];
-  items: HumanInboxItem[];
-  summary: {
-    total_items: number;
-    returned_items: number;
-    pending_items: number;
-    approval_count: number;
-    intervention_count: number;
-    critical_count: number;
-    high_count: number;
+  data: {
+    id: string;
+    items: HumanInboxItem[];
+    summary: {
+      total_items: number;
+      returned_items: number;
+      pending_items: number;
+      approval_count: number;
+      intervention_count: number;
+      critical_count: number;
+      high_count: number;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
   };
   page_info: {
     next_page_token: string | null;
@@ -396,16 +400,18 @@ function emptyPersonaFleetAggregate(): PersonaFleetAggregate {
 
 function emptyHumanInboxAggregate(): HumanInboxAggregate {
   return {
-    data: [],
-    items: [],
-    summary: {
-      total_items: 0,
-      returned_items: 0,
-      pending_items: 0,
-      approval_count: 0,
-      intervention_count: 0,
-      critical_count: 0,
-      high_count: 0,
+    data: {
+      id: "management-human-inbox",
+      items: [],
+      summary: {
+        total_items: 0,
+        returned_items: 0,
+        pending_items: 0,
+        approval_count: 0,
+        intervention_count: 0,
+        critical_count: 0,
+        high_count: 0,
+      },
     },
     page_info: {
       next_page_token: null,
@@ -536,42 +542,39 @@ function emptyManagementTradingPulseRankingsAggregate(
 
 function emptyManagementEvidenceAggregate(): ManagementEvidenceResponse {
   return {
-    data: [],
-    items: [],
-    summary: {
-      totalEvidence: 0,
-      total_evidence: 0,
-      returnedEvidence: 0,
-      returned_evidence: 0,
-      visibleEvidence: 0,
-      visible_evidence: 0,
-      redactedEvidence: 0,
-      redacted_evidence: 0,
-      verifiedEvidence: 0,
-      verified_evidence: 0,
-      bySourceType: {},
-      by_source_type: {},
-      byLinkType: {},
-      by_link_type: {},
-      byCredibilityTier: {},
-      by_credibility_tier: {},
-    },
-    facets: {
-      sourceTypes: {},
-      source_types: {},
-      linkTypes: {},
-      link_types: {},
-      credibilityTiers: {},
-      credibility_tiers: {},
+    data: {
+      id: "management-evidence",
+      items: [],
+      summary: {
+        totalEvidence: 0,
+        total_evidence: 0,
+        returnedEvidence: 0,
+        returned_evidence: 0,
+        visibleEvidence: 0,
+        visible_evidence: 0,
+        redactedEvidence: 0,
+        redacted_evidence: 0,
+        verifiedEvidence: 0,
+        verified_evidence: 0,
+        bySourceType: {},
+        by_source_type: {},
+        byLinkType: {},
+        by_link_type: {},
+        byCredibilityTier: {},
+        by_credibility_tier: {},
+      },
+      facets: {
+        sourceTypes: {},
+        source_types: {},
+        linkTypes: {},
+        link_types: {},
+        credibilityTiers: {},
+        credibility_tiers: {},
+      },
     },
     page_info: {
       next_page_token: null,
       total: 0,
-      page_size: 0,
-    },
-    pagination: {
-      next_page_token: null,
-      has_more: false,
       page_size: 0,
     },
     meta: {
@@ -791,26 +794,33 @@ function adaptPersonaFleetAggregate(body: unknown): PersonaFleetAggregate {
 
 function adaptHumanInboxAggregate(body: unknown): HumanInboxAggregate {
   const envelope = asObject(body);
-  const rawItems = Array.isArray(envelope.items)
-    ? envelope.items
-    : Array.isArray(envelope.data)
-      ? envelope.data
-      : [];
+  const dataEnvelope = asObject(envelope.data);
+  const rawItems = Array.isArray(dataEnvelope.items)
+    ? dataEnvelope.items
+    : Array.isArray(envelope.items)
+      ? envelope.items
+      : Array.isArray(envelope.data)
+        ? envelope.data
+        : [];
   const items = rawItems.filter((item) => item && typeof item === "object") as HumanInboxItem[];
-  const summary = asObject(envelope.summary);
+  const summary = Object.keys(asObject(dataEnvelope.summary)).length > 0
+    ? asObject(dataEnvelope.summary)
+    : asObject(envelope.summary);
   const pageInfo = asObject(envelope.page_info);
   const meta = asObject(envelope.meta);
   return {
-    data: items,
-    items,
-    summary: {
-      total_items: Number(summary.total_items ?? items.length),
-      returned_items: Number(summary.returned_items ?? items.length),
-      pending_items: Number(summary.pending_items ?? 0),
-      approval_count: Number(summary.approval_count ?? 0),
-      intervention_count: Number(summary.intervention_count ?? 0),
-      critical_count: Number(summary.critical_count ?? 0),
-      high_count: Number(summary.high_count ?? 0),
+    data: {
+      id: String(dataEnvelope.id ?? "management-human-inbox"),
+      items,
+      summary: {
+        total_items: Number(summary.total_items ?? items.length),
+        returned_items: Number(summary.returned_items ?? items.length),
+        pending_items: Number(summary.pending_items ?? 0),
+        approval_count: Number(summary.approval_count ?? 0),
+        intervention_count: Number(summary.intervention_count ?? 0),
+        critical_count: Number(summary.critical_count ?? 0),
+        high_count: Number(summary.high_count ?? 0),
+      },
     },
     page_info: {
       next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
@@ -941,45 +951,52 @@ function adaptManagementTradingPulseRankingsAggregate(
 
 function adaptManagementEvidenceAggregate(body: unknown): ManagementEvidenceResponse {
   const envelope = asObject(body);
-  const rawItems = Array.isArray(envelope.items)
-    ? envelope.items
-    : Array.isArray(envelope.data)
-      ? envelope.data
-      : [];
+  const dataEnvelope = asObject(envelope.data);
+  const rawItems = Array.isArray(dataEnvelope.items)
+    ? dataEnvelope.items
+    : Array.isArray(envelope.items)
+      ? envelope.items
+      : Array.isArray(envelope.data)
+        ? envelope.data
+        : [];
   const items = rawItems.filter((item) => item && typeof item === "object") as ManagementEvidenceItem[];
-  const summary = asObject(envelope.summary);
-  const facets = asObject(envelope.facets);
+  const summary = Object.keys(asObject(dataEnvelope.summary)).length > 0
+    ? asObject(dataEnvelope.summary)
+    : asObject(envelope.summary);
+  const facets = Object.keys(asObject(dataEnvelope.facets)).length > 0
+    ? asObject(dataEnvelope.facets)
+    : asObject(envelope.facets);
   const pageInfo = asObject(envelope.page_info);
-  const pagination = asObject(envelope.pagination);
   const meta = asObject(envelope.meta);
   return {
-    data: items,
-    items,
-    summary: {
-      totalEvidence: Number(summary.totalEvidence ?? summary.total_evidence ?? items.length),
-      total_evidence: Number(summary.total_evidence ?? summary.totalEvidence ?? items.length),
-      returnedEvidence: Number(summary.returnedEvidence ?? summary.returned_evidence ?? items.length),
-      returned_evidence: Number(summary.returned_evidence ?? summary.returnedEvidence ?? items.length),
-      visibleEvidence: Number(summary.visibleEvidence ?? summary.visible_evidence ?? items.length),
-      visible_evidence: Number(summary.visible_evidence ?? summary.visibleEvidence ?? items.length),
-      redactedEvidence: Number(summary.redactedEvidence ?? summary.redacted_evidence ?? 0),
-      redacted_evidence: Number(summary.redacted_evidence ?? summary.redactedEvidence ?? 0),
-      verifiedEvidence: Number(summary.verifiedEvidence ?? summary.verified_evidence ?? 0),
-      verified_evidence: Number(summary.verified_evidence ?? summary.verifiedEvidence ?? 0),
-      bySourceType: asObject(summary.bySourceType ?? summary.by_source_type) as Record<string, number>,
-      by_source_type: asObject(summary.by_source_type ?? summary.bySourceType) as Record<string, number>,
-      byLinkType: asObject(summary.byLinkType ?? summary.by_link_type) as Record<string, number>,
-      by_link_type: asObject(summary.by_link_type ?? summary.byLinkType) as Record<string, number>,
-      byCredibilityTier: asObject(summary.byCredibilityTier ?? summary.by_credibility_tier) as Record<string, number>,
-      by_credibility_tier: asObject(summary.by_credibility_tier ?? summary.byCredibilityTier) as Record<string, number>,
+    data: {
+      id: String(dataEnvelope.id ?? "management-evidence"),
+      items,
+      summary: {
+        totalEvidence: Number(summary.totalEvidence ?? summary.total_evidence ?? items.length),
+        total_evidence: Number(summary.total_evidence ?? summary.totalEvidence ?? items.length),
+        returnedEvidence: Number(summary.returnedEvidence ?? summary.returned_evidence ?? items.length),
+        returned_evidence: Number(summary.returned_evidence ?? summary.returnedEvidence ?? items.length),
+        visibleEvidence: Number(summary.visibleEvidence ?? summary.visible_evidence ?? items.length),
+        visible_evidence: Number(summary.visible_evidence ?? summary.visibleEvidence ?? items.length),
+        redactedEvidence: Number(summary.redactedEvidence ?? summary.redacted_evidence ?? 0),
+        redacted_evidence: Number(summary.redacted_evidence ?? summary.redactedEvidence ?? 0),
+        verifiedEvidence: Number(summary.verifiedEvidence ?? summary.verified_evidence ?? 0),
+        verified_evidence: Number(summary.verified_evidence ?? summary.verifiedEvidence ?? 0),
+        bySourceType: asObject(summary.bySourceType ?? summary.by_source_type) as Record<string, number>,
+        by_source_type: asObject(summary.by_source_type ?? summary.bySourceType) as Record<string, number>,
+        byLinkType: asObject(summary.byLinkType ?? summary.by_link_type) as Record<string, number>,
+        by_link_type: asObject(summary.by_link_type ?? summary.byLinkType) as Record<string, number>,
+        byCredibilityTier: asObject(summary.byCredibilityTier ?? summary.by_credibility_tier) as Record<string, number>,
+        by_credibility_tier: asObject(summary.by_credibility_tier ?? summary.byCredibilityTier) as Record<string, number>,
+      },
+      facets: facets as ManagementEvidenceResponse["data"]["facets"],
     },
-    facets: facets as ManagementEvidenceResponse["facets"],
     page_info: {
       next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
       total: Number(pageInfo.total ?? items.length),
       page_size: Number(pageInfo.page_size ?? items.length),
     },
-    pagination: pagination as ManagementEvidenceResponse["pagination"],
     meta: meta as ManagementEvidenceResponse["meta"],
   };
 }

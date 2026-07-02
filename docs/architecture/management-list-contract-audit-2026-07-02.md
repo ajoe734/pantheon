@@ -5,7 +5,7 @@
 | Scope | Static audit of `services/control-plane/bff/main.py` Management list/table/board contracts |
 | Tool | `scripts/audit_management_list_contract.py` |
 | Baseline | `docs/architecture/management-list-contract-baseline.json` |
-| Result | 159 existing contract smells after the first nine remediation slices: 22 P0, 137 P1 |
+| Result | 134 existing contract smells after the first ten remediation slices: 0 P0, 134 P1 |
 
 ## Trigger
 
@@ -34,17 +34,20 @@ findings, `MGMT-LIST-CONTRACT-003` retired nine board-pack findings,
 findings, `MGMT-LIST-CONTRACT-006` retired PM12 analytics table envelope
 findings, `MGMT-LIST-CONTRACT-007` retired Persona League and Quarterly
 Ranking family envelope aliases, `MGMT-LIST-CONTRACT-008` retired Cost
-Attribution envelope aliases, and `MGMT-LIST-CONTRACT-009` retired NL/AI
-Management, Evolution Journal, and Persona Intent duplicate envelopes:
+Attribution envelope aliases, `MGMT-LIST-CONTRACT-009` retired NL/AI
+Management, Evolution Journal, and Persona Intent duplicate envelopes, and
+`MGMT-LIST-CONTRACT-010` retired the remaining P0 list-contract cluster in
+Human Inbox, Evidence Explorer, HIQ Backlog, Intervention Stream, Governance
+Ledger, and Sentinel Pulse helpers:
 
 | Category | Count | Severity | Meaning |
 |---|---:|---|---|
-| `duplicate-envelope` | 5 | P0 | Response returns `data` plus top-level list aliases such as `items`, `rows`, `rankings`, `pools` |
-| `duplicate-list-alias` | 4 | P0 | Same list value is returned under multiple semantic names |
-| `source-record-in-list-dto` | 10 | P0 | Raw source record/document fields appear in list DTO helpers |
-| `embedded-aggregate-payload` | 3 | P0 | List/board payload embeds related aggregate collections |
+| `duplicate-envelope` | 0 | P0 | Response returns `data` plus top-level list aliases such as `items`, `rows`, `rankings`, `pools` |
+| `duplicate-list-alias` | 0 | P0 | Same list value is returned under multiple semantic names |
+| `source-record-in-list-dto` | 0 | P0 | Raw source record/document fields appear in list DTO helpers |
+| `embedded-aggregate-payload` | 0 | P0 | List/board payload embeds related aggregate collections |
 | `board-pack-full-child-payloads` | 0 | P0 | Board pack nests complete child endpoint responses |
-| `camel-snake-duplicate` | 129 | P1 | DTOs return both casing variants for the same fields |
+| `camel-snake-duplicate` | 126 | P1 | DTOs return both casing variants for the same fields |
 | `project-before-page` | 5 | P1 | Endpoint/helper projects broad aggregates before page slicing |
 | `heavy-row-helper` | 3 | P1 | Row helper includes detail-grade nested policy/session/memory/source data |
 
@@ -61,10 +64,10 @@ The complete machine-readable list is in
 | PM12 Analytics Tables | Remediated in `MGMT-LIST-CONTRACT-006`: performance attribution, strategy allocation, capital flow, risk radar, incident timeline, and loop throughput now use one list envelope | Continue removing row-level casing duplicates and project/page order issues in follow-up slices |
 | Persona League Family | Remediated in `MGMT-LIST-CONTRACT-007`: league, rankings, movers, tiers, heatmap, quarterly ranking, recommendations, typed client contracts, and the legacy `/bff/persona-league` helper now use one `data.items`/`data.summary` envelope. `MGMT-LIST-CONTRACT-007B` removed the shadowed legacy `/bff/management/persona-league` decorator. | Continue removing row-level casing duplicates in a follow-up slice |
 | Performance And Cost Attribution | Cost Attribution duplicate list aliases were remediated in `MGMT-LIST-CONTRACT-008`; remaining risk is row projection before page slicing and casing duplication | Filter and page before row expansion; continue removing row-level casing duplicates |
-| Human Inbox And Governance Ledger | Inbox items and ledger helpers expose source records or detail-grade context in list flows | Move raw source/debug payloads to detail endpoints |
+| Human Inbox And Governance Ledger | Remediated in `MGMT-LIST-CONTRACT-010`: Human Inbox and Governance Ledger list contracts now return canonical `data.items`/`data.summary` envelopes and omit raw source records | Keep raw source/debug payloads on detail endpoints only |
 | NL/AI Management Surfaces | Remediated in `MGMT-LIST-CONTRACT-009`: AI audit, conversation list/detail, Evolution Journal, Persona Intent, Python tests, and typed client adapters no longer expose top-level list aliases | Continue removing row-level casing duplicates in Management AI helper payloads |
-| Remaining P0 Cluster | Human Inbox, Governance Ledger, HIQ Backlog, Intervention Stream, Sentinel Pulse, and Evidence degraded helpers still expose source records, duplicate envelopes, or embedded child aggregates | Move source/debug payloads to detail endpoints and collapse list envelopes to `data.items` |
-| Frontend Consumption Pattern | Remediated contracts now reject top-level aliases in focused tests; remaining legacy management client patterns still tolerate multiple shapes on unmigrated routes | Frontend must request server filters/page and adapt one canonical envelope only |
+| Remaining P0 Cluster | Remediated in `MGMT-LIST-CONTRACT-010`: Evidence Explorer, HIQ Backlog, Intervention Stream, Sentinel Pulse, Human Inbox, and Governance Ledger no longer expose duplicate list envelopes, embedded child aggregates, or raw source records in list DTOs | Keep source/debug payloads on detail endpoints and enforce canonical `data.items` list envelopes |
+| Frontend Consumption Pattern | Remediated contracts now reject top-level aliases in focused tests; Human Inbox and Evidence adapters return canonical `data.items`/`data.summary` shapes | Frontend must request server filters/page and adapt one canonical envelope only |
 
 ## Remediation Order
 
@@ -93,12 +96,14 @@ The complete machine-readable list is in
    Evolution Journal, and Persona Intent now use one `data.items`/
    `data.summary` envelope; conversation detail no longer mirrors turns at the
    top level.
-8. Normalize remaining duplicate envelopes in Human Inbox, Governance Ledger,
-   HIQ Backlog, Intervention Stream, and Evidence degraded responses.
-9. Move raw `sourceRecord` and detail-grade helper data out of Human Inbox,
-   Sentinel/Governance helpers, and list DTOs.
-10. Remove camel/snake duplicates from migrated endpoints and delete retired
+8. Done in `MGMT-LIST-CONTRACT-010`: Human Inbox, Evidence Explorer, HIQ
+   Backlog, Intervention Stream, Governance Ledger, and Sentinel Pulse helpers
+   no longer expose duplicate list envelopes, embedded child aggregates, or raw
+   source records in list DTOs.
+9. Remove camel/snake duplicates from migrated endpoints and delete retired
    fingerprints from the baseline.
+10. Fix remaining project-before-page and heavy-row-helper findings so large
+    list endpoints filter and page before detail-grade projection.
 
 ## Enforcement
 

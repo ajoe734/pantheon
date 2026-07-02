@@ -197,7 +197,7 @@ function normalizeManifestView(item: ManagementEvidenceItem, index: number): Liv
 export function collectLiveEvidenceManifests(
   response: ManagementEvidenceResponse,
 ): LiveEvidenceManifestView[] {
-  return response.items
+  return response.data.items
     .map((item, index) => normalizeManifestView(item, index))
     .filter((item): item is LiveEvidenceManifestView => item !== null);
 }
@@ -382,7 +382,7 @@ export function LiveEvidenceManifestPanel() {
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>Source: {surfaceSource}</span>
             <span>Manifests: {manifests.length}</span>
-            <span>Evidence: {response?.summary.visibleEvidence ?? 0}/{response?.summary.totalEvidence ?? 0}</span>
+            <span>Evidence: {response?.data.summary.visibleEvidence ?? 0}/{response?.data.summary.totalEvidence ?? 0}</span>
           </div>
         </div>
         <button
