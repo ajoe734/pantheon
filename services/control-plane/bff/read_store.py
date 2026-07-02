@@ -15788,6 +15788,17 @@ class ReadSurfaceStore:
             return raw
         return (self._local_fallback("telemetry_summaries") or {}).get(runtime_id)
 
+    def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
+        available, raw = self._service.list_records("telemetry_summaries")
+        if available:
+            return [json.loads(json.dumps(summary)) for summary in raw]
+        fallback = self._local_fallback("telemetry_summaries") or {}
+        if isinstance(fallback, dict):
+            return [json.loads(json.dumps(summary)) for summary in fallback.values()]
+        if isinstance(fallback, list):
+            return [json.loads(json.dumps(summary)) for summary in fallback]
+        return []
+
     # ------------------------------------------------------------------ #
     # Evolution surfaces (EV-01 – EV-04)
     # ------------------------------------------------------------------ #
@@ -16364,6 +16375,17 @@ class ReadSurfaceStore:
             return json.loads(json.dumps(raw)) if raw else None
         raw = (self._local_fallback("paper_live_drift_reports") or {}).get(runtime_id)
         return json.loads(json.dumps(raw)) if raw else None
+
+    def list_paper_live_drift_reports(self) -> List[Dict[str, Any]]:
+        available, raw = self._service.list_records("paper_live_drift_reports")
+        if available:
+            return [json.loads(json.dumps(report)) for report in raw]
+        fallback = self._local_fallback("paper_live_drift_reports") or {}
+        if isinstance(fallback, dict):
+            return [json.loads(json.dumps(report)) for report in fallback.values()]
+        if isinstance(fallback, list):
+            return [json.loads(json.dumps(report)) for report in fallback]
+        return []
 
     # ------------------------------------------------------------------ #
     # Persona session surfaces (PS-03, PS-05)

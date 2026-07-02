@@ -6578,21 +6578,37 @@ def _derive_runtime_state_last_updated_at(
     return max(values)
 
 
-def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, Any]:
+def _project_operator_runtime_state_row(
+    binding: Dict[str, Any],
+    *,
+    telemetry_summary_record: Optional[Dict[str, Any]] = None,
+    monitoring_session_record: Optional[Dict[str, Any]] = None,
+    prefetched: bool = False,
+) -> Dict[str, Any]:
     runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
     runtime_binding_id = (
         binding.get("runtime_binding_id")
         or binding.get("binding_id")
         or binding.get("id")
     )
-    telemetry_summary = _project_runtime_state_telemetry_summary(
-        read_store.get_telemetry_summary(runtime_id)
+    raw_telemetry_summary = (
+        telemetry_summary_record
+        if prefetched
+        else read_store.get_telemetry_summary(runtime_id)
     )
-    monitoring_session = _project_runtime_state_monitoring_session(
-        read_store.get_paper_runtime_monitoring_session(
+    telemetry_summary = _project_runtime_state_telemetry_summary(
+        raw_telemetry_summary
+    )
+    raw_monitoring_session = (
+        monitoring_session_record
+        if prefetched
+        else read_store.get_paper_runtime_monitoring_session(
             runtime_id=runtime_id,
             binding_id=str(runtime_binding_id or ""),
         )
+    )
+    monitoring_session = _project_runtime_state_monitoring_session(
+        raw_monitoring_session
     )
     rollbacks = read_store.get_rollbacks(runtime_id)
     latest_rollback = _project_runtime_state_latest_rollback(rollbacks)
@@ -7915,9 +7931,18 @@ def _trading_pulse_drift_metric_counts(drift_groups: Any) -> Dict[str, int]:
     }
 
 
-def _build_trading_pulse_baseline_comparison(row: Dict[str, Any]) -> Dict[str, Any]:
+def _build_trading_pulse_baseline_comparison(
+    row: Dict[str, Any],
+    *,
+    drift_report: Optional[Dict[str, Any]] = None,
+    prefetched: bool = False,
+) -> Dict[str, Any]:
     runtime_id = str(row.get("runtime_id") or "").strip()
-    report = read_store.get_paper_live_drift_report(runtime_id)
+    report = (
+        drift_report
+        if prefetched
+        else read_store.get_paper_live_drift_report(runtime_id)
+    )
     status = _trading_pulse_baseline_status(report)
     drift_groups = (report or {}).get("drift_groups") or []
     metric_counts = _trading_pulse_drift_metric_counts(drift_groups)
@@ -7965,6 +7990,232 @@ def _build_trading_pulse_baseline_comparison(row: Dict[str, Any]) -> Dict[str, A
     }
 
 
+_TRADING_PULSE_METRICS = (
+    "pnl",
+    "drawdown",
+    "sharpe_ratio",
+    "fill_rate",
+    "avg_slippage_bps",
+    "total_trades",
+)
+_TRADING_PULSE_BASELINE_OPERATOR_ORDER = {
+    "breached": 0,
+    "blocked": 0,
+    "critical": 0,
+    "failed": 0,
+    "watch": 1,
+    "degraded": 1,
+    "warning": 1,
+    "warn": 1,
+    "unavailable": 2,
+    "unknown": 3,
+    "ok": 4,
+}
+
+
+def _trading_pulse_runtime_id(record: Dict[str, Any]) -> str:
+    return str(record.get("runtime_id") or record.get("runtimeId") or record.get("id") or "").strip()
+
+
+def _trading_pulse_binding_id(record: Dict[str, Any]) -> str:
+    return str(
+        record.get("runtime_binding_id")
+        or record.get("runtimeBindingId")
+        or record.get("binding_id")
+        or record.get("bindingId")
+        or ""
+    ).strip()
+
+
+def _trading_pulse_index_by_runtime(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    by_runtime: Dict[str, Dict[str, Any]] = {}
+    for record in records:
+        runtime_id = _trading_pulse_runtime_id(record)
+        if runtime_id and runtime_id not in by_runtime:
+            by_runtime[runtime_id] = record
+    return by_runtime
+
+
+def _trading_pulse_monitoring_indexes(
+    sessions: List[Dict[str, Any]],
+) -> tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    by_runtime: Dict[str, Dict[str, Any]] = {}
+    by_binding: Dict[str, Dict[str, Any]] = {}
+    for session in sessions:
+        runtime_id = _trading_pulse_runtime_id(session)
+        binding_id = _trading_pulse_binding_id(session)
+        if runtime_id and runtime_id not in by_runtime:
+            by_runtime[runtime_id] = session
+        if binding_id and binding_id not in by_binding:
+            by_binding[binding_id] = session
+    return by_runtime, by_binding
+
+
+def _trading_pulse_stage(row: Dict[str, Any]) -> str:
+    return str(row.get("deployment_stage") or row.get("deploymentStage") or "").strip().lower()
+
+
+def _trading_pulse_metric_map(row: Dict[str, Any]) -> Dict[str, Any]:
+    telemetry = row.get("telemetry_summary") if isinstance(row.get("telemetry_summary"), dict) else {}
+    metrics = telemetry.get("metrics") if isinstance(telemetry.get("metrics"), dict) else {}
+    return metrics if isinstance(metrics, dict) else {}
+
+
+def _trading_pulse_row_health(row: Dict[str, Any]) -> Dict[str, Any]:
+    health = row.get("row_health") if isinstance(row.get("row_health"), dict) else {}
+    return health if isinstance(health, dict) else {}
+
+
+def _trading_pulse_row_health_status(row: Dict[str, Any]) -> str:
+    return str(_trading_pulse_row_health(row).get("status") or "unknown").strip().lower() or "unknown"
+
+
+def _trading_pulse_row_degraded_checks(row: Dict[str, Any]) -> List[str]:
+    checks = _trading_pulse_row_health(row).get("degraded_checks")
+    if not isinstance(checks, list):
+        return []
+    return [str(check) for check in checks if str(check or "").strip()]
+
+
+def _trading_pulse_status_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for row in rows:
+        status = _trading_pulse_row_health_status(row)
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _trading_pulse_missing_metric_runtime_ids(
+    rows: List[Dict[str, Any]],
+    metric: str,
+) -> List[str]:
+    missing: List[str] = []
+    for row in rows:
+        metrics = _trading_pulse_metric_map(row)
+        if _management_number(metrics.get(metric)) is not None:
+            continue
+        runtime_id = str(row.get("runtime_id") or "").strip()
+        if runtime_id:
+            missing.append(runtime_id)
+    return missing
+
+
+def _trading_pulse_metric_coverage(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    coverage: Dict[str, Dict[str, Any]] = {}
+    total = len(rows)
+    for metric in _TRADING_PULSE_METRICS:
+        missing_runtime_ids = _trading_pulse_missing_metric_runtime_ids(rows, metric)
+        available_count = total - len(missing_runtime_ids)
+        coverage[metric] = {
+            "availableCount": available_count,
+            "available_count": available_count,
+            "missingCount": len(missing_runtime_ids),
+            "missing_count": len(missing_runtime_ids),
+            "missingRuntimeIds": missing_runtime_ids,
+            "missing_runtime_ids": missing_runtime_ids,
+        }
+    return coverage
+
+
+def _trading_pulse_coverage_summary(
+    rows: List[Dict[str, Any]],
+    baseline_comparisons: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    runtime_ids = [str(row.get("runtime_id") or "").strip() for row in rows if row.get("runtime_id")]
+    telemetry_runtime_ids = [
+        str(row.get("runtime_id") or "").strip()
+        for row in rows
+        if isinstance(row.get("telemetry_summary"), dict)
+    ]
+    paper_rows = [row for row in rows if _trading_pulse_stage(row) == "paper"]
+    monitoring_runtime_ids = [
+        str(row.get("runtime_id") or "").strip()
+        for row in paper_rows
+        if isinstance(row.get("paper_runtime_monitoring"), dict)
+    ]
+    baseline_runtime_ids = [
+        str(comparison.get("runtime_id") or comparison.get("runtimeId") or "").strip()
+        for comparison in baseline_comparisons
+        if ((comparison.get("paper_live_drift") or {}).get("available") is True)
+    ]
+    degraded_runtime_ids = [
+        str(row.get("runtime_id") or "").strip()
+        for row in rows
+        if _trading_pulse_row_health_status(row) != "ok"
+    ]
+    missing_telemetry_runtime_ids = sorted(set(runtime_ids) - set(telemetry_runtime_ids))
+    missing_monitoring_runtime_ids = sorted(
+        {
+            str(row.get("runtime_id") or "").strip()
+            for row in paper_rows
+            if not isinstance(row.get("paper_runtime_monitoring"), dict)
+        }
+    )
+    missing_baseline_runtime_ids = sorted(set(runtime_ids) - set(baseline_runtime_ids))
+    row_health_status_counts = _trading_pulse_status_counts(rows)
+    metric_coverage = _trading_pulse_metric_coverage(rows)
+    return {
+        "runtimeCount": len(rows),
+        "runtime_count": len(rows),
+        "paperRuntimeCount": len(paper_rows),
+        "paper_runtime_count": len(paper_rows),
+        "telemetryCoverageCount": len(telemetry_runtime_ids),
+        "telemetry_coverage_count": len(telemetry_runtime_ids),
+        "monitoringCoverageCount": len(monitoring_runtime_ids),
+        "monitoring_coverage_count": len(monitoring_runtime_ids),
+        "baselineComparisonCount": len(baseline_runtime_ids),
+        "baseline_comparison_count": len(baseline_runtime_ids),
+        "missingTelemetryRuntimeIds": missing_telemetry_runtime_ids,
+        "missing_telemetry_runtime_ids": missing_telemetry_runtime_ids,
+        "missingMonitoringRuntimeIds": missing_monitoring_runtime_ids,
+        "missing_monitoring_runtime_ids": missing_monitoring_runtime_ids,
+        "missingBaselineRuntimeIds": missing_baseline_runtime_ids,
+        "missing_baseline_runtime_ids": missing_baseline_runtime_ids,
+        "rowHealthStatusCounts": row_health_status_counts,
+        "row_health_status_counts": row_health_status_counts,
+        "rowHealthDegradedCount": len(degraded_runtime_ids),
+        "row_health_degraded_count": len(degraded_runtime_ids),
+        "degradedRuntimeIds": degraded_runtime_ids,
+        "degraded_runtime_ids": degraded_runtime_ids,
+        "metricCoverage": metric_coverage,
+        "metric_coverage": metric_coverage,
+    }
+
+
+def _trading_pulse_row_health_surface(
+    rows: List[Dict[str, Any]],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    surface["source"] = "bff_composed"
+    degraded_count = sum(1 for row in rows if _trading_pulse_row_health_status(row) != "ok")
+    if degraded_count:
+        surface["status"] = "degraded"
+        surface["message"] = (
+            f"Trading pulse row health is degraded for {degraded_count} runtime(s)."
+        )
+    return surface
+
+
+def _trading_pulse_operator_row_sort_key(row: Dict[str, Any]) -> tuple[int, int, float, float, str]:
+    health_status = _trading_pulse_row_health_status(row)
+    health_priority = 1 if health_status == "ok" else 0
+    baseline = row.get("baseline_comparison") if isinstance(row.get("baseline_comparison"), dict) else {}
+    baseline_status = str(baseline.get("status") or "unknown").strip().lower() or "unknown"
+    baseline_priority = _TRADING_PULSE_BASELINE_OPERATOR_ORDER.get(baseline_status, 3)
+    pnl = _management_number(_trading_pulse_metric_map(row).get("pnl"))
+    pnl_priority = -(abs(pnl) if pnl is not None else -1.0)
+    last_updated = _parse_rfc3339(row.get("last_updated_at"))
+    last_updated_priority = -(last_updated.timestamp()) if last_updated else float("inf")
+    runtime_id = str(row.get("runtime_id") or "")
+    return (health_priority, baseline_priority, pnl_priority, last_updated_priority, runtime_id)
+
+
+def _trading_pulse_sort_operator_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return sorted(rows, key=_trading_pulse_operator_row_sort_key)
+
+
 _MANAGEMENT_RISK_LEVEL_ORDER = {
     "low": 1,
     "medium": 2,
@@ -7975,9 +8226,42 @@ _MANAGEMENT_RISK_LEVEL_ORDER = {
 
 def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_bindings = read_store.list_runtime_bindings()
-    runtime_rows = [_project_operator_runtime_state_row(binding) for binding in runtime_bindings]
+    telemetry_by_runtime_id = _trading_pulse_index_by_runtime(
+        read_store.list_telemetry_summaries()
+    )
+    drift_by_runtime_id = _trading_pulse_index_by_runtime(
+        read_store.list_paper_live_drift_reports()
+    )
+    monitoring_by_runtime_id, monitoring_by_binding_id = _trading_pulse_monitoring_indexes(
+        read_store.list_paper_runtime_monitoring_sessions()
+    )
+    runtime_rows = []
+    for binding in runtime_bindings:
+        runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+        binding_id = str(
+            binding.get("runtime_binding_id")
+            or binding.get("binding_id")
+            or binding.get("id")
+            or ""
+        )
+        runtime_rows.append(
+            _project_operator_runtime_state_row(
+                binding,
+                telemetry_summary_record=telemetry_by_runtime_id.get(runtime_id),
+                monitoring_session_record=(
+                    monitoring_by_binding_id.get(binding_id)
+                    or monitoring_by_runtime_id.get(runtime_id)
+                ),
+                prefetched=True,
+            )
+        )
     baseline_comparisons = [
-        _build_trading_pulse_baseline_comparison(row) for row in runtime_rows
+        _build_trading_pulse_baseline_comparison(
+            row,
+            drift_report=drift_by_runtime_id.get(str(row.get("runtime_id") or "")),
+            prefetched=True,
+        )
+        for row in runtime_rows
     ]
     baseline_by_runtime_id = {
         str(comparison.get("runtimeId") or comparison.get("runtime_id") or ""): comparison
@@ -7986,6 +8270,19 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     for row in runtime_rows:
         comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or ""))
         row["baseline_comparison"] = comparison
+    runtime_rows = _trading_pulse_sort_operator_rows(runtime_rows)
+    row_order = {
+        str(row.get("runtime_id") or ""): index
+        for index, row in enumerate(runtime_rows)
+    }
+    baseline_comparisons = sorted(
+        baseline_comparisons,
+        key=lambda comparison: row_order.get(
+            str(comparison.get("runtimeId") or comparison.get("runtime_id") or ""),
+            len(row_order),
+        ),
+    )
+    coverage = _trading_pulse_coverage_summary(runtime_rows, baseline_comparisons)
     telemetry_rows = [
         row.get("telemetry_summary")
         for row in runtime_rows
@@ -8037,6 +8334,10 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
                 "last_updated_at": row.get("last_updated_at"),
                 "baseline_comparison_status": baseline_comparison.get("status"),
                 "breached_metric_count": baseline_comparison.get("breached_metric_count"),
+                "rowHealthStatus": _trading_pulse_row_health_status(row),
+                "row_health_status": _trading_pulse_row_health_status(row),
+                "rowHealthDegradedChecks": _trading_pulse_row_degraded_checks(row),
+                "row_health_degraded_checks": _trading_pulse_row_degraded_checks(row),
             }
         )
     rankings.sort(
@@ -8075,6 +8376,30 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
             "staleness",
             {"served_from": "unverifiable", "last_known_at": snapshot_at},
         )
+    monitoring_surface = _dataset_surface_status(
+        "paper_runtime_monitoring_sessions",
+        snapshot_at=snapshot_at,
+    )
+    paper_runtime_count = int(coverage.get("paperRuntimeCount") or 0)
+    monitoring_coverage_count = int(coverage.get("monitoringCoverageCount") or 0)
+    if paper_runtime_count == 0:
+        monitoring_surface = {
+            "status": "ok",
+            "source": "not_applicable",
+            "message": "No paper runtimes require paper runtime monitoring.",
+        }
+    elif (
+        monitoring_coverage_count < paper_runtime_count
+        and monitoring_surface.get("status") == "ok"
+    ):
+        monitoring_surface["status"] = "degraded"
+        monitoring_surface["message"] = (
+            "Paper runtime monitoring session missing for one or more paper runtimes."
+        )
+        monitoring_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
     paper_live_drift_surface = _dataset_surface_status(
         "paper_live_drift_reports",
         snapshot_at=snapshot_at,
@@ -8099,12 +8424,23 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         unavailable_message="Trading pulse baseline comparison unavailable.",
         degraded_message="Trading pulse baseline comparison is degraded because one or more paper/live drift reports are missing.",
     )
+    row_health_surface = _trading_pulse_row_health_surface(
+        runtime_rows,
+        snapshot_at=snapshot_at,
+    )
     trading_surface = _aggregate_group_surface(
         "management_trading_pulse",
-        [runtime_surface, telemetry_surface, baseline_surface],
+        [
+            runtime_surface,
+            telemetry_surface,
+            monitoring_surface,
+            paper_live_drift_surface,
+            baseline_surface,
+            row_health_surface,
+        ],
         snapshot_at=snapshot_at,
         unavailable_message="Trading pulse aggregate unavailable.",
-        degraded_message="Trading pulse aggregate is available, but runtime, telemetry, or baseline coverage is degraded.",
+        degraded_message="Trading pulse aggregate is available, but runtime, telemetry, monitoring, row health, or baseline coverage is degraded.",
     )
 
     summary = {
@@ -8121,31 +8457,68 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "baseline_breached_count": baseline_breached_count,
         "baseline_watch_count": baseline_watch_count,
         "by_baseline_status": by_baseline_status,
+        "rowHealthDegradedCount": coverage["rowHealthDegradedCount"],
+        "row_health_degraded_count": coverage["row_health_degraded_count"],
+        "rowHealthStatusCounts": coverage["rowHealthStatusCounts"],
+        "row_health_status_counts": coverage["row_health_status_counts"],
+        "monitoringCoverageCount": coverage["monitoringCoverageCount"],
+        "monitoring_coverage_count": coverage["monitoring_coverage_count"],
+        "missingTelemetryRuntimeIds": coverage["missingTelemetryRuntimeIds"],
+        "missing_telemetry_runtime_ids": coverage["missing_telemetry_runtime_ids"],
+        "missingMonitoringRuntimeIds": coverage["missingMonitoringRuntimeIds"],
+        "missing_monitoring_runtime_ids": coverage["missing_monitoring_runtime_ids"],
+        "missingBaselineRuntimeIds": coverage["missingBaselineRuntimeIds"],
+        "missing_baseline_runtime_ids": coverage["missing_baseline_runtime_ids"],
+        "metricCoverage": coverage["metricCoverage"],
+        "metric_coverage": coverage["metric_coverage"],
+        "coverage": coverage,
     }
     cards = [
         {
             "card_id": "runtime-status",
             "label": "Runtime Status",
             "value": len(runtime_rows),
-            "details": {"by_status": by_status, "by_stage": by_stage},
+            "details": {
+                "by_status": by_status,
+                "by_stage": by_stage,
+                "row_health_status_counts": coverage["row_health_status_counts"],
+            },
+        },
+        {
+            "card_id": "row-health",
+            "label": "Row Health",
+            "value": summary["row_health_degraded_count"],
+            "details": {
+                "row_health_status_counts": coverage["row_health_status_counts"],
+                "degraded_runtime_ids": coverage["degraded_runtime_ids"],
+            },
         },
         {
             "card_id": "pnl",
             "label": "P&L",
             "value": summary["total_pnl"],
-            "details": {"telemetry_coverage_count": len(telemetry_rows)},
+            "details": {
+                "telemetry_coverage_count": len(telemetry_rows),
+                "metric_coverage": (coverage["metric_coverage"] or {}).get("pnl"),
+            },
         },
         {
             "card_id": "drawdown",
             "label": "Worst Drawdown",
             "value": summary["worst_drawdown"],
-            "details": {"source": "telemetry_summaries"},
+            "details": {
+                "source": "telemetry_summaries",
+                "metric_coverage": (coverage["metric_coverage"] or {}).get("drawdown"),
+            },
         },
         {
             "card_id": "execution-quality",
             "label": "Execution Quality",
             "value": summary["average_fill_rate"],
-            "details": {"worst_slippage_bps": summary["worst_slippage_bps"]},
+            "details": {
+                "worst_slippage_bps": summary["worst_slippage_bps"],
+                "metric_coverage": (coverage["metric_coverage"] or {}).get("fill_rate"),
+            },
         },
         {
             "card_id": "baseline-comparison",
@@ -8154,6 +8527,7 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
             "details": {
                 "baseline_comparison_count": summary["baseline_comparison_count"],
                 "by_baseline_status": by_baseline_status,
+                "missing_baseline_runtime_ids": coverage["missing_baseline_runtime_ids"],
             },
         },
     ]
@@ -8162,9 +8536,12 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "management_trading_pulse": trading_surface,
         "runtime_roster": runtime_surface,
         "telemetry_summary": telemetry_surface,
+        "paper_runtime_monitoring": monitoring_surface,
         "paper_live_drift": paper_live_drift_surface,
         "baseline_comparison": baseline_surface,
+        "runtime_row_health": row_health_surface,
     }
+    meta["coverage"] = coverage
     return {
         "summary": summary,
         "cards": cards,
@@ -8229,10 +8606,6 @@ def _trading_pulse_ranked_items(
         item for item in rankings
         if _trading_pulse_metric_value(item, metric) is not None
     ]
-    missing = [
-        item for item in rankings
-        if _trading_pulse_metric_value(item, metric) is None
-    ]
     ordered_present = sorted(
         present,
         key=lambda item: (
@@ -8241,20 +8614,68 @@ def _trading_pulse_ranked_items(
         ),
         reverse=descending,
     )
-    ordered_missing = sorted(
-        missing,
-        key=lambda item: str(item.get("runtimeId") or item.get("runtime_id") or ""),
-    )
 
     ranked: List[Dict[str, Any]] = []
-    for index, item in enumerate((ordered_present + ordered_missing)[:limit], start=1):
+    for index, item in enumerate(ordered_present[:limit], start=1):
         projected = dict(item)
         projected["rank"] = index
         projected["ranking_block_id"] = block_id
         projected["ranking_metric"] = metric
         projected["ranking_metric_value"] = _trading_pulse_metric_value(item, metric)
+        projected["ranking_eligible"] = True
         ranked.append(projected)
     return ranked
+
+
+def _trading_pulse_ranking_missing_runtime_ids(
+    rankings: List[Dict[str, Any]],
+    metric: str,
+) -> List[str]:
+    return [
+        str(item.get("runtimeId") or item.get("runtime_id") or "")
+        for item in rankings
+        if _trading_pulse_metric_value(item, metric) is None
+        and str(item.get("runtimeId") or item.get("runtime_id") or "").strip()
+    ]
+
+
+def _build_management_trading_pulse_ranking_block(
+    rankings: List[Dict[str, Any]],
+    *,
+    block_id: str,
+    label: str,
+    metric: str,
+    descending: bool,
+    limit: int,
+    secondary_metric: Optional[str] = None,
+) -> Dict[str, Any]:
+    items = _trading_pulse_ranked_items(
+        rankings,
+        metric=metric,
+        descending=descending,
+        limit=limit,
+        block_id=block_id,
+    )
+    missing_runtime_ids = _trading_pulse_ranking_missing_runtime_ids(rankings, metric)
+    block: Dict[str, Any] = {
+        "blockId": block_id,
+        "block_id": block_id,
+        "label": label,
+        "metric": metric,
+        "sortOrder": "desc" if descending else "asc",
+        "sort_order": "desc" if descending else "asc",
+        "items": items,
+        "eligibleItemCount": len(rankings) - len(missing_runtime_ids),
+        "eligible_item_count": len(rankings) - len(missing_runtime_ids),
+        "missingMetricCount": len(missing_runtime_ids),
+        "missing_metric_count": len(missing_runtime_ids),
+        "missingMetricRuntimeIds": missing_runtime_ids,
+        "missing_metric_runtime_ids": missing_runtime_ids,
+    }
+    if secondary_metric:
+        block["secondaryMetric"] = secondary_metric
+        block["secondary_metric"] = secondary_metric
+    return block
 
 
 def _build_management_trading_pulse_ranking_blocks(
@@ -8263,59 +8684,39 @@ def _build_management_trading_pulse_ranking_blocks(
     limit: int,
 ) -> List[Dict[str, Any]]:
     return [
-        {
-            "block_id": "pnl-leaders",
-            "label": "P&L Leaders",
-            "metric": "pnl",
-            "sort_order": "desc",
-            "items": _trading_pulse_ranked_items(
-                rankings,
-                metric="pnl",
-                descending=True,
-                limit=limit,
-                block_id="pnl-leaders",
-            ),
-        },
-        {
-            "block_id": "drawdown-control",
-            "label": "Drawdown Control",
-            "metric": "drawdown",
-            "sort_order": "asc",
-            "items": _trading_pulse_ranked_items(
-                rankings,
-                metric="drawdown",
-                descending=False,
-                limit=limit,
-                block_id="drawdown-control",
-            ),
-        },
-        {
-            "block_id": "execution-quality",
-            "label": "Execution Quality",
-            "metric": "fill_rate",
-            "secondary_metric": "avg_slippage_bps",
-            "sort_order": "desc",
-            "items": _trading_pulse_ranked_items(
-                rankings,
-                metric="fill_rate",
-                descending=True,
-                limit=limit,
-                block_id="execution-quality",
-            ),
-        },
-        {
-            "block_id": "sharpe-leaders",
-            "label": "Sharpe Leaders",
-            "metric": "sharpe_ratio",
-            "sort_order": "desc",
-            "items": _trading_pulse_ranked_items(
-                rankings,
-                metric="sharpe_ratio",
-                descending=True,
-                limit=limit,
-                block_id="sharpe-leaders",
-            ),
-        },
+        _build_management_trading_pulse_ranking_block(
+            rankings,
+            block_id="pnl-leaders",
+            label="P&L Leaders",
+            metric="pnl",
+            descending=True,
+            limit=limit,
+        ),
+        _build_management_trading_pulse_ranking_block(
+            rankings,
+            block_id="drawdown-control",
+            label="Drawdown Control",
+            metric="drawdown",
+            descending=False,
+            limit=limit,
+        ),
+        _build_management_trading_pulse_ranking_block(
+            rankings,
+            block_id="execution-quality",
+            label="Execution Quality",
+            metric="fill_rate",
+            descending=True,
+            limit=limit,
+            secondary_metric="avg_slippage_bps",
+        ),
+        _build_management_trading_pulse_ranking_block(
+            rankings,
+            block_id="sharpe-leaders",
+            label="Sharpe Leaders",
+            metric="sharpe_ratio",
+            descending=True,
+            limit=limit,
+        ),
     ]
 
 
@@ -8335,8 +8736,10 @@ def _build_management_trading_pulse_rankings_payload(
             surfaces.get("management_trading_pulse"),
             surfaces.get("runtime_roster"),
             surfaces.get("telemetry_summary"),
+            surfaces.get("paper_runtime_monitoring"),
             surfaces.get("paper_live_drift"),
             surfaces.get("baseline_comparison"),
+            surfaces.get("runtime_row_health"),
         )
         if isinstance(surface, dict)
     ]
@@ -8349,10 +8752,27 @@ def _build_management_trading_pulse_rankings_payload(
     )
     top_item = (blocks[0].get("items") or [None])[0] if blocks else None
     ranked_item_count = sum(len(block.get("items") or []) for block in blocks)
+    missing_metric_item_count = sum(
+        int(block.get("missingMetricCount") or block.get("missing_metric_count") or 0)
+        for block in blocks
+    )
+    eligible_item_count = sum(
+        int(block.get("eligibleItemCount") or block.get("eligible_item_count") or 0)
+        for block in blocks
+    )
+    if missing_metric_item_count and surfaces["management_trading_pulse_rankings"].get("status") == "ok":
+        surfaces["management_trading_pulse_rankings"]["status"] = "degraded"
+        surfaces["management_trading_pulse_rankings"]["message"] = (
+            "Trading pulse rankings are degraded because one or more ranking metrics are missing."
+        )
     summary = {
         "runtime_count": int((trading_pulse.get("summary") or {}).get("runtime_count") or 0),
         "ranking_block_count": len(blocks),
         "ranked_item_count": ranked_item_count,
+        "eligibleItemCount": eligible_item_count,
+        "eligible_item_count": eligible_item_count,
+        "missingMetricItemCount": missing_metric_item_count,
+        "missing_metric_item_count": missing_metric_item_count,
         "criteria": [str(block.get("metric") or "") for block in blocks],
         "limit": limit,
         "top_runtime_id": (top_item or {}).get("runtime_id") if isinstance(top_item, dict) else None,
@@ -8375,6 +8795,7 @@ def _build_management_trading_pulse_rankings_payload(
                 "GET /bff/management/trading-pulse",
                 "GET /bff/runtimes",
                 "telemetry_summaries",
+                "paper_runtime_monitoring_sessions",
                 "paper_live_drift_reports",
             ],
         },
