@@ -63,6 +63,9 @@ def test_human_inbox_composes_approvals_and_interventions() -> None:
             summary = body["data"]["summary"]
             assert summary["approval_count"] >= 1
             assert summary["intervention_count"] >= 1
+            assert "byStatus" not in summary
+            assert "byType" not in summary
+            assert "highestRiskLevel" not in summary
             assert body["meta"]["surfaces"]["human_inbox"]["source"] == "bff_composed"
             assert "approval_queue" in body["meta"]["surfaces"]
             assert body["meta"]["surfaces"]["v5_interventions"]["source"] in {
@@ -142,6 +145,8 @@ def test_human_inbox_includes_persona_readiness_blockers(monkeypatch) -> None:
             assert item["allowedActions"]["canProceed"] is False
             assert item["research_context"]["current_research_projects"][0]["project_id"] == "MGMT-QLIB-006"
             assert "MGMT-QLIB-003" in " ".join(item["blocking_reasons"])
+            assert "blockingReasons" not in item
+            assert "canProceed" not in item
 
             detail_resp = client.get(
                 "/bff/management/human-inbox/readiness_blocker:persona:persona-tw-equity",

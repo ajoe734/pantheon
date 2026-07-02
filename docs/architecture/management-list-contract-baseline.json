@@ -1,7 +1,5 @@
 {
   "fingerprints": [
-    "4b15e7443b7e217f",
-    "b5802c86c86757fa",
     "05020122b7472e41",
     "52956ab8a6c0ff9a",
     "6a6fc6e1dfd3bf58",
@@ -125,28 +123,8 @@
     "48f50593677c72cb",
     "508c45878e0837e7"
   ],
-  "issue_count": 124,
+  "issue_count": 122,
   "issues": [
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "blockingReasons+blocking_reasons, canProceed+can_proceed",
-      "fingerprint": "4b15e7443b7e217f",
-      "function": "_human_inbox_persona_readiness_item",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "byStatus+by_status, byType+by_type, highestRiskLevel+highest_risk_level",
-      "fingerprint": "b5802c86c86757fa",
-      "function": "_human_inbox_summary",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
     {
       "category": "camel-snake-duplicate",
       "evidence": "attachmentId+attachment_id, mimeType+mime_type, sizeBytes+size_bytes",
