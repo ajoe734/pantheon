@@ -1,6 +1,7 @@
 # Management Console Load Gap Execution Packet - 2026-07-01
 
-Status: ready for fleet dispatch
+Status: complete; `MGMT-GAP-010` is production-green and supplemental render
+evidence is archived
 
 Parent task:
 
@@ -114,3 +115,12 @@ enabled). After that fix, a fresh hosted rerun produced:
 See
 `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/MGMT-GAP-010-production-green-closeout-2026-07-01.md`
 for the full evidence index and residual risks.
+
+## Supplemental Hosted Render Evidence
+
+Supplemental hosted render evidence from the broader production gap re-run:
+
+- `docs/04/pantheon_management_console_gap_2026-06-30/archive/hosted-render-rerun-2026-07-01.md`
+
+This render evidence is intentionally narrower than the release-load gate above
+and must not replace the production-green gate artifacts.
