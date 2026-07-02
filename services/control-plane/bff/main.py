@@ -42143,17 +42143,11 @@ def _management_cost_attribution_response(
     data = {
         "id": "management-cost-attribution",
         "items": page_items,
-        "rows": page_items,
-        "attributions": page_items,
         "summary": summary,
         "policy": "read_only_cost_attribution",
     }
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "attributions": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
