@@ -21,12 +21,12 @@ from read_store import ReadSurfaceStore
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-trading:operator,reviewer"}
 
 
-def _fresh_client(td: str) -> TestClient:
+def _fresh_client(td: str, *, include_gap: bool = False) -> TestClient:
     store = ReadSurfaceStore(
         os.path.join(td, "read_surfaces.json"),
         allow_local_snapshot_fallback=False,
     )
-    store.list_runtime_bindings = lambda: [
+    runtime_bindings = [
         {
             "id": "binding-alpha",
             "binding_id": "binding-alpha",
@@ -48,6 +48,20 @@ def _fresh_client(td: str) -> TestClient:
             "artifact_version": "v2",
         },
     ]
+    if include_gap:
+        runtime_bindings.append(
+            {
+                "id": "binding-gamma",
+                "binding_id": "binding-gamma",
+                "runtime_id": "runtime-gamma",
+                "deployment_stage": "paper",
+                "status": "running",
+                "plan_id": "plan-gamma",
+                "artifact_id": "artifact-gamma",
+                "artifact_version": "v3",
+            }
+        )
+    store.list_runtime_bindings = lambda: list(runtime_bindings)
     telemetry_summaries = {
         "runtime-alpha": {
             "runtime_id": "runtime-alpha",
@@ -176,12 +190,41 @@ def _fresh_client(td: str) -> TestClient:
             },
         },
     }
+    monitoring_sessions = {
+        "runtime-alpha": {
+            "session_id": "monitor-alpha",
+            "binding_id": "binding-alpha",
+            "runtime_binding_id": "binding-alpha",
+            "runtime_id": "runtime-alpha",
+            "deployment_stage": "paper",
+            "status": "active",
+            "active": True,
+            "started_at": "2026-05-23T07:30:00Z",
+            "last_heartbeat_at": "2026-05-23T08:10:00Z",
+        }
+    }
     store.get_telemetry_summary = lambda runtime_id: telemetry_summaries.get(runtime_id)
+    store.list_telemetry_summaries = lambda: list(telemetry_summaries.values())
     store.get_paper_live_drift_report = lambda runtime_id: drift_reports.get(runtime_id)
+    store.list_paper_live_drift_reports = lambda: list(drift_reports.values())
+    store.list_paper_runtime_monitoring_sessions = lambda: list(monitoring_sessions.values())
+    store.get_paper_runtime_monitoring_session = (
+        lambda runtime_id=None, binding_id=None: monitoring_sessions.get(runtime_id)
+        or next(
+            (
+                session
+                for session in monitoring_sessions.values()
+                if session.get("binding_id") == binding_id
+                or session.get("runtime_binding_id") == binding_id
+            ),
+            None,
+        )
+    )
     store.get_rollbacks = lambda runtime_id: []
     store.dataset_source = lambda dataset, **kwargs: {
         "runtime_bindings": "canonical",
         "telemetry_summaries": "service_store",
+        "paper_runtime_monitoring_sessions": "service_store",
         "paper_live_drift_reports": "service_store",
         "rollbacks": "service_store",
     }.get(dataset, "missing")
@@ -217,28 +260,83 @@ def test_trading_pulse_returns_card_aggregate_and_runtime_rankings() -> None:
             assert summary["baseline_breached_count"] == 1
             assert summary["baseline_watch_count"] == 1
             assert summary["by_baseline_status"] == {"watch": 1, "breached": 1}
+            assert summary["row_health_degraded_count"] == 0
+            assert summary["row_health_status_counts"] == {"ok": 2}
+            assert summary["monitoring_coverage_count"] == 1
+            assert summary["missing_monitoring_runtime_ids"] == []
+            assert summary["coverage"]["metric_coverage"]["pnl"]["available_count"] == 2
 
-            assert len(data["cards"]) == 5
+            assert len(data["cards"]) == 6
+            assert {card["card_id"] for card in data["cards"]} >= {"row-health"}
             assert data["rankings"][0]["runtime_id"] == "runtime-alpha"
             assert data["rankings"][0]["rank"] == 1
             assert data["rankings"][0]["baseline_comparison_status"] == "watch"
-            assert data["runtime_rows"][0]["telemetry_summary"]["metrics"]["pnl"] == 0.42
+            rows_by_runtime = {row["runtime_id"]: row for row in data["runtime_rows"]}
+            assert data["runtime_rows"][0]["runtime_id"] == "runtime-beta"
+            assert rows_by_runtime["runtime-alpha"]["telemetry_summary"]["metrics"]["pnl"] == 0.42
             assert (
-                data["runtime_rows"][0]["baseline_comparison"]["paper_baseline"]["metrics"]["pnl"]
+                rows_by_runtime["runtime-alpha"]["baseline_comparison"]["paper_baseline"]["metrics"]["pnl"]
                 == 0.25
             )
-            assert data["baseline_comparisons"][1]["status"] == "breached"
-            assert data["baseline_comparisons"][1]["paper_live_drift"]["available"] is True
+            comparisons_by_runtime = {
+                comparison["runtime_id"]: comparison
+                for comparison in data["baseline_comparisons"]
+            }
+            assert comparisons_by_runtime["runtime-beta"]["status"] == "breached"
+            assert comparisons_by_runtime["runtime-beta"]["paper_live_drift"]["available"] is True
             assert body["page_info"] == {
                 "next_page_token": None,
-                "total": 5,
-                "page_size": 5,
+                "total": 6,
+                "page_size": 6,
             }
             assert body["meta"]["surfaces"]["management_trading_pulse"]["source"] == "bff_composed"
             assert body["meta"]["surfaces"]["runtime_roster"]["source"] == "canonical"
             assert body["meta"]["surfaces"]["telemetry_summary"]["source"] == "service_store"
+            assert body["meta"]["surfaces"]["paper_runtime_monitoring"]["source"] == "service_store"
             assert body["meta"]["surfaces"]["paper_live_drift"]["source"] == "service_store"
             assert body["meta"]["surfaces"]["baseline_comparison"]["source"] == "bff_composed"
+            assert body["meta"]["surfaces"]["runtime_row_health"]["status"] == "ok"
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_trading_pulse_exposes_operator_coverage_gaps_and_row_health() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td, include_gap=True)
+            resp = client.get("/bff/management/trading-pulse", headers=OPERATOR_HEADERS)
+
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            data = body["data"]
+            summary = data["summary"]
+            assert summary["runtime_count"] == 3
+            assert summary["telemetry_coverage_count"] == 2
+            assert summary["baseline_comparison_count"] == 2
+            assert summary["monitoring_coverage_count"] == 1
+            assert summary["row_health_degraded_count"] == 1
+            assert summary["row_health_status_counts"] == {"degraded": 1, "ok": 2}
+            assert summary["missing_telemetry_runtime_ids"] == ["runtime-gamma"]
+            assert summary["missing_monitoring_runtime_ids"] == ["runtime-gamma"]
+            assert summary["missing_baseline_runtime_ids"] == ["runtime-gamma"]
+            assert summary["metric_coverage"]["pnl"]["missing_runtime_ids"] == ["runtime-gamma"]
+
+            assert data["runtime_rows"][0]["runtime_id"] == "runtime-gamma"
+            assert data["runtime_rows"][0]["row_health"]["status"] == "degraded"
+            assert set(data["runtime_rows"][0]["row_health"]["degraded_checks"]) == {
+                "telemetry_summary",
+                "paper_runtime_monitoring",
+            }
+            assert data["runtime_rows"][0]["baseline_comparison"]["status"] == "unavailable"
+
+            surfaces = body["meta"]["surfaces"]
+            assert surfaces["management_trading_pulse"]["status"] == "degraded"
+            assert surfaces["telemetry_summary"]["status"] == "degraded"
+            assert surfaces["paper_runtime_monitoring"]["status"] == "degraded"
+            assert surfaces["paper_live_drift"]["status"] == "degraded"
+            assert surfaces["runtime_row_health"]["status"] == "degraded"
+            assert body["meta"]["coverage"]["missing_baseline_runtime_ids"] == ["runtime-gamma"]
         finally:
             bff_main.read_store = original_store
 
@@ -264,6 +362,8 @@ def test_trading_pulse_rankings_returns_computed_blocks_with_limit() -> None:
             assert summary["runtime_count"] == 2
             assert summary["ranking_block_count"] == 4
             assert summary["ranked_item_count"] == 4
+            assert summary["eligible_item_count"] == 8
+            assert summary["missing_metric_item_count"] == 0
             assert summary["limit"] == 1
             assert body["page_info"] == {
                 "next_page_token": None,
@@ -272,7 +372,10 @@ def test_trading_pulse_rankings_returns_computed_blocks_with_limit() -> None:
             }
 
             blocks = {block["block_id"]: block for block in data["items"]}
+            assert blocks["pnl-leaders"]["eligible_item_count"] == 2
+            assert blocks["pnl-leaders"]["missing_metric_count"] == 0
             assert blocks["pnl-leaders"]["items"][0]["runtime_id"] == "runtime-alpha"
+            assert blocks["pnl-leaders"]["items"][0]["ranking_eligible"] is True
             assert blocks["pnl-leaders"]["items"][0]["ranking_metric"] == "pnl"
             assert blocks["drawdown-control"]["items"][0]["runtime_id"] == "runtime-beta"
             assert blocks["execution-quality"]["items"][0]["ranking_metric"] == "fill_rate"
@@ -283,6 +386,33 @@ def test_trading_pulse_rankings_returns_computed_blocks_with_limit() -> None:
                 == "bff_composed"
             )
             assert body["meta"]["surfaces"]["baseline_comparison"]["source"] == "bff_composed"
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_trading_pulse_rankings_exclude_missing_metrics() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td, include_gap=True)
+            resp = client.get(
+                "/bff/management/trading-pulse/rankings?limit=5",
+                headers=OPERATOR_HEADERS,
+            )
+
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            data = body["data"]
+            blocks = {block["block_id"]: block for block in data["items"]}
+            assert blocks["pnl-leaders"]["eligible_item_count"] == 2
+            assert blocks["pnl-leaders"]["missing_metric_count"] == 1
+            assert blocks["pnl-leaders"]["missing_metric_runtime_ids"] == ["runtime-gamma"]
+            assert [item["runtime_id"] for item in blocks["pnl-leaders"]["items"]] == [
+                "runtime-alpha",
+                "runtime-beta",
+            ]
+            assert data["summary"]["missing_metric_item_count"] == 4
+            assert body["meta"]["surfaces"]["management_trading_pulse_rankings"]["status"] == "degraded"
         finally:
             bff_main.read_store = original_store
 
