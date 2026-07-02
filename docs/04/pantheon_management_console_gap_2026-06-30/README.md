@@ -12,6 +12,7 @@
 | Archive evidence | `archive/live-audit-2026-06-30.md` |
 | Re-audit addendum | `archive/full-reaudit-addendum-2026-07-01.md` |
 | Complete re-audit | `archive/complete-reaudit-2026-07-02.md` |
+| Complete re-audit rerun | `archive/complete-reaudit-rerun-2026-07-02.md` |
 | Route/control re-audit | `archive/route-control-reaudit-2026-07-01.md` |
 | Route/control raw artifact | `archive/route-control-reaudit-2026-07-01.json` |
 | Post-closeout adjustment plan | `archive/management-adjustment-development-plan-2026-07-02.md` |
@@ -89,6 +90,15 @@ surfaces. It confirms the current repo mounts only a thin three-panel
 Management entrypoint while the BFF/API layer exposes dozens of management
 surfaces, and it reclassifies what should be adjusted, deleted/hidden, or deeply
 developed.
+
+The superseding 2026-07-02 rerun is archived in
+`docs/04/pantheon_management_console_gap_2026-06-30/archive/complete-reaudit-rerun-2026-07-02.md`.
+It corrects the previous count and layer blending: the current route table has
+61 `/bff/management*` route entries across 60 unique paths, the local Management
+Vite app serves only `/management.html`, direct `/management/*` routes render
+blank 404 pages, and the active shell exposes only Live Evidence and Loop Truth
+with an unreachable OODA drawer. Use this rerun as the current basis for
+adjust/delete/deep-development decisions.
 
 The supplemental 2026-07-01 route/control re-audit is archived in
 `docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md`,
