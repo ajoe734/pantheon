@@ -293,12 +293,15 @@ project-before-page fixes.
 
 ## Validation
 
-Frontend validation attempted in the clean worktree:
+Frontend validation after installing `execute-plans` dependencies in the clean
+worktree:
 
 | Command | Result |
 |---|---|
-| `npm run build:management` | Blocked: `execute-plans/node_modules` missing, `vite: not found` |
-| `npm run test -- --run src/management/components src/lib/bff/__tests__/client.test.ts` | Blocked: `execute-plans/node_modules` missing, `vitest: not found` |
+| `npm ci` | Passed; npm reported existing dependency audit warnings. |
+| `npm run build:management` | Passed; production bundle built successfully. |
+| `npm run test -- --run src/management/components/live-evidence src/management/components/loop-truth` | Passed: 2 files, 3 tests. |
+| `npm run test -- --run src/management/components src/lib/bff/__tests__/client.test.ts` | Failed: existing frontend test drift. `OodaPacketDrawer.test.tsx` cannot resolve `@/i18n`; `client.test.ts` still assumes non-empty mock seeds and live fetch behavior without consistently setting `VITE_BFF_MODE=live`. |
 
 BFF focused validation:
 
@@ -313,22 +316,16 @@ python3 -m pytest \
 Result:
 
 ```text
-69 passed, 1 failed
+70 passed
 ```
 
-Failure:
+Additional BFF validation:
 
-- `test_governance_ledger_unifies_approval_intervention_and_override_sources`
-  expected the current governance-ledger page to include at least one
-  `source_type == "intervention"` row.
-- The route returned 200, but the sampled page did not include an intervention
-  row.
-
-Interpretation:
-
-- The test mixes source-family coverage with current-page sampling.
-- Governance Ledger needs either a deterministic fixture/page ordering contract
-  or a test that checks the complete source set without relying on one page.
+| Command | Result |
+|---|---|
+| `python3 -m py_compile services/control-plane/bff/main.py` | Passed |
+| `python3 scripts/audit_management_list_contract.py --baseline docs/architecture/management-list-contract-baseline.json --fail-on-new --format summary` | Passed: `issues=65 new=0 retired=0` |
+| `python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py -q` | Passed: 14 tests |
 
 ## What Should Be Adjusted
 
