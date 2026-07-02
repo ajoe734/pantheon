@@ -12,6 +12,7 @@ import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -30,6 +31,29 @@ PENDING_APPROVAL_ID = "appr-dec-c5a9f11e"
 # fixture id with state=decided (already resolved, but endpoint still accepts commands)
 DECIDED_APPROVAL_ID = "approval-042"
 UNKNOWN_ID = "unknown-approval-xyz"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_command_admission():
+    original_command_store = bff_main.command_store
+    original_final_idem = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+    original_approval_buffer = list(bff_main._sse_buffers["approval"])
+    original_approval_subscribers = list(bff_main._sse_subscribers["approval"])
+    with tempfile.TemporaryDirectory() as td:
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["approval"].clear()
+        bff_main._sse_subscribers["approval"].clear()
+        try:
+            yield
+        finally:
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idem)
+            bff_main._sse_buffers["approval"].clear()
+            bff_main._sse_buffers["approval"].extend(original_approval_buffer)
+            bff_main._sse_subscribers["approval"].clear()
+            bff_main._sse_subscribers["approval"].extend(original_approval_subscribers)
 
 
 def _fresh_client(td: str, *, allow_fallback: bool = True) -> tuple[TestClient, ReadSurfaceStore]:
@@ -57,6 +81,16 @@ def _admin_headers(idem_key: str | None = None) -> dict:
     if idem_key:
         h["Idempotency-Key"] = idem_key
     return h
+
+
+def _error_payload(response) -> dict:
+    body = response.json()
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+        return detail["error"]
+    if isinstance(body, dict) and isinstance(body.get("error"), dict):
+        return body["error"]
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +178,57 @@ def test_bff_approvals_decide_approve_returns_202_envelope() -> None:
             bff_main.read_store = original
 
 
-def test_bff_approvals_decide_concurrent_operators_do_not_share_idempotency_or_sse_events() -> None:
+def test_bff_approvals_decide_second_operator_conflict_does_not_publish_sse() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_read_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        original_final_idem = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        original_approval_buffer = list(bff_main._sse_buffers["approval"])
+        original_approval_subscribers = list(bff_main._sse_subscribers["approval"])
+        try:
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=True,
+            )
+            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._sse_buffers["approval"].clear()
+            bff_main._sse_subscribers["approval"].clear()
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+            first = client.post(
+                f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+                json={"decision": "approve"},
+                headers=_approver_headers("approval-race-first"),
+            )
+            assert first.status_code == 202, first.text
+            assert len(bff_main.command_store._get_all_commands()) == 1
+            assert len(bff_main._sse_buffers["approval"]) == 1
+
+            second = client.post(
+                f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+                json={"decision": "reject", "rejection_reason": "second operator race"},
+                headers=_admin_headers("approval-race-second"),
+            )
+            assert second.status_code == 409, second.text
+            error = _error_payload(second)
+            assert error["code"] == "RESOURCE_CONFLICT"
+            assert error["details"]["precondition_failed"] == "concurrent_safety"
+            assert len(bff_main.command_store._get_all_commands()) == 1
+            assert len(bff_main._sse_buffers["approval"]) == 1
+            assert bff_main._sse_buffers["approval"][0][1]["data"]["decided_by"] == "op-app001"
+        finally:
+            bff_main.read_store = original_read_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idem)
+            bff_main._sse_buffers["approval"].clear()
+            bff_main._sse_buffers["approval"].extend(original_approval_buffer)
+            bff_main._sse_subscribers["approval"].clear()
+            bff_main._sse_subscribers["approval"].extend(original_approval_subscribers)
+
+
+def test_bff_approvals_decide_concurrent_operators_admit_only_one_command_and_one_sse() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_read_store = bff_main.read_store
         original_command_store = bff_main.command_store
@@ -161,38 +245,35 @@ def test_bff_approvals_decide_concurrent_operators_do_not_share_idempotency_or_s
             bff_main._sse_buffers["approval"].clear()
             bff_main._sse_subscribers["approval"].clear()
 
-            def decide(headers: dict[str, str]) -> dict:
+            def decide(index_and_headers: tuple[int, dict[str, str]]):
+                index, headers = index_and_headers
                 local_client = TestClient(bff_main.app, raise_server_exceptions=False)
                 response = local_client.post(
                     f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
                     json={"decision": "approve"},
-                    headers={**headers, "Idempotency-Key": "shared-concurrent-approval-key"},
+                    headers={**headers, "Idempotency-Key": f"concurrent-approval-race-{index}"},
                 )
-                assert response.status_code == 202, response.text
-                return response.json()
+                return response.status_code, response.json()
 
             with ThreadPoolExecutor(max_workers=2) as pool:
-                first, second = list(pool.map(decide, (APPROVER_HEADERS, ADMIN_HEADERS)))
+                results = list(pool.map(decide, enumerate((APPROVER_HEADERS, ADMIN_HEADERS))))
 
-            command_ids = {
-                first["data"]["command_id"],
-                second["data"]["command_id"],
-            }
-            assert len(command_ids) == 2
-            assert first["meta"]["idempotency"]["replayed"] is False
-            assert second["meta"]["idempotency"]["replayed"] is False
+            statuses = sorted(status for status, _body in results)
+            assert statuses == [202, 409]
+            accepted = [body for status, body in results if status == 202]
+            rejected = [body for status, body in results if status == 409]
+            assert len(accepted) == 1
+            assert len(rejected) == 1
+            error = (rejected[0].get("detail") or rejected[0]).get("error")
+            assert error["code"] == "RESOURCE_CONFLICT"
+            assert error["details"]["precondition_failed"] == "concurrent_safety"
 
             commands = bff_main.command_store._get_all_commands()
-            assert [command["type"] for command in commands].count("ApproveDecision") == 2
-            assert {command["audit"]["operator_id"] for command in commands} == {
-                "op-app001",
-                "op-app001-admin",
-            }
-            assert len(bff_main._sse_buffers["approval"]) == 2
-            assert {
-                event["data"]["decided_by"]
-                for _event_id, event in bff_main._sse_buffers["approval"]
-            } == {"op-app001", "op-app001-admin"}
+            assert [command["type"] for command in commands] == ["ApproveDecision"]
+            assert len(bff_main._sse_buffers["approval"]) == 1
+            event = bff_main._sse_buffers["approval"][0][1]
+            assert event["type"] == "approval.decided"
+            assert event["data"]["decided_by"] in {"op-app001", "op-app001-admin"}
         finally:
             bff_main.read_store = original_read_store
             bff_main.command_store = original_command_store
