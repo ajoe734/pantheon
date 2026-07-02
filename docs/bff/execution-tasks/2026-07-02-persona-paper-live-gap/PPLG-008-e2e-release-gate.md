@@ -15,6 +15,8 @@ for fleet development.
 
 - Run end-to-end create paper persona flow.
 - Prove paper evaluation and eligibility.
+- Prove paper challengers, canary challengers, and live incumbents appear in one
+  cohort competition view.
 - Prove promotion recommendation requires human approval.
 - Prove canary and live allocation changes require human decisions.
 - Prove quarterly ranking generates proposal but does not auto-rebalance.
@@ -26,6 +28,8 @@ for fleet development.
 ## Acceptance Criteria
 
 - One E2E proves create -> paper runtime -> evaluation -> eligible.
+- One E2E proves the `研究 / 模擬 / 正式` selector changes command affordances
+  without splitting persona competition into separate hidden datasets.
 - One E2E proves paper recommendation cannot start canary without approval.
 - One E2E proves approved canary can start within allocation caps.
 - One E2E proves quarterly proposal cannot execute without approval.

@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-07-02 21:50:22
+Last updated: 2026-07-02 23:10:36
 
 ## Objective
 
@@ -44,11 +44,11 @@ Implement the paper-first persona lifecycle: create persona directly into paper 
 |---|---|---|---|---|---|---|
 | `PPLG-001` | EPIC PPLG / contracts | Canonical persona paper/live state and contract alignment | Codex | todo | - | 鎖定 paper-first persona lifecycle, schema, endpoint contract, 舊 onboarding spec supersession。建立完成必須是 paper runtime 或 setup_failed。 |
 | `PPLG-002` | EPIC PPLG / paper launch | Idempotent create-to-paper persona launch workflow | Claude | todo | `PPLG-001` | 實作 POST /bff/management/personas/paper-launch，一次完成 persona、paper pool binding、paper plan、paper approval、RuntimeBinding、paper runtime startup。 |
-| `PPLG-003` | EPIC PPLG / fleet read model | Persona Fleet readiness projection and payload cleanup | Codex2 | todo | `PPLG-001` | 補 Fleet readiness projection 並移除重複大 payload，讓 row 清楚顯示 paper/evaluation/review/live/risk 狀態。 |
-| `PPLG-004` | EPIC PPLG / evaluation ranking | Paper eligibility, promotion score, and cohort ranking engine | Claude2 | todo | `PPLG-001` | 實作 paper hard gates、promotion_score、cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。 |
+| `PPLG-003` | EPIC PPLG / fleet read model | Persona Fleet readiness projection and payload cleanup | Codex2 | todo | `PPLG-001` | 補 Fleet readiness/competition projection 並移除重複大 payload，讓 row 在同一 cohort 顯示 paper challengers、canary challengers、live incumbents。 |
+| `PPLG-004` | EPIC PPLG / evaluation ranking | Paper eligibility and unified competition ranking engine | Claude2 | todo | `PPLG-001` | 實作 paper hard gates、promotion_score、paper/canary/live 同 cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。 |
 | `PPLG-005` | EPIC PPLG / human review | Human review workflows for canary live and quarterly ranking | Claude | todo | `PPLG-004` | 實作 promotion/canary/live/quarterly/replacement/resume human review，所有真錢資金進出與季度重排都需人審。 |
 | `PPLG-006` | EPIC PPLG / risk guardrails | Automatic risk guardrails and incident review evidence | Codex | todo | `PPLG-001` | 實作虧損、drawdown、exposure、slippage、order/data/runtime/policy/correlation guardrails，可自動 pause/reduce/risk_off/freeze 並建立事件審核。 |
-| `PPLG-007` | EPIC PPLG / frontend UX | Frontend Create Paper Persona and Fleet UX | Codex2 | todo | `PPLG-002`, `PPLG-003`, `PPLG-005` | 更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，不再對已跑 paper 的 persona 顯示啟動精靈。 |
+| `PPLG-007` | EPIC PPLG / frontend UX | Frontend Create Paper Persona and unified Fleet UX | Codex2 | todo | `PPLG-002`, `PPLG-003`, `PPLG-005` | 更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，研究/模擬/正式只控制命令上下文，不拆開 paper/live 競爭視圖。 |
 | `PPLG-008` | EPIC PPLG / verification | End-to-end release gate and fleet closeout | Gemini2 | todo | `PPLG-002`, `PPLG-003`, `PPLG-004`, `PPLG-005`, `PPLG-006`, `PPLG-007` | 建立完整驗證包：create->paper runtime->evaluation->human review->canary/live/quarterly/risk-off 全流程證據。 |
 
 ### External / Upstream Integration Work
@@ -91,11 +91,11 @@ Implement the paper-first persona lifecycle: create persona directly into paper 
 |---|---|---|---|---|---|---|---|---|---|
 | `PPLG-001` | EPIC PPLG / contracts | Canonical persona paper/live state and contract alignment | 鎖定 paper-first persona lifecycle, schema, endpoint contract, 舊 onboarding spec supersession。建立完成必須是 paper runtime 或 setup_failed。 | Codex | Claude | todo | - | 2026-07-02 21:47:28 | Assignment created |
 | `PPLG-002` | EPIC PPLG / paper launch | Idempotent create-to-paper persona launch workflow | 實作 POST /bff/management/personas/paper-launch，一次完成 persona、paper pool binding、paper plan、paper approval、RuntimeBinding、paper runtime startup。 | Claude | Codex | todo | `PPLG-001` | 2026-07-02 21:47:50 | Assignment created |
-| `PPLG-003` | EPIC PPLG / fleet read model | Persona Fleet readiness projection and payload cleanup | 補 Fleet readiness projection 並移除重複大 payload，讓 row 清楚顯示 paper/evaluation/review/live/risk 狀態。 | Codex2 | Claude2 | todo | `PPLG-001` | 2026-07-02 21:48:00 | Assignment created |
-| `PPLG-004` | EPIC PPLG / evaluation ranking | Paper eligibility, promotion score, and cohort ranking engine | 實作 paper hard gates、promotion_score、cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。 | Claude2 | Codex | todo | `PPLG-001` | 2026-07-02 21:48:10 | Assignment created |
+| `PPLG-003` | EPIC PPLG / fleet read model | Persona Fleet readiness projection and payload cleanup | 補 Fleet readiness/competition projection 並移除重複大 payload，讓 row 在同一 cohort 顯示 paper challengers、canary challengers、live incumbents。 | Codex2 | Claude2 | todo | `PPLG-001` | 2026-07-02 21:48:00 | Assignment created |
+| `PPLG-004` | EPIC PPLG / evaluation ranking | Paper eligibility and unified competition ranking engine | 實作 paper hard gates、promotion_score、paper/canary/live 同 cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。 | Claude2 | Codex | todo | `PPLG-001` | 2026-07-02 21:48:10 | Assignment created |
 | `PPLG-005` | EPIC PPLG / human review | Human review workflows for canary live and quarterly ranking | 實作 promotion/canary/live/quarterly/replacement/resume human review，所有真錢資金進出與季度重排都需人審。 | Claude | Codex2 | todo | `PPLG-004` | 2026-07-02 21:48:22 | Assignment created |
 | `PPLG-006` | EPIC PPLG / risk guardrails | Automatic risk guardrails and incident review evidence | 實作虧損、drawdown、exposure、slippage、order/data/runtime/policy/correlation guardrails，可自動 pause/reduce/risk_off/freeze 並建立事件審核。 | Codex | Claude2 | todo | `PPLG-001` | 2026-07-02 21:48:33 | Assignment created |
-| `PPLG-007` | EPIC PPLG / frontend UX | Frontend Create Paper Persona and Fleet UX | 更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，不再對已跑 paper 的 persona 顯示啟動精靈。 | Codex2 | Claude | todo | `PPLG-002`, `PPLG-003`, `PPLG-005` | 2026-07-02 21:48:46 | Assignment created |
+| `PPLG-007` | EPIC PPLG / frontend UX | Frontend Create Paper Persona and unified Fleet UX | 更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，研究/模擬/正式只控制命令上下文，不拆開 paper/live 競爭視圖。 | Codex2 | Claude | todo | `PPLG-002`, `PPLG-003`, `PPLG-005` | 2026-07-02 21:48:46 | Assignment created |
 | `PPLG-008` | EPIC PPLG / verification | End-to-end release gate and fleet closeout | 建立完整驗證包：create->paper runtime->evaluation->human review->canary/live/quarterly/risk-off 全流程證據。 | Gemini2 | Codex | todo | `PPLG-002`, `PPLG-003`, `PPLG-004`, `PPLG-005`, `PPLG-006`, `PPLG-007` | 2026-07-02 21:48:57 | Assignment created |
 
 ## Handoff Queue
@@ -144,6 +144,14 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
+- 2026-05-16 01:52:26 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:26 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:28 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:31 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:47 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:48 Orchestrator: PostToolUse: Bash
@@ -156,11 +164,3 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-07-02 21:47:28 Operator: `PPLG-001` Assigned PPLG-001 to Codex with reviewer Claude
-- 2026-07-02 21:47:50 Operator: `PPLG-002` Assigned PPLG-002 to Claude with reviewer Codex
-- 2026-07-02 21:48:00 Operator: `PPLG-003` Assigned PPLG-003 to Codex2 with reviewer Claude2
-- 2026-07-02 21:48:10 Operator: `PPLG-004` Assigned PPLG-004 to Claude2 with reviewer Codex
-- 2026-07-02 21:48:22 Operator: `PPLG-005` Assigned PPLG-005 to Claude with reviewer Codex2
-- 2026-07-02 21:48:33 Operator: `PPLG-006` Assigned PPLG-006 to Codex with reviewer Claude2
-- 2026-07-02 21:48:46 Operator: `PPLG-007` Assigned PPLG-007 to Codex2 with reviewer Claude
-- 2026-07-02 21:48:57 Operator: `PPLG-008` Assigned PPLG-008 to Gemini2 with reviewer Codex

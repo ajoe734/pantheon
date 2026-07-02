@@ -3,7 +3,7 @@
   "sprint": "2026-07-02-persona-paper-live-gap",
   "sprint_started_at": "2026-07-02T00:00:00Z",
   "objective": "Implement the paper-first persona lifecycle: create persona directly into paper runtime, evaluate paper cohorts, require human approval for canary, live, and quarterly allocation changes, and enforce automatic risk guardrails that can pause, reduce, risk-off, or freeze immediately.",
-  "updated_at": "2026-07-02T13:50:22Z",
+  "updated_at": "2026-07-02T15:10:36Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -256,7 +256,7 @@
         "services/control-plane/bff/tests"
       ],
       "acceptance": [
-        "contract docs state create-to-paper invariant;canary live quarterly require human decision;automatic guardrails cannot promote or increase allocation;schema/contract tests cover enums"
+        "contract docs state create-to-paper invariant;paper canary live share one cohort competition model with competition_track;canary live quarterly require human decision;automatic guardrails cannot promote or increase allocation;schema/contract tests cover enums"
       ],
       "next": "Assignment created",
       "last_update": "2026-07-02T13:47:28Z",
@@ -300,7 +300,7 @@
     {
       "id": "PPLG-003",
       "title": "Persona Fleet readiness projection and payload cleanup",
-      "summary_zh": "補 Fleet readiness projection 並移除重複大 payload，讓 row 清楚顯示 paper/evaluation/review/live/risk 狀態。",
+      "summary_zh": "補 Fleet readiness/competition projection 並移除重複大 payload，讓 row 在同一 cohort 顯示 paper challengers、canary challengers、live incumbents。",
       "phase": "EPIC PPLG / fleet read model",
       "owner": "Codex2",
       "reviewer": "Claude2",
@@ -315,7 +315,7 @@
         "services/control-plane/bff/tests/test_bff_b3_persona_fleet.py"
       ],
       "acceptance": [
-        "fleet distinguishes setup_failed paper_running eligible review canary live quarterly risk_off frozen;payload materially smaller;contract tests cover row shape"
+        "fleet default includes paper challengers canary challengers and live incumbents in one competition projection;mode filters do not create hidden separate datasets;payload materially smaller;contract tests cover row shape"
       ],
       "next": "Assignment created",
       "last_update": "2026-07-02T13:48:00Z",
@@ -328,8 +328,8 @@
     },
     {
       "id": "PPLG-004",
-      "title": "Paper eligibility, promotion score, and cohort ranking engine",
-      "summary_zh": "實作 paper hard gates、promotion_score、cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。",
+      "title": "Paper eligibility and unified competition ranking engine",
+      "summary_zh": "實作 paper hard gates、promotion_score、paper/canary/live 同 cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。",
       "phase": "EPIC PPLG / evaluation ranking",
       "owner": "Claude2",
       "reviewer": "Codex",
@@ -345,7 +345,7 @@
         "services/control-plane/bff/tests"
       ],
       "acceptance": [
-        "ineligible personas not queued;eligible rows expose score components gates percentile evidence;recommendation cannot start canary/live without human decision;tests cover threshold and overrides"
+        "ranking snapshots include paper challengers canary challengers and live incumbents in one cohort result;eligible rows expose score components gates percentile evidence;recommendation cannot start canary/live without human decision;tests cover threshold and overrides"
       ],
       "next": "Assignment created",
       "last_update": "2026-07-02T13:48:10Z",
@@ -418,8 +418,8 @@
     },
     {
       "id": "PPLG-007",
-      "title": "Frontend Create Paper Persona and Fleet UX",
-      "summary_zh": "更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，不再對已跑 paper 的 persona 顯示啟動精靈。",
+      "title": "Frontend Create Paper Persona and unified Fleet UX",
+      "summary_zh": "更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，研究/模擬/正式只控制命令上下文，不拆開 paper/live 競爭視圖。",
       "phase": "EPIC PPLG / frontend UX",
       "owner": "Codex2",
       "reviewer": "Claude",
@@ -434,7 +434,7 @@
         "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap/PPLG-007-frontend-paper-persona-flow.md"
       ],
       "acceptance": [
-        "primary create reaches paper_running or setup_failed;row actions match concrete states;eligible shows promotion review;canary/live show approval evidence;e2e covers no canary without approval"
+        "primary create reaches paper_running or setup_failed;mode selector does not hide paper challengers from live incumbent comparison;row actions match concrete states;eligible shows promotion review;canary/live show approval evidence;e2e covers no canary without approval"
       ],
       "next": "Assignment created",
       "last_update": "2026-07-02T13:48:46Z",
@@ -468,7 +468,7 @@
         "docs/deployment/evidence"
       ],
       "acceptance": [
-        "e2e proves create to paper runtime;recommendation cannot start canary without approval;quarterly cannot execute without approval;risk_off interrupts immediately;closeout maps every spec requirement"
+        "e2e proves create to paper runtime;mode selector changes command affordances without splitting competition datasets;recommendation cannot start canary without approval;quarterly cannot execute without approval;risk_off interrupts immediately;closeout maps every spec requirement"
       ],
       "next": "Assignment created",
       "last_update": "2026-07-02T13:48:57Z",

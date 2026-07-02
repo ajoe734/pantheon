@@ -1,4 +1,4 @@
-# PPLG-004 - Paper Eligibility, Promotion Score, And Cohort Ranking Engine
+# PPLG-004 - Paper Eligibility And Unified Competition Ranking Engine
 
 Priority: P0
 
@@ -8,8 +8,9 @@ Depends on: `PPLG-001`
 
 ## Goal
 
-Implement the paper evaluation engine that determines eligibility, computes
-promotion score, ranks within cohorts, and creates recommendations without
+Implement the evaluation engine that determines paper eligibility, computes
+promotion score, ranks paper challengers, canary challengers, and live
+incumbents within the same cohorts, and creates recommendations without
 approving live capital.
 
 ## Required Work
@@ -32,8 +33,13 @@ approving live capital.
   - 10% operational reliability
   - 10% governance fit
   - penalties
-- Implement cohort ranking by market, strategy family, frequency, risk budget,
-  and capital pool type.
+- Implement unified cohort ranking by market, strategy family, frequency, risk
+  budget, and capital pool type.
+- Include `competition_track` values for `paper_challenger`,
+  `canary_challenger`, `live_incumbent`, `watchlist_incumbent`, and
+  `risk_off_excluded`.
+- Compare challenger scores against live incumbent scores and emit
+  `challenger_delta_score` and replacement-risk reasons.
 - Emit recommendation packets only, not approvals.
 
 ## Acceptance Criteria
@@ -41,6 +47,8 @@ approving live capital.
 - Ineligible personas are not queued for promotion.
 - Eligible personas expose score, score components, gates, cohort percentile,
   tie-breakers, and evidence refs.
+- Ranking snapshots include paper challengers, canary challengers, and live
+  incumbents in the same cohort result.
 - Score thresholds match the gap spec defaults.
 - A recommendation cannot start canary/live without PPLG-005 human decision.
 - Tests cover high score, low score, missing evidence, high correlation, and

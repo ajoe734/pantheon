@@ -33,6 +33,11 @@ Canary and live trading are separate governance decisions. System-generated
 ranking may recommend them, but human approval is required before any real-money
 state begins or changes allocation.
 
+Paper, canary, and live personas compete in one cohort league. Paper personas
+are challengers, canary personas are probationary challengers, and live personas
+are incumbents. The management console must show them together by default so the
+operator can compare challengers and incumbents in one ranking surface.
+
 Automatic actions are allowed only for risk protection:
 
 ```text
@@ -61,6 +66,9 @@ The gap is product semantics and orchestration:
   promotion review, canary, live, and risk-off states.
 - There is no canonical evaluation score and cohort ranking contract for paper
   personas.
+- The management UI still risks treating `research`, `paper/simulation`, and
+  `formal/live` as separate worlds instead of one persona competition system
+  with different command permissions.
 - There is no first-class human review workflow for canary promotion, live
   promotion, and quarterly rebalance.
 - There is no unified automatic risk guardrail contract that can act immediately
@@ -89,6 +97,12 @@ The gap is product semantics and orchestration:
    behind approved RuntimeBinding and risk policy.
 10. UI labels must not imply that a persona is deployed/live when it is only
     provisioned, warming up, or pending review.
+11. Paper, canary, and live personas must appear in the same cohort competition
+    view by default. Scope filters may narrow the view, but must not split the
+    competition model.
+12. The global `研究 / 模擬 / 正式` mode switch is a command-safety context, not a
+    data partition. It changes allowed actions and default command affordances;
+    it must not hide paper challengers from live incumbent comparison.
 
 ## 4. Target State Machine
 
@@ -285,6 +299,27 @@ Penalty examples:
 
 Ranking is inside cohorts, not a single global leaderboard.
 
+Each cohort ranking includes:
+
+- paper challengers
+- canary challengers
+- live incumbents
+- watchlisted or auto-reduced live incumbents, clearly marked
+
+Paper and live are not ranked in separate tables. The distinction is
+`competition_track`, not page membership:
+
+```text
+paper_challenger
+canary_challenger
+live_incumbent
+watchlist_incumbent
+risk_off_excluded
+```
+
+The leaderboard must let the operator answer: "Which paper/canary challenger is
+ready to challenge which live incumbent, and what human review is required?"
+
 Cohort key:
 
 ```text
@@ -465,8 +500,33 @@ Persona creation:
 - No normal user path should leave a persona as identity-only.
 - Failed setup shows the failed step and a retry/repair action.
 
+Global mode selector:
+
+- `研究`: research-only and proposal work. It may default to research surfaces,
+  but Persona Fleet/League links must still preserve unified competition context.
+- `模擬`: paper-safe command context. Paper launch and paper runtime actions are
+  primary; live incumbents remain visible as read-only comparison rows.
+- `正式`: live-governed command context. Canary/live/quarterly review actions are
+  visible when permitted; paper challengers remain visible in the same cohort
+  rankings.
+- The selector must not be implemented as three separate persona datasets.
+- Scope narrowing should be explicit filters such as `track=paper_challenger`,
+  `track=live_incumbent`, or `capital_scope=live`, not hidden by global mode.
+
+Persona League / Fleet default:
+
+- Default view is a unified competition table, not a paper-only or live-only
+  list.
+- Rows must identify `competition_track`, `cohort_id`, `cohort_rank`,
+  `incumbent_persona_id` when applicable, and `challenger_delta_score`.
+- Paper challengers can outrank live incumbents but still require human review
+  before canary/live allocation.
+- Live incumbents remain in the table with allocation, drawdown, watchlist, and
+  replacement-risk signals.
+
 Persona Fleet columns:
 
+- `Competition`: cohort, rank, track, challenger/incumbent label.
 - `Paper Runtime`: provisioning, running, warming up, failed, risk-off.
 - `Evaluation`: warming up, ineligible, eligible, score, cohort percentile.
 - `Review`: none, promotion pending, live pending, quarterly pending, rejected.
@@ -498,6 +558,7 @@ Required new or updated contracts:
 - `PaperEvaluationSnapshot`.
 - `PromotionScoreSnapshot`.
 - `CohortRankingSnapshot`.
+- `CompetitionStandingSnapshot`.
 - `HumanReviewRequest`.
 - `QuarterlyRebalanceProposal`.
 - `RiskGuardrailEvent`.
@@ -512,6 +573,7 @@ Required endpoint families:
 | `POST /bff/management/personas/{id}/setup/retry` | Idempotent retry from failed step. |
 | `GET /bff/management/personas/evaluations` | Evaluation list by cohort/status. |
 | `GET /bff/management/personas/{id}/evaluation` | Score, gates, ranking, evidence. |
+| `GET /bff/management/personas/competition-standings` | Unified paper/canary/live cohort leaderboard. |
 | `POST /bff/management/personas/{id}/promotion-reviews` | Submit recommendation for human review. |
 | `GET /bff/management/promotion-reviews` | Human review queue. |
 | `POST /bff/management/promotion-reviews/{id}/decisions` | Human approval/rejection. |
@@ -529,6 +591,10 @@ The implementation is not complete until these are true:
 - A paper persona cannot enter canary or live without a human decision record.
 - Quarterly ranking generates a proposal but cannot alter allocation without a
   human decision record.
+- Persona Fleet/League shows paper challengers, canary challengers, and live
+  incumbents in one cohort competition view by default.
+- The `研究 / 模擬 / 正式` control changes command affordances and filters only;
+  it does not split persona competition into separate hidden datasets.
 - Automatic risk rules can pause/reduce/risk-off/freeze without waiting for
   human approval, and always create incident review evidence.
 - Fleet list is clear and fast enough for operator use. It must not ship

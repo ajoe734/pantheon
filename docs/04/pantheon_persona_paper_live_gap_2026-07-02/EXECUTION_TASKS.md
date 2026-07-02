@@ -25,11 +25,11 @@ active `ai-status.json` assignments through the existing supervisor path.
 |---|---|---|---|---|
 | `PPLG-001` | Codex | Claude | none | Lock canonical states, schemas, API contracts, and old-spec supersession. |
 | `PPLG-002` | Claude | Codex | `PPLG-001` | Implement idempotent create-to-paper launch workflow. |
-| `PPLG-003` | Codex2 | Claude2 | `PPLG-001` | Update Fleet/readiness read model and remove heavy duplicate payloads. |
-| `PPLG-004` | Claude2 | Codex | `PPLG-001` | Implement paper eligibility, promotion score, and cohort ranking. |
+| `PPLG-003` | Codex2 | Claude2 | `PPLG-001` | Update Fleet/readiness/competition read model and remove heavy duplicate payloads. |
+| `PPLG-004` | Claude2 | Codex | `PPLG-001` | Implement paper eligibility, promotion score, and unified paper/canary/live cohort ranking. |
 | `PPLG-005` | Claude | Codex2 | `PPLG-004` | Implement human review workflows for canary/live/quarterly decisions. |
 | `PPLG-006` | Codex | Claude2 | `PPLG-001` | Implement automatic guardrails and incident review evidence. |
-| `PPLG-007` | Codex2 | Claude | `PPLG-002,PPLG-003,PPLG-005` | Update frontend create and Fleet UX to paper-first semantics. |
+| `PPLG-007` | Codex2 | Claude | `PPLG-002,PPLG-003,PPLG-005` | Update frontend create, mode selector, and Fleet/League UX to paper-first unified competition semantics. |
 | `PPLG-008` | Gemini2 | Codex | `PPLG-002,PPLG-003,PPLG-004,PPLG-005,PPLG-006,PPLG-007` | Produce E2E release gate and closeout evidence. |
 
 ## Dispatch Command

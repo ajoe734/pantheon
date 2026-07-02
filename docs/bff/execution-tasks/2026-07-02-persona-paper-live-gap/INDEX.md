@@ -10,6 +10,7 @@ Status: ready for supervisor dispatch after human review
 ## Product Rules
 
 - Persona creation must complete to paper runtime or visible repair state.
+- Paper, canary, and live personas compete in one cohort league by default.
 - Canary/live require human approval.
 - Quarterly ranking and replacement require human approval.
 - Automatic guardrails may pause, reduce, risk-off, or freeze immediately.
@@ -21,11 +22,11 @@ Status: ready for supervisor dispatch after human review
 |---|---|---|
 | `PPLG-001` | Architecture/contracts | Lock states, schemas, endpoint contracts, and supersession notes. |
 | `PPLG-002` | Backend orchestration | Create paper persona launch workflow and retry semantics. |
-| `PPLG-003` | BFF/read model | Fleet/readiness projection and payload/performance cleanup. |
-| `PPLG-004` | Evaluation/ranking | Paper eligibility, scoring, and cohort ranking. |
+| `PPLG-003` | BFF/read model | Fleet/readiness/competition projection and payload/performance cleanup. |
+| `PPLG-004` | Evaluation/ranking | Paper eligibility, scoring, and unified paper/canary/live cohort ranking. |
 | `PPLG-005` | Governance review | Human promotion/live/quarterly review workflows. |
 | `PPLG-006` | Risk/runtime | Automatic risk guardrails and incident review. |
-| `PPLG-007` | Frontend | Create Paper Persona and Fleet UX update. |
+| `PPLG-007` | Frontend | Create Paper Persona, mode selector, and unified Fleet/League UX update. |
 | `PPLG-008` | Verification | End-to-end gates and closeout evidence. |
 
 ## Dispatch
