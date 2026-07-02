@@ -1,8 +1,6 @@
 {
   "fingerprints": [
-    "0a5cedc1f634bf97",
     "8641fcbac9dfcabc",
-    "4a615319ab12a52f",
     "e82049b20c070c8f",
     "c19abf63afbbf05e",
     "299be8af36052c2a",
@@ -33,7 +31,6 @@
     "b51343fc7f6e396b",
     "acd37100f81e4324",
     "2423d67cfbf0a0da",
-    "16b0b8fbdf0e38ab",
     "47ffd27352754ba5",
     "ddb0bdb019c142c9",
     "e877198091a3cc1e",
@@ -64,8 +61,6 @@
     "e0fb8f200f7367fe",
     "a3176c40f270f521",
     "5b90963f760f854b",
-    "7572d1eb7de3d678",
-    "362c9b3debb81ef6",
     "08828e3a0938d6bb",
     "fa4b71f410d16062",
     "0b45126c74aaf2eb",
@@ -100,10 +95,6 @@
     "e39aaaa9b5ebd0cb",
     "21b95243d04ea9f1",
     "c6fea404b06f7d4c",
-    "2ab3f604fff8bd8b",
-    "2a5de534ad8fd6d2",
-    "2bfa5b15334191e0",
-    "8ade202fca4b4cf4",
     "d796ed63bce73e1c",
     "6def67249bed03b6",
     "d57eba3274b646d9",
@@ -230,33 +221,13 @@
     "48f50593677c72cb",
     "508c45878e0837e7"
   ],
-  "issue_count": 229,
+  "issue_count": 220,
   "issues": [
-    {
-      "category": "board-pack-full-child-payloads",
-      "evidence": "Calls portfolio-book, persona-league, movers, and attribution endpoints, then embeds their full payloads under data.",
-      "fingerprint": "0a5cedc1f634bf97",
-      "function": "_management_board_pack_response",
-      "recommendation": "Board-pack should be summary-only: section status, counts, deltas, and hrefs. Do not nest child list payloads.",
-      "route": "",
-      "severity": "P0",
-      "title": "Board-pack composes complete child endpoint payloads"
-    },
     {
       "category": "duplicate-envelope",
       "evidence": "keys=['data', 'items']",
       "fingerprint": "8641fcbac9dfcabc",
       "function": "_human_inbox_payload",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items', 'sections']",
-      "fingerprint": "4a615319ab12a52f",
-      "function": "_management_board_pack_response",
       "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
       "route": "",
       "severity": "P0",
@@ -564,16 +535,6 @@
     },
     {
       "category": "duplicate-list-alias",
-      "evidence": "aliases=['items', 'sections']",
-      "fingerprint": "16b0b8fbdf0e38ab",
-      "function": "_management_board_pack_response",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
       "evidence": "aliases=['items', 'rows']",
       "fingerprint": "47ffd27352754ba5",
       "function": "_management_capital_flow_response",
@@ -867,26 +828,6 @@
       "evidence": "keys=['humanInbox', 'human_inbox']",
       "fingerprint": "5b90963f760f854b",
       "function": "_intervention_stream_record_event",
-      "recommendation": "Return summary counts, health, and hrefs. Fetch related aggregates from dedicated endpoints only when the user opens the detail/section.",
-      "route": "",
-      "severity": "P0",
-      "title": "List or board payload embeds related aggregate collections"
-    },
-    {
-      "category": "embedded-aggregate-payload",
-      "evidence": "keys=['persona_league', 'portfolio_book', 'portfolio_book_exposure', 'portfolio_book_positions', 'strategy_allocation']",
-      "fingerprint": "7572d1eb7de3d678",
-      "function": "_management_board_pack_response",
-      "recommendation": "Return summary counts, health, and hrefs. Fetch related aggregates from dedicated endpoints only when the user opens the detail/section.",
-      "route": "",
-      "severity": "P0",
-      "title": "List or board payload embeds related aggregate collections"
-    },
-    {
-      "category": "embedded-aggregate-payload",
-      "evidence": "keys=['performanceAttribution', 'performance_attribution', 'personaLeague', 'persona_league', 'portfolioBook', 'portfolioBookExposure', 'portfolioBookPositions', 'portfolio_book', 'portfolio_book_exposure', 'portfolio_book_positions', 'strategyAllocation', 'strategy_allocation']",
-      "fingerprint": "362c9b3debb81ef6",
-      "function": "_management_board_pack_response",
       "recommendation": "Return summary counts, health, and hrefs. Fetch related aggregates from dedicated endpoints only when the user opens the detail/section.",
       "route": "",
       "severity": "P0",
@@ -1227,46 +1168,6 @@
       "evidence": "createdAt+created_at, providerStatus+provider_status, sessionId+session_id, traceId+trace_id, uiActions+ui_actions",
       "fingerprint": "c6fea404b06f7d4c",
       "function": "_management_ai_turn_api_payload",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "byStatus+by_status, degradedSectionCount+degraded_section_count, okSectionCount+ok_section_count, sectionCount+section_count, sectionIds+section_ids, sectionLimit+section_limit, unavailableSectionCount+unavailable_section_count",
-      "fingerprint": "2ab3f604fff8bd8b",
-      "function": "_management_board_pack_response",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "byPersona+by_persona, byPool+by_pool",
-      "fingerprint": "2a5de534ad8fd6d2",
-      "function": "_management_board_pack_response",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "performanceAttribution+performance_attribution, personaLeague+persona_league, portfolioBook+portfolio_book, portfolioBookExposure+portfolio_book_exposure, portfolioBookPositions+portfolio_book_positions, sectionLimit+section_limit, snapshotAt+snapshot_at, strategyAllocation+strategy_allocation",
-      "fingerprint": "2bfa5b15334191e0",
-      "function": "_management_board_pack_response",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "itemCount+item_count, returnedItemCount+returned_item_count",
-      "fingerprint": "8ade202fca4b4cf4",
-      "function": "_management_board_pack_section",
       "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
       "route": "",
       "severity": "P1",

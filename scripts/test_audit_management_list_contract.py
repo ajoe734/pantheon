@@ -134,6 +134,66 @@ async def bff_management_persona_fleet():
     )
 
 
+def test_audit_detects_legacy_board_pack_child_payloads(tmp_path: Path) -> None:
+    source = tmp_path / "sample_bff.py"
+    source.write_text(
+        """
+async def _management_board_pack_response():
+    portfolio_book = {"data": {"items": []}}
+    return {
+        "data": {
+            "items": [],
+            "portfolioBook": portfolio_book,
+            "personaLeague": {"league": {"data": {"items": []}}},
+            "performanceAttribution": {"byPersona": {"items": []}},
+        }
+    }
+""",
+        encoding="utf-8",
+    )
+
+    result = _run("--source", str(source), "--format", "json")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert any(
+        issue["category"] == "board-pack-full-child-payloads"
+        for issue in payload["issues"]
+    )
+
+
+def test_audit_allows_summary_only_board_pack(tmp_path: Path) -> None:
+    source = tmp_path / "sample_bff.py"
+    source.write_text(
+        """
+async def _management_board_pack_response():
+    sections = [{"id": "portfolio_book", "href": "/bff/management/portfolio-book"}]
+    return {
+        "data": {
+            "items": sections,
+            "summary": {"section_count": 1},
+        },
+        "page_info": {"total": 1},
+        "meta": {
+            "related": {
+                "portfolio_book": {"href": "/bff/management/portfolio-book"},
+                "persona_league": {"href": "/bff/management/persona-league"},
+            }
+        },
+    }
+""",
+        encoding="utf-8",
+    )
+
+    result = _run("--source", str(source), "--format", "json")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    categories = {issue["category"] for issue in payload["issues"]}
+    assert "board-pack-full-child-payloads" not in categories
+    assert "embedded-aggregate-payload" not in categories
+
+
 def test_audit_baseline_allows_current_debt_but_fails_new_findings(tmp_path: Path) -> None:
     source = tmp_path / "sample_bff.py"
     source.write_text(

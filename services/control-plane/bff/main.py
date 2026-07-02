@@ -42393,18 +42393,16 @@ def _management_board_pack_section(
         "status": surface.get("status", "unknown"),
         "source": surface.get("source"),
         "item_count": item_count,
-        "itemCount": item_count,
         "returned_item_count": returned_count,
-        "returnedItemCount": returned_count,
         "summary": _management_payload_summary(payload),
     }
 
 
 def _management_board_pack_surfaces(
-    section_payloads: Dict[str, Dict[str, Any]],
+    section_payloads: List[Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
     surfaces: Dict[str, Dict[str, Any]] = {}
-    for payload in section_payloads.values():
+    for payload in section_payloads:
         meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
         nested_surfaces = meta.get("surfaces") if isinstance(meta.get("surfaces"), dict) else {}
         for key, surface in nested_surfaces.items():
@@ -42481,16 +42479,16 @@ async def _management_board_pack_response(
         surface_key="performance_attribution_by_pool",
     )
 
-    section_payloads = {
-        "portfolio_book": portfolio_book,
-        "portfolio_book_exposure": portfolio_exposure,
-        "portfolio_book_positions": portfolio_positions,
-        "strategy_allocation": strategy_allocation,
-        "persona_league": persona_league,
-        "persona_league_movers": persona_movers,
-        "performance_attribution_by_persona": attribution_by_persona,
-        "performance_attribution_by_pool": attribution_by_pool,
-    }
+    section_payload_refs = [
+        ("portfolio_book", portfolio_book),
+        ("portfolio_book_exposure", portfolio_exposure),
+        ("portfolio_book_positions", portfolio_positions),
+        ("strategy_allocation", strategy_allocation),
+        ("persona_league", persona_league),
+        ("persona_league_movers", persona_movers),
+        ("performance_attribution_by_persona", attribution_by_persona),
+        ("performance_attribution_by_pool", attribution_by_pool),
+    ]
     sections = [
         _management_board_pack_section(
             section_id="portfolio_book",
@@ -42550,12 +42548,14 @@ async def _management_board_pack_response(
         ),
     ]
     section_status_counts = _management_count_by(sections, "status")
-    nested_surfaces = _management_board_pack_surfaces(section_payloads)
+    nested_surfaces = _management_board_pack_surfaces(
+        [payload for _, payload in section_payload_refs]
+    )
     board_surface = _aggregate_group_surface(
         "management_board_pack",
         [
-            _management_payload_surface(payload, section_id)
-            for section_id, payload in section_payloads.items()
+            _management_payload_surface(payload, surface_key)
+            for surface_key, payload in section_payload_refs
         ],
         snapshot_at=snapshot_at,
         unavailable_message="Management board-pack aggregate unavailable.",
@@ -42563,61 +42563,27 @@ async def _management_board_pack_response(
     )
     summary = {
         "section_count": len(sections),
-        "sectionCount": len(sections),
         "section_ids": [section["id"] for section in sections],
-        "sectionIds": [section["id"] for section in sections],
         "by_status": section_status_counts,
-        "byStatus": section_status_counts,
         "ok_section_count": section_status_counts.get("ok", 0),
-        "okSectionCount": section_status_counts.get("ok", 0),
         "degraded_section_count": section_status_counts.get("degraded", 0),
-        "degradedSectionCount": section_status_counts.get("degraded", 0),
         "unavailable_section_count": section_status_counts.get("unavailable", 0),
-        "unavailableSectionCount": section_status_counts.get("unavailable", 0),
         "period": period_key,
         "section_limit": section_limit,
-        "sectionLimit": section_limit,
         "policy": "read_only_management_board_pack",
         "basis": "composed_from_pm12_management_read_surfaces",
     }
-    performance_attribution = {
-        "byPersona": attribution_by_persona,
-        "by_persona": attribution_by_persona,
-        "byPool": attribution_by_pool,
-        "by_pool": attribution_by_pool,
-    }
-    persona_league_pack = {
-        "league": persona_league,
-        "movers": persona_movers,
-    }
     data = {
         "id": "management-board-pack",
-        "snapshotAt": snapshot_at,
         "snapshot_at": snapshot_at,
         "period": period_key,
-        "sectionLimit": section_limit,
         "section_limit": section_limit,
-        "sections": sections,
+        "items": sections,
         "summary": summary,
-        "portfolioBook": portfolio_book,
-        "portfolio_book": portfolio_book,
-        "portfolioBookExposure": portfolio_exposure,
-        "portfolio_book_exposure": portfolio_exposure,
-        "portfolioBookPositions": portfolio_positions,
-        "portfolio_book_positions": portfolio_positions,
-        "strategyAllocation": strategy_allocation,
-        "strategy_allocation": strategy_allocation,
-        "personaLeague": persona_league_pack,
-        "persona_league": persona_league_pack,
-        "performanceAttribution": performance_attribution,
-        "performance_attribution": performance_attribution,
         "policy": "read_only_management_board_pack",
     }
     return {
         "data": data,
-        "items": sections,
-        "sections": sections,
-        "summary": summary,
         "page_info": {
             "next_page_token": None,
             "total": len(sections),
@@ -42629,6 +42595,10 @@ async def _management_board_pack_response(
                 "management_board_pack": board_surface,
                 "board_pack": board_surface,
                 **nested_surfaces,
+            },
+            "related": {
+                section["id"]: {"href": section["href"]}
+                for section in sections
             },
             "composition_sources": [
                 "GET /bff/management/portfolio-book",
