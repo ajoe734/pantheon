@@ -617,8 +617,12 @@ def test_hiq_backlog_composes_open_hiq_interventions_and_findings(monkeypatch) -
         assert intervention["links"]["human_inbox"] == (
             "/bff/management/human-inbox/intervention:intv-hiq-critical"
         )
-        assert intervention["allowedActions"]["canRemediate"] is True
+        assert intervention["allowed_actions"]["canRemediate"] is True
         assert "humanInbox" not in intervention["links"]
+        assert "allowedActions" not in intervention
+        assert "backlogId" not in intervention
+        assert "sourceType" not in intervention
+        assert "sourceRefs" not in intervention
         assert "sourceRecord" not in intervention
         assert "source_record" not in intervention
     finally:
@@ -774,6 +778,10 @@ def test_intervention_stream_returns_recent_persona_events(monkeypatch) -> None:
         assert "rows" not in data
         assert "events" not in data
         assert "stream" not in data
+        assert all("eventId" not in item for item in items)
+        assert all("eventSource" not in item for item in items)
+        assert all("sourceRefs" not in item for item in items)
+        assert all("streamSequence" not in item for item in items)
         assert [item["intervention_id"] for item in items] == [
             "intv-alpha",
             "intv-alpha",
@@ -989,6 +997,10 @@ def test_governance_ledger_unifies_approval_intervention_and_override_sources() 
             assert any(item["source_type"] == "approval" for item in items)
             assert any(item["source_type"] == "intervention" for item in items)
             assert any(item["source_type"] == "override" for item in items)
+            assert all("ledgerId" not in item for item in items)
+            assert all("sourceType" not in item for item in items)
+            assert all("eventType" not in item for item in items)
+            assert all("evidenceRefs" not in item for item in items)
             assert all("sourceRecord" not in item for item in items)
             assert all("source_record" not in item for item in items)
 
