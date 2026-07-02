@@ -265,12 +265,18 @@ def test_trading_pulse_returns_card_aggregate_and_runtime_rankings() -> None:
             assert summary["monitoring_coverage_count"] == 1
             assert summary["missing_monitoring_runtime_ids"] == []
             assert summary["coverage"]["metric_coverage"]["pnl"]["available_count"] == 2
+            assert "rowHealthDegradedCount" not in summary
+            assert "rowHealthStatusCounts" not in summary
+            assert "monitoringCoverageCount" not in summary
+            assert "metricCoverage" not in summary["coverage"]
 
             assert len(data["cards"]) == 6
             assert {card["card_id"] for card in data["cards"]} >= {"row-health"}
             assert data["rankings"][0]["runtime_id"] == "runtime-alpha"
             assert data["rankings"][0]["rank"] == 1
             assert data["rankings"][0]["baseline_comparison_status"] == "watch"
+            assert "rowHealthStatus" not in data["rankings"][0]
+            assert "rowHealthDegradedChecks" not in data["rankings"][0]
             rows_by_runtime = {row["runtime_id"]: row for row in data["runtime_rows"]}
             assert data["runtime_rows"][0]["runtime_id"] == "runtime-beta"
             assert rows_by_runtime["runtime-alpha"]["telemetry_summary"]["metrics"]["pnl"] == 0.42
@@ -365,6 +371,8 @@ def test_trading_pulse_rankings_returns_computed_blocks_with_limit() -> None:
             assert summary["eligible_item_count"] == 8
             assert summary["missing_metric_item_count"] == 0
             assert summary["limit"] == 1
+            assert "eligibleItemCount" not in summary
+            assert "missingMetricItemCount" not in summary
             assert body["page_info"] == {
                 "next_page_token": None,
                 "total": 4,
@@ -374,11 +382,18 @@ def test_trading_pulse_rankings_returns_computed_blocks_with_limit() -> None:
             blocks = {block["block_id"]: block for block in data["items"]}
             assert blocks["pnl-leaders"]["eligible_item_count"] == 2
             assert blocks["pnl-leaders"]["missing_metric_count"] == 0
+            assert "blockId" not in blocks["pnl-leaders"]
+            assert "sortOrder" not in blocks["pnl-leaders"]
+            assert "eligibleItemCount" not in blocks["pnl-leaders"]
+            assert "missingMetricCount" not in blocks["pnl-leaders"]
+            assert "missingMetricRuntimeIds" not in blocks["pnl-leaders"]
             assert blocks["pnl-leaders"]["items"][0]["runtime_id"] == "runtime-alpha"
             assert blocks["pnl-leaders"]["items"][0]["ranking_eligible"] is True
             assert blocks["pnl-leaders"]["items"][0]["ranking_metric"] == "pnl"
             assert blocks["drawdown-control"]["items"][0]["runtime_id"] == "runtime-beta"
             assert blocks["execution-quality"]["items"][0]["ranking_metric"] == "fill_rate"
+            assert blocks["execution-quality"]["secondary_metric"] == "avg_slippage_bps"
+            assert "secondaryMetric" not in blocks["execution-quality"]
             assert blocks["sharpe-leaders"]["items"][0]["runtime_id"] == "runtime-alpha"
             assert blocks["pnl-leaders"]["items"][0]["baseline_comparison_status"] == "watch"
             assert (

@@ -63,11 +63,6 @@
     "1d612cc431158228",
     "3059395d2a0bd509",
     "7ad13033887632f2",
-    "56b224a8fc579c98",
-    "f8ff403ff7f34c43",
-    "753e74d31e89dfff",
-    "a772bc52ce82fc80",
-    "f8308ac629f8e3f9",
     "e08d52efec9ab1af",
     "cb9b7609eb529f43",
     "56a9e26a0f57b405",
@@ -97,14 +92,8 @@
     "b80fb745646c3ad4",
     "2597d48d5e490084",
     "db134ab605478688",
-    "dccbdea81e0b0a2e",
-    "3fe4c526212f409e",
     "46d413a54d94d165",
     "b2a7a46089bdd07c",
-    "ac332009b72a7536",
-    "08ec1724ff9c413d",
-    "647cde3125d552f1",
-    "8044dd1c2b77acdc",
     "16fffb9600a03952",
     "71d52ed93ddeb23f",
     "ff56b99adbf45284",
@@ -114,7 +103,7 @@
     "48f50593677c72cb",
     "508c45878e0837e7"
   ],
-  "issue_count": 113,
+  "issue_count": 102,
   "issues": [
     {
       "category": "camel-snake-duplicate",
@@ -748,56 +737,6 @@
     },
     {
       "category": "camel-snake-duplicate",
-      "evidence": "capturedAt+captured_at, displayLabel+display_label, linkType+link_type, linkedObjectSummary+linked_object_summary, refId+ref_id, resolvedLink+resolved_link, routeHref+route_href, sourceRef+source_ref, sourceType+source_type",
-      "fingerprint": "56b224a8fc579c98",
-      "function": "_pm12_quarter_formula_governance_evidence_refs",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "governanceEvidenceRefs+governance_evidence_refs, requiresGovernanceEvidence+requires_governance_evidence, versionPolicy+version_policy",
-      "fingerprint": "f8ff403ff7f34c43",
-      "function": "_pm12_quarter_formula_payload",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "changeControl+change_control, formulaId+formula_id, formulaVersion+formula_version, governanceEvidenceRefs+governance_evidence_refs, scoreField+score_field, versionHistory+version_history",
-      "fingerprint": "753e74d31e89dfff",
-      "function": "_pm12_quarter_formula_payload",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "changeType+change_type, effectiveAt+effective_at, formulaVersion+formula_version, governanceEvidenceRefs+governance_evidence_refs",
-      "fingerprint": "a772bc52ce82fc80",
-      "function": "_pm12_quarter_formula_version_history",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "endExclusiveAt+end_exclusive_at, quarterNumber+quarter_number, startAt+start_at",
-      "fingerprint": "f8308ac629f8e3f9",
-      "function": "_pm12_quarter_window",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
       "evidence": "scoreField+score_field, weightedContribution+weighted_contribution",
       "fingerprint": "e08d52efec9ab1af",
       "function": "_pm12_quarterly_drilldown_contributions",
@@ -1088,26 +1027,6 @@
     },
     {
       "category": "camel-snake-duplicate",
-      "evidence": "evidenceRefCount+evidence_ref_count, formulaVersion+formula_version, personaCount+persona_count, rankedCount+ranked_count, redactedEvidenceCount+redacted_evidence_count, returnedCount+returned_count, topPersonaId+top_persona_id",
-      "fingerprint": "dccbdea81e0b0a2e",
-      "function": "bff_management_quarterly_ranking",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "/bff/management/quarterly-ranking",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "evidenceRefs+evidence_refs, quarterWindow+quarter_window",
-      "fingerprint": "3fe4c526212f409e",
-      "function": "bff_management_quarterly_ranking",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "/bff/management/quarterly-ranking",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
       "evidence": "contributionBreakdown+contribution_breakdown, evidenceRefs+evidence_refs, quarterWindow+quarter_window, rankingItem+ranking_item, sourceBreakdown+source_breakdown",
       "fingerprint": "46d413a54d94d165",
       "function": "bff_management_quarterly_ranking_drilldown",
@@ -1123,46 +1042,6 @@
       "function": "bff_management_quarterly_ranking_drilldown",
       "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
       "route": "/bff/management/quarterly-ranking/drilldown",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "componentCount+component_count, evidenceRefCount+evidence_ref_count, formulaId+formula_id, formulaVersion+formula_version, weightTotal+weight_total",
-      "fingerprint": "ac332009b72a7536",
-      "function": "bff_management_quarterly_ranking_formula",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "/bff/management/quarterly-ranking/formula",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "evidenceRefs+evidence_refs, versionHistory+version_history",
-      "fingerprint": "08ec1724ff9c413d",
-      "function": "bff_management_quarterly_ranking_formula",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "/bff/management/quarterly-ranking/formula",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "allowedActions+allowed_actions, byAction+by_action, evidenceRefCount+evidence_ref_count, formulaVersion+formula_version, humanGateDecisionCount+human_gate_decision_count, liveCapitalMutationCount+live_capital_mutation_count, personaCount+persona_count, rankedCount+ranked_count, recommendationCount+recommendation_count, redactedEvidenceCount+redacted_evidence_count, returnedCount+returned_count, topPersonaId+top_persona_id",
-      "fingerprint": "647cde3125d552f1",
-      "function": "bff_management_quarterly_ranking_recommendations",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "/bff/management/quarterly-ranking/recommendations",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "allowedActions+allowed_actions, evidenceRefs+evidence_refs, governanceDestinations+governance_destinations, quarterWindow+quarter_window",
-      "fingerprint": "8044dd1c2b77acdc",
-      "function": "bff_management_quarterly_ranking_recommendations",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "/bff/management/quarterly-ranking/recommendations",
       "severity": "P1",
       "title": "DTO returns camelCase and snake_case copies of fields"
     },

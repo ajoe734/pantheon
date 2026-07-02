@@ -8155,29 +8155,17 @@ def _trading_pulse_coverage_summary(
     row_health_status_counts = _trading_pulse_status_counts(rows)
     metric_coverage = _trading_pulse_metric_coverage(rows)
     return {
-        "runtimeCount": len(rows),
         "runtime_count": len(rows),
-        "paperRuntimeCount": len(paper_rows),
         "paper_runtime_count": len(paper_rows),
-        "telemetryCoverageCount": len(telemetry_runtime_ids),
         "telemetry_coverage_count": len(telemetry_runtime_ids),
-        "monitoringCoverageCount": len(monitoring_runtime_ids),
         "monitoring_coverage_count": len(monitoring_runtime_ids),
-        "baselineComparisonCount": len(baseline_runtime_ids),
         "baseline_comparison_count": len(baseline_runtime_ids),
-        "missingTelemetryRuntimeIds": missing_telemetry_runtime_ids,
         "missing_telemetry_runtime_ids": missing_telemetry_runtime_ids,
-        "missingMonitoringRuntimeIds": missing_monitoring_runtime_ids,
         "missing_monitoring_runtime_ids": missing_monitoring_runtime_ids,
-        "missingBaselineRuntimeIds": missing_baseline_runtime_ids,
         "missing_baseline_runtime_ids": missing_baseline_runtime_ids,
-        "rowHealthStatusCounts": row_health_status_counts,
         "row_health_status_counts": row_health_status_counts,
-        "rowHealthDegradedCount": len(degraded_runtime_ids),
         "row_health_degraded_count": len(degraded_runtime_ids),
-        "degradedRuntimeIds": degraded_runtime_ids,
         "degraded_runtime_ids": degraded_runtime_ids,
-        "metricCoverage": metric_coverage,
         "metric_coverage": metric_coverage,
     }
 
@@ -8334,9 +8322,7 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
                 "last_updated_at": row.get("last_updated_at"),
                 "baseline_comparison_status": baseline_comparison.get("status"),
                 "breached_metric_count": baseline_comparison.get("breached_metric_count"),
-                "rowHealthStatus": _trading_pulse_row_health_status(row),
                 "row_health_status": _trading_pulse_row_health_status(row),
-                "rowHealthDegradedChecks": _trading_pulse_row_degraded_checks(row),
                 "row_health_degraded_checks": _trading_pulse_row_degraded_checks(row),
             }
         )
@@ -8344,7 +8330,7 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         key=lambda item: (
             _management_number(item.get("pnl")) is not None,
             _management_number(item.get("pnl")) or 0.0,
-            str(item.get("runtimeId") or ""),
+            str(item.get("runtime_id") or ""),
         ),
         reverse=True,
     )
@@ -8380,8 +8366,8 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "paper_runtime_monitoring_sessions",
         snapshot_at=snapshot_at,
     )
-    paper_runtime_count = int(coverage.get("paperRuntimeCount") or 0)
-    monitoring_coverage_count = int(coverage.get("monitoringCoverageCount") or 0)
+    paper_runtime_count = int(coverage.get("paper_runtime_count") or 0)
+    monitoring_coverage_count = int(coverage.get("monitoring_coverage_count") or 0)
     if paper_runtime_count == 0:
         monitoring_surface = {
             "status": "ok",
@@ -8457,19 +8443,12 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "baseline_breached_count": baseline_breached_count,
         "baseline_watch_count": baseline_watch_count,
         "by_baseline_status": by_baseline_status,
-        "rowHealthDegradedCount": coverage["rowHealthDegradedCount"],
         "row_health_degraded_count": coverage["row_health_degraded_count"],
-        "rowHealthStatusCounts": coverage["rowHealthStatusCounts"],
         "row_health_status_counts": coverage["row_health_status_counts"],
-        "monitoringCoverageCount": coverage["monitoringCoverageCount"],
         "monitoring_coverage_count": coverage["monitoring_coverage_count"],
-        "missingTelemetryRuntimeIds": coverage["missingTelemetryRuntimeIds"],
         "missing_telemetry_runtime_ids": coverage["missing_telemetry_runtime_ids"],
-        "missingMonitoringRuntimeIds": coverage["missingMonitoringRuntimeIds"],
         "missing_monitoring_runtime_ids": coverage["missing_monitoring_runtime_ids"],
-        "missingBaselineRuntimeIds": coverage["missingBaselineRuntimeIds"],
         "missing_baseline_runtime_ids": coverage["missing_baseline_runtime_ids"],
-        "metricCoverage": coverage["metricCoverage"],
         "metric_coverage": coverage["metric_coverage"],
         "coverage": coverage,
     }
@@ -8658,22 +8637,16 @@ def _build_management_trading_pulse_ranking_block(
     )
     missing_runtime_ids = _trading_pulse_ranking_missing_runtime_ids(rankings, metric)
     block: Dict[str, Any] = {
-        "blockId": block_id,
         "block_id": block_id,
         "label": label,
         "metric": metric,
-        "sortOrder": "desc" if descending else "asc",
         "sort_order": "desc" if descending else "asc",
         "items": items,
-        "eligibleItemCount": len(rankings) - len(missing_runtime_ids),
         "eligible_item_count": len(rankings) - len(missing_runtime_ids),
-        "missingMetricCount": len(missing_runtime_ids),
         "missing_metric_count": len(missing_runtime_ids),
-        "missingMetricRuntimeIds": missing_runtime_ids,
         "missing_metric_runtime_ids": missing_runtime_ids,
     }
     if secondary_metric:
-        block["secondaryMetric"] = secondary_metric
         block["secondary_metric"] = secondary_metric
     return block
 
@@ -8753,11 +8726,11 @@ def _build_management_trading_pulse_rankings_payload(
     top_item = (blocks[0].get("items") or [None])[0] if blocks else None
     ranked_item_count = sum(len(block.get("items") or []) for block in blocks)
     missing_metric_item_count = sum(
-        int(block.get("missingMetricCount") or block.get("missing_metric_count") or 0)
+        int(block.get("missing_metric_count") or 0)
         for block in blocks
     )
     eligible_item_count = sum(
-        int(block.get("eligibleItemCount") or block.get("eligible_item_count") or 0)
+        int(block.get("eligible_item_count") or 0)
         for block in blocks
     )
     if missing_metric_item_count and surfaces["management_trading_pulse_rankings"].get("status") == "ok":
@@ -8769,9 +8742,7 @@ def _build_management_trading_pulse_rankings_payload(
         "runtime_count": int((trading_pulse.get("summary") or {}).get("runtime_count") or 0),
         "ranking_block_count": len(blocks),
         "ranked_item_count": ranked_item_count,
-        "eligibleItemCount": eligible_item_count,
         "eligible_item_count": eligible_item_count,
-        "missingMetricItemCount": missing_metric_item_count,
         "missing_metric_item_count": missing_metric_item_count,
         "criteria": [str(block.get("metric") or "") for block in blocks],
         "limit": limit,
@@ -39625,12 +39596,9 @@ def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, 
     return {
         "quarter": quarter_id,
         "year": year,
-        "quarterNumber": quarter_number,
         "quarter_number": quarter_number,
         "label": f"{year} Q{quarter_number}",
-        "startAt": _pm12_iso_z(start_at),
         "start_at": _pm12_iso_z(start_at),
-        "endExclusiveAt": _pm12_iso_z(end_exclusive_at),
         "end_exclusive_at": _pm12_iso_z(end_exclusive_at),
         "timezone": "UTC",
     }
@@ -39640,18 +39608,12 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
     return [
         {
             "id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
-            "refId": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
             "ref_id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
             "title": "PM-12 quarterly ranking formula governance baseline",
-            "displayLabel": "PM-12 quarterly ranking formula governance baseline",
             "display_label": "PM-12 quarterly ranking formula governance baseline",
-            "sourceType": "governance_record",
             "source_type": "governance_record",
-            "sourceRef": _PM12_QUARTERLY_FORMULA_DOC_REF,
             "source_ref": _PM12_QUARTERLY_FORMULA_DOC_REF,
-            "capturedAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
             "captured_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
-            "linkType": "formula_version_governance",
             "link_type": "formula_version_governance",
             "credibility": {
                 "tier": "primary",
@@ -39659,21 +39621,10 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
                 "last_verified_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
                 "verification_method": "task_review",
             },
-            "linkedObjectSummary": {
-                "entity_type": "ranking_formula",
-                "entity_ref": "pm12-quarterly-ranking-formula",
-                "display_label": "PM-12 quarterly ranking formula",
-            },
             "linked_object_summary": {
                 "entity_type": "ranking_formula",
                 "entity_ref": "pm12-quarterly-ranking-formula",
                 "display_label": "PM-12 quarterly ranking formula",
-            },
-            "resolvedLink": {
-                "availability": "available",
-                "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
-                "display_label": "Open PM-12 integration spec",
-                "open_in_new_tab": False,
             },
             "resolved_link": {
                 "availability": "available",
@@ -39681,7 +39632,6 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
                 "display_label": "Open PM-12 integration spec",
                 "open_in_new_tab": False,
             },
-            "routeHref": _PM12_QUARTERLY_FORMULA_DOC_REF,
             "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
         }
     ]
@@ -39695,13 +39645,9 @@ def _pm12_quarter_formula_version_history() -> List[Dict[str, Any]]:
         {
             "id": f"pm12-quarterly-ranking-formula-{_PM12_LEAGUE_FORMULA_VERSION}",
             "version": _PM12_LEAGUE_FORMULA_VERSION,
-            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-            "effectiveAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
             "effective_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
-            "changeType": "baseline",
             "change_type": "baseline",
-            "governanceEvidenceRefs": evidence_ref_ids,
             "governance_evidence_refs": evidence_ref_ids,
             "description": "Baseline formula accepted for PM-12 quarterly ranking reads.",
         }
@@ -39714,23 +39660,17 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
     ]
     version_history = _pm12_quarter_formula_version_history()
     change_control = {
-        "versionPolicy": "formula_version_changes_require_governance_evidence",
         "version_policy": "formula_version_changes_require_governance_evidence",
-        "requiresGovernanceEvidence": True,
         "requires_governance_evidence": True,
-        "governanceEvidenceRefs": evidence_ref_ids,
         "governance_evidence_refs": evidence_ref_ids,
         "authority": "read_only_governance_advisory",
     }
     return {
         "id": "pm12-quarterly-ranking-formula",
-        "formulaId": "pm12-quarterly-ranking-formula",
         "formula_id": "pm12-quarterly-ranking-formula",
         "version": _PM12_LEAGUE_FORMULA_VERSION,
-        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
-        "scoreField": "overallScore",
         "score_field": "overallScore",
         "components": [
             {"key": "pnl", "label": "PnL", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]},
@@ -39740,11 +39680,8 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
         ],
         "basis": "latest_available_persona_league_metrics_with_quarter_window",
         "policy": "read_only_governance_advisory",
-        "governanceEvidenceRefs": evidence_ref_ids,
         "governance_evidence_refs": evidence_ref_ids,
-        "versionHistory": version_history,
         "version_history": version_history,
-        "changeControl": change_control,
         "change_control": change_control,
     }
 
@@ -39758,8 +39695,8 @@ def _pm12_quarter_evidence_refs(
     evidence_refs: List[Dict[str, Any]],
     quarter_window: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    start_at = _audit_datetime(quarter_window.get("startAt"))
-    end_exclusive_at = _audit_datetime(quarter_window.get("endExclusiveAt"))
+    start_at = _audit_datetime(quarter_window.get("start_at"))
+    end_exclusive_at = _audit_datetime(quarter_window.get("end_exclusive_at"))
     if start_at is None or end_exclusive_at is None:
         return []
     return [
@@ -39953,7 +39890,7 @@ def _pm12_quarterly_drilldown_payload(
         "score": score,
         "overallScore": item.get("overallScore"),
         "overall_score": item.get("overall_score") or item.get("overallScore"),
-        "formulaVersion": item.get("formulaVersion") or formula["formulaVersion"],
+        "formulaVersion": item.get("formulaVersion") or formula["formula_version"],
         "formula_version": item.get("formula_version") or formula["formula_version"],
         "componentCount": len(contributions),
         "component_count": len(contributions),
@@ -41023,7 +40960,7 @@ async def bff_management_quarterly_ranking_formula(
     snapshot_at = utc_now()
     formula = _pm12_quarter_formula_payload()
     evidence_refs = _pm12_quarter_formula_governance_evidence_refs()
-    version_history = list(formula.get("versionHistory") or [])
+    version_history = list(formula.get("version_history") or [])
     formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
     evidence_surface = _composed_surface_status(
         snapshot_at=snapshot_at,
@@ -41032,15 +40969,10 @@ async def bff_management_quarterly_ranking_formula(
     )
     weights = formula.get("weights") if isinstance(formula.get("weights"), dict) else {}
     summary = {
-        "formulaId": formula["formulaId"],
         "formula_id": formula["formula_id"],
-        "formulaVersion": formula["formulaVersion"],
         "formula_version": formula["formula_version"],
-        "componentCount": len(formula.get("components") or []),
         "component_count": len(formula.get("components") or []),
-        "weightTotal": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
         "weight_total": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
-        "evidenceRefCount": len(evidence_refs),
         "evidence_ref_count": len(evidence_refs),
         "basis": formula["basis"],
         "policy": formula["policy"],
@@ -41048,9 +40980,7 @@ async def bff_management_quarterly_ranking_formula(
     return {
         "data": formula,
         "formula": formula,
-        "versionHistory": version_history,
         "version_history": version_history,
-        "evidenceRefs": evidence_refs,
         "evidence_refs": evidence_refs,
         "summary": summary,
         "meta": {
@@ -41115,30 +41045,21 @@ async def bff_management_quarterly_ranking(
     top_item = ranked_items[0] if ranked_items else None
     summary = {
         "quarter": quarter_window["quarter"],
-        "formulaVersion": formula["formulaVersion"],
         "formula_version": formula["formula_version"],
-        "personaCount": len(rows),
         "persona_count": len(rows),
-        "rankedCount": total,
         "ranked_count": total,
-        "returnedCount": len(page_items),
         "returned_count": len(page_items),
-        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
         "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
-        "evidenceRefCount": len(public_evidence_refs),
         "evidence_ref_count": len(public_evidence_refs),
-        "redactedEvidenceCount": redacted_count,
         "redacted_evidence_count": redacted_count,
         "basis": formula["basis"],
     }
     data = {
         "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
         "quarter": quarter_window["quarter"],
-        "quarterWindow": quarter_window,
         "quarter_window": quarter_window,
         "formula": formula,
         "items": page_items,
-        "evidenceRefs": public_evidence_refs,
         "evidence_refs": public_evidence_refs,
         "summary": summary,
     }
@@ -41250,7 +41171,6 @@ async def bff_management_quarterly_ranking_drilldown(
         degraded_message="Quarterly ranking drilldown is degraded because one or more source surfaces are degraded.",
     )
     summary = dict(drilldown["summary"])
-    summary["redactedEvidenceCount"] = redacted_count
     summary["redacted_evidence_count"] = redacted_count
 
     return {
@@ -41331,29 +41251,17 @@ async def bff_management_quarterly_ranking_recommendations(
     top_item = ranked_items[0] if ranked_items else None
     summary = {
         "quarter": quarter_window["quarter"],
-        "formulaVersion": formula["formulaVersion"],
         "formula_version": formula["formula_version"],
-        "personaCount": len(rows),
         "persona_count": len(rows),
-        "rankedCount": len(ranked_items),
         "ranked_count": len(ranked_items),
-        "recommendationCount": total,
         "recommendation_count": total,
-        "returnedCount": len(page_items),
         "returned_count": len(page_items),
-        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
         "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
-        "humanGateDecisionCount": total,
         "human_gate_decision_count": total,
-        "liveCapitalMutationCount": 0,
         "live_capital_mutation_count": 0,
-        "evidenceRefCount": len(public_evidence_refs),
         "evidence_ref_count": len(public_evidence_refs),
-        "redactedEvidenceCount": redacted_count,
         "redacted_evidence_count": redacted_count,
-        "byAction": action_counts,
         "by_action": action_counts,
-        "allowedActions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
         "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
         "basis": formula["basis"],
         "policy": "read_only_governance_advisory",
@@ -41402,17 +41310,13 @@ async def bff_management_quarterly_ranking_recommendations(
     data = {
         "id": f"pm12-quarterly-ranking-recommendations-{quarter_window['quarter'].lower()}",
         "quarter": quarter_window["quarter"],
-        "quarterWindow": quarter_window,
         "quarter_window": quarter_window,
         "formula": formula,
         "items": page_items,
-        "evidenceRefs": public_evidence_refs,
         "evidence_refs": public_evidence_refs,
         "summary": summary,
         "policy": "read_only_governance_advisory",
-        "governanceDestinations": governance_destinations,
         "governance_destinations": governance_destinations,
-        "allowedActions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
         "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
     }
     return {
