@@ -733,43 +733,46 @@ describe("managementClient — Evolution Journal aggregate live adapter", () => 
   it("reads /bff/management/evolution-journal with journal filters", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
-        items: [
-          {
-            id: "mutation_review:evo-dec-88f3a2c1",
-            journal_id: "mutation_review:evo-dec-88f3a2c1",
-            entryType: "mutation_review",
-            entry_type: "mutation_review",
-            source_id: "evo-dec-88f3a2c1",
-            title: "Mutation review: evo-dec-88f3a2c1",
-            summary: "Freeze candidate artifact at canary stage.",
-            status: "reviewed",
-            risk_level: "medium",
-            action_type: "freeze_canary",
-            target: { type: "candidate_artifact", id: "artifact-44d7e9b0", version: "v3.1.2" },
-            mutationReview: {
-              decision_id: "evo-dec-88f3a2c1",
-              allowedActions: { canApproveMutation: true },
+        data: {
+          id: "management_evolution_journal",
+          items: [
+            {
+              id: "mutation_review:evo-dec-88f3a2c1",
+              journal_id: "mutation_review:evo-dec-88f3a2c1",
+              entryType: "mutation_review",
+              entry_type: "mutation_review",
+              source_id: "evo-dec-88f3a2c1",
+              title: "Mutation review: evo-dec-88f3a2c1",
+              summary: "Freeze candidate artifact at canary stage.",
+              status: "reviewed",
+              risk_level: "medium",
+              action_type: "freeze_canary",
+              target: { type: "candidate_artifact", id: "artifact-44d7e9b0", version: "v3.1.2" },
+              mutationReview: {
+                decision_id: "evo-dec-88f3a2c1",
+                allowedActions: { canApproveMutation: true },
+              },
             },
+          ],
+          summary: {
+            total_items: 1,
+            returned_items: 1,
+            decision_count: 0,
+            mutation_review_count: 1,
+            postmortem_count: 0,
+            rollback_count: 0,
+            freeze_order_count: 0,
+            pending_review_count: 1,
+            active_freeze_count: 0,
+            completed_rollback_count: 0,
+            latest_at: "2026-04-18T11:05:00Z",
+            byType: { mutation_review: 1 },
+            by_type: { mutation_review: 1 },
+            byStatus: { reviewed: 1 },
+            by_status: { reviewed: 1 },
+            byRiskLevel: { medium: 1 },
+            by_risk_level: { medium: 1 },
           },
-        ],
-        summary: {
-          total_items: 1,
-          returned_items: 1,
-          decision_count: 0,
-          mutation_review_count: 1,
-          postmortem_count: 0,
-          rollback_count: 0,
-          freeze_order_count: 0,
-          pending_review_count: 1,
-          active_freeze_count: 0,
-          completed_rollback_count: 0,
-          latest_at: "2026-04-18T11:05:00Z",
-          byType: { mutation_review: 1 },
-          by_type: { mutation_review: 1 },
-          byStatus: { reviewed: 1 },
-          by_status: { reviewed: 1 },
-          byRiskLevel: { medium: 1 },
-          by_risk_level: { medium: 1 },
         },
         page_info: { total: 1, page_size: 1, next_page_token: null },
         meta: {
@@ -791,9 +794,11 @@ describe("managementClient — Evolution Journal aggregate live adapter", () => 
     expect(fetchMock.mock.calls[0][0]).toBe(
       "https://example.test/bff/management/evolution-journal?source_type=mutation_review&status=reviewed&page_size=1",
     );
-    expect(aggregate.items[0].entry_type).toBe("mutation_review");
-    expect(aggregate.items[0].mutationReview?.decision_id).toBe("evo-dec-88f3a2c1");
-    expect(aggregate.summary.mutation_review_count).toBe(1);
+    expect("items" in aggregate).toBe(false);
+    expect("summary" in aggregate).toBe(false);
+    expect(aggregate.data.items[0].entry_type).toBe("mutation_review");
+    expect(aggregate.data.items[0].mutationReview?.decision_id).toBe("evo-dec-88f3a2c1");
+    expect(aggregate.data.summary.mutation_review_count).toBe(1);
     expect(aggregate.meta.surfaces.management_evolution_journal.source).toBe("bff_composed");
   });
 });
@@ -815,47 +820,50 @@ describe("managementClient — Persona Intent aggregate live adapter", () => {
   it("reads /bff/management/persona-intent with redacted intent filters", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
-        items: [
-          {
-            id: "persona_trace:sess-001",
-            intent_id: "persona_trace:sess-001",
-            sourceType: "persona_trace",
-            source_type: "persona_trace",
-            source_id: "sess-001",
-            personaId: "persona-alpha",
-            persona_id: "persona-alpha",
-            intent: "interactive",
-            title: "Persona trace sess-001",
-            summary: "Interactive session intent summary.",
-            status: "active",
-            occurred_at: "2026-04-11T11:55:00Z",
-            trace: {
-              trace_id: "trace-sess-001",
-              capability_summary: { effective_tool_count: 3 },
+        data: {
+          id: "management_persona_intent",
+          items: [
+            {
+              id: "persona_trace:sess-001",
+              intent_id: "persona_trace:sess-001",
+              sourceType: "persona_trace",
+              source_type: "persona_trace",
+              source_id: "sess-001",
+              personaId: "persona-alpha",
+              persona_id: "persona-alpha",
+              intent: "interactive",
+              title: "Persona trace sess-001",
+              summary: "Interactive session intent summary.",
+              status: "active",
+              occurred_at: "2026-04-11T11:55:00Z",
+              trace: {
+                trace_id: "trace-sess-001",
+                capability_summary: { effective_tool_count: 3 },
+              },
+              redacted: true,
+              redaction: {
+                policy: "management_persona_intent_public_summary",
+                redacted_fields: ["capability_snapshot", "tools_enabled"],
+              },
             },
-            redacted: true,
-            redaction: {
-              policy: "management_persona_intent_public_summary",
-              redacted_fields: ["capability_snapshot", "tools_enabled"],
-            },
+          ],
+          summary: {
+            total_items: 1,
+            returned_items: 1,
+            persona_trace_count: 1,
+            trainer_session_count: 0,
+            agora_session_count: 0,
+            redacted_item_count: 1,
+            persona_count: 1,
+            persona_ids: ["persona-alpha"],
+            latest_at: "2026-04-11T11:55:00Z",
+            bySourceType: { persona_trace: 1 },
+            by_source_type: { persona_trace: 1 },
+            byStatus: { active: 1 },
+            by_status: { active: 1 },
+            byIntent: { interactive: 1 },
+            by_intent: { interactive: 1 },
           },
-        ],
-        summary: {
-          total_items: 1,
-          returned_items: 1,
-          persona_trace_count: 1,
-          trainer_session_count: 0,
-          agora_session_count: 0,
-          redacted_item_count: 1,
-          persona_count: 1,
-          persona_ids: ["persona-alpha"],
-          latest_at: "2026-04-11T11:55:00Z",
-          bySourceType: { persona_trace: 1 },
-          by_source_type: { persona_trace: 1 },
-          byStatus: { active: 1 },
-          by_status: { active: 1 },
-          byIntent: { interactive: 1 },
-          by_intent: { interactive: 1 },
         },
         page_info: { total: 1, page_size: 1, next_page_token: null },
         meta: {
@@ -879,9 +887,11 @@ describe("managementClient — Persona Intent aggregate live adapter", () => {
     expect(fetchMock.mock.calls[0][0]).toBe(
       "https://example.test/bff/management/persona-intent?source_type=persona_trace&persona_id=persona-alpha&status=active&page_size=1",
     );
-    expect(aggregate.items[0].source_type).toBe("persona_trace");
-    expect(aggregate.items[0].redaction.policy).toBe("management_persona_intent_public_summary");
-    expect(aggregate.summary.redacted_item_count).toBe(1);
+    expect("items" in aggregate).toBe(false);
+    expect("summary" in aggregate).toBe(false);
+    expect(aggregate.data.items[0].source_type).toBe("persona_trace");
+    expect(aggregate.data.items[0].redaction.policy).toBe("management_persona_intent_public_summary");
+    expect(aggregate.data.summary.redacted_item_count).toBe(1);
     expect(aggregate.meta.surfaces.management_persona_intent.source).toBe("bff_composed");
   });
 });

@@ -32364,10 +32364,13 @@ async def bff_management_evolution_journal(
         "rollbacks",
         "freeze_orders",
     ]
+    summary = _evolution_journal_summary(filtered, len(page_items))
     return {
-        "data": page_items,
-        "items": page_items,
-        "summary": _evolution_journal_summary(filtered, len(page_items)),
+        "data": {
+            "id": "management_evolution_journal",
+            "items": page_items,
+            "summary": summary,
+        },
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -36948,8 +36951,19 @@ async def bff_management_ai_audit(
         limit=limit,
     )
     return {
-        "data": events,
-        "items": events,
+        "data": {
+            "id": "management_ai_audit",
+            "items": events,
+            "summary": {
+                "total_events": len(events),
+                "returned_items": len(events),
+            },
+        },
+        "page_info": {
+            "next_page_token": None,
+            "total": len(events),
+            "page_size": limit,
+        },
         "meta": {
             "count": len(events),
             "filters": {
@@ -37028,8 +37042,19 @@ async def bff_management_ai_conversations(
             }
         )
     return {
-        "data": items,
-        "items": items,
+        "data": {
+            "id": "management_ai_conversations",
+            "items": items,
+            "summary": {
+                "total_sessions": len(items),
+                "returned_items": len(items),
+            },
+        },
+        "page_info": {
+            "next_page_token": None,
+            "total": len(items),
+            "page_size": limit,
+        },
         "meta": {
             "count": len(items),
             "limit": limit,
@@ -37104,7 +37129,6 @@ async def bff_management_ai_conversation(
                 "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             },
         },
-        "items": turns,
         "meta": {
             "count": len(turns),
             "turnCap": limit,
@@ -37244,9 +37268,11 @@ async def bff_management_persona_intent(
     ]
     meta["redacted_item_count"] = summary["redacted_item_count"]
     return {
-        "data": page_items,
-        "items": page_items,
-        "summary": summary,
+        "data": {
+            "id": "management_persona_intent",
+            "items": page_items,
+            "summary": summary,
+        },
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,

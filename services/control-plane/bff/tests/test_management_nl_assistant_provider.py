@@ -1454,7 +1454,9 @@ def test_management_nl_stream_control_status_uses_bff_interceptor(tmp_path, monk
             headers=OPERATOR_HEADERS,
         )
         assert audit_resp.status_code == 200, audit_resp.text
-        events = audit_resp.json()["data"]
+        audit_body = audit_resp.json()
+        assert "items" not in audit_body
+        events = audit_body["data"]["items"]
         assert any(event.get("control_command") == "status" for event in events)
     finally:
         bff_main.read_store = original_store
@@ -1494,7 +1496,9 @@ def test_management_nl_stream_records_openclaw_provider_audit_and_usage(tmp_path
             headers=OPERATOR_HEADERS,
         )
         assert audit_resp.status_code == 200, audit_resp.text
-        events = audit_resp.json()["data"]
+        audit_body = audit_resp.json()
+        assert "items" not in audit_body
+        events = audit_body["data"]["items"]
         provider_events = [event for event in events if event["event_type"].startswith("management_ai.provider.")]
         assert [event["event_type"] for event in provider_events] == [
             "management_ai.provider.started",
@@ -1558,9 +1562,11 @@ def test_management_nl_stream_records_done_only_openclaw_answer(tmp_path, monkey
             headers=OPERATOR_HEADERS,
         )
         assert audit_resp.status_code == 200, audit_resp.text
+        audit_body = audit_resp.json()
+        assert "items" not in audit_body
         provider_events = [
             event
-            for event in audit_resp.json()["data"]
+            for event in audit_body["data"]["items"]
             if event["event_type"].startswith("management_ai.provider.")
         ]
         assert [event["event_type"] for event in provider_events] == [
@@ -1845,7 +1851,9 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
             headers=OPERATOR_HEADERS,
         )
         assert audit_resp.status_code == 200, audit_resp.text
-        events = audit_resp.json()["data"]
+        audit_body = audit_resp.json()
+        assert "items" not in audit_body
+        events = audit_body["data"]["items"]
         event_types = [event["event_type"] for event in events]
         assert event_types == [
             "management_ai.exchange.accepted",
@@ -2022,7 +2030,9 @@ def test_management_ai_conversation_reader_returns_full_session_and_ignores_trac
 
         list_resp = client.get("/bff/management/ai/conversations", headers=OPERATOR_HEADERS)
         assert list_resp.status_code == 200, list_resp.text
-        sessions = list_resp.json()["items"]
+        list_body = list_resp.json()
+        assert "items" not in list_body
+        sessions = list_body["data"]["items"]
         assert sessions[0]["sessionId"] == "mgmt-full-session"
         assert sessions[0]["href"] == "/bff/management/ai/conversations/mgmt-full-session"
         assert sessions[0]["turnCount"] == 4

@@ -39,12 +39,15 @@ def test_evolution_journal_composes_required_sources() -> None:
 
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["data"] == body["items"]
-            assert body["summary"]["decision_count"] >= 1
-            assert body["summary"]["postmortem_count"] >= 1
-            assert body["summary"]["mutation_review_count"] >= 1
-            assert body["summary"]["rollback_count"] >= 1
-            assert body["summary"]["freeze_order_count"] >= 1
+            assert set(body.keys()) == {"data", "page_info", "meta"}
+            assert set(body["data"].keys()) == {"id", "items", "summary"}
+            items = body["data"]["items"]
+            summary = body["data"]["summary"]
+            assert summary["decision_count"] >= 1
+            assert summary["postmortem_count"] >= 1
+            assert summary["mutation_review_count"] >= 1
+            assert summary["rollback_count"] >= 1
+            assert summary["freeze_order_count"] >= 1
             assert body["meta"]["surfaces"]["management_evolution_journal"]["source"] == "bff_composed"
             for surface in [
                 "evolution_decisions",
@@ -55,13 +58,13 @@ def test_evolution_journal_composes_required_sources() -> None:
             ]:
                 assert surface in body["meta"]["surfaces"]
 
-            by_type = {item["entry_type"]: item for item in body["items"]}
+            by_type = {item["entry_type"]: item for item in items}
             assert by_type["evolution_decision"]["decision"]["id"]
             assert by_type["postmortem"]["postmortem"]["postmortem_id"]
             assert by_type["rollback"]["rollback"]["rollback_id"]
             assert by_type["freeze_order"]["freezeOrder"]["freeze_order_id"]
             mutation_review = next(
-                item for item in body["items"]
+                item for item in items
                 if item["entry_type"] == "mutation_review"
                 and item["source_id"] == "evo-dec-88f3a2c1"
             )
@@ -86,12 +89,14 @@ def test_evolution_journal_supports_filters_and_pagination() -> None:
             body = resp.json()
             assert body["page_info"]["page_size"] == 1
             assert body["page_info"]["total"] == 1
-            assert len(body["items"]) == 1
-            item = body["items"][0]
+            items = body["data"]["items"]
+            summary = body["data"]["summary"]
+            assert len(items) == 1
+            item = items[0]
             assert item["entry_type"] == "mutation_review"
             assert item["source_id"] == "evo-dec-88f3a2c1"
             assert item["mutationReview"]["allowedActions"]["canApproveMutation"] is True
-            assert body["summary"]["pending_review_count"] == 1
+            assert summary["pending_review_count"] == 1
         finally:
             bff_main.read_store = original_store
 

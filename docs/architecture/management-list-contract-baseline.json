@@ -5,19 +5,10 @@
     "ed4926d7fe6233ef",
     "46a4fd5b91a041e1",
     "4100e85b653007c0",
-    "164c4d6eb1d684aa",
-    "26cb264ce8128c4a",
-    "a5f51361be49e433",
-    "34fe134d76546ea9",
-    "e13308eb7f2009be",
     "2423d67cfbf0a0da",
     "e877198091a3cc1e",
     "3b97bfb43c240b7b",
     "9607c4511e1fab58",
-    "8b78c4a6c24b2564",
-    "a92462c7e8e4cf16",
-    "6e0ca6ff4e3c0d87",
-    "bfb4526ac8b34f87",
     "e0fb8f200f7367fe",
     "a3176c40f270f521",
     "5b90963f760f854b",
@@ -169,7 +160,7 @@
     "48f50593677c72cb",
     "508c45878e0837e7"
   ],
-  "issue_count": 168,
+  "issue_count": 159,
   "issues": [
     {
       "category": "duplicate-envelope",
@@ -222,56 +213,6 @@
       "title": "List response exposes both data and top-level list aliases"
     },
     {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items']",
-      "fingerprint": "164c4d6eb1d684aa",
-      "function": "bff_management_ai_audit",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "/bff/management/ai/audit",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items']",
-      "fingerprint": "26cb264ce8128c4a",
-      "function": "bff_management_ai_conversation",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "/bff/management/ai/conversations/{session_id}",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items']",
-      "fingerprint": "a5f51361be49e433",
-      "function": "bff_management_ai_conversations",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "/bff/management/ai/conversations",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items']",
-      "fingerprint": "34fe134d76546ea9",
-      "function": "bff_management_evolution_journal",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "/bff/management/evolution-journal",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items']",
-      "fingerprint": "e13308eb7f2009be",
-      "function": "bff_management_persona_intent",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "/bff/management/persona-intent",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
       "category": "duplicate-list-alias",
       "evidence": "aliases=['data', 'items']",
       "fingerprint": "2423d67cfbf0a0da",
@@ -308,46 +249,6 @@
       "function": "_management_intervention_stream_response",
       "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
       "route": "",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['data', 'items']",
-      "fingerprint": "8b78c4a6c24b2564",
-      "function": "bff_management_ai_audit",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "/bff/management/ai/audit",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['data', 'items']",
-      "fingerprint": "a92462c7e8e4cf16",
-      "function": "bff_management_ai_conversations",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "/bff/management/ai/conversations",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['data', 'items']",
-      "fingerprint": "6e0ca6ff4e3c0d87",
-      "function": "bff_management_evolution_journal",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "/bff/management/evolution-journal",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['data', 'items']",
-      "fingerprint": "bfb4526ac8b34f87",
-      "function": "bff_management_persona_intent",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "/bff/management/persona-intent",
       "severity": "P0",
       "title": "Same list value is returned under multiple names"
     },
