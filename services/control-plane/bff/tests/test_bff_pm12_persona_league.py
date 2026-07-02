@@ -229,13 +229,16 @@ def test_pm12_quarterly_ranking_returns_formula_window_and_evidence() -> None:
             assert body["page_info"]["total"] >= 1
             assert items[0]["rank"] == 1
             assert items[0]["quarter"] == "2026-Q1"
-            assert items[0]["scoreField"] == "overallScore"
+            assert items[0]["score_field"] == "overallScore"
             assert data["evidence_refs"]
             assert summary["evidence_ref_count"] == len(data["evidence_refs"])
             assert "quarterWindow" not in data
             assert "formulaVersion" not in summary
             assert "evidenceRefs" not in data
             assert "evidenceRefCount" not in summary
+            assert "scoreField" not in items[0]
+            assert "quarterWindow" not in items[0]
+            assert "formulaVersion" not in items[0]
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["surfaces"]["quarterly_ranking"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/persona-league" in body["meta"]["composition_sources"]
@@ -276,6 +279,60 @@ def test_pm12_quarterly_ranking_formula_returns_weights_and_governance_trace() -
             assert "changeControl" not in body["formula"]
             assert body["meta"]["version_policy"] == "formula_version_changes_require_governance_evidence"
             assert body["meta"]["surfaces"]["quarterly_ranking_formula"]["status"] == "ok"
+        finally:
+            bff_main.read_store = original
+
+
+def test_pm12_quarterly_ranking_drilldown_uses_snake_case_lightweight_sources() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/quarterly-ranking/drilldown",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1", "persona_id": "persona-alpha"},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            data = body["data"]
+            summary = body["summary"]
+            contribution = body["contributions"][0]
+            assert data["quarter_window"]["start_at"] == "2026-01-01T00:00:00Z"
+            assert data["persona_id"] == "persona-alpha"
+            assert data["summary"]["persona_id"] == "persona-alpha"
+            assert summary["component_count"] == len(data["contributions"])
+            assert contribution["score_field"]
+            assert contribution["weighted_contribution"] >= 0
+            assert contribution["contribution_share"] >= 0
+            assert data["source_breakdown"]["route_policy_summary"]["rule_count"] >= 0
+            assert data["source_breakdown"]["session_count"] >= 0
+            assert data["links"]["parent_ranking"].endswith("quarter=2026-Q1")
+
+            assert "rankingItem" not in body
+            assert "contributionBreakdown" not in body
+            assert "sourceBreakdown" not in body
+            assert "quarterWindow" not in body
+            assert "evidenceRefs" not in body
+            assert "correlationId" not in body["meta"]
+            assert "quarterWindow" not in data
+            assert "personaId" not in data
+            assert "rankingItem" not in data
+            assert "contributionBreakdown" not in data
+            assert "sourceBreakdown" not in data
+            assert "evidenceRefs" not in data
+            assert "parentRanking" not in data["links"]
+            assert "scoreField" not in contribution
+            assert "weightedContribution" not in contribution
+            assert "contributionShare" not in contribution
+            assert "rankedCount" not in summary
+            assert "formulaVersion" not in summary
+            assert "evidenceRefCount" not in summary
+            assert "capabilities" not in data["source_breakdown"]
+            assert "sessions" not in data["source_breakdown"]
+            assert "memory" not in data["source_breakdown"]
+            assert "allowedActions" not in data["source_breakdown"]
         finally:
             bff_main.read_store = original
 
@@ -327,12 +384,17 @@ def test_pm12_quarterly_ranking_recommendations_are_governance_only() -> None:
             assert "humanGateDecisionCount" not in summary
             assert "liveCapitalMutationCount" not in summary
             for recommendation in items:
-                assert recommendation["actionId"] in allowed
-                assert recommendation["recommendationType"] == "governance_advisory"
-                assert recommendation["requiresHumanGateDecision"] is True
-                assert recommendation["liveCapitalMutation"] is False
-                assert recommendation["governance"]["liveCapitalMutation"] is False
+                assert recommendation["action_id"] in allowed
+                assert recommendation["recommendation_type"] == "governance_advisory"
+                assert recommendation["requires_human_gate_decision"] is True
+                assert recommendation["live_capital_mutation"] is False
+                assert recommendation["governance"]["live_capital_mutation"] is False
                 assert "human_inbox" in recommendation["governance"]["destinations"]
+                assert "actionId" not in recommendation
+                assert "recommendationType" not in recommendation
+                assert "requiresHumanGateDecision" not in recommendation
+                assert "liveCapitalMutation" not in recommendation
+                assert "liveCapitalMutation" not in recommendation["governance"]
         finally:
             bff_main.read_store = original
 

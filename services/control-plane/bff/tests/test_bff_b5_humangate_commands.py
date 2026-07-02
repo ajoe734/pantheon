@@ -158,7 +158,7 @@ def test_human_inbox_decision_flow_can_submit_decisions_via_command_path() -> No
             params={"source_type": "intervention", "page_size": 1},
         )
         assert inbox.status_code == 200, inbox.text
-        item = inbox.json()["items"][0]
+        item = inbox.json()["data"]["items"][0]
         assert item["id"].startswith("intervention:")
 
         for command in (
@@ -194,19 +194,19 @@ def test_quarterly_ranking_recommendation_submit_uses_command_response_without_l
             params={"quarter": "2026-Q1", "page_size": 1},
         )
         assert recommendations.status_code == 200, recommendations.text
-        item = recommendations.json()["items"][0]
+        item = recommendations.json()["data"]["items"][0]
 
         response = _submit_command(
             client,
             command="QuarterlyRankingRecommendationSubmit",
             target_type="Ranking",
-            target_id=item["recommendationId"],
+            target_id=item["recommendation_id"],
             params={
                 "quarter": item["quarter"],
-                "recommendationId": item["recommendationId"],
-                "actionId": item["actionId"],
-                "personaId": item["personaId"],
-                "liveCapitalMutation": item["liveCapitalMutation"],
+                "recommendation_id": item["recommendation_id"],
+                "recommendation_action_id": item["action_id"],
+                "persona_id": item["persona_id"],
+                "live_capital_mutation": item["live_capital_mutation"],
             },
             idempotency_key="bff-b5-quarterly-recommendation-submit",
         )
@@ -219,9 +219,9 @@ def test_quarterly_ranking_recommendation_submit_uses_command_response_without_l
         record = bff_main.command_store.get_command(command_id)
         assert record is not None
         assert record["type"] == "QuarterlyRankingRecommendationSubmit"
-        assert record["target"] == {"type": "Ranking", "id": item["recommendationId"]}
-        assert record["params"]["recommendation_id"] == item["recommendationId"]
-        assert record["params"]["recommendation_action_id"] == item["actionId"]
+        assert record["target"] == {"type": "Ranking", "id": item["recommendation_id"]}
+        assert record["params"]["recommendation_id"] == item["recommendation_id"]
+        assert record["params"]["recommendation_action_id"] == item["action_id"]
         assert record["params"]["action_id"] == "submit_recommendation"
         assert record["params"]["audit_event"] == "quarterly_ranking.recommendation_submitted"
         assert record["audit"]["receipt_dual_write"]["command_receipt"]["command"] == (

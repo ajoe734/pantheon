@@ -1409,9 +1409,7 @@ export interface ManagementQuarterlyRankingFormulaResponse {
 
 export interface ManagementQuarterlyRankingItem extends ManagementPersonaLeagueRankingItem {
   quarter: string;
-  quarterWindow: ManagementQuarterlyRankingWindow;
   quarter_window: ManagementQuarterlyRankingWindow;
-  formulaVersion: string;
   formula_version: string;
   basis: string;
 }
@@ -1469,13 +1467,10 @@ export interface ManagementQuarterlyRankingContribution {
   id: string;
   key: string;
   label: string;
-  scoreField: string;
   score_field: string;
   score: number;
   weight: number;
-  weightedContribution: number;
   weighted_contribution: number;
-  contributionShare: number;
   contribution_share: number;
   basis: string;
   [key: string]: unknown;
@@ -1483,23 +1478,15 @@ export interface ManagementQuarterlyRankingContribution {
 
 export interface ManagementQuarterlyRankingDrilldownSummary {
   quarter: string;
-  personaId: string;
   persona_id: string;
   rank?: number | null;
-  rankedCount: number;
   ranked_count: number;
   score: number;
-  overallScore?: number | null;
   overall_score?: number | null;
-  formulaVersion: string;
   formula_version: string;
-  componentCount: number;
   component_count: number;
-  totalWeightedContribution: number;
   total_weighted_contribution: number;
-  evidenceRefCount: number;
   evidence_ref_count: number;
-  redactedEvidenceCount?: number;
   redacted_evidence_count?: number;
   basis: string;
   [key: string]: unknown;
@@ -1508,21 +1495,15 @@ export interface ManagementQuarterlyRankingDrilldownSummary {
 export interface ManagementQuarterlyRankingDrilldownData {
   id: string;
   quarter: string;
-  quarterWindow: ManagementQuarterlyRankingWindow;
   quarter_window: ManagementQuarterlyRankingWindow;
-  personaId: string;
   persona_id: string;
   rank?: number | null;
   score: number;
-  rankingItem: ManagementQuarterlyRankingItem;
   ranking_item: ManagementQuarterlyRankingItem;
   formula: ManagementQuarterlyRankingFormula;
   contributions: ManagementQuarterlyRankingContribution[];
-  contributionBreakdown: ManagementQuarterlyRankingContribution[];
   contribution_breakdown: ManagementQuarterlyRankingContribution[];
-  sourceBreakdown: Record<string, unknown>;
   source_breakdown: Record<string, unknown>;
-  evidenceRefs: ManagementEvidenceItem[];
   evidence_refs: ManagementEvidenceItem[];
   summary: ManagementQuarterlyRankingDrilldownSummary;
   links?: Record<string, string | null | undefined>;
@@ -1532,22 +1513,16 @@ export interface ManagementQuarterlyRankingDrilldownData {
 export interface ManagementQuarterlyRankingDrilldownResponse {
   data: ManagementQuarterlyRankingDrilldownData;
   item: ManagementQuarterlyRankingItem;
-  rankingItem: ManagementQuarterlyRankingItem;
   ranking_item: ManagementQuarterlyRankingItem;
   contributions: ManagementQuarterlyRankingContribution[];
-  contributionBreakdown: ManagementQuarterlyRankingContribution[];
   contribution_breakdown: ManagementQuarterlyRankingContribution[];
-  sourceBreakdown: Record<string, unknown>;
   source_breakdown: Record<string, unknown>;
   formula: ManagementQuarterlyRankingFormula;
-  quarterWindow: ManagementQuarterlyRankingWindow;
   quarter_window: ManagementQuarterlyRankingWindow;
-  evidenceRefs: ManagementEvidenceItem[];
   evidence_refs: ManagementEvidenceItem[];
   summary: ManagementQuarterlyRankingDrilldownSummary;
   meta: {
     snapshot_at?: string;
-    correlationId?: string;
     correlation_id?: string;
     surfaces?: Record<string, ManagementSurfaceRef>;
     composition_sources?: string[];
@@ -1578,28 +1553,20 @@ export type ManagementQuarterlyRankingRecommendationAction =
   | string;
 
 export interface ManagementQuarterlyRankingRecommendationGovernance {
-  requiresHumanGateDecision: boolean;
   requires_human_gate_decision: boolean;
   destinations: string[];
-  humanInboxRoute?: string;
   human_inbox_route?: string;
-  governanceQueueRoute?: string;
   governance_queue_route?: string;
-  decisionType?: string;
   decision_type?: string;
-  liveCapitalMutation: boolean;
   live_capital_mutation: boolean;
   [key: string]: unknown;
 }
 
 export interface ManagementQuarterlyRankingRecommendationItem {
   id: string;
-  recommendationId: string;
   recommendation_id: string;
   quarter: string;
-  quarterWindow: ManagementQuarterlyRankingWindow;
   quarter_window: ManagementQuarterlyRankingWindow;
-  personaId: string;
   persona_id: string;
   name?: string;
   owner?: string;
@@ -1608,21 +1575,14 @@ export interface ManagementQuarterlyRankingRecommendationItem {
   rank?: number;
   score: number;
   tier?: string;
-  tierId?: string;
   tier_id?: string;
-  tierLabel?: string;
   tier_label?: string;
-  formulaVersion: string;
   formula_version: string;
-  actionId: ManagementQuarterlyRankingRecommendationAction;
   action_id: ManagementQuarterlyRankingRecommendationAction;
-  actionLabel: string;
   action_label: string;
-  recommendationType: "governance_advisory" | string;
   recommendation_type: "governance_advisory" | string;
   status: "recommended" | string;
   priority: string;
-  riskLevel: string;
   risk_level: string;
   target: {
     type: string;
@@ -1630,18 +1590,13 @@ export interface ManagementQuarterlyRankingRecommendationItem {
     [key: string]: unknown;
   };
   rationale: string;
-  rationaleCodes: string[];
   rationale_codes: string[];
   metrics: Record<string, unknown>;
   components: Record<string, unknown>;
-  evidenceRefs: ManagementEvidenceItem[];
   evidence_refs: ManagementEvidenceItem[];
-  evidenceRefIds: string[];
   evidence_ref_ids: string[];
   governance: ManagementQuarterlyRankingRecommendationGovernance;
-  requiresHumanGateDecision: boolean;
   requires_human_gate_decision: boolean;
-  liveCapitalMutation: boolean;
   live_capital_mutation: boolean;
   policy: string;
   links?: Record<string, string | null | undefined>;
