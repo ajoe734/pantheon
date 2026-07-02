@@ -24,7 +24,12 @@ OPERATOR_HEADERS = {"Authorization": "Bearer asst-bff-002:operator"}
 
 
 class FakeProviderClient:
-    def __init__(self, result: dict[str, Any] | None = None, exc: Exception | None = None) -> None:
+    def __init__(
+        self,
+        result: dict[str, Any] | None = None,
+        exc: Exception | None = None,
+        stream_events: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.result = result or {
             "status": "ok",
             "data": {
@@ -35,6 +40,15 @@ class FakeProviderClient:
             },
         }
         self.exc = exc
+        self.stream_events = stream_events or [
+            {"type": "delta", "text": "Streamed provider answer."},
+            {
+                "type": "done",
+                "text": "Streamed provider answer.",
+                "elapsed_ms": 12,
+                "transport": "responses_http",
+            },
+        ]
         self.calls: list[dict[str, Any]] = []
 
     def invoke_assistant_provider(self, **kwargs: Any) -> dict[str, Any]:
@@ -42,6 +56,12 @@ class FakeProviderClient:
         if self.exc is not None:
             raise self.exc
         return self.result
+
+    def stream_assistant_provider(self, **kwargs: Any):
+        self.calls.append({"stream": True, **kwargs})
+        if self.exc is not None:
+            raise self.exc
+        yield from self.stream_events
 
     def get_assistant_readiness(self, **_kwargs: Any) -> dict[str, Any]:
         return {
@@ -1126,7 +1146,7 @@ def test_management_nl_provider_uses_active_kernel_debug_mode(tmp_path, monkeypa
         monkeypatch.setattr(
             bff_main,
             "_extract_identity",
-            lambda authorization: _kernel_operator_identity(),
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(),
         )
         client = _seeded_client(tmp_path, monkeypatch)
 
@@ -1200,7 +1220,7 @@ def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, mon
         monkeypatch.setattr(
             bff_main,
             "_extract_identity",
-            lambda authorization: _kernel_operator_identity(capabilities=["assistant.kernel.repair"]),
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(capabilities=["assistant.kernel.repair"]),
         )
         client = _seeded_client(tmp_path, monkeypatch)
 
@@ -1276,7 +1296,7 @@ def test_management_nl_direct_passphrase_activates_control_mode_without_provider
         monkeypatch.setattr(
             bff_main,
             "_extract_identity",
-            lambda authorization: _kernel_operator_identity(),
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(),
         )
         client = _seeded_client(tmp_path, monkeypatch)
 
@@ -1353,7 +1373,7 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
         monkeypatch.setattr(
             bff_main,
             "_extract_identity",
-            lambda authorization: _kernel_operator_identity(),
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(),
         )
         client = _seeded_client(tmp_path, monkeypatch)
 
@@ -1443,6 +1463,117 @@ def test_management_nl_stream_control_status_uses_bff_interceptor(tmp_path, monk
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
+
+def test_management_nl_stream_records_openclaw_provider_audit_and_usage(tmp_path, monkeypatch) -> None:
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+
+        resp = client.post(
+            "/bff/management/nl/ask/stream",
+            json={
+                "question": "Stream provider audit check",
+                "sessionId": "mgmt-stream-provider-audit-session",
+                "traceId": "mgmt-stream-provider-audit-trace",
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-stream-provider-audit"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.text
+        assert "Streamed provider answer." in body
+        assert '"provider": "openclaw"' in body
+        assert fake.calls and fake.calls[0]["stream"] is True
+
+        audit_resp = client.get(
+            "/bff/management/ai/audit?session_id=mgmt-stream-provider-audit-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert audit_resp.status_code == 200, audit_resp.text
+        events = audit_resp.json()["data"]
+        provider_events = [event for event in events if event["event_type"].startswith("management_ai.provider.")]
+        assert [event["event_type"] for event in provider_events] == [
+            "management_ai.provider.started",
+            "management_ai.provider.completed",
+        ]
+        assert provider_events[0]["provider"] == "openclaw"
+        assert provider_events[0]["route"] == "POST /api/openclaw-adapter/assistant/providers/openclaw/invoke/stream"
+        assert provider_events[1]["provider"] == "openclaw"
+        assert provider_events[1]["output_summary"]["model"] == "openclaw/main"
+
+        usage_resp = client.get(
+            "/bff/assistant/providers/usage-summary?auth_probe=false&limit=50&window_hours=24",
+            headers=OPERATOR_HEADERS,
+        )
+        assert usage_resp.status_code == 200, usage_resp.text
+        rows = usage_resp.json()["data"]["providers"]
+        openclaw = next(row for row in rows if row["provider"] == "openclaw")
+        assert openclaw["calls"] == 1
+        assert openclaw["successCount"] == 1
+        assert openclaw["observedUsage"]["source"] == "management_ai_bff_audit"
+        assert openclaw["models"][0]["model"] == "openclaw/main"
+    finally:
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_stream_records_done_only_openclaw_answer(tmp_path, monkeypatch) -> None:
+    fake = FakeProviderClient(
+        stream_events=[
+            {
+                "type": "done",
+                "text": "Done-only provider answer.",
+                "elapsed_ms": 12,
+                "transport": "responses_http",
+            }
+        ]
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+
+        resp = client.post(
+            "/bff/management/nl/ask/stream",
+            json={
+                "question": "Done-only stream audit check",
+                "sessionId": "mgmt-stream-provider-done-only-session",
+                "traceId": "mgmt-stream-provider-done-only-trace",
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-stream-provider-done-only"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert "Done-only provider answer." in resp.text
+
+        audit_resp = client.get(
+            "/bff/management/ai/audit?session_id=mgmt-stream-provider-done-only-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert audit_resp.status_code == 200, audit_resp.text
+        provider_events = [
+            event
+            for event in audit_resp.json()["data"]
+            if event["event_type"].startswith("management_ai.provider.")
+        ]
+        assert [event["event_type"] for event in provider_events] == [
+            "management_ai.provider.started",
+            "management_ai.provider.completed",
+        ]
+        assert provider_events[1]["output_summary"]["output_bytes"] == len("Done-only provider answer.".encode("utf-8"))
+    finally:
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
 def test_management_nl_chat_control_command_requires_authorized_operator(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
     original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
@@ -1458,7 +1589,7 @@ def test_management_nl_chat_control_command_requires_authorized_operator(tmp_pat
         monkeypatch.setattr(
             bff_main,
             "_extract_identity",
-            lambda authorization: _kernel_operator_identity(roles=["reviewer"]),
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(roles=["reviewer"]),
         )
         client = _seeded_client(tmp_path, monkeypatch)
 

@@ -32850,6 +32850,16 @@ def _management_ai_provider_display(provider: str) -> str:
     return labels.get(provider, provider)
 
 
+def _management_ai_provider_route(provider: str, *, stream: bool = False) -> str:
+    normalized = _management_ai_provider_key(provider)
+    if normalized in {"claude", "claude_cli"}:
+        return "POST /api/openclaw-adapter/assistant/claude/invoke"
+    if normalized in {"openclaw", "openclaw_agent"}:
+        suffix = "/stream" if stream else ""
+        return f"POST /api/openclaw-adapter/assistant/providers/openclaw/invoke{suffix}"
+    return "POST /api/openclaw-adapter/assistant/providers/codex/invoke"
+
+
 def _management_ai_event_model(event: Dict[str, Any]) -> str:
     output_summary = event.get("output_summary") if isinstance(event.get("output_summary"), dict) else {}
     usage = output_summary.get("usage") if isinstance(output_summary.get("usage"), dict) else {}
@@ -35895,11 +35905,7 @@ def _mgmt_nl_maybe_provider_answer(
             "provider_run_id": run_id,
             "actor_id": identity.operator_id,
             "provider": provider,
-            "route": (
-                "POST /api/openclaw-adapter/assistant/claude/invoke"
-                if provider in {"claude", "claude_cli"}
-                else "POST /api/openclaw-adapter/assistant/providers/codex/invoke"
-            ),
+            "route": _management_ai_provider_route(provider),
             "context_pack_id": context_pack.get("context_pack_id"),
             "mode": provider_mode,
             "prompt_bytes": len(prompt.encode("utf-8")),
@@ -36885,6 +36891,23 @@ def bff_management_nl_ask_stream(
     )
 
     def event_stream() -> Iterator[str]:
+        provider_run_id = trace_id
+        provider_started = time.monotonic()
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.provider.started",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "provider_run_id": provider_run_id,
+                "actor_id": identity.operator_id,
+                "provider": "openclaw",
+                "route": _management_ai_provider_route("openclaw", stream=True),
+                "context_pack_id": context_pack.get("context_pack_id"),
+                "mode": provider_mode,
+                "prompt_bytes": len(prompt.encode("utf-8")),
+            }
+        )
         yield _mgmt_nl_sse_frame(
             {
                 "type": "meta", "sessionId": session_id, "session_id": session_id,
@@ -36892,7 +36915,9 @@ def bff_management_nl_ask_stream(
             }
         )
         chunks: List[str] = []
+        final_text: Optional[str] = None
         had_error = False
+        failure_event: Optional[Dict[str, Any]] = None
         try:
             for evt in OpenClawOpsClient().stream_assistant_provider(
                 mode=provider_mode,
@@ -36905,21 +36930,85 @@ def bff_management_nl_ask_stream(
             ):
                 if evt.get("type") == "delta":
                     chunks.append(str(evt.get("text") or ""))
+                elif evt.get("type") == "done":
+                    final_text = str(evt.get("text") or "")
                 elif evt.get("type") == "error":
                     had_error = True
+                    failure_event = {
+                        "event_type": "management_ai.provider.failed",
+                        "session_id": session_id,
+                        "message_id": message_id,
+                        "trace_id": trace_id,
+                        "provider_run_id": provider_run_id,
+                        "actor_id": identity.operator_id,
+                        "provider": "openclaw",
+                        "mode": provider_mode,
+                        "duration_ms": max(0, int((time.monotonic() - provider_started) * 1000)),
+                        "status_code": evt.get("status_code"),
+                        "error_code": evt.get("error_code") or "OPENCLAW_STREAM_ERROR",
+                        "error_message": _management_ai_summary_value(evt.get("message")),
+                    }
                 yield _mgmt_nl_sse_frame(evt)
         except OpenClawOpsClientError as exc:
             had_error = True
+            failure_event = {
+                "event_type": "management_ai.provider.failed",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "provider_run_id": provider_run_id,
+                "actor_id": identity.operator_id,
+                "provider": "openclaw",
+                "mode": provider_mode,
+                "duration_ms": max(0, int((time.monotonic() - provider_started) * 1000)),
+                "status_code": exc.status_code,
+                "error_code": exc.error_code,
+                "error_message": _management_ai_summary_value(exc.message),
+            }
             yield _mgmt_nl_sse_frame(
                 {"type": "error", "error_code": exc.error_code, "message": exc.message}
             )
         except Exception as exc:  # noqa: BLE001
             had_error = True
+            failure_event = {
+                "event_type": "management_ai.provider.failed",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "provider_run_id": provider_run_id,
+                "actor_id": identity.operator_id,
+                "provider": "openclaw",
+                "mode": provider_mode,
+                "duration_ms": max(0, int((time.monotonic() - provider_started) * 1000)),
+                "status_code": 500,
+                "error_code": "BFF_STREAM_ERROR",
+                "error_message": _management_ai_summary_value(str(exc)[:200]),
+            }
             yield _mgmt_nl_sse_frame(
                 {"type": "error", "error_code": "BFF_STREAM_ERROR", "message": str(exc)[:200]}
             )
-        answer = "".join(chunks).strip()
+        answer = "".join(chunks).strip() or (final_text or "").strip()
         if answer and not had_error:
+            duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
+            _management_ai_record_event(
+                {
+                    "event_type": "management_ai.provider.completed",
+                    "session_id": session_id,
+                    "message_id": message_id,
+                    "trace_id": trace_id,
+                    "provider_run_id": provider_run_id,
+                    "actor_id": identity.operator_id,
+                    "provider": "openclaw",
+                    "provider_state": "completed",
+                    "mode": provider_mode,
+                    "duration_ms": duration_ms,
+                    "output_summary": {
+                        "model": "openclaw/main",
+                        "transport": "responses_http",
+                        "output_bytes": len(answer.encode("utf-8")),
+                    },
+                }
+            )
             provider_status = {
                 "provider": "openclaw",
                 "used": True,
@@ -36936,6 +37025,8 @@ def bff_management_nl_ask_stream(
                 provider_status=provider_status,
             )
             yield _mgmt_nl_sse_frame({"type": "done", "text": answer, "providerStatus": provider_status})
+        elif failure_event is not None:
+            _management_ai_record_event(failure_event)
         yield _mgmt_nl_sse_frame("[DONE]")
 
     return StreamingResponse(
