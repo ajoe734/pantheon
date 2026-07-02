@@ -8585,8 +8585,6 @@ def _management_sentinel_pulse_finding(record: Dict[str, Any]) -> Dict[str, Any]
         "sourceRefs": source_refs,
         "source_refs": source_refs,
         "links": links,
-        "sourceRecord": record,
-        "source_record": record,
     }
 
 
@@ -8632,8 +8630,6 @@ def _management_sentinel_pulse_intervention(record: Dict[str, Any]) -> Dict[str,
         "sourceRefs": source_refs,
         "source_refs": source_refs,
         "links": links,
-        "sourceRecord": record,
-        "source_record": record,
     }
 
 
@@ -8854,12 +8850,12 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     )
     resolved_link = item.get("resolved_link") if isinstance(item.get("resolved_link"), dict) else {}
     credibility = item.get("credibility") if isinstance(item.get("credibility"), dict) else {}
-    source_type = source_document.get("source_type")
-    source_ref = source_document.get("source_ref")
-    captured_at = source_document.get("captured_at")
+    source_type = source_document.get("source_type") or item.get("source_type") or item.get("sourceType")
+    source_ref = source_document.get("source_ref") or item.get("source_ref") or item.get("sourceRef")
+    captured_at = source_document.get("captured_at") or item.get("captured_at") or item.get("capturedAt")
     link_type = item.get("link_type")
     route_href = item.get("route_href") or (f"/knowledge/evidence/{ref_id}" if ref_id else None)
-    title = source_document.get("title") or display_label
+    title = source_document.get("title") or item.get("title") or display_label
     public_item = {
         "id": ref_id,
         "refId": ref_id,
@@ -8961,12 +8957,10 @@ def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
                 "evidence_type": "live_evidence_artifact",
                 "link_type": "provenance",
                 "display_label": "BFF live evidence artifact verifier",
-                "source_document": {
-                    "title": "Strict BFF live evidence artifact verifier",
-                    "source_type": "workflow_artifact",
-                    "source_ref": str(candidate),
-                    "captured_at": captured_at,
-                },
+                "title": "Strict BFF live evidence artifact verifier",
+                "source_type": "workflow_artifact",
+                "source_ref": str(candidate),
+                "captured_at": captured_at,
                 "credibility": {
                     "tier": "primary",
                     "verified": payload.get("overall") == "pass",
@@ -9018,7 +9012,17 @@ def _management_evidence_summary(
             if bool((item.get("credibility") or {}).get("verified"))
         ]
     )
-    by_source_type = _management_count_by_nested(visible_items, "source_document", "source_type")
+    by_source_type: Dict[str, int] = {}
+    for item in visible_items:
+        source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
+        source_type = (
+            source_document.get("source_type")
+            or item.get("source_type")
+            or item.get("sourceType")
+            or "unknown"
+        )
+        key = str(source_type or "unknown").strip() or "unknown"
+        by_source_type[key] = by_source_type.get(key, 0) + 1
     by_link_type = _management_count_by(visible_items, "link_type")
     by_credibility_tier = _management_count_by_nested(visible_items, "credibility", "tier")
     return {
@@ -9063,12 +9067,13 @@ def _management_evidence_degraded_payload(*, page_size: int) -> Dict[str, Any]:
     }
     meta["redacted_evidence_count"] = 0
     return {
-        "data": [],
-        "items": [],
-        "summary": summary,
-        "facets": facets,
+        "data": {
+            "id": "management-evidence",
+            "items": [],
+            "summary": summary,
+            "facets": facets,
+        },
         "page_info": {"next_page_token": None, "total": 0, "page_size": page_size},
-        "pagination": {"next_page_token": None, "has_more": False, "page_size": page_size},
         "meta": meta,
     }
 
@@ -9212,18 +9217,15 @@ def _build_management_evidence_payload(
     meta["redacted_evidence_count"] = redacted_count
 
     return {
-        "data": public_items,
-        "items": public_items,
-        "summary": summary,
-        "facets": facets,
+        "data": {
+            "id": "management-evidence",
+            "items": public_items,
+            "summary": summary,
+            "facets": facets,
+        },
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
-            "page_size": page_size,
-        },
-        "pagination": {
-            "next_page_token": next_page_token,
-            "has_more": next_page_token is not None,
             "page_size": page_size,
         },
         "meta": meta,
@@ -29791,7 +29793,6 @@ def _human_inbox_attach_common_fields(
     href: str,
     source_record: Dict[str, Any],
 ) -> Dict[str, Any]:
-    source_clone = _management_json_clone(source_record)
     projected.setdefault("kind", inbox_type)
     projected["inbox_type"] = inbox_type
     projected["sourceDataset"] = source_dataset
@@ -29804,8 +29805,6 @@ def _human_inbox_attach_common_fields(
     projected["updated_at"] = updated_at
     projected["href"] = href
     projected.setdefault("route", href)
-    projected["sourceRecord"] = source_clone
-    projected["source_record"] = source_clone
     return projected
 
 
@@ -30346,10 +30345,13 @@ def _human_inbox_payload(
         sentinel_records=sources["sentinel_records"],
         persona_rows=sources["persona_rows"],
     )
+    summary = _human_inbox_summary(filtered, len(page_items))
     return {
-        "data": page_items,
-        "items": page_items,
-        "summary": _human_inbox_summary(filtered, len(page_items)),
+        "data": {
+            "id": "management-human-inbox",
+            "items": page_items,
+            "summary": summary,
+        },
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -30517,13 +30519,10 @@ def _hiq_backlog_intervention_item(
         "source_refs": source_refs,
         "links": {
             "source": f"/bff/v5/interventions/{intervention_id}",
-            "humanInbox": f"/bff/management/human-inbox/{human_inbox_id}",
             "human_inbox": f"/bff/management/human-inbox/{human_inbox_id}",
         },
         "allowedActions": allowed_actions,
         "allowed_actions": allowed_actions,
-        "sourceRecord": _management_json_clone(record),
-        "source_record": _management_json_clone(record),
     }
 
 
@@ -30580,7 +30579,6 @@ def _hiq_backlog_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
         "source_refs": source_refs,
         "links": {
             "source": f"/bff/v5/sentinel/findings/{finding_id}",
-            "humanInbox": "/bff/management/human-inbox",
             "human_inbox": "/bff/management/human-inbox",
         },
         "allowedActions": {
@@ -30593,8 +30591,6 @@ def _hiq_backlog_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
             "canOpenIntervention": False,
             "canRemediate": False,
         },
-        "sourceRecord": _management_json_clone(record),
-        "source_record": _management_json_clone(record),
     }
 
 
@@ -30784,17 +30780,11 @@ def _management_hiq_backlog_response(
     data = {
         "id": "management-hiq-backlog",
         "items": page_items,
-        "rows": page_items,
-        "backlog": page_items,
         "summary": summary,
         "policy": "read_only_hiq_backlog",
     }
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "backlog": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -30989,11 +30979,8 @@ def _intervention_stream_record_event(record: Dict[str, Any]) -> Optional[Dict[s
         "source_refs": source_refs,
         "links": {
             "source": f"/bff/v5/interventions/{intervention_id}",
-            "humanInbox": f"/bff/management/human-inbox/intervention:{intervention_id}",
             "human_inbox": f"/bff/management/human-inbox/intervention:{intervention_id}",
         },
-        "sourceRecord": _management_json_clone(record),
-        "source_record": _management_json_clone(record),
     }
 
 
@@ -31073,8 +31060,6 @@ def _intervention_stream_audit_event(event: Dict[str, Any]) -> Optional[Dict[str
             "source": "/bff/audit",
             "intervention": f"/bff/v5/interventions/{intervention_id}",
         },
-        "sourceRecord": _management_json_clone(event),
-        "source_record": _management_json_clone(event),
     }
 
 
@@ -31249,19 +31234,11 @@ def _management_intervention_stream_response(
     data = {
         "id": "management-intervention-stream",
         "items": page_items,
-        "rows": page_items,
-        "events": page_items,
-        "stream": page_items,
         "summary": summary,
         "policy": "read_only_intervention_stream",
     }
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "events": page_items,
-        "stream": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -41567,8 +41544,6 @@ def _governance_ledger_entry(
         "evidence_refs": _management_json_clone(evidence_refs or []),
         "auditContext": _management_json_clone(audit_context or {}),
         "audit_context": _management_json_clone(audit_context or {}),
-        "sourceRecord": _management_json_clone(source_record or {}),
-        "source_record": _management_json_clone(source_record or {}),
     }
 
 
@@ -41851,17 +41826,11 @@ def _management_governance_ledger_response(
     data = {
         "id": "management-governance-ledger",
         "items": page_items,
-        "entries": page_items,
-        "ledger": page_items,
         "summary": summary,
         "policy": "read_only_governance_ledger",
     }
     return {
         "data": data,
-        "items": page_items,
-        "entries": page_items,
-        "ledger": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
