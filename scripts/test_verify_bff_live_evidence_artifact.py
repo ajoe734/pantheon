@@ -443,15 +443,28 @@ def write_strict_auth_json(artifact_dir: Path) -> None:
     )
 
 
-def strict_sse_reconnect_bearer(attempt_count: int = 5) -> dict[str, object]:
+def strict_sse_reconnect_mode(mode: str, attempt_count: int = 5) -> dict[str, object]:
     expected_event_ids = [f"evt-{index}" for index in range(2, 2 + attempt_count)]
     cursor_event_ids = [f"evt-{index}" for index in range(1, 1 + attempt_count)]
+    request_headers = (
+        {
+            "Authorization": "present",
+            "Cookie": "absent",
+            "Accept": "text/event-stream",
+        }
+        if mode == "bearer_polyfill"
+        else {
+            "Authorization": "absent",
+            "Cookie": "present",
+            "Accept": "text/event-stream",
+        }
+    )
     attempts = []
     for index, expected_event_id in enumerate(expected_event_ids):
         cursor_event_id = cursor_event_ids[index]
         attempts.append(
             {
-                "mode": "bearer_polyfill",
+                "mode": mode,
                 "ok": True,
                 "attempt": index + 1,
                 "cursor_event_id": cursor_event_id,
@@ -459,12 +472,7 @@ def strict_sse_reconnect_bearer(attempt_count: int = 5) -> dict[str, object]:
                 "observed_replayed_event_id": expected_event_id,
                 "replayed_expected_event": True,
                 "url_path": "/bff/events/stream?channel=approval",
-                "request_headers": {
-                    "Authorization": "present",
-                    "Cookie": "absent",
-                    "Last-Event-ID": cursor_event_id,
-                    "Accept": "text/event-stream",
-                },
+                "request_headers": {**request_headers, "Last-Event-ID": cursor_event_id},
                 "response_headers": {
                     "X-SSE-Channel": "approval",
                     "X-SSE-Replay-Supported": "true",
@@ -482,7 +490,7 @@ def strict_sse_reconnect_bearer(attempt_count: int = 5) -> dict[str, object]:
             }
         )
     return {
-        "mode": "bearer_polyfill",
+        "mode": mode,
         "ok": True,
         "attempt_count": attempt_count,
         "cursor_event_ids": cursor_event_ids,
@@ -494,6 +502,13 @@ def strict_sse_reconnect_bearer(attempt_count: int = 5) -> dict[str, object]:
         "attempts": attempts,
     }
 
+
+def strict_sse_reconnect_bearer(attempt_count: int = 5) -> dict[str, object]:
+    return strict_sse_reconnect_mode("bearer_polyfill", attempt_count)
+
+
+def strict_sse_reconnect_cookie(attempt_count: int = 5) -> dict[str, object]:
+    return strict_sse_reconnect_mode("cookie_session", attempt_count)
 
 def write_strict_sse_json(artifact_dir: Path) -> None:
     (artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
@@ -514,6 +529,19 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
+                    "cookie_session": {
+                        "ok": True,
+                        "request_headers": {
+                            "Authorization": "absent",
+                            "Cookie": "present",
+                            "Accept": "text/event-stream",
+                        },
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
                     "bearer_polyfill": {
                         "ok": True,
                         "request_headers": {
@@ -528,7 +556,10 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
                         },
                     },
                 },
-                "reconnect_sequence": {"bearer_polyfill": strict_sse_reconnect_bearer()},
+                "reconnect_sequence": {
+                    "cookie_session": strict_sse_reconnect_cookie(),
+                    "bearer_polyfill": strict_sse_reconnect_bearer(),
+                },
             }
         ),
         encoding="utf-8",
@@ -1576,6 +1607,43 @@ def test_verifier_rejects_sse_reconnect_attempt_without_bearer_authorization(tmp
     item = payload["criteria"]["sse_reconnect_soak"]
     assert item["status"] == "fail"
     assert "bearerAttemptAuth:4/5" in item["note"]
+
+
+def test_verifier_rejects_sse_without_cookie_browser_soak_and_reconnect(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    del sse["soak"]["cookie_session"]
+    del sse["reconnect_sequence"]["cookie_session"]
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "soakCookieAuth:False" in item["note"]
+    assert "heartbeat:0/2" in item["note"]
+    assert "reconnect:0/5" in item["note"]
+
+
+def test_verifier_rejects_sse_cookie_reconnect_attempt_without_cookie_auth(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    attempt = sse["reconnect_sequence"]["cookie_session"]["attempts"][0]
+    attempt["request_headers"]["Cookie"] = "absent"
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "cookieAttemptAuth:4/5" in item["note"]
+    assert "attemptLineage:False" in item["note"]
 
 
 def test_verifier_rejects_short_sse_reconnect_even_when_summary_claims_pass(tmp_path: Path) -> None:
