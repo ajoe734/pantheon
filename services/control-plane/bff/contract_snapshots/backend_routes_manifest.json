@@ -2183,6 +2183,24 @@
     },
     {
       "method": "GET",
+      "path": "/bff/management/personas/{param}/readiness",
+      "family": "management-console",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/personas/paper-launch",
+      "family": "management-console",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/personas/{param}/setup/retry",
+      "family": "management-console",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/mcp-servers",
       "family": "mcp-final",
       "status": "alias",
@@ -3165,12 +3183,6 @@
     },
     {
       "method": "GET",
-      "path": "/bff/management/personas/{param}/readiness",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
       "path": "/bff/management/portfolio-book",
       "family": "unknown",
       "status": "implemented"
@@ -3424,18 +3436,6 @@
     {
       "method": "POST",
       "path": "/bff/management/nl/ask/stream",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/personas/paper-launch",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/personas/{param}/setup/retry",
       "family": "unknown",
       "status": "implemented"
     },
