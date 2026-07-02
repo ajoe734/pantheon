@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Doc ID | `MGMT_CONSOLE_GAP_2026-06-30` |
-| Status | Ready for execution task dispatch |
+| Status | Production closeout complete; post-closeout adjustment plan archived |
 | Scope | Pantheon Management Console production-level gap closure |
 | Audit basis | Hosted FE/BFF probes on 2026-06-30, plus active FE source checkout `.fe-ep` (`origin/dev`, historically tracked as `execute-plans`) |
 | FE deployment checked | `pantheon-dev-fe`, deployed `20260630T134507Z`, commit `f53176db20a477331e18355204b421c638030303` |
@@ -13,6 +13,7 @@
 | Re-audit addendum | `archive/full-reaudit-addendum-2026-07-01.md` |
 | Route/control re-audit | `archive/route-control-reaudit-2026-07-01.md` |
 | Route/control raw artifact | `archive/route-control-reaudit-2026-07-01.json` |
+| Post-closeout adjustment plan | `archive/management-adjustment-development-plan-2026-07-02.md` |
 | Execution packet | `docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md` |
 | Dispatch tracking | `docs/bff/execution-tasks/2026-06-30-management-console-production-gap/DISPATCH_TRACKING.md` |
 
