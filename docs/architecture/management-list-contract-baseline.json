@@ -37,11 +37,6 @@
     "24669ad56df7d6d7",
     "386f063d043e2fcb",
     "2682a4f22021e1f5",
-    "71b5a602ce3d8097",
-    "f8d7fcc4346812a8",
-    "533f2c0bcf553a92",
-    "40a79c0f75bb418a",
-    "528bac6f2b739f50",
     "561ddc1ffc080513",
     "95fcafeb689ae42a",
     "3c38388d401fbaf1",
@@ -119,7 +114,7 @@
     "48f50593677c72cb",
     "508c45878e0837e7"
   ],
-  "issue_count": 118,
+  "issue_count": 113,
   "issues": [
     {
       "category": "camel-snake-duplicate",
@@ -486,56 +481,6 @@
       "evidence": "capitalPool+capital_pool",
       "fingerprint": "2682a4f22021e1f5",
       "function": "_management_risk_radar_rows",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "sentinelFindings+sentinel_findings",
-      "fingerprint": "71b5a602ce3d8097",
-      "function": "_management_sentinel_pulse_finding",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "findingId+finding_id, incidentId+incident_id, loopRunId+loop_run_id, runtimeId+runtime_id",
-      "fingerprint": "f8d7fcc4346812a8",
-      "function": "_management_sentinel_pulse_finding",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "createdAt+created_at, findingId+finding_id, riskLevel+risk_level, sourceRefs+source_refs, triggeredAt+triggered_at, updatedAt+updated_at",
-      "fingerprint": "533f2c0bcf553a92",
-      "function": "_management_sentinel_pulse_finding",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "findingId+finding_id, interventionId+intervention_id",
-      "fingerprint": "40a79c0f75bb418a",
-      "function": "_management_sentinel_pulse_intervention",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "findingId+finding_id, interventionId+intervention_id, riskLevel+risk_level, sourceRefs+source_refs, triggeredAt+triggered_at",
-      "fingerprint": "528bac6f2b739f50",
-      "function": "_management_sentinel_pulse_intervention",
       "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
       "route": "",
       "severity": "P1",

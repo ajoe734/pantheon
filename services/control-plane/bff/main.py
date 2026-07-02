@@ -7985,7 +7985,6 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     }
     for row in runtime_rows:
         comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or ""))
-        row["baselineComparison"] = comparison
         row["baseline_comparison"] = comparison
     telemetry_rows = [
         row.get("telemetry_summary")
@@ -8025,28 +8024,18 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         baseline_comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or "")) or {}
         rankings.append(
             {
-                "runtimeId": row.get("runtime_id"),
                 "runtime_id": row.get("runtime_id"),
-                "runtimeBindingId": row.get("runtime_binding_id"),
                 "runtime_binding_id": row.get("runtime_binding_id"),
-                "deploymentStage": row.get("deployment_stage"),
                 "deployment_stage": row.get("deployment_stage"),
                 "status": row.get("status"),
                 "pnl": metrics.get("pnl"),
                 "drawdown": metrics.get("drawdown"),
-                "sharpeRatio": metrics.get("sharpe_ratio"),
                 "sharpe_ratio": metrics.get("sharpe_ratio"),
-                "fillRate": metrics.get("fill_rate"),
                 "fill_rate": metrics.get("fill_rate"),
-                "avgSlippageBps": metrics.get("avg_slippage_bps"),
                 "avg_slippage_bps": metrics.get("avg_slippage_bps"),
-                "totalTrades": metrics.get("total_trades"),
                 "total_trades": metrics.get("total_trades"),
-                "lastUpdatedAt": row.get("last_updated_at"),
                 "last_updated_at": row.get("last_updated_at"),
-                "baselineComparisonStatus": baseline_comparison.get("status"),
                 "baseline_comparison_status": baseline_comparison.get("status"),
-                "breachedMetricCount": baseline_comparison.get("breachedMetricCount"),
                 "breached_metric_count": baseline_comparison.get("breached_metric_count"),
             }
         )
@@ -8119,70 +8108,52 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     )
 
     summary = {
-        "runtimeCount": len(runtime_rows),
         "runtime_count": len(runtime_rows),
-        "telemetryCoverageCount": len(telemetry_rows),
         "telemetry_coverage_count": len(telemetry_rows),
-        "byStatus": by_status,
         "by_status": by_status,
-        "byStage": by_stage,
         "by_stage": by_stage,
-        "totalPnl": round(sum(pnl_values), 6) if pnl_values else None,
         "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
-        "worstDrawdown": max(drawdown_values) if drawdown_values else None,
         "worst_drawdown": max(drawdown_values) if drawdown_values else None,
-        "averageFillRate": _management_avg(fill_rate_values),
         "average_fill_rate": _management_avg(fill_rate_values),
-        "worstSlippageBps": max(slippage_values) if slippage_values else None,
         "worst_slippage_bps": max(slippage_values) if slippage_values else None,
-        "totalTrades": int(sum(trade_values)) if trade_values else 0,
         "total_trades": int(sum(trade_values)) if trade_values else 0,
-        "baselineComparisonCount": baseline_available_count,
         "baseline_comparison_count": baseline_available_count,
-        "baselineBreachedCount": baseline_breached_count,
         "baseline_breached_count": baseline_breached_count,
-        "baselineWatchCount": baseline_watch_count,
         "baseline_watch_count": baseline_watch_count,
-        "byBaselineStatus": by_baseline_status,
         "by_baseline_status": by_baseline_status,
     }
     cards = [
         {
-            "cardId": "runtime-status",
             "card_id": "runtime-status",
             "label": "Runtime Status",
             "value": len(runtime_rows),
-            "details": {"byStatus": by_status, "byStage": by_stage},
+            "details": {"by_status": by_status, "by_stage": by_stage},
         },
         {
-            "cardId": "pnl",
             "card_id": "pnl",
             "label": "P&L",
-            "value": summary["totalPnl"],
-            "details": {"telemetryCoverageCount": len(telemetry_rows)},
+            "value": summary["total_pnl"],
+            "details": {"telemetry_coverage_count": len(telemetry_rows)},
         },
         {
-            "cardId": "drawdown",
             "card_id": "drawdown",
             "label": "Worst Drawdown",
-            "value": summary["worstDrawdown"],
+            "value": summary["worst_drawdown"],
             "details": {"source": "telemetry_summaries"},
         },
         {
-            "cardId": "execution-quality",
             "card_id": "execution-quality",
             "label": "Execution Quality",
-            "value": summary["averageFillRate"],
-            "details": {"worstSlippageBps": summary["worstSlippageBps"]},
+            "value": summary["average_fill_rate"],
+            "details": {"worst_slippage_bps": summary["worst_slippage_bps"]},
         },
         {
-            "cardId": "baseline-comparison",
             "card_id": "baseline-comparison",
             "label": "Baseline Comparison",
-            "value": summary["baselineBreachedCount"],
+            "value": summary["baseline_breached_count"],
             "details": {
-                "baselineComparisonCount": summary["baselineComparisonCount"],
-                "byBaselineStatus": by_baseline_status,
+                "baseline_comparison_count": summary["baseline_comparison_count"],
+                "by_baseline_status": by_baseline_status,
             },
         },
     ]
@@ -8198,9 +8169,7 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "summary": summary,
         "cards": cards,
         "rankings": rankings,
-        "runtimeRows": runtime_rows,
         "runtime_rows": runtime_rows,
-        "baselineComparisons": baseline_comparisons,
         "baseline_comparisons": baseline_comparisons,
         "meta": meta,
     }
@@ -8213,21 +8182,11 @@ def _build_management_trading_pulse_route_payload(snapshot_at: str) -> Dict[str,
         "summary": payload["summary"],
         "cards": payload["cards"],
         "rankings": payload["rankings"],
-        "runtimeRows": payload["runtimeRows"],
         "runtime_rows": payload["runtime_rows"],
-        "baselineComparisons": payload["baselineComparisons"],
         "baseline_comparisons": payload["baseline_comparisons"],
     }
     return {
         "data": data,
-        "items": payload["cards"],
-        "cards": payload["cards"],
-        "rankings": payload["rankings"],
-        "runtimeRows": payload["runtimeRows"],
-        "runtime_rows": payload["runtime_rows"],
-        "baselineComparisons": payload["baselineComparisons"],
-        "baseline_comparisons": payload["baseline_comparisons"],
-        "summary": payload["summary"],
         "page_info": {
             "next_page_token": None,
             "total": len(payload["cards"]),
@@ -8291,12 +8250,9 @@ def _trading_pulse_ranked_items(
     for index, item in enumerate((ordered_present + ordered_missing)[:limit], start=1):
         projected = dict(item)
         projected["rank"] = index
-        projected["rankingBlockId"] = block_id
         projected["ranking_block_id"] = block_id
-        projected["rankingMetric"] = metric
         projected["ranking_metric"] = metric
-        projected["rankingMetricValue"] = _trading_pulse_metric_value(item, metric)
-        projected["ranking_metric_value"] = projected["rankingMetricValue"]
+        projected["ranking_metric_value"] = _trading_pulse_metric_value(item, metric)
         ranked.append(projected)
     return ranked
 
@@ -8308,11 +8264,9 @@ def _build_management_trading_pulse_ranking_blocks(
 ) -> List[Dict[str, Any]]:
     return [
         {
-            "blockId": "pnl-leaders",
             "block_id": "pnl-leaders",
             "label": "P&L Leaders",
             "metric": "pnl",
-            "sortOrder": "desc",
             "sort_order": "desc",
             "items": _trading_pulse_ranked_items(
                 rankings,
@@ -8323,11 +8277,9 @@ def _build_management_trading_pulse_ranking_blocks(
             ),
         },
         {
-            "blockId": "drawdown-control",
             "block_id": "drawdown-control",
             "label": "Drawdown Control",
             "metric": "drawdown",
-            "sortOrder": "asc",
             "sort_order": "asc",
             "items": _trading_pulse_ranked_items(
                 rankings,
@@ -8338,13 +8290,10 @@ def _build_management_trading_pulse_ranking_blocks(
             ),
         },
         {
-            "blockId": "execution-quality",
             "block_id": "execution-quality",
             "label": "Execution Quality",
             "metric": "fill_rate",
-            "secondaryMetric": "avg_slippage_bps",
             "secondary_metric": "avg_slippage_bps",
-            "sortOrder": "desc",
             "sort_order": "desc",
             "items": _trading_pulse_ranked_items(
                 rankings,
@@ -8355,11 +8304,9 @@ def _build_management_trading_pulse_ranking_blocks(
             ),
         },
         {
-            "blockId": "sharpe-leaders",
             "block_id": "sharpe-leaders",
             "label": "Sharpe Leaders",
             "metric": "sharpe_ratio",
-            "sortOrder": "desc",
             "sort_order": "desc",
             "items": _trading_pulse_ranked_items(
                 rankings,
@@ -8403,24 +8350,19 @@ def _build_management_trading_pulse_rankings_payload(
     top_item = (blocks[0].get("items") or [None])[0] if blocks else None
     ranked_item_count = sum(len(block.get("items") or []) for block in blocks)
     summary = {
-        "runtimeCount": int((trading_pulse.get("summary") or {}).get("runtimeCount") or 0),
         "runtime_count": int((trading_pulse.get("summary") or {}).get("runtime_count") or 0),
-        "rankingBlockCount": len(blocks),
         "ranking_block_count": len(blocks),
-        "rankedItemCount": ranked_item_count,
         "ranked_item_count": ranked_item_count,
         "criteria": [str(block.get("metric") or "") for block in blocks],
         "limit": limit,
-        "topRuntimeId": (top_item or {}).get("runtimeId") if isinstance(top_item, dict) else None,
         "top_runtime_id": (top_item or {}).get("runtime_id") if isinstance(top_item, dict) else None,
     }
     return {
-        "data": blocks,
-        "items": blocks,
-        "rankings": blocks,
-        "rankingBlocks": blocks,
-        "ranking_blocks": blocks,
-        "summary": summary,
+        "data": {
+            "id": "management-trading-pulse-rankings",
+            "items": blocks,
+            "summary": summary,
+        },
         "page_info": {
             "next_page_token": None,
             "total": len(blocks),
@@ -8461,8 +8403,6 @@ def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
                     "href": f"/management/sentinel?finding={finding_id}",
                     "target_id": finding_id,
                 },
-                "sourceRecord": finding,
-                "source_record": finding,
             }
         )
     runtime_anomalies = [
@@ -8474,8 +8414,6 @@ def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
             "summary": alert.get("summary"),
             "raised_at": alert.get("raised_at"),
             "target_ref": alert.get("target_ref"),
-            "sourceRecord": alert,
-            "source_record": alert,
         }
         for alert in runtime_alerts
     ]
@@ -8513,14 +8451,8 @@ def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
         "items": anomalies,
         "summary": {
             "total": len(anomalies),
-            "bySeverity": _management_count_by(anomalies, "severity"),
             "by_severity": _management_count_by(anomalies, "severity"),
-            "byKind": _management_count_by(anomalies, "kind"),
             "by_kind": _management_count_by(anomalies, "kind"),
-            "highestSeverity": _highest_ranked_value(
-                [str(item.get("severity") or "") for item in anomalies],
-                _ALERT_SEVERITY_ORDER,
-            ),
             "highest_severity": _highest_ranked_value(
                 [str(item.get("severity") or "") for item in anomalies],
                 _ALERT_SEVERITY_ORDER,
@@ -8551,38 +8483,27 @@ def _management_sentinel_pulse_finding(record: Dict[str, Any]) -> Dict[str, Any]
     )
     links = {
         "finding": f"/bff/v5/sentinel/findings/{finding_id}" if finding_id else None,
-        "sentinelFindings": "/bff/v5/sentinel/findings",
         "sentinel_findings": "/bff/v5/sentinel/findings",
     }
     source_refs = {
-        "findingId": finding_id or None,
         "finding_id": finding_id or None,
-        "incidentId": incident_id,
         "incident_id": incident_id,
-        "loopRunId": loop_run_id,
         "loop_run_id": loop_run_id,
-        "runtimeId": runtime_id,
         "runtime_id": runtime_id,
     }
     return {
         "id": finding_id,
-        "findingId": finding_id,
         "finding_id": finding_id,
         "kind": kind,
         "severity": severity,
-        "riskLevel": severity,
         "risk_level": severity,
         "status": status,
         "title": title,
         "summary": record.get("summary") or title,
-        "triggeredAt": triggered_at,
         "triggered_at": triggered_at,
-        "createdAt": record.get("created_at"),
         "created_at": record.get("created_at"),
-        "updatedAt": record.get("updated_at"),
         "updated_at": record.get("updated_at"),
         "target": record.get("target") if isinstance(record.get("target"), dict) else {},
-        "sourceRefs": source_refs,
         "source_refs": source_refs,
         "links": links,
     }
@@ -8607,27 +8528,20 @@ def _management_sentinel_pulse_intervention(record: Dict[str, Any]) -> Dict[str,
         "finding": f"/bff/v5/sentinel/findings/{finding_id}" if finding_id else None,
     }
     source_refs = {
-        "interventionId": intervention_id or None,
         "intervention_id": intervention_id or None,
-        "findingId": finding_id,
         "finding_id": finding_id,
     }
     return {
         "id": intervention_id,
-        "interventionId": intervention_id,
         "intervention_id": intervention_id,
-        "findingId": finding_id,
         "finding_id": finding_id,
         "kind": kind,
         "severity": severity,
-        "riskLevel": severity,
         "risk_level": severity,
         "status": status,
         "title": title,
         "summary": record.get("summary") or record.get("description") or title,
-        "triggeredAt": triggered_at,
         "triggered_at": triggered_at,
-        "sourceRefs": source_refs,
         "source_refs": source_refs,
         "links": links,
     }
@@ -8639,7 +8553,6 @@ def _management_sentinel_pulse_matches(item: Dict[str, Any], q: str) -> bool:
         return True
     searchable = [
         item.get("id"),
-        item.get("findingId"),
         item.get("finding_id"),
         item.get("kind"),
         item.get("severity"),
@@ -8647,7 +8560,7 @@ def _management_sentinel_pulse_matches(item: Dict[str, Any], q: str) -> bool:
         item.get("title"),
         item.get("summary"),
     ]
-    source_refs = item.get("sourceRefs") if isinstance(item.get("sourceRefs"), dict) else {}
+    source_refs = item.get("source_refs") if isinstance(item.get("source_refs"), dict) else {}
     searchable.extend(source_refs.values())
     return any(needle in str(value or "").lower() for value in searchable)
 
@@ -8710,50 +8623,37 @@ def _build_management_sentinel_pulse_response(
         _ALERT_SEVERITY_ORDER,
     )
     summary = {
-        "findingCount": len(findings),
         "finding_count": len(findings),
-        "returnedFindingCount": len(page_findings),
         "returned_finding_count": len(page_findings),
-        "activeFindingCount": len(active_findings),
         "active_finding_count": len(active_findings),
-        "criticalFindingCount": len(critical_findings),
         "critical_finding_count": len(critical_findings),
-        "interventionCount": len(interventions),
         "intervention_count": len(interventions),
-        "pendingInterventionCount": len(pending_interventions),
         "pending_intervention_count": len(pending_interventions),
-        "highestSeverity": highest_severity,
         "highest_severity": highest_severity,
-        "byStatus": by_status,
         "by_status": by_status,
-        "bySeverity": by_severity,
         "by_severity": by_severity,
-        "byKind": by_kind,
         "by_kind": by_kind,
         "policy": "read_only_sentinel_pulse",
         "basis": "composed_from_v5_sentinel_findings_and_interventions",
     }
     cards = [
         {
-            "cardId": "active-findings",
             "card_id": "active-findings",
             "label": "Active Findings",
-            "value": summary["activeFindingCount"],
-            "details": {"byStatus": by_status, "by_status": by_status},
+            "value": summary["active_finding_count"],
+            "details": {"by_status": by_status},
         },
         {
-            "cardId": "critical-findings",
             "card_id": "critical-findings",
             "label": "Critical Findings",
-            "value": summary["criticalFindingCount"],
-            "details": {"highestSeverity": highest_severity, "highest_severity": highest_severity},
+            "value": summary["critical_finding_count"],
+            "details": {"highest_severity": highest_severity},
         },
         {
-            "cardId": "pending-interventions",
             "card_id": "pending-interventions",
             "label": "Pending Interventions",
-            "value": summary["pendingInterventionCount"],
-            "details": {"interventionCount": summary["interventionCount"]},
+            "value": summary["pending_intervention_count"],
+            "details": {"intervention_count": summary["intervention_count"]},
         },
     ]
 
@@ -8780,22 +8680,17 @@ def _build_management_sentinel_pulse_response(
     )
     data = {
         "id": "management-sentinel-pulse",
-        "snapshotAt": snapshot_at,
         "snapshot_at": snapshot_at,
         "items": page_findings,
-        "findings": page_findings,
-        "interventions": interventions,
+        "related": {
+            "interventions": interventions,
+        },
         "cards": cards,
         "summary": summary,
         "policy": "read_only_sentinel_pulse",
     }
     return {
         "data": data,
-        "items": page_findings,
-        "findings": page_findings,
-        "interventions": interventions,
-        "cards": cards,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": len(findings),
@@ -9777,13 +9672,9 @@ def _build_management_ep5_readiness_payload() -> Dict[str, Any]:
         },
         links={
             "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/ep5",
-            "brokerLive": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
             "broker_live": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
-            "capitalBindingLive": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live",
             "capital_binding_live": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live",
-            "bffHa": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
             "bff_ha": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
-            "strictPublish": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
             "strict_publish": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
         },
     )
@@ -9819,28 +9710,19 @@ def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
     )
     data = {
         "id": "management-cockpit",
-        "snapshotAt": snapshot_at,
         "snapshot_at": snapshot_at,
-        "operatorHome": operator_home,
         "operator_home": operator_home,
-        "runtimeHealth": runtime_health,
         "runtime_health": runtime_health,
         "alerts": alerts,
-        "humanInbox": human_inbox,
         "human_inbox": human_inbox,
-        "tradingPulse": trading_pulse,
         "trading_pulse": trading_pulse,
         "anomalies": anomalies,
         "links": {
             "self": f"/bff{_MANAGEMENT_COCKPIT_ROUTE}",
-            "operatorHome": "/api/v1/operator/home",
             "operator_home": "/api/v1/operator/home",
-            "runtimeHealth": "/api/v1/operator/health-status",
             "runtime_health": "/api/v1/operator/health-status",
             "alerts": "/bff/alerts",
-            "humanInbox": "/bff/management/human-inbox",
             "human_inbox": "/bff/management/human-inbox",
-            "tradingPulse": "/bff/management/trading-pulse",
             "trading_pulse": "/bff/management/trading-pulse",
         },
     }
@@ -9856,12 +9738,6 @@ def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
     }
     return {
         "data": data,
-        "operator_home": operator_home,
-        "runtime_health": runtime_health,
-        "alerts": alerts,
-        "human_inbox": human_inbox,
-        "trading_pulse": trading_pulse,
-        "anomalies": anomalies,
         "meta": meta,
     }
 

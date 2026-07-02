@@ -201,6 +201,7 @@ def test_management_evidence_preserves_artifact_manifest_from_store() -> None:
 
         item = payload["data"]["items"][0]
         assert item["overall"] == "pass"
+        assert "artifactManifest" not in item
         manifest = item["artifact_manifest"]
         assert manifest["file_count"] == 2
         assert manifest["total_bytes"] == 88

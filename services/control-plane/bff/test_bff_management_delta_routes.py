@@ -123,24 +123,25 @@ def test_sentinel_pulse_composes_findings_and_interventions(monkeypatch) -> None
     data = body["data"]
 
     assert data["id"] == "management-sentinel-pulse"
-    assert body["items"] == body["findings"] == data["findings"]
-    assert data["items"] == body["items"]
-    assert data["interventions"] == body["interventions"]
+    assert set(body) == {"data", "page_info", "meta"}
+    assert "items" not in body
+    assert "findings" not in body
+    assert "summary" not in body
     assert body["page_info"] == {"next_page_token": None, "total": 1, "page_size": 5}
 
-    finding = body["items"][0]
-    assert finding["findingId"] == "finding-critical"
+    finding = data["items"][0]
+    assert finding["finding_id"] == "finding-critical"
     assert finding["severity"] == "critical"
-    assert finding["sourceRefs"]["runtimeId"] == "runtime-alpha"
+    assert finding["source_refs"]["runtime_id"] == "runtime-alpha"
     assert finding["links"]["finding"] == "/bff/v5/sentinel/findings/finding-critical"
 
-    assert body["interventions"][0]["interventionId"] == "intv-critical"
-    assert body["summary"]["findingCount"] == 1
-    assert body["summary"]["activeFindingCount"] == 1
-    assert body["summary"]["criticalFindingCount"] == 1
-    assert body["summary"]["pendingInterventionCount"] == 1
-    assert body["summary"]["highestSeverity"] == "critical"
-    assert body["summary"]["policy"] == "read_only_sentinel_pulse"
+    assert data["related"]["interventions"][0]["intervention_id"] == "intv-critical"
+    assert data["summary"]["finding_count"] == 1
+    assert data["summary"]["active_finding_count"] == 1
+    assert data["summary"]["critical_finding_count"] == 1
+    assert data["summary"]["pending_intervention_count"] == 1
+    assert data["summary"]["highest_severity"] == "critical"
+    assert data["summary"]["policy"] == "read_only_sentinel_pulse"
     assert body["meta"]["surfaces"]["management_sentinel_pulse"]["source"] == "bff_composed"
     assert body["meta"]["surfaces"]["sentinel_findings"]["source"] == "canonical"
     assert body["meta"]["surfaces"]["v5_interventions"]["source"] == "canonical"

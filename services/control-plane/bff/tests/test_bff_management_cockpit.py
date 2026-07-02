@@ -185,20 +185,24 @@ def test_bff_management_cockpit_composes_required_sections() -> None:
             data = payload["data"]
 
             assert data["id"] == "management-cockpit"
-            assert payload["operator_home"] == data["operatorHome"]
-            assert payload["runtime_health"] == data["runtimeHealth"]
+            assert set(payload) == {"data", "meta"}
+            assert "operator_home" not in payload
+            assert "runtime_health" not in payload
+            assert "operatorHome" not in data
+            assert "runtimeHealth" not in data
             assert data["alerts"]["summary"]["total_active"] >= 1
-            assert data["humanInbox"]["summary"]["total"] >= 4
-            assert data["humanInbox"]["summary"]["governance_review_count"] == 1
-            assert data["humanInbox"]["summary"]["approval_count"] == 1
-            assert data["humanInbox"]["summary"]["intervention_count"] == 1
-            assert data["humanInbox"]["summary"]["sentinel_finding_count"] == 1
-            assert data["tradingPulse"]["summary"]["runtimeCount"] == 1
-            assert data["tradingPulse"]["summary"]["totalPnl"] == 0.42
-            assert data["tradingPulse"]["summary"]["baselineComparisonCount"] == 1
-            assert data["tradingPulse"]["rankings"][0]["runtimeId"] == "runtime-b3-001"
+            inbox_summary = data["human_inbox"]["data"]["summary"]
+            assert inbox_summary["total"] >= 4
+            assert inbox_summary["governance_review_count"] == 1
+            assert inbox_summary["approval_count"] == 1
+            assert inbox_summary["intervention_count"] == 1
+            assert inbox_summary["sentinel_finding_count"] == 1
+            assert data["trading_pulse"]["summary"]["runtime_count"] == 1
+            assert data["trading_pulse"]["summary"]["total_pnl"] == 0.42
+            assert data["trading_pulse"]["summary"]["baseline_comparison_count"] == 1
+            assert data["trading_pulse"]["rankings"][0]["runtime_id"] == "runtime-b3-001"
             assert (
-                data["tradingPulse"]["baselineComparisons"][0]["status"]
+                data["trading_pulse"]["baseline_comparisons"][0]["status"]
                 == "watch"
             )
             assert data["anomalies"]["summary"]["total"] >= 2

@@ -41,16 +41,11 @@ export interface ManagementCockpitSection<T = Record<string, unknown>> {
 
 export interface ManagementCockpitData {
   id: "management-cockpit" | string;
-  snapshotAt?: string;
   snapshot_at?: string;
-  operatorHome: Record<string, unknown>;
   operator_home: Record<string, unknown>;
-  runtimeHealth: Record<string, unknown>;
   runtime_health: Record<string, unknown>;
   alerts: ManagementCockpitSection;
-  humanInbox: ManagementCockpitSection;
   human_inbox: ManagementCockpitSection;
-  tradingPulse: ManagementCockpitSection;
   trading_pulse: ManagementCockpitSection;
   anomalies: ManagementCockpitSection;
   links?: Record<string, string>;
@@ -58,12 +53,6 @@ export interface ManagementCockpitData {
 
 export interface ManagementCockpitResponse {
   data: ManagementCockpitData;
-  operator_home: Record<string, unknown>;
-  runtime_health: Record<string, unknown>;
-  alerts: ManagementCockpitSection;
-  human_inbox: ManagementCockpitSection;
-  trading_pulse: ManagementCockpitSection;
-  anomalies: ManagementCockpitSection;
   meta: ManagementCockpitMeta;
 }
 
@@ -416,37 +405,23 @@ export interface ManagementInterventionStreamResponse {
 }
 
 export interface ManagementTradingPulseSummary {
-  runtimeCount: number;
   runtime_count: number;
-  telemetryCoverageCount: number;
   telemetry_coverage_count: number;
-  byStatus: Record<string, number>;
   by_status: Record<string, number>;
-  byStage: Record<string, number>;
   by_stage: Record<string, number>;
-  totalPnl?: number | null;
   total_pnl?: number | null;
-  worstDrawdown?: number | null;
   worst_drawdown?: number | null;
-  averageFillRate?: number | null;
   average_fill_rate?: number | null;
-  worstSlippageBps?: number | null;
   worst_slippage_bps?: number | null;
-  totalTrades: number;
   total_trades: number;
-  baselineComparisonCount?: number;
   baseline_comparison_count?: number;
-  baselineBreachedCount?: number;
   baseline_breached_count?: number;
-  baselineWatchCount?: number;
   baseline_watch_count?: number;
-  byBaselineStatus?: Record<string, number>;
   by_baseline_status?: Record<string, number>;
   [key: string]: unknown;
 }
 
 export interface ManagementTradingPulseCard {
-  cardId: string;
   card_id: string;
   label: string;
   value?: number | string | boolean | null;
@@ -461,7 +436,6 @@ export interface ManagementTradingPulseRuntimeRow {
   status?: string;
   telemetry_summary?: Record<string, unknown> | null;
   rollback_summary?: Record<string, unknown> | null;
-  baselineComparison?: ManagementTradingPulseBaselineComparison | null;
   baseline_comparison?: ManagementTradingPulseBaselineComparison | null;
   last_updated_at?: string | null;
   [key: string]: unknown;
@@ -495,35 +469,22 @@ export interface ManagementTradingPulseBaselineComparison {
 }
 
 export interface ManagementTradingPulseRankingItem {
-  runtimeId?: string | null;
   runtime_id?: string | null;
-  runtimeBindingId?: string | null;
   runtime_binding_id?: string | null;
-  deploymentStage?: string | null;
   deployment_stage?: string | null;
   status?: string | null;
   rank: number;
   pnl?: number | null;
   drawdown?: number | null;
-  sharpeRatio?: number | null;
   sharpe_ratio?: number | null;
-  fillRate?: number | null;
   fill_rate?: number | null;
-  avgSlippageBps?: number | null;
   avg_slippage_bps?: number | null;
-  totalTrades?: number | null;
   total_trades?: number | null;
-  lastUpdatedAt?: string | null;
   last_updated_at?: string | null;
-  baselineComparisonStatus?: string | null;
   baseline_comparison_status?: string | null;
-  breachedMetricCount?: number | null;
   breached_metric_count?: number | null;
-  rankingBlockId?: string;
   ranking_block_id?: string;
-  rankingMetric?: string;
   ranking_metric?: string;
-  rankingMetricValue?: number | null;
   ranking_metric_value?: number | null;
   [key: string]: unknown;
 }
@@ -533,23 +494,13 @@ export interface ManagementTradingPulseData {
   summary: ManagementTradingPulseSummary;
   cards: ManagementTradingPulseCard[];
   rankings: ManagementTradingPulseRankingItem[];
-  runtimeRows: ManagementTradingPulseRuntimeRow[];
   runtime_rows: ManagementTradingPulseRuntimeRow[];
-  baselineComparisons: ManagementTradingPulseBaselineComparison[];
   baseline_comparisons: ManagementTradingPulseBaselineComparison[];
   [key: string]: unknown;
 }
 
 export interface ManagementTradingPulseResponse {
   data: ManagementTradingPulseData;
-  items: ManagementTradingPulseCard[];
-  cards: ManagementTradingPulseCard[];
-  rankings: ManagementTradingPulseRankingItem[];
-  runtimeRows: ManagementTradingPulseRuntimeRow[];
-  runtime_rows: ManagementTradingPulseRuntimeRow[];
-  baselineComparisons: ManagementTradingPulseBaselineComparison[];
-  baseline_comparisons: ManagementTradingPulseBaselineComparison[];
-  summary: ManagementTradingPulseSummary;
   page_info: {
     next_page_token: string | null;
     total: number;
@@ -574,35 +525,28 @@ export interface ManagementTradingPulseRankingsQuery {
 }
 
 export interface ManagementTradingPulseRankingBlock {
-  blockId: string;
   block_id: string;
   label: string;
   metric: string;
-  secondaryMetric?: string;
   secondary_metric?: string;
-  sortOrder: "asc" | "desc" | string;
   sort_order: "asc" | "desc" | string;
   items: ManagementTradingPulseRankingItem[];
   [key: string]: unknown;
 }
 
 export interface ManagementTradingPulseRankingsResponse {
-  data: ManagementTradingPulseRankingBlock[];
-  items: ManagementTradingPulseRankingBlock[];
-  rankings: ManagementTradingPulseRankingBlock[];
-  rankingBlocks: ManagementTradingPulseRankingBlock[];
-  ranking_blocks: ManagementTradingPulseRankingBlock[];
-  summary: {
-    runtimeCount: number;
+  data: {
+    id: "management-trading-pulse-rankings" | string;
+    items: ManagementTradingPulseRankingBlock[];
+    summary: {
     runtime_count: number;
-    rankingBlockCount: number;
     ranking_block_count: number;
-    rankedItemCount: number;
     ranked_item_count: number;
     criteria: string[];
     limit: number;
-    topRuntimeId?: string | null;
     top_runtime_id?: string | null;
+    [key: string]: unknown;
+    };
     [key: string]: unknown;
   };
   page_info: {
@@ -636,70 +580,49 @@ export interface ManagementSentinelPulseQuery {
 }
 
 export interface ManagementSentinelPulseSourceRefs {
-  findingId?: string | null;
   finding_id?: string | null;
-  incidentId?: string | null;
   incident_id?: string | null;
-  loopRunId?: string | null;
   loop_run_id?: string | null;
-  runtimeId?: string | null;
   runtime_id?: string | null;
-  interventionId?: string | null;
   intervention_id?: string | null;
   [key: string]: unknown;
 }
 
 export interface ManagementSentinelPulseFinding {
   id: string;
-  findingId: string;
   finding_id: string;
   kind: string;
   severity: string;
-  riskLevel: string;
   risk_level: string;
   status: string;
   title: string;
   summary?: string;
-  triggeredAt?: string | null;
   triggered_at?: string | null;
-  createdAt?: string | null;
   created_at?: string | null;
-  updatedAt?: string | null;
   updated_at?: string | null;
   target?: Record<string, unknown>;
-  sourceRefs: ManagementSentinelPulseSourceRefs;
   source_refs: ManagementSentinelPulseSourceRefs;
   links?: Record<string, string | null | undefined>;
-  sourceRecord?: Record<string, unknown>;
-  source_record?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
 export interface ManagementSentinelPulseIntervention {
   id: string;
-  interventionId: string;
   intervention_id: string;
-  findingId?: string | null;
   finding_id?: string | null;
   kind: string;
   severity: string;
-  riskLevel: string;
   risk_level: string;
   status: string;
   title: string;
   summary?: string;
-  triggeredAt?: string | null;
   triggered_at?: string | null;
-  sourceRefs: ManagementSentinelPulseSourceRefs;
   source_refs: ManagementSentinelPulseSourceRefs;
   links?: Record<string, string | null | undefined>;
-  sourceRecord?: Record<string, unknown>;
-  source_record?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
 export interface ManagementSentinelPulseCard {
-  cardId: string;
   card_id: string;
   label: string;
   value?: number | string | boolean | null;
@@ -708,25 +631,15 @@ export interface ManagementSentinelPulseCard {
 }
 
 export interface ManagementSentinelPulseSummary {
-  findingCount: number;
   finding_count: number;
-  returnedFindingCount: number;
   returned_finding_count: number;
-  activeFindingCount: number;
   active_finding_count: number;
-  criticalFindingCount: number;
   critical_finding_count: number;
-  interventionCount: number;
   intervention_count: number;
-  pendingInterventionCount: number;
   pending_intervention_count: number;
-  highestSeverity?: string | null;
   highest_severity?: string | null;
-  byStatus: Record<string, number>;
   by_status: Record<string, number>;
-  bySeverity: Record<string, number>;
   by_severity: Record<string, number>;
-  byKind: Record<string, number>;
   by_kind: Record<string, number>;
   policy: string;
   basis: string;
@@ -736,21 +649,17 @@ export interface ManagementSentinelPulseSummary {
 export interface ManagementSentinelPulseResponse {
   data: {
     id: "management-sentinel-pulse" | string;
-    snapshotAt?: string;
     snapshot_at?: string;
     items: ManagementSentinelPulseFinding[];
-    findings: ManagementSentinelPulseFinding[];
-    interventions: ManagementSentinelPulseIntervention[];
+    related?: {
+      interventions?: ManagementSentinelPulseIntervention[];
+      [key: string]: unknown;
+    };
     cards: ManagementSentinelPulseCard[];
     summary: ManagementSentinelPulseSummary;
     policy?: string;
     [key: string]: unknown;
   };
-  items: ManagementSentinelPulseFinding[];
-  findings: ManagementSentinelPulseFinding[];
-  interventions: ManagementSentinelPulseIntervention[];
-  cards: ManagementSentinelPulseCard[];
-  summary: ManagementSentinelPulseSummary;
   page_info: {
     next_page_token: string | null;
     total: number;
