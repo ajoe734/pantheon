@@ -1,0 +1,15 @@
+{
+  "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/trading-room?nocache=1782985786822",
+  "capturedAt": "2026-07-02T09:49:50.411Z",
+  "screenshotPath": "/tmp/ag-dynui-live-default-001-probe/.lovable/audits/agora-trading-room/agora-trading-room-live.png",
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 401 ()",
+    "Failed to load resource: the server responded with a status of 401 ()"
+  ],
+  "bodyBg": "rgb(249, 250, 251)",
+  "rootBg": "rgba(0, 0, 0, 0)",
+  "firstBg": "rgb(17, 20, 23)",
+  "bodyText": "⟁ Pantheon\nAgora 交易台\n研究\n搜尋策略、Persona、工作項…\n⌘K\nSNAPSHOT DATA\n即時\nzh-TW\npantheon-dev-browser\nA\nAGORA\n⚡\nServant\nTrading Room\nStrategy Workshop\nPerformance\nFailed to load Trading Room.\nJobs\nShadow\nJournal",
+  "amberMark": true,
+  "title": "Pantheon Management Console"
+}
