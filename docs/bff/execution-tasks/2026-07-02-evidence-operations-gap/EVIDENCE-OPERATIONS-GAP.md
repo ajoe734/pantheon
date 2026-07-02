@@ -46,6 +46,38 @@ That means the surface can truthfully say "the evidence read surface is ok" but
 the row is still not operationally traceable. The page must distinguish surface
 health from row-level actionability.
 
+## Current Performance Symptom
+
+Hosted dev timing probes on 2026-07-02 show that the user-visible slowness is
+not explained by payload size or row count:
+
+- `/bff/management/evidence?page_size=5`
+  - payload: about 6 KB
+  - time to first byte: about 3.28 seconds
+  - total: about 3.28 seconds
+- `/api/v1/knowledge/evidence?page_size=5`
+  - payload: about 1.3 KB
+  - time to first byte: about 0.11 seconds
+- `/api/v1/knowledge/evidence/evref-rart-20260615-002`
+  - payload: about 1 KB
+  - time to first byte: about 0.09 seconds
+
+The management endpoint and the knowledge endpoint share the same underlying
+evidence read-store path, so the observed gap points at the management
+aggregate request path, proxy/middleware path, or aggregate instrumentation gap
+rather than the evidence dataset itself. Do not tune the UI table before
+instrumenting `/bff/management/evidence` end-to-end.
+
+Production target:
+
+- list aggregate p95 under 500 ms for 100 rows on warm dev infrastructure;
+- detail aggregate p95 under 300 ms when related surfaces are warm;
+- payload size and row count included in logs;
+- per-stage timings for auth, read-store load, filtering, redaction, public
+  item mapping, summary/facets, and response serialization;
+- explicit degraded meta when a related surface is omitted because of latency
+  budget.
+
 ## Existing Architecture To Reuse
 
 ### KW-03 Evidence Refs Contract
@@ -635,6 +667,8 @@ Tasks:
 
 - Add actionability derivation helper in BFF.
 - Mark rows with missing source/link fields as `incomplete`.
+- Add endpoint timing instrumentation for `/bff/management/evidence`.
+- Add a latency budget before expanding detail joins or related-surface fanout.
 - Extend fixtures/tests for current `evref-rart-*` shape.
 - Decide whether `producer_record` is a valid credibility tier or should map to
   KW-03 `primary/secondary/tertiary/unverified` with a separate method field.
@@ -646,6 +680,8 @@ Acceptance:
 - Current live-like `evref-rart-*` records render as incomplete/unresolved, not
   operationally healthy.
 - BFF tests prove surface `ok` does not imply row actionability `traceable`.
+- Warm list aggregate does not spend multiple seconds before first byte when
+  the underlying knowledge evidence list returns in about 100 ms.
 
 ### Phase 1 - Read Model Enrichment
 
@@ -873,6 +909,22 @@ Key files:
 - frontend route tests
 - BFF smoke tests
 
+### EVID-OPS-010 - Management Evidence Latency Budget
+
+Scope:
+
+- Instrument `/bff/management/evidence` with per-stage timings.
+- Compare management aggregate timing with `/api/v1/knowledge/evidence`.
+- Add a regression probe for small payload, warm read-store latency.
+- Prevent future chain/relationship joins from turning the list endpoint into a
+  blocking fanout path.
+
+Key files:
+
+- `services/control-plane/bff/main.py`
+- BFF observability/logging helpers
+- hosted probe scripts
+
 ## Validation Plan
 
 Backend:
@@ -894,6 +946,9 @@ Live:
 
 - Probe `/bff/management/evidence?page_size=5`.
 - Probe `/api/v1/knowledge/evidence/{ref_id}` for current refs.
+- Compare `/bff/management/evidence?page_size=5` with
+  `/api/v1/knowledge/evidence?page_size=5` and flag multi-second aggregate
+  overhead.
 - Probe `/management/evidence` screenshot:
   - no blank state,
   - incomplete/unresolved badges visible,
@@ -925,5 +980,7 @@ The upgrade is complete only when:
   flow through the command/task/reviewer systems with idempotency and audit;
 - current `evref-rart-*` rows are no longer misleadingly presented as fully
   actionable;
+- list and detail aggregates meet documented latency budgets or expose degraded
+  surfaces instead of blocking the first render;
 - first-tier navigation placement is backed by shipped operation capability, or
   the page is moved out of first-tier Oversight.
