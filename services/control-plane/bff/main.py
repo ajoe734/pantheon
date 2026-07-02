@@ -32650,6 +32650,9 @@ async def bff_management_evolution_journal(
 async def bff_management_persona_fleet(
     state: Optional[str] = None,
     health: Optional[str] = None,
+    competition_track: Optional[str] = None,
+    capital_scope: Optional[str] = None,
+    review_status: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
@@ -32658,6 +32661,9 @@ async def bff_management_persona_fleet(
     return await bff_management_fleet(
         state=state,
         health=health,
+        competition_track=competition_track,
+        capital_scope=capital_scope,
+        review_status=review_status,
         page_token=page_token,
         page_size=page_size,
         authorization=authorization,
@@ -50660,6 +50666,305 @@ def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
     return _as_float(metrics.get("training_improvement_pct")) / 100.0
 
 
+_PPLG_COMPETITION_TRACKS = {
+    "paper_challenger",
+    "canary_challenger",
+    "live_incumbent",
+    "watchlist_incumbent",
+    "risk_off_excluded",
+}
+_PPLG_CAPITAL_SCOPES = {"none", "paper", "canary", "live", "risk_off"}
+_PPLG_REVIEW_STATES = {
+    "none",
+    "promotion_pending",
+    "live_pending",
+    "quarterly_pending",
+    "incident_resume_pending",
+    "rejected",
+}
+_PPLG_LIFECYCLE_STATES = {
+    "paper_provisioning",
+    "paper_running",
+    "paper_warming_up",
+    "paper_ineligible",
+    "paper_eligible",
+    "promotion_review_pending",
+    "promotion_rejected",
+    "canary_running",
+    "live_review_pending",
+    "live_running",
+    "quarterly_review_pending",
+    "watchlist",
+    "auto_reduced",
+    "risk_off",
+    "frozen",
+    "retired",
+    "setup_failed",
+    "repair_required",
+}
+
+
+def _pplg_slug(value: Any, default: str = "mixed") -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return text or default
+
+
+def _pplg_first_present(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _pplg_normalized_runtime_status(runtime: Dict[str, Any]) -> str:
+    if not runtime:
+        return "missing"
+    raw = str(runtime.get("status") or runtime.get("state") or "").strip().lower()
+    stage = str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").strip().lower()
+    if raw in {"risk_off"} or stage == "risk_off":
+        return "risk_off"
+    if raw in {"frozen"} or stage == "frozen":
+        return "frozen"
+    if raw in {"failed", "error", "errored"}:
+        return "failed"
+    if raw in {"starting", "pending", "provisioning"}:
+        return "starting"
+    if raw in {"warming_up", "warming", "warmup"}:
+        return "warming_up"
+    if raw in {"paused", "stopped", "suspended"}:
+        return "paused"
+    if raw in {"active", "ready", "running", "idle"}:
+        return "active"
+    return "active" if runtime else "missing"
+
+
+def _pplg_heartbeat_status(runtime: Dict[str, Any]) -> str:
+    if not runtime:
+        return "missing"
+    status = _pplg_normalized_runtime_status(runtime)
+    if status in {"failed", "risk_off", "frozen"}:
+        return "stale"
+    if status in {"active", "starting", "warming_up", "paused"}:
+        return "fresh"
+    return "unknown"
+
+
+def _pplg_capital_scope(
+    *,
+    deployment_stage: str,
+    capital_pool: Dict[str, Any],
+    binding: Dict[str, Any],
+    product_lifecycle_state: str,
+) -> str:
+    if product_lifecycle_state in {"risk_off", "frozen", "auto_reduced"}:
+        return "risk_off"
+    explicit = str(
+        _pplg_first_present(
+            capital_pool.get("capital_scope"),
+            capital_pool.get("scope"),
+            binding.get("capital_scope"),
+            binding.get("allowed_deployment_scope"),
+        )
+        or ""
+    ).strip().lower()
+    if explicit in _PPLG_CAPITAL_SCOPES:
+        return explicit
+    stage = str(deployment_stage or "").strip().lower()
+    if stage in {"paper", "canary", "live"}:
+        return stage
+    if capital_pool.get("live_capital_enabled") is True:
+        return "live"
+    if capital_pool:
+        return "paper"
+    return "none"
+
+
+def _pplg_required_human_review(
+    *,
+    recommendation: Any,
+    persona_status: str,
+    product_lifecycle_state: str,
+) -> Optional[str]:
+    if product_lifecycle_state in {"risk_off", "frozen"}:
+        return "resume_after_incident"
+    raw = f"{recommendation or ''} {persona_status or ''}".lower()
+    if "quarter" in raw or "rebalance" in raw:
+        return "quarterly_rebalance"
+    if "retire" in raw:
+        return "retire"
+    if "live" in raw and "review" in raw:
+        return "canary_to_live"
+    if "canary" in raw or "promote" in raw or "needs_human_approval" in raw:
+        return "promotion_to_canary"
+    return None
+
+
+def _pplg_human_review_state(required_human_review: Optional[str], persona_status: str) -> str:
+    if "rejected" in str(persona_status or "").lower():
+        return "rejected"
+    return {
+        None: "none",
+        "promotion_to_canary": "promotion_pending",
+        "canary_to_live": "live_pending",
+        "quarterly_rebalance": "quarterly_pending",
+        "resume_after_incident": "incident_resume_pending",
+        "retire": "quarterly_pending",
+    }.get(required_human_review, "none")
+
+
+def _pplg_setup_status(
+    *,
+    deployment_stage: str,
+    runtime_status: str,
+    lifecycle_state: str,
+    persona_status: str,
+) -> str:
+    combined = f"{lifecycle_state or ''} {persona_status or ''}".lower()
+    if "setup_failed" in combined or runtime_status == "failed":
+        return "setup_failed"
+    if "repair_required" in combined:
+        return "repair_required"
+    if runtime_status == "missing":
+        return "repair_required"
+    if runtime_status == "starting":
+        return "provisioning"
+    if runtime_status == "warming_up":
+        return "paper_runtime_warming_up"
+    return "paper_runtime_active"
+
+
+def _pplg_product_lifecycle_state(
+    *,
+    deployment_stage: str,
+    runtime_status: str,
+    setup_status: str,
+    lifecycle_state: str,
+    persona_status: str,
+    recommendation: Any,
+    risk_flags: List[str],
+) -> str:
+    raw = f"{lifecycle_state or ''} {persona_status or ''} {' '.join(risk_flags)}".lower()
+    if "frozen" in raw or runtime_status == "frozen":
+        return "frozen"
+    if "risk_off" in raw or runtime_status == "risk_off":
+        return "risk_off"
+    if "retired" in raw:
+        return "retired"
+    if setup_status in {"setup_failed", "repair_required", "provisioning"}:
+        return setup_status if setup_status != "provisioning" else "paper_provisioning"
+    if setup_status == "paper_runtime_warming_up":
+        return "paper_warming_up"
+    if str(lifecycle_state or "").lower() in _PPLG_LIFECYCLE_STATES:
+        return str(lifecycle_state).lower()
+    required = _pplg_required_human_review(
+        recommendation=recommendation,
+        persona_status=persona_status,
+        product_lifecycle_state="paper_running",
+    )
+    if required == "promotion_to_canary":
+        return "promotion_review_pending"
+    if required == "canary_to_live":
+        return "live_review_pending"
+    if required == "quarterly_rebalance":
+        return "quarterly_review_pending"
+    stage = str(deployment_stage or "").strip().lower()
+    if stage == "live":
+        return "live_running"
+    if stage == "canary":
+        return "canary_running"
+    if stage == "paper":
+        return "paper_running"
+    return "watchlist"
+
+
+def _pplg_competition_track(product_lifecycle_state: str, deployment_stage: str) -> str:
+    if product_lifecycle_state in {"risk_off", "frozen", "auto_reduced"}:
+        return "risk_off_excluded"
+    stage = str(deployment_stage or "").strip().lower()
+    if stage == "live":
+        return "live_incumbent"
+    if stage == "canary":
+        return "canary_challenger"
+    if stage == "paper":
+        return "paper_challenger"
+    return "watchlist_incumbent"
+
+
+def _pplg_live_status(product_lifecycle_state: str, deployment_stage: str) -> str:
+    if product_lifecycle_state in {"risk_off", "frozen", "auto_reduced"}:
+        return product_lifecycle_state
+    stage = str(deployment_stage or "").strip().lower()
+    if stage == "live":
+        return "live_running"
+    if stage == "canary":
+        return "canary_running"
+    return "no_live_authority"
+
+
+def _pplg_row_action(
+    *,
+    setup_status: str,
+    deployment_stage: str,
+    runtime_status: str,
+    product_lifecycle_state: str,
+    required_human_review: Optional[str],
+    review_state: str,
+    persona_id: str,
+    runtime_id: Any,
+) -> Dict[str, Any]:
+    if product_lifecycle_state in {"risk_off", "frozen"}:
+        action_id = "open_incident_review"
+        label = "開啟事件審核"
+        href = f"/management/personas/{persona_id}/incident-review"
+    elif setup_status in {"setup_failed", "repair_required"}:
+        action_id = "repair_paper_setup"
+        label = "修復 paper setup"
+        href = f"/management/personas/{persona_id}/paper-launch/repair"
+    elif required_human_review in {"promotion_to_canary", "canary_to_live"}:
+        action_id = "submit_live_review"
+        label = "送交實盤審核"
+        href = f"/management/personas/{persona_id}/reviews/new"
+    elif review_state in {"quarterly_pending", "incident_resume_pending"}:
+        action_id = "open_human_review"
+        label = "開啟人審"
+        href = f"/management/personas/{persona_id}/reviews"
+    elif str(deployment_stage or "").lower() == "live":
+        action_id = "monitor_live_runtime"
+        label = "監控實盤"
+        href = f"/management/runtimes/{runtime_id}" if runtime_id else f"/personas/{persona_id}"
+    elif str(deployment_stage or "").lower() == "canary":
+        action_id = "monitor_canary_runtime"
+        label = "監控 canary"
+        href = f"/management/runtimes/{runtime_id}" if runtime_id else f"/personas/{persona_id}"
+    elif str(deployment_stage or "").lower() == "paper" and runtime_status in {"active", "warming_up", "starting"}:
+        action_id = "monitor_paper_runtime"
+        label = "監控 paper runtime"
+        href = f"/management/runtimes/{runtime_id}" if runtime_id else f"/personas/{persona_id}"
+    else:
+        action_id = "view_persona"
+        label = "查看 persona"
+        href = f"/personas/{persona_id}"
+    return {
+        "action_id": action_id,
+        "actionId": action_id,
+        "label": label,
+        "href": href,
+        "requires_human_review": required_human_review is not None,
+        "requiresHumanReview": required_human_review is not None,
+        "startup_wizard_visible": False,
+        "startupWizardVisible": False,
+        "legacy_startup_wizard_hidden": True,
+        "legacyStartupWizardHidden": True,
+    }
+
+
+def _pplg_cohort_id(market_scope: List[Any], strategy_family: Any) -> str:
+    market = "-".join(_pplg_slug(value, default="market") for value in (market_scope or ["mixed"]))
+    strategy = _pplg_slug(strategy_family, default="strategy")
+    return f"cohort-{market}-{strategy}"
+
+
 def _build_persona_health_items(
     snapshot_at: str,
     *,
@@ -50717,6 +51022,7 @@ def _build_persona_health_items(
             or metadata.get("deployment_stage")
             or "none"
         )
+        capital_pool = read_store.get_capital_pool(str(pool_id or "")) or {}
         market_scope = list(
             league_entry.get("market_scope")
             or metadata.get("market_scope")
@@ -50749,6 +51055,13 @@ def _build_persona_health_items(
             or league_entry.get("status")
             or persona.get("status")
             or lifecycle_state
+        )
+        runtime_status = _pplg_normalized_runtime_status(runtime)
+        setup_status = _pplg_setup_status(
+            deployment_stage=str(deployment_stage),
+            runtime_status=runtime_status,
+            lifecycle_state=lifecycle_state,
+            persona_status=persona_status,
         )
         data_source_status = (
             metadata.get("data_source_status")
@@ -50792,6 +51105,116 @@ def _build_persona_health_items(
             or snapshot_at
         )
         ooda_stage = league_entry.get("ooda_stage") or metadata.get("ooda_stage")
+        product_lifecycle_state = _pplg_product_lifecycle_state(
+            deployment_stage=str(deployment_stage),
+            runtime_status=runtime_status,
+            setup_status=setup_status,
+            lifecycle_state=lifecycle_state,
+            persona_status=persona_status,
+            recommendation=recommendation,
+            risk_flags=risk_flags,
+        )
+        required_human_review = _pplg_required_human_review(
+            recommendation=recommendation,
+            persona_status=persona_status,
+            product_lifecycle_state=product_lifecycle_state,
+        )
+        review_state = _pplg_human_review_state(required_human_review, persona_status)
+        competition_track = _pplg_competition_track(product_lifecycle_state, str(deployment_stage))
+        capital_scope = _pplg_capital_scope(
+            deployment_stage=str(deployment_stage),
+            capital_pool=capital_pool,
+            binding=binding,
+            product_lifecycle_state=product_lifecycle_state,
+        )
+        cohort_id = str(
+            league_entry.get("cohort_id")
+            or metadata.get("cohort_id")
+            or _pplg_cohort_id(market_scope, persona.get("strategy_family") or metadata.get("strategy_family"))
+        )
+        raw_rank = league_entry.get("league_rank") or league_entry.get("rank") or metadata.get("cohort_rank")
+        cohort_rank = int(_as_float(raw_rank, 0) or 0)
+        challenger_delta_score = (
+            _as_float(league_entry.get("challenger_delta_score"))
+            if league_entry.get("challenger_delta_score") is not None
+            else None
+        )
+        repair_failed_step = (
+            metadata.get("failed_step")
+            or metadata.get("setup_failed_step")
+            or league_entry.get("failed_step")
+        )
+        repair_url = None
+        if setup_status in {"setup_failed", "repair_required"}:
+            repair_url = (
+                metadata.get("repair_url")
+                or f"/bff/management/personas/{persona_id}/paper-launch/repair"
+            )
+        readiness_projection = {
+            "persona_id": persona_id,
+            "product_lifecycle_state": product_lifecycle_state,
+            "setup_status": setup_status,
+            "paper_runtime": {
+                "runtime_binding_id": (
+                    runtime.get("runtime_binding_id")
+                    or runtime.get("binding_id")
+                    or runtime.get("id")
+                    or None
+                ),
+                "runtime_id": runtime_id or None,
+                "status": runtime_status,
+                "heartbeat_status": _pplg_heartbeat_status(runtime),
+            },
+            "competition_track": competition_track,
+            "capital_scope": capital_scope,
+            "required_human_review": required_human_review,
+            "repair": {
+                "retryable": setup_status in {"setup_failed", "repair_required"},
+                "failed_step": repair_failed_step or None,
+                "repair_url": repair_url,
+            },
+            "trace_id": str(
+                metadata.get("trace_id")
+                or league_entry.get("trace_id")
+                or runtime.get("trace_id")
+                or f"fleet-{persona_id}"
+            ),
+            "snapshot_at": snapshot_at,
+        }
+        row_action = _pplg_row_action(
+            setup_status=setup_status,
+            deployment_stage=str(deployment_stage),
+            runtime_status=runtime_status,
+            product_lifecycle_state=product_lifecycle_state,
+            required_human_review=required_human_review,
+            review_state=review_state,
+            persona_id=persona_id,
+            runtime_id=runtime_id,
+        )
+        competition_standing = {
+            "standing_id": f"standing-{persona_id}",
+            "persona_id": persona_id,
+            "cohort_id": cohort_id,
+            "competition_track": competition_track,
+            "cohort_rank": cohort_rank or 1,
+            "score_snapshot_id": str(
+                league_entry.get("score_snapshot_id")
+                or metadata.get("score_snapshot_id")
+                or f"score-{persona_id}"
+            ),
+            "promotion_score": max(0.0, min(100.0, score)),
+            "product_lifecycle_state": product_lifecycle_state,
+            "capital_scope": capital_scope,
+            "human_review_state": review_state,
+            "incumbent_persona_id": league_entry.get("incumbent_persona_id"),
+            "challenger_delta_score": challenger_delta_score,
+            "replacement_risk": (
+                "pending_human_review"
+                if review_state != "none"
+                else "watch" if competition_track == "paper_challenger" else "none"
+            ),
+            "snapshot_at": snapshot_at,
+        }
         item = {
             "id": persona_id,
             "persona_id": persona_id,
@@ -50835,6 +51258,44 @@ def _build_persona_health_items(
             "runtimeId": runtime_id,
             "deployment_stage": deployment_stage,
             "deploymentStage": deployment_stage,
+            "product_lifecycle_state": product_lifecycle_state,
+            "productLifecycleState": product_lifecycle_state,
+            "competition_track": competition_track,
+            "competitionTrack": competition_track,
+            "cohort_id": cohort_id,
+            "cohortId": cohort_id,
+            "cohort_rank": cohort_rank or None,
+            "cohortRank": cohort_rank or None,
+            "capital_scope": capital_scope,
+            "capitalScope": capital_scope,
+            "paper_runtime_status": readiness_projection["paper_runtime"]["status"],
+            "paperRuntimeStatus": readiness_projection["paper_runtime"]["status"],
+            "evaluation_status": (
+                research_status.get("status")
+                or research_status.get("stage")
+                or "warming_up"
+            ),
+            "evaluationStatus": (
+                research_status.get("status")
+                or research_status.get("stage")
+                or "warming_up"
+            ),
+            "review_status": review_state,
+            "reviewStatus": review_state,
+            "required_human_review": required_human_review,
+            "requiredHumanReview": required_human_review,
+            "live_status": _pplg_live_status(product_lifecycle_state, str(deployment_stage)),
+            "liveStatus": _pplg_live_status(product_lifecycle_state, str(deployment_stage)),
+            "setup_failed_step": repair_failed_step,
+            "setupFailedStep": repair_failed_step,
+            "repair_action": row_action if setup_status in {"setup_failed", "repair_required"} else None,
+            "repairAction": row_action if setup_status in {"setup_failed", "repair_required"} else None,
+            "readiness_projection": readiness_projection,
+            "readinessProjection": readiness_projection,
+            "competition_standing": competition_standing,
+            "competitionStanding": competition_standing,
+            "row_action": row_action,
+            "rowAction": row_action,
             "ooda_stage": ooda_stage,
             "oodaStage": ooda_stage,
             "recommendation": recommendation,
@@ -50881,13 +51342,24 @@ def _build_persona_health_items(
             },
         }
         items.append(item)
-    return sorted(
+    ranked_items = sorted(
         items,
         key=lambda item: (
             -_as_float(item.get("score")),
             str(item.get("persona_id") or ""),
         ),
     )
+    for rank, item in enumerate(ranked_items, start=1):
+        if item.get("cohortRank") is None:
+            item["cohortRank"] = rank
+            item["cohort_rank"] = rank
+        standing = item.get("competitionStanding")
+        if isinstance(standing, dict) and int(standing.get("cohort_rank") or 0) <= 1:
+            standing["cohort_rank"] = int(item.get("cohortRank") or rank)
+        standing_snake = item.get("competition_standing")
+        if isinstance(standing_snake, dict) and int(standing_snake.get("cohort_rank") or 0) <= 1:
+            standing_snake["cohort_rank"] = int(item.get("cohortRank") or rank)
+    return ranked_items
 
 
 def _capital_pool_totals(pools: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -50983,6 +51455,9 @@ async def bff_persona_league_detail(
 async def bff_management_fleet(
     state: Optional[str] = None,
     health: Optional[str] = None,
+    competition_track: Optional[str] = None,
+    capital_scope: Optional[str] = None,
+    review_status: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
@@ -51010,6 +51485,27 @@ async def bff_management_fleet(
             item for item in health_items
             if str(item.get("health") or item.get("status") or "").strip().lower() in requested_health
         ]
+    if competition_track:
+        requested_tracks = {token.strip().lower() for token in competition_track.split(",") if token.strip()}
+        health_items = [
+            item for item in health_items
+            if str(item.get("competitionTrack") or item.get("competition_track") or "").strip().lower()
+            in requested_tracks
+        ]
+    if capital_scope:
+        requested_scopes = {token.strip().lower() for token in capital_scope.split(",") if token.strip()}
+        health_items = [
+            item for item in health_items
+            if str(item.get("capitalScope") or item.get("capital_scope") or "").strip().lower()
+            in requested_scopes
+        ]
+    if review_status:
+        requested_review_states = {token.strip().lower() for token in review_status.split(",") if token.strip()}
+        health_items = [
+            item for item in health_items
+            if str(item.get("reviewStatus") or item.get("review_status") or "").strip().lower()
+            in requested_review_states
+        ]
     total_personas = len(health_items)
     page_items, next_page_token = _page_slice(health_items, page_token, page_size)
     summary = {
@@ -51018,6 +51514,19 @@ async def bff_management_fleet(
         "critical_personas": len([item for item in health_items if item.get("health") == "critical"]),
         "degraded_personas": len([item for item in health_items if item.get("health") == "degraded"]),
         "healthy_personas": len([item for item in health_items if item.get("health") == "healthy"]),
+        "competition_tracks": {
+            track: len([item for item in health_items if item.get("competitionTrack") == track])
+            for track in sorted(_PPLG_COMPETITION_TRACKS)
+        },
+        "capital_scopes": {
+            scope: len([item for item in health_items if item.get("capitalScope") == scope])
+            for scope in sorted(_PPLG_CAPITAL_SCOPES)
+        },
+        "review_states": {
+            status_key: len([item for item in health_items if item.get("reviewStatus") == status_key])
+            for status_key in sorted(_PPLG_REVIEW_STATES)
+        },
+        "competition_default": "unified_paper_canary_live_cohort",
     }
     page_info = {
         "next_page_token": next_page_token,
@@ -51048,6 +51557,14 @@ async def bff_management_fleet(
                 "approved_artifacts_only": True,
                 "live_capital_side_effects": False,
                 "human_gate_required_for_capital_changes": True,
+                "competition_default": "unified_paper_canary_live_cohort",
+                "separate_paper_live_datasets": False,
+                "mode_selector": {
+                    "semantics": "command_safety_context_only",
+                    "does_not_filter_competition_tracks": True,
+                    "contexts": ["research", "paper", "live"],
+                    "filter_fields": ["competition_track", "capital_scope", "review_status"],
+                },
             },
             "summary": summary,
             "page_info": page_info,

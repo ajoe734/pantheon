@@ -67,11 +67,196 @@ def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolutio
             assert alpha["drillDown"]["href"] == "/personas/persona-alpha"
             assert "metrics" in alpha
             assert "currentWork" in alpha
-            assert body["data"]["execution_boundary"] == {
-                "approved_artifacts_only": True,
-                "live_capital_side_effects": False,
-                "human_gate_required_for_capital_changes": True,
+            boundary = body["data"]["execution_boundary"]
+            assert boundary["approved_artifacts_only"] is True
+            assert boundary["live_capital_side_effects"] is False
+            assert boundary["human_gate_required_for_capital_changes"] is True
+            assert boundary["competition_default"] == "unified_paper_canary_live_cohort"
+            assert boundary["mode_selector"]["semantics"] == "command_safety_context_only"
+            assert boundary["mode_selector"]["does_not_filter_competition_tracks"] is True
+            assert alpha["readinessProjection"]["competition_track"] in {
+                "paper_challenger",
+                "canary_challenger",
+                "live_incumbent",
+                "watchlist_incumbent",
+                "risk_off_excluded",
             }
+            assert alpha["rowAction"]["startupWizardVisible"] is False
+        finally:
+            bff_main.read_store = original
+
+
+def test_persona_fleet_default_unifies_paper_canary_and_live_tracks() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=True,
+            )
+            store._data["personas"] = {
+                "persona-paper-test": {
+                    "id": "persona-paper-test",
+                    "persona_id": "persona-paper-test",
+                    "name": "Paper Challenger",
+                    "lifecycle_state": "active",
+                    "status": "active",
+                    "created_at": "2026-07-02T00:00:00Z",
+                    "updated_at": "2026-07-02T00:00:00Z",
+                    "canonicalWriteAuthority": "persona_registry_service",
+                    "persistenceMode": "bff_local_dev_store",
+                    "metadata": {
+                        "owner": "test",
+                        "market_scope": ["US"],
+                        "capital_pool_id": "pool-paper-test",
+                        "deployment_stage": "paper",
+                    },
+                },
+                "persona-canary-test": {
+                    "id": "persona-canary-test",
+                    "persona_id": "persona-canary-test",
+                    "name": "Canary Challenger",
+                    "lifecycle_state": "active",
+                    "status": "active",
+                    "created_at": "2026-07-02T00:00:00Z",
+                    "updated_at": "2026-07-02T00:00:00Z",
+                    "canonicalWriteAuthority": "persona_registry_service",
+                    "persistenceMode": "bff_local_dev_store",
+                    "metadata": {
+                        "owner": "test",
+                        "market_scope": ["US"],
+                        "capital_pool_id": "pool-canary-test",
+                        "deployment_stage": "canary",
+                    },
+                },
+                "persona-live-test": {
+                    "id": "persona-live-test",
+                    "persona_id": "persona-live-test",
+                    "name": "Live Incumbent",
+                    "lifecycle_state": "active",
+                    "status": "active",
+                    "created_at": "2026-07-02T00:00:00Z",
+                    "updated_at": "2026-07-02T00:00:00Z",
+                    "canonicalWriteAuthority": "persona_registry_service",
+                    "persistenceMode": "bff_local_dev_store",
+                    "metadata": {
+                        "owner": "test",
+                        "market_scope": ["US"],
+                        "capital_pool_id": "pool-live-test",
+                        "deployment_stage": "live",
+                    },
+                },
+            }
+            store._data["bindings"] = {
+                "binding-paper-test": {
+                    "binding_id": "binding-paper-test",
+                    "persona_id": "persona-paper-test",
+                    "capital_pool_id": "pool-paper-test",
+                    "status": "active",
+                    "validity": "active",
+                    "allowed_deployment_scope": "paper",
+                },
+                "binding-canary-test": {
+                    "binding_id": "binding-canary-test",
+                    "persona_id": "persona-canary-test",
+                    "capital_pool_id": "pool-canary-test",
+                    "status": "active",
+                    "validity": "active",
+                    "allowed_deployment_scope": "canary",
+                },
+                "binding-live-test": {
+                    "binding_id": "binding-live-test",
+                    "persona_id": "persona-live-test",
+                    "capital_pool_id": "pool-live-test",
+                    "status": "active",
+                    "validity": "active",
+                    "allowed_deployment_scope": "live",
+                },
+            }
+            store._data["runtime_bindings"] = {
+                "runtime-paper-test": {
+                    "runtime_binding_id": "rb-paper-test",
+                    "runtime_id": "runtime-paper-test",
+                    "capital_pool_id": "pool-paper-test",
+                    "deployment_stage": "paper",
+                    "status": "active",
+                },
+                "runtime-canary-test": {
+                    "runtime_binding_id": "rb-canary-test",
+                    "runtime_id": "runtime-canary-test",
+                    "capital_pool_id": "pool-canary-test",
+                    "deployment_stage": "canary",
+                    "status": "active",
+                },
+                "runtime-live-test": {
+                    "runtime_binding_id": "rb-live-test",
+                    "runtime_id": "runtime-live-test",
+                    "capital_pool_id": "pool-live-test",
+                    "deployment_stage": "live",
+                    "status": "active",
+                },
+            }
+            store._local_overlay_write_datasets.add("runtime_bindings")
+            store._data["persona_league"] = {
+                "persona-paper-test": {
+                    "persona_id": "persona-paper-test",
+                    "deployment_stage": "paper",
+                    "capital_pool_id": "pool-paper-test",
+                    "runtime_id": "runtime-paper-test",
+                    "league_score": 82.0,
+                    "league_rank": 3,
+                    "governance_required": True,
+                    "recommendation": "promote_canary_review",
+                    "status": "paper_running",
+                },
+                "persona-canary-test": {
+                    "persona_id": "persona-canary-test",
+                    "deployment_stage": "canary",
+                    "capital_pool_id": "pool-canary-test",
+                    "runtime_id": "runtime-canary-test",
+                    "league_score": 88.0,
+                    "league_rank": 2,
+                    "governance_required": True,
+                    "recommendation": "canary_live_review",
+                    "status": "canary_running",
+                },
+                "persona-live-test": {
+                    "persona_id": "persona-live-test",
+                    "deployment_stage": "live",
+                    "capital_pool_id": "pool-live-test",
+                    "runtime_id": "runtime-live-test",
+                    "league_score": 91.0,
+                    "league_rank": 1,
+                    "governance_required": True,
+                    "recommendation": "",
+                    "status": "live_running",
+                },
+            }
+            bff_main.read_store = store
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+            response = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+            live_response = client.get(
+                "/bff/management/persona-fleet?competition_track=live_incumbent",
+                headers=OPERATOR_HEADERS,
+            )
+
+            assert response.status_code == 200, response.text
+            rows = {item["persona_id"]: item for item in response.json()["items"]}
+            assert rows["persona-paper-test"]["competitionTrack"] == "paper_challenger"
+            assert rows["persona-canary-test"]["competitionTrack"] == "canary_challenger"
+            assert rows["persona-live-test"]["competitionTrack"] == "live_incumbent"
+            assert rows["persona-paper-test"]["rowAction"]["actionId"] == "submit_live_review"
+            assert rows["persona-paper-test"]["rowAction"]["label"] == "送交實盤審核"
+            assert rows["persona-paper-test"]["rowAction"]["startupWizardVisible"] is False
+            assert rows["persona-live-test"]["rowAction"]["actionId"] == "monitor_live_runtime"
+            assert response.json()["data"]["execution_boundary"]["separate_paper_live_datasets"] is False
+
+            assert live_response.status_code == 200, live_response.text
+            live_rows = {item["persona_id"] for item in live_response.json()["items"]}
+            assert "persona-live-test" in live_rows
+            assert "persona-paper-test" not in live_rows
+            assert "persona-canary-test" not in live_rows
         finally:
             bff_main.read_store = original
 
