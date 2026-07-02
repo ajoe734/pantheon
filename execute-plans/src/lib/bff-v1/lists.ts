@@ -28,10 +28,13 @@ export function normalizeLiveListResponse<T>(
   _key: string,
 ): ListEnvelope<T> {
   const root = toRecord(data);
+  const dataEnvelope = toRecord(root.data);
   const items: T[] = Array.isArray(root.items)
     ? (root.items as T[])
     : Array.isArray(root.data)
       ? (root.data as T[])
+      : Array.isArray(dataEnvelope.items)
+        ? (dataEnvelope.items as T[])
       : [];
   const cursor = toRecord(root.cursor ?? root.page_info);
   const pageSize = typeof root.page_size === "number" ? root.page_size : items.length;

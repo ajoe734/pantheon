@@ -40558,6 +40558,12 @@ async def bff_management_persona_league(
     rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
     total = len(rows)
     page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    summary = {
+        "personaCount": total,
+        "persona_count": total,
+        "returnedCount": len(page_items),
+        "returned_count": len(page_items),
+    }
     persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
     surfaces = {
         "persona_league": _composed_surface_status(snapshot_at=snapshot_at),
@@ -40571,8 +40577,11 @@ async def bff_management_persona_league(
         "persona_health": dict(persona_surface),
     }
     return {
-        "data": page_items,
-        "items": page_items,
+        "data": {
+            "id": "management-persona-league",
+            "items": page_items,
+            "summary": summary,
+        },
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": {
             "snapshot_at": snapshot_at,
@@ -40623,12 +40632,11 @@ async def bff_management_persona_league_rankings(
         "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
     }
     return {
-        "data": blocks,
-        "items": blocks,
-        "rankings": blocks,
-        "rankingBlocks": blocks,
-        "ranking_blocks": blocks,
-        "summary": summary,
+        "data": {
+            "id": "management-persona-league-rankings",
+            "items": blocks,
+            "summary": summary,
+        },
         "page_info": {"next_page_token": None, "total": len(blocks), "page_size": len(blocks)},
         "meta": {
             "snapshot_at": snapshot_at,
@@ -40682,15 +40690,11 @@ async def bff_management_persona_league_movers(
     data = {
         "id": "management-persona-league-movers",
         "items": movers,
-        "movers": movers,
         "summary": summary,
         "policy": "read_only_governance_advisory",
     }
     return {
         "data": data,
-        "items": movers,
-        "movers": movers,
-        "summary": summary,
         "page_info": {
             "next_page_token": None,
             "total": summary["moverCount"],
@@ -40738,11 +40742,15 @@ async def bff_management_persona_league_tiers(
         degraded_message="Persona league tiers are degraded because one or more source surfaces are degraded.",
     )
     return {
-        "data": tiers,
-        "items": tiers,
-        "tiers": tiers,
-        "assignments": assignments,
-        "summary": summary,
+        "data": {
+            "id": "management-persona-league-tiers",
+            "items": tiers,
+            "summary": summary,
+            "related": {
+                "assignments": assignments,
+            },
+            "policy": "read_only_governance_advisory",
+        },
         "page_info": {"next_page_token": None, "total": len(tiers), "page_size": len(tiers)},
         "meta": {
             "snapshot_at": snapshot_at,
@@ -40781,7 +40789,7 @@ async def bff_management_persona_league_heatmap(
         bucket=bucket,
         bucket_count=bucket_count,
     )
-    heatmap_rows, cells, summary = _pm12_persona_league_heatmap_rows(rows, buckets)
+    heatmap_rows, _, summary = _pm12_persona_league_heatmap_rows(rows, buckets)
     summary = {
         **summary,
         "bucket": bucket_key,
@@ -40801,9 +40809,8 @@ async def bff_management_persona_league_heatmap(
         "heatmapId": "persona-league-heatmap",
         "heatmap_id": "persona-league-heatmap",
         "bucket": bucket_key,
+        "items": heatmap_rows,
         "buckets": buckets,
-        "rows": heatmap_rows,
-        "cells": cells,
         "summary": summary,
         "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
@@ -40811,11 +40818,6 @@ async def bff_management_persona_league_heatmap(
     }
     return {
         "data": data,
-        "items": heatmap_rows,
-        "rows": heatmap_rows,
-        "buckets": buckets,
-        "cells": cells,
-        "summary": summary,
         "page_info": {
             "next_page_token": None,
             "total": len(heatmap_rows),
@@ -40963,21 +40965,12 @@ async def bff_management_quarterly_ranking(
         "quarter_window": quarter_window,
         "formula": formula,
         "items": page_items,
-        "rankings": page_items,
         "evidenceRefs": public_evidence_refs,
         "evidence_refs": public_evidence_refs,
         "summary": summary,
     }
     return {
         "data": data,
-        "items": page_items,
-        "rankings": page_items,
-        "formula": formula,
-        "quarterWindow": quarter_window,
-        "quarter_window": quarter_window,
-        "evidenceRefs": public_evidence_refs,
-        "evidence_refs": public_evidence_refs,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -41240,7 +41233,6 @@ async def bff_management_quarterly_ranking_recommendations(
         "quarter_window": quarter_window,
         "formula": formula,
         "items": page_items,
-        "recommendations": page_items,
         "evidenceRefs": public_evidence_refs,
         "evidence_refs": public_evidence_refs,
         "summary": summary,
@@ -41252,14 +41244,6 @@ async def bff_management_quarterly_ranking_recommendations(
     }
     return {
         "data": data,
-        "items": page_items,
-        "recommendations": page_items,
-        "formula": formula,
-        "quarterWindow": quarter_window,
-        "quarter_window": quarter_window,
-        "evidenceRefs": public_evidence_refs,
-        "evidence_refs": public_evidence_refs,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -52694,8 +52678,13 @@ def _persona_league_payload(
     total = len(items)
     page_items, next_page_token = _page_slice(items, page_token, page_size)
     return {
-        "data": page_items,
-        "items": page_items,
+        "data": {
+            "items": page_items,
+            "summary": {
+                "total": total,
+                "returned_count": len(page_items),
+            },
+        },
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": _read_surface_meta(
             "persona_league",

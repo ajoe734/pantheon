@@ -194,7 +194,7 @@ def test_persona_league_filters_and_requires_governance_for_rank_actions() -> No
         detail = client.get("/bff/persona-league/persona-crypto", headers=HEADERS)
 
     assert all_rows.status_code == 200, all_rows.text
-    rows = all_rows.json()["items"]
+    rows = all_rows.json()["data"]["items"]
     assert [row["persona_id"] for row in rows[:3]] == [
         "persona-crypto",
         "persona-us-equity",
@@ -203,7 +203,7 @@ def test_persona_league_filters_and_requires_governance_for_rank_actions() -> No
     assert all(row["governance_required"] is True for row in rows[:3])
 
     assert tw_rows.status_code == 200, tw_rows.text
-    assert [row["persona_id"] for row in tw_rows.json()["items"]] == ["persona-tw-equity"]
+    assert [row["persona_id"] for row in tw_rows.json()["data"]["items"]] == ["persona-tw-equity"]
 
     assert detail.status_code == 200, detail.text
     assert detail.json()["data"]["recommendation"] == "prepare_canary_packet"
