@@ -52690,7 +52690,6 @@ def _persona_league_payload(
 
 
 @app.get("/bff/persona-league")
-@app.get("/bff/management/persona-league")
 async def bff_persona_league(
     market_scope: Optional[str] = None,
     status: Optional[str] = None,
