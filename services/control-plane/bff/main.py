@@ -2008,6 +2008,15 @@ _HUMAN_GATE_APPROVER_DECISIONS = {"approve", "reject", "revoke", "extend_ttl"}
 _HUMAN_GATE_SELF_APPROVAL_DECISIONS = {"approve", "reject", "revoke"}
 _HUMAN_GATE_HIGH_RISK_LEVELS = {"high", "critical"}
 _HUMAN_GATE_DEFAULT_MAX_TTL_SECONDS = 604800
+_EVIDENCE_REF_ACTION_REQUIRED = {"action_id"}
+_VALID_EVIDENCE_REF_ACTIONS = {
+    "mark_stale",
+    "request_more_evidence",
+    "create_disposition_task",
+    "assign_reviewer",
+    "resolve",
+}
+_EVIDENCE_REF_REVIEWER_ACTIONS = {"assign_reviewer", "create_disposition_task"}
 _HUMAN_GATE_REQUESTER_FIELDS = (
     "requester_id",
     "requesterId",
@@ -3110,6 +3119,7 @@ _FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, ObjectType] = {
     CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: ObjectType.HUMAN_GATE_ITEM,
     CommandType.HUMAN_GATE_REVOKE: ObjectType.HUMAN_GATE_ITEM,
     CommandType.HUMAN_GATE_EXTEND_TTL: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.EVIDENCE_REF_ACTION: ObjectType.EVIDENCE_REF,
     CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: ObjectType.RANKING,
 }
 
@@ -3443,9 +3453,65 @@ def _normalize_quarterly_recommendation_command(cmd: OperatorCommand) -> Operato
     return cmd
 
 
+def _normalize_evidence_ref_command(cmd: OperatorCommand) -> OperatorCommand:
+    if cmd.command != CommandType.EVIDENCE_REF_ACTION:
+        return cmd
+
+    params = dict(cmd.params or {})
+    target_ref_id = str(cmd.target.id or "").strip()
+    provided_ref_ids = [
+        str(params.get(alias) or "").strip()
+        for alias in ("ref_id", "refId")
+        if str(params.get(alias) or "").strip()
+    ]
+    for provided_ref_id in provided_ref_ids:
+        if target_ref_id and provided_ref_id != target_ref_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "EvidenceRefAction params target id does not match the command target",
+                "EVIDENCE_REF_TARGET_MISMATCH",
+                precondition_failed="ref_id",
+                suggestion="Use target.id as the authoritative EvidenceRef id",
+                details_extra={
+                    "targetId": target_ref_id,
+                    "providedRefId": provided_ref_id,
+                },
+            )
+    ref_id = target_ref_id or (provided_ref_ids[0] if provided_ref_ids else "")
+    if ref_id:
+        params["ref_id"] = ref_id
+        params["refId"] = ref_id
+
+    action_id = str(params.get("action_id") or params.get("actionId") or cmd.action or "").strip().lower()
+    if action_id:
+        params["action_id"] = action_id
+        params["actionId"] = action_id
+        params.setdefault("audit_event", f"evidence.{action_id}")
+        params.setdefault("auditEvent", f"evidence.{action_id}")
+
+    for snake, camel in (
+        ("reviewer", "reviewerId"),
+        ("owner", "ownerId"),
+        ("task_ref", "taskRef"),
+        ("task_title", "taskTitle"),
+    ):
+        value = str(params.get(snake) or params.get(camel) or "").strip()
+        if value:
+            params[snake] = value
+            params[camel] = value
+
+    params.setdefault("entity_type", "evidence_ref")
+    params.setdefault("entity_id", ref_id or cmd.target.id)
+    cmd.params = params
+    return cmd
+
+
 def _normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
-    return _normalize_quarterly_recommendation_command(
-        _normalize_human_gate_command(cmd)
+    return _normalize_evidence_ref_command(
+        _normalize_quarterly_recommendation_command(
+            _normalize_human_gate_command(cmd)
+        )
     )
 
 
@@ -4860,6 +4926,74 @@ def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIden
         params["ttlSeconds"] = ttl_seconds
 
 
+def _validate_evidence_ref_action(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _EVIDENCE_REF_ACTION_REQUIRED - {key for key, value in params.items() if value not in (None, "")}
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for EvidenceRefAction",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="evidence_ref_action",
+        )
+
+    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "EvidenceRefAction requires operator, reviewer, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
+        )
+
+    ref_id = str(params.get("ref_id") or params.get("refId") or "").strip()
+    if not ref_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "EvidenceRefAction requires ref_id",
+            "ref_id must match target.id for the evidence ref command",
+            precondition_failed="ref_id",
+        )
+    if read_store.get_evidence_ref_detail(ref_id) is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Evidence reference not found",
+            f"Evidence reference {ref_id} does not exist",
+            precondition_failed="ref_id",
+            suggestion="Refresh Evidence Operations and retry against an existing evidence ref",
+            details_extra={"refId": ref_id},
+        )
+
+    action_id = str(params.get("action_id") or params.get("actionId") or "").strip().lower()
+    if action_id not in _VALID_EVIDENCE_REF_ACTIONS:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid evidence operation action",
+            f"action_id must be one of {sorted(_VALID_EVIDENCE_REF_ACTIONS)}",
+            precondition_failed="action_id",
+        )
+    params["action_id"] = action_id
+    params["actionId"] = action_id
+
+    if action_id in _EVIDENCE_REF_REVIEWER_ACTIONS:
+        reviewer = str(params.get("reviewer") or params.get("reviewerId") or "").strip()
+        if action_id == "assign_reviewer" and not reviewer:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "assign_reviewer requires reviewer",
+                "reviewer must be a non-empty operator or reviewer id",
+                precondition_failed="reviewer",
+            )
+        if reviewer:
+            params["reviewer"] = reviewer
+            params["reviewerId"] = reviewer
+
+
 def _validate_quarterly_ranking_recommendation_submit(
     params: Dict[str, Any],
     identity: OperatorIdentity,
@@ -4928,6 +5062,7 @@ _VALIDATORS = {
     CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _validate_human_gate_decision,
     CommandType.HUMAN_GATE_REVOKE: _validate_human_gate_decision,
     CommandType.HUMAN_GATE_EXTEND_TTL: _validate_human_gate_decision,
+    CommandType.EVIDENCE_REF_ACTION: _validate_evidence_ref_action,
     CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _validate_quarterly_ranking_recommendation_submit,
 }
 
@@ -8890,17 +9025,49 @@ def _build_management_sentinel_pulse_response(
     }
 
 
-def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
+def _management_evidence_operation_for_ref(ref_id: str) -> Dict[str, Any]:
+    try:
+        operation = read_store.get_evidence_operation_state(ref_id)
+    except Exception:
+        operation = {}
+    if not isinstance(operation, dict):
+        operation = {}
+    merged = _management_evidence_default_operation()
+    merged.update(json.loads(json.dumps(operation)))
+    merged["ref_id"] = ref_id
+    return merged
+
+
+def _management_evidence_public_item(
+    item: Dict[str, Any],
+    *,
+    operation: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     ref_id = str(item.get("ref_id") or item.get("id") or "").strip()
     display_label = item.get("display_label") or ref_id
+    operation_state = (
+        json.loads(json.dumps(operation))
+        if isinstance(operation, dict)
+        else _management_evidence_operation_for_ref(ref_id)
+    )
     if item.get("redacted"):
+        operation_state = _management_evidence_default_operation()
+        operation_state["ref_id"] = ref_id
         required_capability = item.get("required_capability")
-        actionability = _management_evidence_actionability(item, linked_object_link=None)
-        allowed_actions = _management_evidence_allowed_actions(actionability, linked_object_link=None)
+        actionability = _management_evidence_actionability(
+            item,
+            linked_object_link=None,
+            operation=operation_state,
+        )
+        allowed_actions = _management_evidence_allowed_actions(
+            actionability,
+            linked_object_link=None,
+            operation=operation_state,
+        )
         disabled_reasons = _management_evidence_disabled_action_reasons(
             actionability,
             linked_object_link=None,
-            mutation_reason="Evidence operation commands are not implemented yet.",
+            operation=operation_state,
         )
         return {
             "id": ref_id,
@@ -8914,7 +9081,7 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
             "reason": item.get("reason"),
             "redacted": True,
             "actionability": actionability,
-            "operation": _management_evidence_default_operation(),
+            "operation": operation_state,
             "linkedObjectLink": _management_evidence_unavailable_link(
                 "Linked object unavailable",
                 "redacted",
@@ -8944,15 +9111,20 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     route_href = item.get("route_href") or (f"/knowledge/evidence/{ref_id}" if ref_id else None)
     title = source_document.get("title") or display_label
     linked_object_link = _management_evidence_linked_object_link(linked_summary)
-    actionability = _management_evidence_actionability(item, linked_object_link=linked_object_link)
+    actionability = _management_evidence_actionability(
+        item,
+        linked_object_link=linked_object_link,
+        operation=operation_state,
+    )
     allowed_actions = _management_evidence_allowed_actions(
         actionability,
         linked_object_link=linked_object_link,
+        operation=operation_state,
     )
     disabled_reasons = _management_evidence_disabled_action_reasons(
         actionability,
         linked_object_link=linked_object_link,
-        mutation_reason="Evidence operation commands are not implemented yet.",
+        operation=operation_state,
     )
     return {
         "id": ref_id,
@@ -8979,7 +9151,7 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "managementHref": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
         "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
         "actionability": actionability,
-        "operation": _management_evidence_default_operation(),
+        "operation": operation_state,
         "linkedObjectLink": json.loads(json.dumps(linked_object_link)),
         "linked_object_link": json.loads(json.dumps(linked_object_link)),
         "allowedActions": allowed_actions,
@@ -9039,6 +9211,9 @@ def _management_evidence_default_operation() -> Dict[str, Any]:
         "reviewer": None,
         "task_refs": [],
         "last_action_at": None,
+        "last_reason": None,
+        "command_refs": [],
+        "audit_refs": [],
     }
 
 
@@ -9046,6 +9221,7 @@ def _management_evidence_actionability(
     item: Dict[str, Any],
     *,
     linked_object_link: Optional[Dict[str, Any]],
+    operation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if item.get("redacted"):
         return {
@@ -9096,12 +9272,24 @@ def _management_evidence_actionability(
         reasons.append(reason)
 
     deduped_reasons = list(dict.fromkeys(reasons))
-    if "resolved_link_unavailable" in deduped_reasons:
+    operation_status = str((operation or {}).get("status") or "none").strip().lower()
+    if operation_status == "stale":
+        deduped_reasons.append("operation_stale")
+        state = "stale"
+        severity = "warning"
+    elif operation_status == "needs_evidence":
+        deduped_reasons.append("operation_needs_evidence")
+        state = "needs_evidence"
+        severity = "warning"
+    elif "resolved_link_unavailable" in deduped_reasons:
         state = "unresolved_source"
         severity = "warning"
     elif deduped_reasons:
         state = "incomplete"
         severity = "warning"
+    elif operation_status in {"open", "under_review"}:
+        state = "under_review"
+        severity = "info"
     else:
         state = "traceable"
         severity = "ok"
@@ -9120,8 +9308,13 @@ def _management_evidence_allowed_actions(
     actionability: Dict[str, Any],
     *,
     linked_object_link: Optional[Dict[str, Any]],
+    operation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, bool]:
     is_redacted = actionability.get("state") == "redacted"
+    status = str((operation or {}).get("status") or "none").strip().lower()
+    task_refs = (operation or {}).get("task_refs") if isinstance((operation or {}).get("task_refs"), list) else []
+    is_resolved = status == "resolved"
+    has_operation = status not in {"", "none"}
     linked_object_available = (
         isinstance(linked_object_link, dict)
         and linked_object_link.get("availability") == "available"
@@ -9131,10 +9324,11 @@ def _management_evidence_allowed_actions(
         "canOpenSource": bool(actionability.get("can_open_source")) and not is_redacted,
         "canOpenLinkedObject": bool(linked_object_available) and not is_redacted,
         "canInspectChain": not is_redacted,
-        "canMarkStale": False,
-        "canRequestEvidence": False,
-        "canCreateDispositionTask": False,
-        "canAssignReviewer": False,
+        "canMarkStale": not is_redacted and status not in {"stale", "resolved"},
+        "canRequestEvidence": not is_redacted and not is_resolved,
+        "canCreateDispositionTask": not is_redacted and not is_resolved and not task_refs,
+        "canAssignReviewer": not is_redacted and not is_resolved,
+        "canResolve": not is_redacted and has_operation and not is_resolved,
     }
 
 
@@ -9142,7 +9336,7 @@ def _management_evidence_disabled_action_reasons(
     actionability: Dict[str, Any],
     *,
     linked_object_link: Optional[Dict[str, Any]],
-    mutation_reason: str,
+    operation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
     reasons: Dict[str, str] = {}
     if not actionability.get("can_open_source"):
@@ -9160,10 +9354,29 @@ def _management_evidence_disabled_action_reasons(
         )
     if actionability.get("state") == "redacted":
         reasons["canInspectChain"] = "Evidence is redacted for this operator."
-    reasons["canMarkStale"] = mutation_reason
-    reasons["canRequestEvidence"] = mutation_reason
-    reasons["canCreateDispositionTask"] = mutation_reason
-    reasons["canAssignReviewer"] = mutation_reason
+    status = str((operation or {}).get("status") or "none").strip().lower()
+    task_refs = (operation or {}).get("task_refs") if isinstance((operation or {}).get("task_refs"), list) else []
+    if actionability.get("state") == "redacted":
+        mutation_reason = "Evidence is redacted for this operator."
+        reasons["canMarkStale"] = mutation_reason
+        reasons["canRequestEvidence"] = mutation_reason
+        reasons["canCreateDispositionTask"] = mutation_reason
+        reasons["canAssignReviewer"] = mutation_reason
+        reasons["canResolve"] = mutation_reason
+    else:
+        if status == "stale":
+            reasons["canMarkStale"] = "Evidence is already marked stale."
+        if status == "resolved":
+            resolved_reason = "Evidence operation is already resolved."
+            reasons["canMarkStale"] = resolved_reason
+            reasons["canRequestEvidence"] = resolved_reason
+            reasons["canCreateDispositionTask"] = resolved_reason
+            reasons["canAssignReviewer"] = resolved_reason
+            reasons["canResolve"] = resolved_reason
+        if task_refs:
+            reasons["canCreateDispositionTask"] = "A disposition task is already attached."
+        if status in {"", "none"}:
+            reasons["canResolve"] = "No open evidence operation exists to resolve."
     return reasons
 
 
@@ -9484,12 +9697,54 @@ def _management_evidence_unavailable_surface(
     }
 
 
+def _management_evidence_tasks_from_operation(operation: Dict[str, Any]) -> List[Dict[str, Any]]:
+    task_refs = operation.get("task_refs") if isinstance(operation.get("task_refs"), list) else []
+    tasks: List[Dict[str, Any]] = []
+    for task_ref in task_refs:
+        clean_ref = str(task_ref or "").strip()
+        if not clean_ref:
+            continue
+        tasks.append(
+            {
+                "task_ref": clean_ref,
+                "taskRef": clean_ref,
+                "status": "linked",
+                "materialization": "operation_projection",
+                "route_href": None,
+            }
+        )
+    return tasks
+
+
+def _management_evidence_audit_events_from_operation(operation: Dict[str, Any]) -> List[Dict[str, Any]]:
+    events = operation.get("events") if isinstance(operation.get("events"), list) else []
+    audit_events: List[Dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        audit_events.append(
+            {
+                "audit_ref": event.get("audit_ref"),
+                "event_id": event.get("event_id"),
+                "action": event.get("action"),
+                "actor_id": event.get("actor_id"),
+                "created_at": event.get("created_at"),
+                "reason": event.get("reason"),
+                "status_after": event.get("status_after"),
+                "command_id": event.get("command_id"),
+            }
+        )
+    audit_events.sort(key=lambda event: str(event.get("created_at") or ""), reverse=True)
+    return audit_events
+
+
 def _management_evidence_detail_surfaces(
     *,
     snapshot_at: str,
     evidence_surface: Dict[str, Any],
     relationships: Dict[str, List[Dict[str, Any]]],
     chain: Dict[str, Any],
+    operation: Dict[str, Any],
 ) -> Dict[str, Any]:
     management_surface = _aggregate_group_surface(
         "management_evidence_detail",
@@ -9522,11 +9777,9 @@ def _management_evidence_detail_surfaces(
             message="No readiness relationship projection is available for this evidence ref.",
         )
     )
-    operation_surface = _composed_surface_status(
-        snapshot_at=snapshot_at,
-        available=False,
-        missing_message="Evidence operation projection is not implemented yet.",
-    )
+    operation_surface = _composed_surface_status(snapshot_at=snapshot_at)
+    operation_surface["source"] = "bff_evidence_operation_projection"
+    operation_surface["status_value"] = operation.get("status") or "none"
     return {
         "management_evidence_detail": management_surface,
         "evidence_ref_detail": evidence_surface,
@@ -9577,7 +9830,8 @@ def _build_management_evidence_detail_payload(
             capabilities=capabilities,
         )
         if self_processed.get("redacted"):
-            public_item = _management_evidence_public_item(self_processed)
+            operation = _management_evidence_operation_for_ref(clean_ref_id)
+            public_item = _management_evidence_public_item(self_processed, operation=operation)
             relationships = _management_evidence_empty_relationships()
             chain = {
                 "nodes": [],
@@ -9591,6 +9845,7 @@ def _build_management_evidence_detail_payload(
                 evidence_surface=evidence_surface,
                 relationships=relationships,
                 chain=chain,
+                operation=operation,
             )
             meta["redacted_evidence_count"] = 1
             meta["performance"] = {
@@ -9621,18 +9876,21 @@ def _build_management_evidence_detail_payload(
         else {}
     )
     linked_object_link = _management_evidence_linked_object_link(linked_summary)
+    operation = _management_evidence_operation_for_ref(clean_ref_id)
     actionability = _management_evidence_actionability(
         evidence_ref,
         linked_object_link=linked_object_link,
+        operation=operation,
     )
     allowed_actions = _management_evidence_allowed_actions(
         actionability,
         linked_object_link=linked_object_link,
+        operation=operation,
     )
     disabled_reasons = _management_evidence_disabled_action_reasons(
         actionability,
         linked_object_link=linked_object_link,
-        mutation_reason="Evidence operation commands are not implemented yet.",
+        operation=operation,
     )
     relationships = _management_evidence_detail_relationships(
         evidence_ref,
@@ -9665,6 +9923,7 @@ def _build_management_evidence_detail_payload(
         evidence_surface=evidence_surface,
         relationships=relationships,
         chain=chain,
+        operation=operation,
     )
     meta["redacted_evidence_count"] = redacted_count
     meta["performance"] = {
@@ -9701,12 +9960,12 @@ def _build_management_evidence_detail_payload(
         "managementHref": f"/management/evidence?ref_id={quote(clean_ref_id, safe='')}",
         "management_href": f"/management/evidence?ref_id={quote(clean_ref_id, safe='')}",
         "actionability": actionability,
-        "operation": _management_evidence_default_operation(),
+        "operation": operation,
         "relationships": json.loads(json.dumps(relationships)),
         "chain": json.loads(json.dumps(chain)),
-        "tasks": [],
-        "auditEvents": [],
-        "audit_events": [],
+        "tasks": _management_evidence_tasks_from_operation(operation),
+        "auditEvents": _management_evidence_audit_events_from_operation(operation),
+        "audit_events": _management_evidence_audit_events_from_operation(operation),
         "allowedActions": allowed_actions,
         "allowed_actions": allowed_actions,
         "disabledActionReasons": disabled_reasons,
@@ -9771,10 +10030,19 @@ def _management_evidence_actionability_summary(public_items: List[Dict[str, Any]
     visible_items = [item for item in public_items if not item.get("redacted")]
     by_state = _management_count_by_nested(public_items, "actionability", "state")
     by_severity = _management_count_by_nested(public_items, "actionability", "severity")
+    by_operation_status = _management_count_by_nested(public_items, "operation", "status")
     traceable_count = by_state.get("traceable", 0)
     unresolved_count = by_state.get("unresolved_source", 0)
     incomplete_count = by_state.get("incomplete", 0)
     redacted_count = by_state.get("redacted", 0)
+    operation_open_count = len(
+        [
+            item
+            for item in visible_items
+            if str(((item.get("operation") or {}).get("status")) or "none").strip().lower()
+            not in {"", "none", "resolved"}
+        ]
+    )
     needs_attention_count = len(public_items) - traceable_count
     return {
         "traceableEvidence": traceable_count,
@@ -9789,10 +10057,14 @@ def _management_evidence_actionability_summary(public_items: List[Dict[str, Any]
         "needs_attention_evidence": needs_attention_count,
         "visibleActionabilityEvidence": len(visible_items),
         "visible_actionability_evidence": len(visible_items),
+        "openOperationEvidence": operation_open_count,
+        "open_operation_evidence": operation_open_count,
         "byActionabilityState": by_state,
         "by_actionability_state": by_state,
         "byActionabilitySeverity": by_severity,
         "by_actionability_severity": by_severity,
+        "byOperationStatus": by_operation_status,
+        "by_operation_status": by_operation_status,
     }
 
 
@@ -9891,6 +10163,8 @@ def _build_management_evidence_payload(
         has_data=evidence_dataset_available,
         missing_message="Evidence reference read surface is unavailable.",
     )
+    operation_surface = _composed_surface_status(snapshot_at=snapshot_at)
+    operation_surface["source"] = "bff_evidence_operation_projection"
     management_surface = _aggregate_group_surface(
         "management_evidence",
         [evidence_surface],
@@ -9919,11 +10193,17 @@ def _build_management_evidence_payload(
         capabilities=capabilities,
     )
     record_stage("redaction")
-    public_items = [
-        _management_evidence_public_item(item)
-        for item in processed_items
-        if isinstance(item, dict)
-    ]
+    public_items = []
+    for item in processed_items:
+        if not isinstance(item, dict):
+            continue
+        item_ref_id = str(item.get("ref_id") or item.get("id") or "").strip()
+        public_items.append(
+            _management_evidence_public_item(
+                item,
+                operation=_management_evidence_operation_for_ref(item_ref_id),
+            )
+        )
     record_stage("public_item_mapping")
     summary = _management_evidence_summary(
         filtered_total=total,
@@ -9942,6 +10222,8 @@ def _build_management_evidence_payload(
         "actionability_states": summary["by_actionability_state"],
         "actionabilitySeverity": summary["byActionabilitySeverity"],
         "actionability_severity": summary["by_actionability_severity"],
+        "operationStatuses": summary["byOperationStatus"],
+        "operation_statuses": summary["by_operation_status"],
     }
     record_stage("summary_facets")
     meta = _snapshot_meta(snapshot_at)
@@ -9949,6 +10231,7 @@ def _build_management_evidence_payload(
         "management_evidence": management_surface,
         "evidence_refs": evidence_surface,
         "knowledge_evidence": evidence_surface,
+        "evidence_operations": operation_surface,
     }
     meta["redacted_evidence_count"] = redacted_count
     timings_ms["total"] = _management_timing_ms(total_started_at)
@@ -39067,7 +39350,12 @@ def _pm12_public_quarter_evidence_refs(
     )
     return (
         [
-            _management_evidence_public_item(item)
+            _management_evidence_public_item(
+                item,
+                operation=_management_evidence_operation_for_ref(
+                    str(item.get("ref_id") or item.get("id") or "").strip()
+                ),
+            )
             for item in processed_evidence_refs
             if isinstance(item, dict)
         ],
@@ -42580,6 +42868,81 @@ async def _process_command(command_id: str):
         )
         log.warning("Worker: command %s failed during routing resolution: %s", command_id, exc)
         return
+
+    if command_type == CommandType.EVIDENCE_REF_ACTION:
+        try:
+            foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
+            idem = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
+            target = record.get("target") if isinstance(record.get("target"), dict) else {}
+            action_id = str(execution_params.get("action_id") or execution_params.get("actionId") or "").strip().lower()
+            ref_id = str(execution_params.get("ref_id") or execution_params.get("refId") or target.get("id") or "").strip()
+            operation_result = read_store.record_evidence_operation_event(
+                ref_id=ref_id,
+                action=action_id,
+                actor_id=str(audit.get("operator_id") or "operator-command"),
+                reason=str(audit.get("reason") or execution_params.get("reason") or ""),
+                command_id=command_id,
+                reviewer=str(execution_params.get("reviewer") or execution_params.get("reviewerId") or "").strip() or None,
+                owner=str(execution_params.get("owner") or execution_params.get("ownerId") or "").strip() or None,
+                task_ref=str(execution_params.get("task_ref") or execution_params.get("taskRef") or "").strip() or None,
+                idempotency_key=str(idem.get("idempotency_key") or "").strip() or None,
+                created_at=utc_now(),
+                metadata={
+                    key: value
+                    for key, value in execution_params.items()
+                    if key
+                    in {
+                        "action_id",
+                        "actionId",
+                        "audit_event",
+                        "auditEvent",
+                        "entity_type",
+                        "entity_id",
+                        "task_title",
+                        "taskTitle",
+                    }
+                },
+            )
+            result = {
+                "command_id": command_id,
+                "ref_id": ref_id,
+                "action_id": action_id,
+                "operation": operation_result.get("operation") or {},
+                "event": operation_result.get("event") or {},
+                "execution_completed_at": utc_now(),
+            }
+            audit["execution_completed_at"] = result["execution_completed_at"]
+            audit["executor"] = "bff_evidence_operation_projection"
+            audit["downstream_verified"] = True
+            command_store.update_status(
+                command_id,
+                CommandStatus.EXECUTED,
+                result=result,
+                audit=audit,
+            )
+            log.info("Worker: evidence operation command %s completed for %s", command_id, ref_id)
+            return
+        except Exception as exc:
+            failed_at = utc_now()
+            error = {
+                "code": "EVIDENCE_OPERATION_WRITE_FAILED",
+                "message": f"Unable to record evidence operation: {exc}",
+                "started_at": failed_at,
+                "failed_at": failed_at,
+                "suggestion": "Refresh Evidence Operations and retry after the evidence operation projection is writable.",
+            }
+            audit["execution_completed_at"] = failed_at
+            audit["executor"] = "bff_evidence_operation_projection"
+            audit["failure_reason"] = error["message"]
+            audit["failure_suggestion"] = error["suggestion"]
+            command_store.update_status(
+                command_id,
+                CommandStatus.FAILED,
+                error=error,
+                audit=audit,
+            )
+            log.warning("Worker: command %s failed during evidence operation write: %s", command_id, exc)
+            return
 
     if command_type == CommandType.RECORD_SPONSOR_DECISION:
         try:

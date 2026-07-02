@@ -2633,6 +2633,13 @@ class ServiceBackedReadAdapter:
             "keys": ["ref_id", "id"],
             "snapshot_key": "evidence_refs",
         },
+        "evidence_operations": {
+            "env": "PANTHEON_BFF_EVIDENCE_OPERATION_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["ref_id", "id"],
+            "snapshot_key": "evidence_operations",
+        },
         "insight_cards": {
             "env": "PANTHEON_BFF_INSIGHT_CARD_STORE",
             "dirs": (),
@@ -7046,6 +7053,7 @@ class ReadSurfaceStore:
         "institutional_memory_entries": "institutional_memory_entries",
         "research_analyses": "research_analyses",
         "evidence_refs": "evidence_refs",
+        "evidence_operations": "evidence_operations",
         "insight_cards": "insight_cards",
         "strategy_specs": "strategy_specs",
         "research_search_documents": "research_search_documents",
@@ -12772,6 +12780,176 @@ class ReadSurfaceStore:
         if not evidence_ref:
             return None
         return self._project_evidence_ref_detail(evidence_ref)
+
+    def _evidence_operation_store_path(self) -> Optional[Path]:
+        explicit = os.getenv("PANTHEON_BFF_EVIDENCE_OPERATION_STORE", "").strip()
+        return Path(explicit) if explicit else None
+
+    def _load_evidence_operation_records(self) -> Dict[str, Dict[str, Any]]:
+        path = self._evidence_operation_store_path()
+        if path is not None and path.exists():
+            payload = _load_record_store_payload(path)
+            return _normalize_records(payload, ["ref_id", "id"])
+
+        local_payload = self._local_dataset("evidence_operations")
+        if isinstance(local_payload, dict):
+            return {
+                str(key): json.loads(json.dumps(value))
+                for key, value in local_payload.items()
+                if isinstance(value, dict)
+            }
+        if isinstance(local_payload, list):
+            return _normalize_records(local_payload, ["ref_id", "id"])
+        return {}
+
+    def _save_evidence_operation_records(self, records: Dict[str, Dict[str, Any]]) -> None:
+        payload = {
+            str(key): json.loads(json.dumps(value))
+            for key, value in records.items()
+            if isinstance(value, dict)
+        }
+        path = self._evidence_operation_store_path()
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+            self._service._cache.pop("evidence_operations", None)
+            self._service._cache_meta.pop("evidence_operations", None)
+            self._service._cache_source.pop("evidence_operations", None)
+            return
+
+        self._data["evidence_operations"] = payload
+        self._save()
+
+    @staticmethod
+    def _default_evidence_operation_state(ref_id: str) -> Dict[str, Any]:
+        return {
+            "ref_id": ref_id,
+            "status": "none",
+            "owner": None,
+            "reviewer": None,
+            "task_refs": [],
+            "last_action_at": None,
+            "last_reason": None,
+            "command_refs": [],
+            "audit_refs": [],
+            "events": [],
+        }
+
+    @staticmethod
+    def _evidence_operation_status_after(action: str, current_status: str) -> str:
+        action_status = {
+            "mark_stale": "stale",
+            "request_more_evidence": "needs_evidence",
+            "create_disposition_task": "open",
+            "assign_reviewer": "under_review",
+            "resolve": "resolved",
+        }
+        return action_status.get(action, current_status or "open")
+
+    @staticmethod
+    def _append_unique_string(values: Any, value: Optional[str]) -> List[str]:
+        current = [str(item) for item in values if str(item or "").strip()] if isinstance(values, list) else []
+        clean = str(value or "").strip()
+        if clean and clean not in current:
+            current.append(clean)
+        return current
+
+    def get_evidence_operation_state(self, ref_id: Optional[str]) -> Dict[str, Any]:
+        clean_ref_id = str(ref_id or "").strip()
+        if not clean_ref_id:
+            return self._default_evidence_operation_state("")
+        records = self._load_evidence_operation_records()
+        state = records.get(clean_ref_id)
+        if not isinstance(state, dict):
+            return self._default_evidence_operation_state(clean_ref_id)
+        merged = self._default_evidence_operation_state(clean_ref_id)
+        merged.update(json.loads(json.dumps(state)))
+        merged["ref_id"] = clean_ref_id
+        merged["task_refs"] = [
+            str(item) for item in merged.get("task_refs", []) if str(item or "").strip()
+        ] if isinstance(merged.get("task_refs"), list) else []
+        merged["command_refs"] = [
+            str(item) for item in merged.get("command_refs", []) if str(item or "").strip()
+        ] if isinstance(merged.get("command_refs"), list) else []
+        merged["audit_refs"] = [
+            str(item) for item in merged.get("audit_refs", []) if str(item or "").strip()
+        ] if isinstance(merged.get("audit_refs"), list) else []
+        merged["events"] = [
+            event for event in merged.get("events", []) if isinstance(event, dict)
+        ] if isinstance(merged.get("events"), list) else []
+        return merged
+
+    def record_evidence_operation_event(
+        self,
+        *,
+        ref_id: str,
+        action: str,
+        actor_id: str,
+        reason: str,
+        command_id: Optional[str] = None,
+        reviewer: Optional[str] = None,
+        owner: Optional[str] = None,
+        task_ref: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        created_at: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        clean_ref_id = str(ref_id or "").strip()
+        if not clean_ref_id:
+            raise ValueError("ref_id is required for an evidence operation event")
+        clean_action = str(action or "").strip().lower()
+        clean_actor = str(actor_id or "").strip() or "operator-command"
+        event_at = (
+            str(created_at or "").strip()
+            or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+        records = self._load_evidence_operation_records()
+        state = records.get(clean_ref_id) if isinstance(records.get(clean_ref_id), dict) else None
+        if state is None:
+            state = self._default_evidence_operation_state(clean_ref_id)
+
+        current_status = str(state.get("status") or "none").strip() or "none"
+        status_after = self._evidence_operation_status_after(clean_action, current_status)
+        clean_owner = str(owner or "").strip() or None
+        clean_reviewer = str(reviewer or "").strip() or None
+        clean_task_ref = str(task_ref or "").strip() or None
+        if clean_action == "create_disposition_task" and not clean_task_ref:
+            clean_task_ref = f"EVID-OPS-{event_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+
+        audit_ref = f"audit:{clean_ref_id}:{event_at.replace(':', '').replace('-', '')}:{clean_action}"
+        event = {
+            "event_id": f"evop-{uuid.uuid4().hex[:12]}",
+            "ref_id": clean_ref_id,
+            "action": clean_action,
+            "actor_id": clean_actor,
+            "created_at": event_at,
+            "reason": str(reason or "").strip(),
+            "status_after": status_after,
+            "owner": clean_owner,
+            "reviewer": clean_reviewer,
+            "task_refs": [clean_task_ref] if clean_task_ref else [],
+            "command_id": str(command_id or "").strip() or None,
+            "audit_ref": audit_ref,
+            "idempotency_key": str(idempotency_key or "").strip() or None,
+            "metadata": json.loads(json.dumps(metadata or {})),
+        }
+
+        events = state.get("events") if isinstance(state.get("events"), list) else []
+        events.append(event)
+        state["events"] = events
+        state["status"] = status_after
+        if clean_owner:
+            state["owner"] = clean_owner
+        if clean_reviewer:
+            state["reviewer"] = clean_reviewer
+        state["task_refs"] = self._append_unique_string(state.get("task_refs") or [], clean_task_ref)
+        state["command_refs"] = self._append_unique_string(state.get("command_refs") or [], command_id)
+        state["audit_refs"] = self._append_unique_string(state.get("audit_refs") or [], audit_ref)
+        state["last_action_at"] = event_at
+        state["last_reason"] = str(reason or "").strip() or None
+        records[clean_ref_id] = state
+        self._save_evidence_operation_records(records)
+        return json.loads(json.dumps({"operation": state, "event": event}))
 
     @staticmethod
     def _kw04_route_href(insight_id: Optional[str]) -> Optional[str]:

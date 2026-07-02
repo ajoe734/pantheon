@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
+from command_queue import CommandStore
 from read_store import ReadSurfaceStore
 
 
@@ -31,10 +32,12 @@ OPERATOR_HEADERS = {"Authorization": "Bearer op-b3:operator"}
 def _evidence_client() -> Iterator[TestClient]:
     tracked_env = {
         "PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"),
+        "PANTHEON_BFF_EVIDENCE_OPERATION_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_OPERATION_STORE"),
     }
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         evidence_store = root / "evidence_refs.json"
+        operation_store = root / "evidence_operations.json"
         evidence_store.write_text(
             json.dumps(
                 {
@@ -153,15 +156,19 @@ def _evidence_client() -> Iterator[TestClient]:
             encoding="utf-8",
         )
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
+        os.environ["PANTHEON_BFF_EVIDENCE_OPERATION_STORE"] = str(operation_store)
         original_store = bff_main.read_store
+        original_command_store = bff_main.command_store
         try:
             bff_main.read_store = ReadSurfaceStore(
                 os.path.join(td, "read_surfaces.json"),
                 allow_local_snapshot_fallback=True,
             )
+            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
             yield TestClient(bff_main.app)
         finally:
             bff_main.read_store = original_store
+            bff_main.command_store = original_command_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -209,7 +216,11 @@ def test_management_evidence_composes_explorer_envelope_with_filters() -> None:
         assert item["allowedActions"]["canOpenSource"] is True
         assert item["allowedActions"]["canOpenLinkedObject"] is True
         assert item["allowedActions"]["canInspectChain"] is True
-        assert item["allowedActions"]["canMarkStale"] is False
+        assert item["allowedActions"]["canMarkStale"] is True
+        assert item["allowedActions"]["canRequestEvidence"] is True
+        assert item["allowedActions"]["canCreateDispositionTask"] is True
+        assert item["allowedActions"]["canAssignReviewer"] is True
+        assert item["allowedActions"]["canResolve"] is False
         assert item["operation"]["status"] == "none"
         assert item["redacted"] is False
         assert payload["summary"]["traceableEvidence"] == 1
@@ -261,22 +272,21 @@ def test_management_evidence_marks_verified_but_untraceable_rows_as_unresolved()
             "canOpenSource": False,
             "canOpenLinkedObject": True,
             "canInspectChain": True,
-            "canMarkStale": False,
-            "canRequestEvidence": False,
-            "canCreateDispositionTask": False,
-            "canAssignReviewer": False,
+            "canMarkStale": True,
+            "canRequestEvidence": True,
+            "canCreateDispositionTask": True,
+            "canAssignReviewer": True,
+            "canResolve": False,
         }
         assert item["disabledActionReasons"]["canOpenSource"] == (
             "Source link is unavailable or incomplete."
         )
-        assert "not implemented yet" in item["disabledActionReasons"]["canMarkStale"]
-        assert item["operation"] == {
-            "status": "none",
-            "owner": None,
-            "reviewer": None,
-            "task_refs": [],
-            "last_action_at": None,
-        }
+        assert item["disabledActionReasons"]["canResolve"] == (
+            "No open evidence operation exists to resolve."
+        )
+        assert item["operation"]["status"] == "none"
+        assert item["operation"]["task_refs"] == []
+        assert item["operation"]["command_refs"] == []
         assert payload["meta"]["performance"]["timings_ms"]["read_store_load"] >= 0
 
 
@@ -323,8 +333,14 @@ def test_management_evidence_detail_composes_operations_relationships_and_chain(
         assert payload["allowedActions"]["canOpenSource"] is True
         assert payload["allowedActions"]["canOpenLinkedObject"] is True
         assert payload["allowedActions"]["canInspectChain"] is True
-        assert payload["allowedActions"]["canMarkStale"] is False
-        assert "not implemented yet" in payload["disabledActionReasons"]["canRequestEvidence"]
+        assert payload["allowedActions"]["canMarkStale"] is True
+        assert payload["allowedActions"]["canRequestEvidence"] is True
+        assert payload["allowedActions"]["canCreateDispositionTask"] is True
+        assert payload["allowedActions"]["canAssignReviewer"] is True
+        assert payload["allowedActions"]["canResolve"] is False
+        assert payload["disabledActionReasons"]["canResolve"] == (
+            "No open evidence operation exists to resolve."
+        )
 
         relationships = payload["relationships"]
         assert relationships["artifacts"][0]["entity_ref"] == "artifact-b3-alpha"
@@ -356,7 +372,7 @@ def test_management_evidence_detail_composes_operations_relationships_and_chain(
         assert payload["meta"]["surfaces"]["chain"]["status"] == "ok"
         assert payload["meta"]["surfaces"]["assertions"]["status"] == "ok"
         assert payload["meta"]["surfaces"]["readiness_relationships"]["status"] == "ok"
-        assert payload["meta"]["surfaces"]["operation_state"]["status"] == "degraded"
+        assert payload["meta"]["surfaces"]["operation_state"]["status"] == "ok"
         assert payload["meta"]["performance"]["row_count"] == 1
 
 
@@ -401,6 +417,130 @@ def test_management_evidence_detail_preserves_capability_redaction() -> None:
         assert payload["relationships"]["artifacts"] == []
         assert payload["chain"]["empty_reason"] == "redacted"
         assert payload["meta"]["redacted_evidence_count"] == 1
+
+
+def test_management_evidence_action_command_marks_stale_and_overlays_reads() -> None:
+    with _evidence_client() as client:
+        response = client.post(
+            "/bff/v1/commands",
+            headers={
+                **OPERATOR_HEADERS,
+                "Idempotency-Key": "evidence-mark-stale-001",
+                "X-Trace-Id": "trace-evidence-mark-stale-001",
+            },
+            json={
+                "command": "EvidenceRefAction",
+                "target": {"type": "EvidenceRef", "id": "evref-b3-alert-001"},
+                "params": {"action_id": "mark_stale"},
+                "audit_context": {"reason": "Source packet is stale after readiness review."},
+            },
+        )
+
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["data"]["command"] == "EvidenceRefAction"
+        assert body["meta"]["idempotency"]["replayed"] is False
+
+        stored = bff_main.command_store.get_command_by_idempotency_key(
+            "evidence-mark-stale-001",
+            operator_id="op-b3",
+        )
+        assert stored is not None
+        assert stored["status"] == "executed"
+        assert stored["target"] == {"type": "EvidenceRef", "id": "evref-b3-alert-001"}
+        assert stored["params"]["ref_id"] == "evref-b3-alert-001"
+        assert stored["result"]["operation"]["status"] == "stale"
+
+        detail = client.get(
+            "/bff/management/evidence/evref-b3-alert-001",
+            headers=ADMIN_HEADERS,
+        )
+        assert detail.status_code == 200, detail.text
+        payload = detail.json()
+        assert payload["operation"]["status"] == "stale"
+        assert payload["operation"]["last_reason"] == "Source packet is stale after readiness review."
+        assert payload["actionability"]["state"] == "stale"
+        assert payload["allowedActions"]["canMarkStale"] is False
+        assert payload["allowedActions"]["canResolve"] is True
+        assert payload["disabledActionReasons"]["canMarkStale"] == "Evidence is already marked stale."
+        assert payload["auditEvents"][0]["command_id"] == stored["command_id"]
+        assert payload["auditEvents"][0]["action"] == "mark_stale"
+
+        list_response = client.get(
+            "/bff/management/evidence?ref_id=evref-b3-alert-001",
+            headers=ADMIN_HEADERS,
+        )
+        assert list_response.status_code == 200, list_response.text
+        list_payload = list_response.json()
+        row = list_payload["items"][0]
+        assert row["operation"]["status"] == "stale"
+        assert row["actionability"]["state"] == "stale"
+        assert list_payload["facets"]["operationStatuses"] == {"stale": 1}
+
+
+def test_management_evidence_action_command_replays_same_idempotency_key() -> None:
+    with _evidence_client() as client:
+        payload = {
+            "command": "EvidenceRefAction",
+            "target": {"type": "EvidenceRef", "id": "evref-b3-alert-001"},
+            "params": {"action_id": "request_more_evidence"},
+            "audit_context": {"reason": "Need a current packet before disposition."},
+        }
+        first = client.post(
+            "/bff/v1/commands",
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "evidence-request-more-001"},
+            json=payload,
+        )
+        second = client.post(
+            "/bff/v1/commands",
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "evidence-request-more-001"},
+            json=payload,
+        )
+
+        assert first.status_code == 202, first.text
+        assert second.status_code == 202, second.text
+        assert second.json()["data"]["commandId"] == first.json()["data"]["commandId"]
+        assert second.json()["meta"]["idempotency"]["replayed"] is True
+        assert len(bff_main.command_store._get_all_commands()) == 1
+
+
+def test_management_evidence_action_command_assign_reviewer_requires_reviewer() -> None:
+    with _evidence_client() as client:
+        response = client.post(
+            "/bff/v1/commands",
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "evidence-assign-missing-reviewer-001"},
+            json={
+                "command": "EvidenceRefAction",
+                "target": {"type": "EvidenceRef", "id": "evref-b3-alert-001"},
+                "params": {"action_id": "assign_reviewer"},
+                "audit_context": {"reason": "Reviewer is required for assignment."},
+            },
+        )
+
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["details"]["precondition_failed"] == "reviewer"
+        assert bff_main.command_store._get_all_commands() == []
+
+
+def test_management_evidence_action_command_rejects_ref_id_target_mismatch() -> None:
+    with _evidence_client() as client:
+        response = client.post(
+            "/bff/v1/commands",
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "evidence-target-mismatch-001"},
+            json={
+                "command": "EvidenceRefAction",
+                "target": {"type": "EvidenceRef", "id": "evref-b3-alert-001"},
+                "params": {
+                    "ref_id": "evref-b3-producer-001",
+                    "action_id": "mark_stale",
+                },
+                "audit_context": {"reason": "Mismatched target must be rejected."},
+            },
+        )
+
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["details"]["precondition_failed"] == "ref_id"
+        assert bff_main.command_store._get_all_commands() == []
 
 
 def test_management_evidence_requires_read_authentication() -> None:
