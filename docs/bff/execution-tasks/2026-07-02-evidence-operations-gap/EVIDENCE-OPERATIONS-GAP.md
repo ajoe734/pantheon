@@ -778,6 +778,22 @@ Acceptance:
 - RBAC rejects unauthorized mutations.
 - Commands produce audit and operation projection records.
 
+Implementation progress on 2026-07-02:
+
+- Added `EvidenceRefAction` command admission through `/bff/v1/commands` with
+  `target.type = EvidenceRef`.
+- Supported operation actions now include `mark_stale`,
+  `request_more_evidence`, `create_disposition_task`, `assign_reviewer`, and
+  `resolve`.
+- Added an evidence operation projection store backed by
+  `PANTHEON_BFF_EVIDENCE_OPERATION_STORE` for local/dev read-model durability.
+- Evidence list and detail now overlay operation status, command refs, task
+  refs, and audit events from the operation projection.
+- The command worker records operation events and marks the command executed;
+  idempotency replay and target mismatch behavior are covered by tests.
+- Task refs can be attached to evidence operations, but trusted task packet
+  materialization remains Phase 3.
+
 ### Phase 3 - Task/Reviewer Integration
 
 Goal: make disposition follow-up visible and owned.
