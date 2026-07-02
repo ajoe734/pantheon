@@ -237,6 +237,110 @@ describe("managementClient — Persona Fleet aggregate live adapter", () => {
             training: { session_count: 2 },
             evolution: { decision_count: 1 },
             allowedActions: { canRetire: true },
+            deployment_stage: "paper",
+            deploymentStage: "paper",
+            product_lifecycle_state: "promotion_review_pending",
+            productLifecycleState: "promotion_review_pending",
+            competition_track: "paper_challenger",
+            competitionTrack: "paper_challenger",
+            capital_scope: "paper",
+            capitalScope: "paper",
+            paper_runtime_status: "active",
+            paperRuntimeStatus: "active",
+            review_status: "promotion_pending",
+            reviewStatus: "promotion_pending",
+            required_human_review: "promotion_to_canary",
+            requiredHumanReview: "promotion_to_canary",
+            readiness_projection: {
+              persona_id: "persona-alpha",
+              product_lifecycle_state: "promotion_review_pending",
+              setup_status: "paper_runtime_active",
+              paper_runtime: {
+                runtime_binding_id: "binding-042",
+                runtime_id: "runtime-042",
+                status: "active",
+                heartbeat_status: "fresh",
+              },
+              competition_track: "paper_challenger",
+              capital_scope: "paper",
+              required_human_review: "promotion_to_canary",
+              repair: { retryable: false, failed_step: null, repair_url: null },
+              trace_id: "fleet-persona-alpha",
+              snapshot_at: "2026-04-10T15:00:00Z",
+            },
+            readinessProjection: {
+              persona_id: "persona-alpha",
+              product_lifecycle_state: "promotion_review_pending",
+              setup_status: "paper_runtime_active",
+              paper_runtime: {
+                runtime_binding_id: "binding-042",
+                runtime_id: "runtime-042",
+                status: "active",
+                heartbeat_status: "fresh",
+              },
+              competition_track: "paper_challenger",
+              capital_scope: "paper",
+              required_human_review: "promotion_to_canary",
+              repair: { retryable: false, failed_step: null, repair_url: null },
+              trace_id: "fleet-persona-alpha",
+              snapshot_at: "2026-04-10T15:00:00Z",
+            },
+            competition_standing: {
+              standing_id: "standing-persona-alpha",
+              persona_id: "persona-alpha",
+              cohort_id: "cohort-tw-equity-stat-arb",
+              competition_track: "paper_challenger",
+              cohort_rank: 1,
+              score_snapshot_id: "score-persona-alpha",
+              promotion_score: 91,
+              product_lifecycle_state: "promotion_review_pending",
+              capital_scope: "paper",
+              human_review_state: "promotion_pending",
+              incumbent_persona_id: "persona-live-incumbent",
+              challenger_delta_score: 3.2,
+              replacement_risk: "pending_human_review",
+              snapshot_at: "2026-04-10T15:00:00Z",
+            },
+            competitionStanding: {
+              standing_id: "standing-persona-alpha",
+              persona_id: "persona-alpha",
+              cohort_id: "cohort-tw-equity-stat-arb",
+              competition_track: "paper_challenger",
+              cohort_rank: 1,
+              score_snapshot_id: "score-persona-alpha",
+              promotion_score: 91,
+              product_lifecycle_state: "promotion_review_pending",
+              capital_scope: "paper",
+              human_review_state: "promotion_pending",
+              incumbent_persona_id: "persona-live-incumbent",
+              challenger_delta_score: 3.2,
+              replacement_risk: "pending_human_review",
+              snapshot_at: "2026-04-10T15:00:00Z",
+            },
+            row_action: {
+              action_id: "submit_live_review",
+              actionId: "submit_live_review",
+              label: "送交實盤審核",
+              href: "/management/personas/persona-alpha/reviews/new",
+              requires_human_review: true,
+              requiresHumanReview: true,
+              startup_wizard_visible: false,
+              startupWizardVisible: false,
+              legacy_startup_wizard_hidden: true,
+              legacyStartupWizardHidden: true,
+            },
+            rowAction: {
+              action_id: "submit_live_review",
+              actionId: "submit_live_review",
+              label: "送交實盤審核",
+              href: "/management/personas/persona-alpha/reviews/new",
+              requires_human_review: true,
+              requiresHumanReview: true,
+              startup_wizard_visible: false,
+              startupWizardVisible: false,
+              legacy_startup_wizard_hidden: true,
+              legacyStartupWizardHidden: true,
+            },
           },
         ],
         summary: {
@@ -247,6 +351,29 @@ describe("managementClient — Persona Fleet aggregate live adapter", () => {
           healthy_personas: 0,
           bound_personas: 1,
           runtime_bound_personas: 1,
+          competition_tracks: {
+            paper_challenger: 1,
+            canary_challenger: 0,
+            live_incumbent: 0,
+            watchlist_incumbent: 0,
+            risk_off_excluded: 0,
+          },
+          capital_scopes: {
+            none: 0,
+            paper: 1,
+            canary: 0,
+            live: 0,
+            risk_off: 0,
+          },
+          review_states: {
+            none: 0,
+            promotion_pending: 1,
+            live_pending: 0,
+            quarterly_pending: 0,
+            incident_resume_pending: 0,
+            rejected: 0,
+          },
+          competition_default: "unified_paper_canary_live_cohort",
         },
         page_info: { total: 1, page_size: 1, next_page_token: null },
         meta: {
@@ -258,12 +385,28 @@ describe("managementClient — Persona Fleet aggregate live adapter", () => {
     );
     globalThis.fetch = fetchMock;
 
-    const aggregate = await managementClient.personaFleet.list({ health: "critical", page_size: 1 });
+    const aggregate = await managementClient.personaFleet.list({
+      health: "critical",
+      competition_track: "paper_challenger",
+      capital_scope: "paper",
+      review_status: "promotion_pending",
+      page_size: 1,
+    });
 
-    expect(fetchMock.mock.calls[0][0]).toBe("https://example.test/bff/management/persona-fleet?health=critical&page_size=1");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://example.test/bff/management/persona-fleet?health=critical&competition_track=paper_challenger&capital_scope=paper&review_status=promotion_pending&page_size=1");
     expect(aggregate.items[0].id).toBe("persona-alpha");
     expect(aggregate.items[0].telemetrySummary).toHaveProperty("latest");
+    expect(aggregate.items[0].competitionTrack).toBe("paper_challenger");
+    expect(aggregate.items[0].capitalScope).toBe("paper");
+    expect(aggregate.items[0].reviewStatus).toBe("promotion_pending");
+    expect(aggregate.items[0].readinessProjection?.setup_status).toBe("paper_runtime_active");
+    expect(aggregate.items[0].rowAction?.actionId).toBe("submit_live_review");
+    expect(aggregate.items[0].rowAction?.label).toBe("送交實盤審核");
+    expect(aggregate.items[0].rowAction?.startupWizardVisible).toBe(false);
+    expect(aggregate.items[0].rowAction?.legacyStartupWizardHidden).toBe(true);
     expect(aggregate.summary.critical_personas).toBe(1);
+    expect(aggregate.summary.competition_default).toBe("unified_paper_canary_live_cohort");
+    expect(aggregate.summary.competition_tracks?.paper_challenger).toBe(1);
     expect(aggregate.meta.surfaces?.persona_fleet).toEqual({ status: "ok", source: "bff_composed" });
   });
 });
