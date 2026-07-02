@@ -209,6 +209,9 @@ export const paths = {
 
   // ---- Management aggregate read surfaces ----
   managementPersonaFleet: () => `${BASE}/management/persona-fleet`,
+  managementPersonaPaperLaunch: () => `${BASE}/management/personas/paper-launch`,
+  managementPersonaReadiness: (id: string) => `${BASE}/management/personas/${enc(id)}/readiness`,
+  managementPersonaSetupRetry: (id: string) => `${BASE}/management/personas/${enc(id)}/setup/retry`,
   managementHumanInbox: () => `${BASE}/management/human-inbox`,
   managementHumanInboxItem: (id: string) => `${BASE}/management/human-inbox/${enc(id)}`,
 

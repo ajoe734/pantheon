@@ -319,6 +319,126 @@ export interface PersonaFleetAggregate {
   };
 }
 
+export type PaperPersonaLaunchStatus =
+  | "paper_provisioning"
+  | "paper_running"
+  | "paper_warming_up"
+  | "setup_failed"
+  | "repair_required"
+  | (string & {});
+
+export type PaperPersonaLaunchStep =
+  | "persona_identity_created"
+  | "policy_snapshots_created"
+  | "paper_capital_pool_ready"
+  | "paper_binding_active"
+  | "paper_deployment_plan_created"
+  | "paper_approval_recorded"
+  | "paper_runtime_binding_created"
+  | "paper_runtime_started"
+  | "telemetry_heartbeat_verified"
+  | (string & {});
+
+export interface PaperCapitalPoolSelection {
+  mode: "select_existing" | "create_from_template" | (string & {});
+  capital_scope?: "paper";
+  capitalScope?: "paper";
+  capital_pool_id?: string | null;
+  capitalPoolId?: string | null;
+  template_id?: string | null;
+  templateId?: string | null;
+  [key: string]: unknown;
+}
+
+export interface PaperPersonaLaunchRequest {
+  name: string;
+  mandate: string;
+  strategy_family?: string[];
+  strategyFamily?: string[];
+  market_scope?: string[];
+  marketScope?: string[];
+  source_scope?: string[];
+  sourceScope?: string[];
+  risk_profile_id?: string;
+  riskProfileId?: string;
+  paper_capital_pool?: PaperCapitalPoolSelection;
+  paperCapitalPool?: PaperCapitalPoolSelection;
+  paper_budget?: number;
+  paperBudget?: number;
+  artifact_id?: string;
+  artifactId?: string;
+  operator_note?: string | null;
+  operatorNote?: string | null;
+  persona_id?: string;
+  personaId?: string;
+  launch_id?: string;
+  launchId?: string;
+  [key: string]: unknown;
+}
+
+export interface PaperPersonaLaunch {
+  launch_id: string;
+  name: string;
+  mandate: string;
+  strategy_family: string[];
+  market_scope: string[];
+  source_scope: string[];
+  risk_profile_id: string;
+  paper_capital_pool: PaperCapitalPoolSelection;
+  paper_budget: number;
+  artifact_id: string;
+  operator_note?: string | null;
+  status: PaperPersonaLaunchStatus;
+  persona_id: string;
+  capital_pool_id?: string | null;
+  binding_id?: string | null;
+  deployment_plan_id?: string | null;
+  approval_decision_id?: string | null;
+  runtime_binding_id?: string | null;
+  runtime_id?: string | null;
+  completed_steps: PaperPersonaLaunchStep[];
+  failed_step?: PaperPersonaLaunchStep | null;
+  retryable: boolean;
+  repair_url?: string | null;
+  trace_id: string;
+  created_at: string;
+  updated_at?: string;
+  [key: string]: unknown;
+}
+
+export interface PaperPersonaLaunchResponse {
+  data: PaperPersonaLaunch;
+  launch: PaperPersonaLaunch;
+  meta: {
+    snapshot_at?: string;
+    idempotency?: {
+      idempotencyKey?: string;
+      replayed?: boolean;
+    };
+    trace_id?: string;
+    surfaces?: Record<string, unknown>;
+    audit_events?: Array<Record<string, unknown>>;
+    [key: string]: unknown;
+  };
+}
+
+export interface PersonaReadinessResponse {
+  data: PersonaFleetReadinessProjection;
+  readinessProjection: PersonaFleetReadinessProjection;
+  latest_launch?: PaperPersonaLaunch | null;
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
+export interface PaperPersonaLaunchMutationOptions {
+  idempotencyKey: string;
+  traceId?: string;
+  requestId?: string;
+}
+
 export type HumanInboxSourceType = "approval" | "intervention";
 export type HumanInboxPriority = "critical" | "high" | "medium" | "low" | "unknown";
 
@@ -955,6 +1075,36 @@ function adaptPersonaFleetAggregate(body: unknown): PersonaFleetAggregate {
       page_size: Number(pageInfo.page_size ?? items.length),
     },
     meta,
+  };
+}
+
+function adaptPaperPersonaLaunchResponse(body: unknown): PaperPersonaLaunchResponse | undefined {
+  const envelope = asObject(body);
+  const rawLaunch = asObject(envelope.data ?? envelope.launch);
+  const launchId = String(rawLaunch.launch_id ?? "").trim();
+  if (!launchId) return undefined;
+  const launch = rawLaunch as unknown as PaperPersonaLaunch;
+  return {
+    data: launch,
+    launch,
+    meta: asObject(envelope.meta) as PaperPersonaLaunchResponse["meta"],
+  };
+}
+
+function adaptPersonaReadinessResponse(body: unknown): PersonaReadinessResponse | undefined {
+  const envelope = asObject(body);
+  const rawReadiness = asObject(envelope.data ?? envelope.readinessProjection);
+  const personaId = String(rawReadiness.persona_id ?? rawReadiness.personaId ?? "").trim();
+  if (!personaId) return undefined;
+  const readiness = rawReadiness as unknown as PersonaFleetReadinessProjection;
+  const rawLaunch = envelope.latest_launch === null ? null : asObject(envelope.latest_launch);
+  return {
+    data: readiness,
+    readinessProjection: readiness,
+    latest_launch: rawLaunch && Object.keys(rawLaunch).length > 0
+      ? rawLaunch as unknown as PaperPersonaLaunch
+      : null,
+    meta: asObject(envelope.meta) as PersonaReadinessResponse["meta"],
   };
 }
 
@@ -1676,6 +1826,69 @@ const evolutionReviews = {
   get: evolutionReviewDetail,
 };
 
+function paperLaunchMutationHeaders(
+  options: PaperPersonaLaunchMutationOptions,
+): Record<string, string> {
+  const idempotencyKey = String(options.idempotencyKey || "").trim();
+  if (!idempotencyKey) {
+    throw new Error("personaPaperLaunch mutations require idempotencyKey");
+  }
+  const headers: Record<string, string> = {
+    "Idempotency-Key": idempotencyKey,
+  };
+  if (options.traceId) headers["X-Trace-Id"] = options.traceId;
+  if (options.requestId) headers["X-Request-Id"] = options.requestId;
+  return headers;
+}
+
+async function paperLaunchLiveOnly(): Promise<never> {
+  throw new Error("Paper persona launch requires live BFF mode.");
+}
+
+const personaPaperLaunch = {
+  create: (
+    payload: PaperPersonaLaunchRequest,
+    options: PaperPersonaLaunchMutationOptions,
+  ): Promise<PaperPersonaLaunchResponse> =>
+    withStrictLiveOrMock<PaperPersonaLaunchResponse, unknown>(
+      {
+        method: "POST",
+        path: paths.managementPersonaPaperLaunch(),
+        body: payload,
+        headers: paperLaunchMutationHeaders(options),
+      },
+      paperLaunchLiveOnly,
+      adaptPaperPersonaLaunchResponse,
+      (error) => { throw error; },
+    ),
+  readiness: (personaId: string): Promise<PersonaReadinessResponse | undefined> =>
+    withStrictLiveOrMock<PersonaReadinessResponse | undefined, unknown>(
+      {
+        method: "GET",
+        path: paths.managementPersonaReadiness(personaId),
+      },
+      async () => undefined,
+      adaptPersonaReadinessResponse,
+      strictNotFoundAsUndefined,
+    ),
+  retry: (
+    personaId: string,
+    payload: Partial<PaperPersonaLaunchRequest> = {},
+    options: PaperPersonaLaunchMutationOptions,
+  ): Promise<PaperPersonaLaunchResponse> =>
+    withStrictLiveOrMock<PaperPersonaLaunchResponse, unknown>(
+      {
+        method: "POST",
+        path: paths.managementPersonaSetupRetry(personaId),
+        body: payload,
+        headers: paperLaunchMutationHeaders(options),
+      },
+      paperLaunchLiveOnly,
+      adaptPaperPersonaLaunchResponse,
+      (error) => { throw error; },
+    ),
+};
+
 const personaFleet = {
   list: (query?: PersonaFleetQuery): Promise<PersonaFleetAggregate> =>
     withStrictLiveOrMock<PersonaFleetAggregate, unknown>(
@@ -1841,6 +2054,7 @@ export const managementClient = {
   personaLeague,
   managementFleet,
   evolutionReviews,
+  personaPaperLaunch,
   personaFleet,
   humanInbox,
   tradingPulse,

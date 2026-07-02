@@ -7089,6 +7089,7 @@ class ReadSurfaceStore:
         "rebalances": "rebalances",
         "rankings": "rankings",
         "persona_league": "persona_league",
+        "paper_persona_launches": "paper_persona_launches",
     }
     _MARKET_PERSONA_RECORD_KEYS = {
         "personas": ["persona_id", "id"],
@@ -10451,6 +10452,7 @@ class ReadSurfaceStore:
         strategy_family: Optional[str] = None,
         traits: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        persona_capital_binding_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         timestamp = created_at or _utc_now_rfc3339()
         clean_metadata = json.loads(json.dumps(metadata or {}))
@@ -10598,16 +10600,21 @@ class ReadSurfaceStore:
         validity: Optional[str] = None,
         include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
+        local_bindings = self._local_overlay_records("persona_bindings")
         available, raw_bindings = self._canonical.list_records("persona_bindings")
         if available:
             bindings_by_id = {
                 str(binding.get("binding_id") or binding.get("id") or ""): binding
                 for binding in (self._project_canonical_binding(binding) for binding in raw_bindings)
             }
+            for binding_id, binding in local_bindings.items():
+                key = str(binding.get("binding_id") or binding.get("id") or binding_id)
+                if key:
+                    bindings_by_id[key] = json.loads(json.dumps(binding))
         else:
             bindings_by_id = {
                 str(binding.get("binding_id") or binding.get("id") or binding_id): binding
-                for binding_id, binding in (self._local_fallback("persona_bindings") or {}).items()
+                for binding_id, binding in (local_bindings or self._local_fallback("persona_bindings") or {}).items()
                 if isinstance(binding, dict)
             }
         if include_market_persona_defaults:
@@ -10679,11 +10686,21 @@ class ReadSurfaceStore:
         state: Optional[str] = None,
         include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
+        local_decisions = self._local_overlay_records("approval_decisions")
         available, raw_decisions = self._canonical.list_records("approval_decisions")
         if available:
-            decisions = [self._project_canonical_approval_decision(decision) for decision in raw_decisions]
+            decisions_by_id = {
+                str(decision.get("decision_id") or decision.get("id") or ""): decision
+                for decision in (self._project_canonical_approval_decision(decision) for decision in raw_decisions)
+                if str(decision.get("decision_id") or decision.get("id") or "").strip()
+            }
+            for decision_id, decision in local_decisions.items():
+                key = str(decision.get("decision_id") or decision.get("id") or decision_id)
+                if key:
+                    decisions_by_id[key] = json.loads(json.dumps(decision))
+            decisions = list(decisions_by_id.values())
         else:
-            decisions = list((self._local_fallback("approval_decisions") or {}).values())
+            decisions = list((local_decisions or self._local_fallback("approval_decisions") or {}).values())
         if outcome:
             decisions = [d for d in decisions if str(d.get("outcome") or "").lower() == outcome.lower()]
         if state:
@@ -10870,6 +10887,9 @@ class ReadSurfaceStore:
     def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not decision_id:
             return None
+        local_decision = self._local_overlay_records("approval_decisions").get(decision_id)
+        if local_decision is not None:
+            return json.loads(json.dumps(local_decision))
         available, raw = self._canonical.approval_decision(decision_id)
         if available:
             return self._project_canonical_approval_decision(raw) if raw else None
@@ -10896,6 +10916,11 @@ class ReadSurfaceStore:
         risk_policy_ref: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
         status: str = "draft",
+        capital_scope: Optional[str] = None,
+        live_capital_enabled: Optional[bool] = None,
+        nav: Optional[float] = None,
+        cash: Optional[float] = None,
+        market_scope: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         pools = self._ensure_local_overlay_records("capital_pools")
         timestamp = created_at or _utc_now_rfc3339()
@@ -10906,6 +10931,11 @@ class ReadSurfaceStore:
             "status": status,
             "risk_policy_ref": risk_policy_ref,
             "params": params or {},
+            "capital_scope": capital_scope,
+            "live_capital_enabled": bool(live_capital_enabled) if live_capital_enabled is not None else None,
+            "nav": nav,
+            "cash": cash,
+            "market_scope": list(market_scope or []),
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": actor_id,
@@ -10926,39 +10956,136 @@ class ReadSurfaceStore:
         actor_id: str,
         created_at: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
+        status: str = "stopped",
+        state: Optional[str] = None,
+        capital_pool_id: Optional[str] = None,
+        artifact_id: Optional[str] = None,
+        artifact_version: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        persona_capital_binding_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         runtimes = self._ensure_local_overlay_records("runtime_bindings")
         timestamp = created_at or _utc_now_rfc3339()
         clean_params = json.loads(json.dumps(params or {}))
+        clean_metadata = {
+            "created_via": "POST /bff/runtimes",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        if metadata:
+            clean_metadata.update(json.loads(json.dumps(metadata)))
+        clean_state = state or status
+        clean_persona_binding_id = persona_capital_binding_id or binding_id
         record = {
             "id": runtime_id,
             "runtime_id": runtime_id,
             "name": name,
-            "state": "stopped",
-            "status": "stopped",
+            "state": clean_state,
+            "status": status,
             "persona_id": persona_id,
             "binding_id": binding_id,
             "runtime_binding_id": binding_id,
-            "persona_capital_binding_id": binding_id,
+            "persona_capital_binding_id": clean_persona_binding_id,
             "deployment_plan_id": deployment_plan_id,
             "plan_id": deployment_plan_id,
             "runtime_kind": runtime_kind,
             "deployment_stage": runtime_kind,
             "deployment_mode": runtime_kind,
+            "capital_pool_id": capital_pool_id,
+            "artifact_id": artifact_id,
+            "artifact_version": artifact_version,
             "params": clean_params,
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": actor_id,
-            "metadata": {
-                "created_via": "POST /bff/runtimes",
-                "persistenceMode": "bff_local_dev_store",
-            },
+            "metadata": clean_metadata,
             "canonicalWriteAuthority": "runtime_manager_service",
             "persistenceMode": "bff_local_dev_store",
         }
         runtimes[runtime_id] = record
         self._save()
         return record
+
+    def create_persona_binding(
+        self,
+        *,
+        binding_id: str,
+        persona_id: str,
+        capital_pool_id: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        role: str = "paper_owner",
+        status: str = "active",
+        allowed_deployment_scope: str = "paper",
+        approval_decision_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        bindings = self._ensure_local_overlay_records("persona_bindings")
+        timestamp = created_at or _utc_now_rfc3339()
+        record = {
+            "id": binding_id,
+            "binding_id": binding_id,
+            "persona_id": persona_id,
+            "capital_pool_id": capital_pool_id,
+            "role": role,
+            "validity": status,
+            "status": status,
+            "allowed_deployment_scope": allowed_deployment_scope,
+            "deployment_modes": [allowed_deployment_scope],
+            "approval_decision_id": approval_decision_id,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "metadata": json.loads(json.dumps(metadata or {})),
+            "canonicalWriteAuthority": "capital_governance_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        bindings[binding_id] = record
+        self._save()
+        return json.loads(json.dumps(record))
+
+    def create_approval_decision(
+        self,
+        *,
+        decision_id: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        outcome: str = "approved",
+        state: str = "decided",
+        risk_level: str = "low",
+        decision_type: str = "paper_launch",
+        target_type: str = "DeploymentPlan",
+        target_id: Optional[str] = None,
+        rationale: Optional[str] = None,
+        evidence_refs: Optional[List[Dict[str, Any]]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        approvals = self._ensure_local_overlay_records("approval_decisions")
+        timestamp = created_at or _utc_now_rfc3339()
+        record = {
+            "id": decision_id,
+            "decision_id": decision_id,
+            "decision_type": decision_type,
+            "target_type": target_type,
+            "target_id": target_id,
+            "outcome": outcome,
+            "state": state,
+            "decision_state": state,
+            "reviewer": actor_id,
+            "actor_id": actor_id,
+            "created_by": actor_id,
+            "created_at": timestamp,
+            "submitted_at": timestamp,
+            "decided_at": timestamp if outcome else None,
+            "risk_level": risk_level,
+            "rationale": rationale or "Automated paper-only approval; no real-money authority granted.",
+            "evidence_refs": json.loads(json.dumps(evidence_refs or [])),
+            "metadata": json.loads(json.dumps(metadata or {})),
+            "canonicalWriteAuthority": "governance_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        approvals[decision_id] = record
+        self._save()
+        return json.loads(json.dumps(record))
 
     def create_deployment_plan(
         self,
@@ -10973,6 +11100,7 @@ class ReadSurfaceStore:
         params: Optional[Dict[str, Any]] = None,
         locked: bool = False,
         status: str = "pending_approval",
+        approval_decision_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         plans = self._ensure_local_overlay_records("deployment_plans")
         timestamp = created_at or _utc_now_rfc3339()
@@ -10989,6 +11117,7 @@ class ReadSurfaceStore:
             "capital_pool_id": capital_pool_id,
             "target_pool_id": capital_pool_id,
             "status": status,
+            "approval_decision_id": approval_decision_id,
             "locked": bool(locked),
             "params": clean_params,
             "created_at": timestamp,
@@ -11004,6 +11133,60 @@ class ReadSurfaceStore:
         plans[plan_id] = record
         self._save()
         return record
+
+    def upsert_paper_runtime_monitoring_session(
+        self,
+        *,
+        session_id: str,
+        runtime_id: str,
+        runtime_binding_id: str,
+        persona_id: str,
+        capital_pool_id: str,
+        actor_id: str,
+        started_at: Optional[str] = None,
+        status: str = "active",
+        heartbeat_status: str = "fresh",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        sessions = self._ensure_local_overlay_records("paper_runtime_monitoring_sessions")
+        timestamp = started_at or _utc_now_rfc3339()
+        record = {
+            "id": session_id,
+            "session_id": session_id,
+            "runtime_id": runtime_id,
+            "binding_id": runtime_binding_id,
+            "runtime_binding_id": runtime_binding_id,
+            "persona_id": persona_id,
+            "capital_pool_id": capital_pool_id,
+            "status": status,
+            "active": status in {"active", "running", "warming_up"},
+            "started_at": timestamp,
+            "last_heartbeat_at": timestamp,
+            "heartbeat_status": heartbeat_status,
+            "created_by": actor_id,
+            "metadata": json.loads(json.dumps(metadata or {})),
+            "canonicalWriteAuthority": "runtime_manager_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        sessions[session_id] = record
+        self._save()
+        return json.loads(json.dumps(record))
+
+    def record_governance_audit_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        events = self._local_dataset("governance_audit_events")
+        if not isinstance(events, list):
+            events = []
+            self._data[self._LOCAL_DATA_KEYS["governance_audit_events"]] = events
+        timestamp = str(event.get("timestamp") or event.get("occurred_at") or _utc_now_rfc3339())
+        entry_id = str(event.get("entry_id") or event.get("id") or f"audit-{uuid.uuid4().hex[:12]}")
+        record = {
+            "entry_id": entry_id,
+            "timestamp": timestamp,
+            **json.loads(json.dumps(event)),
+        }
+        events.append(record)
+        self._save()
+        return json.loads(json.dumps(record))
 
     def patch_capital_pool(
         self,
@@ -11285,6 +11468,64 @@ class ReadSurfaceStore:
         for item in self.list_persona_league():
             if str(item.get("persona_id") or item.get("id") or "") == str(persona_id):
                 return json.loads(json.dumps(item))
+        return None
+
+    # ------------------------------------------------------------------ #
+    # Paper-first persona launch workflow
+    # ------------------------------------------------------------------ #
+
+    def upsert_paper_persona_launch(self, launch: Dict[str, Any]) -> Dict[str, Any]:
+        launch_id = str(launch.get("launch_id") or launch.get("id") or "").strip()
+        if not launch_id:
+            launch_id = f"launch-{uuid.uuid4().hex[:12]}"
+        record = json.loads(json.dumps({**launch, "id": launch_id, "launch_id": launch_id}))
+        launches = self._ensure_local_overlay_records("paper_persona_launches")
+        launches[launch_id] = record
+        self._save()
+        return json.loads(json.dumps(record))
+
+    def list_paper_persona_launches(self, persona_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        records = list(self._local_overlay_records("paper_persona_launches").values())
+        fallback = self._local_fallback("paper_persona_launches")
+        if not records and isinstance(fallback, dict):
+            records = list(fallback.values())
+        if persona_id:
+            records = [
+                record
+                for record in records
+                if str(record.get("persona_id") or "").strip() == str(persona_id)
+            ]
+        return sorted(
+            [json.loads(json.dumps(record)) for record in records if isinstance(record, dict)],
+            key=lambda record: str(record.get("updated_at") or record.get("created_at") or ""),
+            reverse=True,
+        )
+
+    def get_paper_persona_launch(self, launch_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not launch_id:
+            return None
+        launch = self._local_overlay_records("paper_persona_launches").get(str(launch_id))
+        if launch is not None:
+            return json.loads(json.dumps(launch))
+        fallback = self._local_fallback("paper_persona_launches")
+        if isinstance(fallback, dict):
+            record = fallback.get(str(launch_id))
+            return json.loads(json.dumps(record)) if isinstance(record, dict) else None
+        return None
+
+    def get_paper_persona_launch_by_idempotency_key(
+        self,
+        idempotency_key: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        if not idempotency_key:
+            return None
+        clean_key = str(idempotency_key).strip()
+        for launch in self.list_paper_persona_launches():
+            if str(launch.get("idempotency_key") or "").strip() == clean_key:
+                return launch
+            key_map = launch.get("idempotency_keys")
+            if isinstance(key_map, dict) and clean_key in key_map:
+                return launch
         return None
 
     # ------------------------------------------------------------------ #

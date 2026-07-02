@@ -3,7 +3,7 @@
     "snapshot_date": "2026-07-02",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 577,
+    "total_routes": 580,
     "status_values": [
       "implemented",
       "alias",
@@ -3165,6 +3165,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/management/personas/{param}/readiness",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/management/portfolio-book",
       "family": "unknown",
       "status": "implemented"
@@ -3418,6 +3424,18 @@
     {
       "method": "POST",
       "path": "/bff/management/nl/ask/stream",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/personas/paper-launch",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/personas/{param}/setup/retry",
       "family": "unknown",
       "status": "implemented"
     },
