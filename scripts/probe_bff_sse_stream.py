@@ -955,6 +955,18 @@ def main() -> int:
             "enabled": True,
             "seconds": args.soak_seconds,
             "min_heartbeats": args.soak_min_heartbeats,
+            COOKIE_MODE.name: stream_soak(
+                base_url=base_url,
+                mode=COOKIE_MODE,
+                token=token,
+                timeout=args.timeout,
+                channel=args.channel,
+                cookie_name=args.cookie_name,
+                seconds=args.soak_seconds,
+                min_heartbeats=args.soak_min_heartbeats,
+                last_event_id=replay_last_event_id or None,
+                expected_event_ids=expected_replay_ids,
+            ),
             BEARER_MODE.name: stream_soak(
                 base_url=base_url,
                 mode=BEARER_MODE,
@@ -1007,6 +1019,9 @@ def main() -> int:
         "mock_generator_closed_in_live_mode": bool(mock_generator_check.get("passed")),
     }
     if args.soak_seconds > 0:
+        assertions["cookie_soak_observed_heartbeat_without_duplicate_replay"] = bool(
+            soak_results.get(COOKIE_MODE.name, {}).get("ok")
+        )
         assertions["bearer_soak_observed_heartbeat_without_duplicate_replay"] = bool(
             soak_results.get(BEARER_MODE.name, {}).get("ok")
         )
@@ -1015,7 +1030,11 @@ def main() -> int:
             auth_source.get("kind") == "provided_bearer"
             and args.soak_seconds >= STRICT_LIVE_SOAK_MIN_SECONDS
             and args.soak_min_heartbeats >= STRICT_LIVE_SOAK_MIN_HEARTBEATS
+            and soak_results.get(COOKIE_MODE.name, {}).get("ok")
             and soak_results.get(BEARER_MODE.name, {}).get("ok")
+            and reconnect_sequence.get(COOKIE_MODE.name, {}).get("ok")
+            and reconnect_sequence.get(COOKIE_MODE.name, {}).get("attempt_count", 0)
+            >= args.reconnect_attempts
             and reconnect_sequence.get(BEARER_MODE.name, {}).get("ok")
             and reconnect_sequence.get(BEARER_MODE.name, {}).get("attempt_count", 0)
             >= args.reconnect_attempts
@@ -1084,6 +1103,9 @@ def main() -> int:
                     and reconnect_sequence.get(BEARER_MODE.name, {}).get("ok")
                 ),
                 "replay_unavailable_409_with_resync_routes": bool(unavailable.get("ok")),
+                "cookie_soak_heartbeat_duplicate_replay": bool(
+                    not args.soak_seconds or soak_results.get(COOKIE_MODE.name, {}).get("ok")
+                ),
                 "bearer_soak_heartbeat_duplicate_replay": bool(
                     not args.soak_seconds or soak_results.get(BEARER_MODE.name, {}).get("ok")
                 ),

@@ -947,107 +947,144 @@ function analyzeSseSmoke(stepOutcomes) {
   ]) || evidencePath(step.evidence);
   const json = readJson(file);
   const soak = json?.soak || {};
-  const bearerSoak = soak?.bearer_polyfill || {};
-  const blocks = bearerSoak?.blocks || {};
-  const seconds = Number(soak?.seconds ?? bearerSoak?.soak_seconds ?? 0);
-  const minHeartbeats = Number(soak?.min_heartbeats ?? bearerSoak?.min_heartbeats ?? 0);
-  const heartbeatCount = Number(blocks?.heartbeat_count ?? 0);
-  const duplicateEventIds = Array.isArray(blocks?.duplicate_event_ids) ? blocks.duplicate_event_ids : [];
-  const missingExpected = Array.isArray(bearerSoak?.missing_expected_event_ids) ? bearerSoak.missing_expected_event_ids : [];
-  const bearerReconnect = json?.reconnect_sequence?.bearer_polyfill || {};
-  const reconnectAttempts = Array.isArray(bearerReconnect?.attempts)
-    ? bearerReconnect.attempts.length
-    : Number(bearerReconnect?.attempt_count ?? 0);
+  const seconds = Number(soak?.seconds ?? 0);
+  const minHeartbeats = Number(soak?.min_heartbeats ?? 0);
   const reconnectRequirementCandidates = [
     Number(json?.strict_live_evidence_requirements?.min_reconnect_attempts ?? 5),
     Number(json?.strict_live_evidence_requirements?.requested_reconnect_attempts ?? 0),
   ].filter((value) => Number.isFinite(value));
   const minReconnectAttempts = Math.max(5, ...reconnectRequirementCandidates);
-  const reconnectDuplicateEventIds = Array.isArray(bearerReconnect?.duplicate_event_ids)
-    ? bearerReconnect.duplicate_event_ids
-    : [];
-  const reconnectMissingExpected = Array.isArray(bearerReconnect?.missing_expected_event_ids)
-    ? bearerReconnect.missing_expected_event_ids
-    : [];
-  const reconnectAttemptDetails = Array.isArray(bearerReconnect?.attempts) ? bearerReconnect.attempts : [];
-  const reconnectAttemptDetailsOk = reconnectAttemptDetails.length >= minReconnectAttempts
-    && reconnectAttemptDetails.every((attempt) =>
-      attempt?.ok === true
-      && attempt?.replayed_expected_event === true
-      && typeof attempt?.cursor_event_id === "string"
-      && attempt.cursor_event_id.length > 0
-      && typeof attempt?.expected_replayed_event_id === "string"
-      && attempt.expected_replayed_event_id.length > 0
-      && typeof attempt?.observed_replayed_event_id === "string"
-      && attempt.observed_replayed_event_id.length > 0
-    );
-  const reconnectObservedEventIds = Array.isArray(bearerReconnect?.observed_event_ids)
-    ? bearerReconnect.observed_event_ids.map((eventId) => String(eventId)).filter(Boolean)
-    : [];
-  const reconnectExpectedEventIds = Array.isArray(bearerReconnect?.expected_event_ids)
-    ? bearerReconnect.expected_event_ids.map((eventId) => String(eventId)).filter(Boolean)
-    : [];
-  const reconnectCursorEventIds = Array.isArray(bearerReconnect?.cursor_event_ids)
-    ? bearerReconnect.cursor_event_ids.map((eventId) => String(eventId)).filter(Boolean)
-    : [];
-  const reconnectObservedUniqueCount = new Set(reconnectObservedEventIds).size;
-  const reconnectObservedSequenceOk = reconnectObservedEventIds.length >= minReconnectAttempts
-    && reconnectObservedUniqueCount === reconnectObservedEventIds.length
-    && reconnectExpectedEventIds.length >= minReconnectAttempts
-    && reconnectExpectedEventIds.slice(0, reconnectObservedEventIds.length).join("\n") === reconnectObservedEventIds.join("\n");
   const sseChannel = typeof json?.channel === "string" ? json.channel : "";
-  const reconnectAttemptLineageOk = reconnectAttemptDetails.length >= minReconnectAttempts
-    && reconnectCursorEventIds.length >= minReconnectAttempts
-    && reconnectAttemptDetails.every((attempt, index) => {
-      const cursor = reconnectCursorEventIds[index] || "";
-      const expected = reconnectExpectedEventIds[index] || "";
-      const observed = reconnectObservedEventIds[index] || "";
-      const requestHeaders = attempt?.request_headers && typeof attempt.request_headers === "object" ? attempt.request_headers : {};
-      const responseHeaders = attempt?.response_headers && typeof attempt.response_headers === "object" ? attempt.response_headers : {};
-      const firstEvent = attempt?.first_event && typeof attempt.first_event === "object" ? attempt.first_event : {};
-      const firstEventData = firstEvent?.data && typeof firstEvent.data === "object" ? firstEvent.data : {};
-      const shapeChecks = firstEvent?.shape_checks && typeof firstEvent.shape_checks === "object" ? firstEvent.shape_checks : {};
-      const eventLine = typeof firstEvent?.event === "string" ? firstEvent.event : "";
-      const dataType = typeof firstEventData?.type === "string" ? firstEventData.type : "";
-      const dataTimestamp = typeof firstEventData?.timestamp === "string" ? firstEventData.timestamp : "";
-      return Number(attempt?.attempt) === index + 1
-        && attempt?.mode === "bearer_polyfill"
-        && sseAttemptUrlMatchesChannel(attempt?.url_path, sseChannel)
+  const requiredModes = ["cookie_session", "bearer_polyfill"];
+  const requestUsesExpectedAuth = (headers, mode) => mode === "bearer_polyfill"
+    ? headers["Authorization"] === "present" && headers["Cookie"] === "absent"
+    : headers["Authorization"] === "absent" && headers["Cookie"] === "present";
+  const modeDetails = requiredModes.map((mode) => {
+    const modeSoak = soak?.[mode] || {};
+    const blocks = modeSoak?.blocks || {};
+    const reconnect = json?.reconnect_sequence?.[mode] || {};
+    const duplicateEventIds = Array.isArray(blocks?.duplicate_event_ids) ? blocks.duplicate_event_ids : [];
+    const missingExpected = Array.isArray(modeSoak?.missing_expected_event_ids) ? modeSoak.missing_expected_event_ids : [];
+    const reconnectDuplicateEventIds = Array.isArray(reconnect?.duplicate_event_ids) ? reconnect.duplicate_event_ids : [];
+    const reconnectMissingExpected = Array.isArray(reconnect?.missing_expected_event_ids) ? reconnect.missing_expected_event_ids : [];
+    const reconnectAttemptDetails = Array.isArray(reconnect?.attempts) ? reconnect.attempts : [];
+    const reconnectAttempts = Array.isArray(reconnect?.attempts)
+      ? reconnect.attempts.length
+      : Number(reconnect?.attempt_count ?? 0);
+    const reconnectObservedEventIds = Array.isArray(reconnect?.observed_event_ids)
+      ? reconnect.observed_event_ids.map((eventId) => String(eventId)).filter(Boolean)
+      : [];
+    const reconnectExpectedEventIds = Array.isArray(reconnect?.expected_event_ids)
+      ? reconnect.expected_event_ids.map((eventId) => String(eventId)).filter(Boolean)
+      : [];
+    const reconnectCursorEventIds = Array.isArray(reconnect?.cursor_event_ids)
+      ? reconnect.cursor_event_ids.map((eventId) => String(eventId)).filter(Boolean)
+      : [];
+    const reconnectAttemptDetailsOk = reconnectAttemptDetails.length >= minReconnectAttempts
+      && reconnectAttemptDetails.every((attempt) =>
+        attempt?.ok === true
+        && attempt?.mode === mode
+        && attempt?.replayed_expected_event === true
         && typeof attempt?.cursor_event_id === "string"
-        && attempt.cursor_event_id === cursor
-        && (index === 0 || cursor === reconnectExpectedEventIds[index - 1])
-        && requestHeaders["Last-Event-ID"] === cursor
-        && responseHeaders["X-SSE-Channel"] === sseChannel
-        && responseHeaders["X-SSE-Replay-Supported"] === "true"
-        && attempt?.expected_replayed_event_id === expected
-        && attempt?.observed_replayed_event_id === observed
-        && observed === expected
-        && firstEvent?.id === observed
-        && firstEventData?.id === observed
-        && eventLine === dataType
-        && dataType.length > 0
-        && dataTimestamp.length > 0
-        && shapeChecks?.id_line_matches_data_id === true
-        && shapeChecks?.event_line_matches_data_type === true
-        && shapeChecks?.data_json_parse_ok === true;
-    });
-  const reconnectOk = bearerReconnect?.ok === true
-    && reconnectAttempts >= minReconnectAttempts
-    && bearerReconnect?.cursors_advanced === true
-    && reconnectDuplicateEventIds.length === 0
-    && reconnectMissingExpected.length === 0
-    && reconnectAttemptDetailsOk
-    && reconnectAttemptLineageOk
-    && reconnectObservedSequenceOk;
+        && attempt.cursor_event_id.length > 0
+        && typeof attempt?.expected_replayed_event_id === "string"
+        && attempt.expected_replayed_event_id.length > 0
+        && typeof attempt?.observed_replayed_event_id === "string"
+        && attempt.observed_replayed_event_id.length > 0
+      );
+    const reconnectObservedUniqueCount = new Set(reconnectObservedEventIds).size;
+    const reconnectObservedSequenceOk = reconnectObservedEventIds.length >= minReconnectAttempts
+      && reconnectObservedUniqueCount === reconnectObservedEventIds.length
+      && reconnectExpectedEventIds.length >= minReconnectAttempts
+      && reconnectExpectedEventIds.slice(0, reconnectObservedEventIds.length).join("\n") === reconnectObservedEventIds.join("\n");
+    const reconnectAttemptLineageOk = reconnectAttemptDetails.length >= minReconnectAttempts
+      && reconnectCursorEventIds.length >= minReconnectAttempts
+      && reconnectAttemptDetails.every((attempt, index) => {
+        const cursor = reconnectCursorEventIds[index] || "";
+        const expected = reconnectExpectedEventIds[index] || "";
+        const observed = reconnectObservedEventIds[index] || "";
+        const requestHeaders = attempt?.request_headers && typeof attempt.request_headers === "object" ? attempt.request_headers : {};
+        const responseHeaders = attempt?.response_headers && typeof attempt.response_headers === "object" ? attempt.response_headers : {};
+        const firstEvent = attempt?.first_event && typeof attempt.first_event === "object" ? attempt.first_event : {};
+        const firstEventData = firstEvent?.data && typeof firstEvent.data === "object" ? firstEvent.data : {};
+        const shapeChecks = firstEvent?.shape_checks && typeof firstEvent.shape_checks === "object" ? firstEvent.shape_checks : {};
+        const eventLine = typeof firstEvent?.event === "string" ? firstEvent.event : "";
+        const dataType = typeof firstEventData?.type === "string" ? firstEventData.type : "";
+        const dataTimestamp = typeof firstEventData?.timestamp === "string" ? firstEventData.timestamp : "";
+        return Number(attempt?.attempt) === index + 1
+          && attempt?.mode === mode
+          && sseAttemptUrlMatchesChannel(attempt?.url_path, sseChannel)
+          && typeof attempt?.cursor_event_id === "string"
+          && attempt.cursor_event_id === cursor
+          && (index === 0 || cursor === reconnectExpectedEventIds[index - 1])
+          && requestHeaders["Last-Event-ID"] === cursor
+          && requestUsesExpectedAuth(requestHeaders, mode)
+          && responseHeaders["X-SSE-Channel"] === sseChannel
+          && responseHeaders["X-SSE-Replay-Supported"] === "true"
+          && attempt?.expected_replayed_event_id === expected
+          && attempt?.observed_replayed_event_id === observed
+          && observed === expected
+          && firstEvent?.id === observed
+          && firstEventData?.id === observed
+          && eventLine === dataType
+          && dataType.length > 0
+          && dataTimestamp.length > 0
+          && shapeChecks?.id_line_matches_data_id === true
+          && shapeChecks?.event_line_matches_data_type === true
+          && shapeChecks?.data_json_parse_ok === true;
+      });
+    const heartbeatCount = Number(blocks?.heartbeat_count ?? 0);
+    const soakRequestHeaders = modeSoak?.request_headers && typeof modeSoak.request_headers === "object" ? modeSoak.request_headers : {};
+    const soakOk = modeSoak?.ok === true
+      && requestUsesExpectedAuth(soakRequestHeaders, mode)
+      && heartbeatCount >= minHeartbeats
+      && duplicateEventIds.length === 0
+      && missingExpected.length === 0;
+    const reconnectOk = reconnect?.ok === true
+      && reconnectAttempts >= minReconnectAttempts
+      && reconnect?.cursors_advanced === true
+      && reconnectDuplicateEventIds.length === 0
+      && reconnectMissingExpected.length === 0
+      && reconnectAttemptDetailsOk
+      && reconnectAttemptLineageOk
+      && reconnectObservedSequenceOk;
+    return {
+      mode,
+      soakOk,
+      heartbeatCount,
+      duplicateEventIds,
+      missingExpected,
+      reconnectOk,
+      reconnectAttempts,
+      reconnectDuplicateEventIds,
+      reconnectMissingExpected,
+      reconnectAttemptDetailsOk,
+      reconnectAttemptLineageOk,
+      reconnectObservedEventIds,
+      reconnectObservedSequenceOk,
+    };
+  });
+  const minOf = (values) => values.length ? Math.min(...values) : 0;
+  const heartbeatCount = minOf(modeDetails.map((detail) => detail.heartbeatCount));
+  const duplicateEventIds = modeDetails.flatMap((detail) => detail.duplicateEventIds);
+  const missingExpected = modeDetails.flatMap((detail) => detail.missingExpected);
+  const reconnectAttempts = minOf(modeDetails.map((detail) => detail.reconnectAttempts));
+  const reconnectDuplicateEventIds = modeDetails.flatMap((detail) => detail.reconnectDuplicateEventIds);
+  const reconnectMissingExpected = modeDetails.flatMap((detail) => detail.reconnectMissingExpected);
+  const reconnectAttemptDetailsOk = modeDetails.every((detail) => detail.reconnectAttemptDetailsOk);
+  const reconnectAttemptLineageOk = modeDetails.every((detail) => detail.reconnectAttemptLineageOk);
+  const reconnectObservedEventIds = modeDetails.reduce(
+    (shortest, detail) => detail.reconnectObservedEventIds.length < shortest.length ? detail.reconnectObservedEventIds : shortest,
+    modeDetails[0]?.reconnectObservedEventIds || [],
+  );
+  const reconnectObservedSequenceOk = modeDetails.every((detail) => detail.reconnectObservedSequenceOk);
+  const reconnectOk = modeDetails.every((detail) => detail.reconnectOk);
   const strict = json?.strict_live_evidence === true;
   const summaryPassed = json?.summary?.passed === true;
   const soakOk = soak?.enabled === true
-    && bearerSoak?.ok === true
     && seconds >= 75
-    && minHeartbeats >= 1
-    && heartbeatCount >= minHeartbeats
-    && duplicateEventIds.length === 0
-    && missingExpected.length === 0
+    && minHeartbeats >= 2
+    && modeDetails.every((detail) => detail.soakOk)
     && reconnectOk;
   return {
     exists: Boolean(json),

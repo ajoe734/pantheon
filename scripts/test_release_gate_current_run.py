@@ -118,7 +118,8 @@ def _strict_dry_run_items(*, with_side_effect_checks: bool = True, mismatched_re
     return items
 
 
-def _strict_sse_reconnect_bearer(
+def _strict_sse_reconnect_mode(
+    mode: str,
     *,
     attempt_count: int = 5,
     detail_ok: bool = True,
@@ -129,6 +130,11 @@ def _strict_sse_reconnect_bearer(
     expected_event_ids = [f"evt-{index}" for index in range(2, 2 + attempt_count)]
     cursor_event_ids = [f"evt-{index}" for index in range(1, 1 + attempt_count)]
     observed_event_ids = list(expected_event_ids)
+    auth_headers = (
+        {"Authorization": "present", "Cookie": "absent"}
+        if mode == "bearer_polyfill"
+        else {"Authorization": "absent", "Cookie": "present"}
+    )
     if duplicate_observed and len(observed_event_ids) >= 2:
         observed_event_ids[-1] = observed_event_ids[0]
     attempts = []
@@ -136,7 +142,7 @@ def _strict_sse_reconnect_bearer(
         ok = detail_ok or index != attempt_count - 1
         attempts.append(
             {
-                "mode": "bearer_polyfill",
+                "mode": mode,
                 "ok": ok,
                 "attempt": index + 1,
                 "url_path": "/bff/events/stream?channel=approval",
@@ -145,6 +151,7 @@ def _strict_sse_reconnect_bearer(
                 "observed_replayed_event_id": observed_event_ids[index],
                 "replayed_expected_event": ok and observed_event_ids[index] == expected_event_ids[index],
                 "request_headers": {
+                    **auth_headers,
                     "Last-Event-ID": (
                         "wrong-cursor"
                         if not lineage_ok and index == attempt_count - 1
@@ -187,6 +194,13 @@ def _strict_sse_reconnect_bearer(
         "attempts": attempts,
     }
 
+
+def _strict_sse_reconnect_bearer(**kwargs):
+    return _strict_sse_reconnect_mode("bearer_polyfill", **kwargs)
+
+
+def _strict_sse_reconnect_cookie(**kwargs):
+    return _strict_sse_reconnect_mode("cookie_session", **kwargs)
 
 def _strict_rbac_matrix_items(
     *,
@@ -583,8 +597,18 @@ def test_release_gate_ignores_step_outcome_evidence_outside_current_run(tmp_path
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
+                    "cookie_session": {
+                        "ok": True,
+                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
                     "bearer_polyfill": {
                         "ok": True,
+                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
                         "missing_expected_event_ids": [],
                         "blocks": {
                             "heartbeat_count": 2,
@@ -593,6 +617,7 @@ def test_release_gate_ignores_step_outcome_evidence_outside_current_run(tmp_path
                     },
                 },
                 "reconnect_sequence": {
+                    "cookie_session": _strict_sse_reconnect_cookie(),
                     "bearer_polyfill": _strict_sse_reconnect_bearer(),
                 },
             }
@@ -883,8 +908,18 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
+                    "cookie_session": {
+                        "ok": True,
+                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
                     "bearer_polyfill": {
                         "ok": True,
+                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
                         "missing_expected_event_ids": [],
                         "blocks": {
                             "heartbeat_count": 2,
@@ -893,6 +928,7 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
                     },
                 },
                 "reconnect_sequence": {
+                    "cookie_session": _strict_sse_reconnect_cookie(),
                     "bearer_polyfill": _strict_sse_reconnect_bearer(),
                 },
             }
@@ -939,7 +975,7 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
     assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
-def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp_path: Path) -> None:
+def test_release_gate_rejects_strict_sse_soak_without_cookie_browser_path(tmp_path: Path) -> None:
     if shutil.which("node") is None:
         pytest.skip("node is required to execute aggregate-release-gate.mjs")
 
@@ -961,6 +997,7 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
                     "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
+                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
                         "missing_expected_event_ids": [],
                         "blocks": {
                             "heartbeat_count": 2,
@@ -969,6 +1006,93 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
                     },
                 },
                 "reconnect_sequence": {
+                    "bearer_polyfill": _strict_sse_reconnect_bearer(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    sse_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
+    )
+    assert sse_check["status"] == "fail"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:0/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
+
+
+def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-CONSOL-011",
+                "channel": "approval",
+                "strict_live_evidence": True,
+                "strict_live_evidence_requirements": {"min_reconnect_attempts": 5},
+                "summary": {"passed": True},
+                "soak": {
+                    "enabled": True,
+                    "seconds": 75.0,
+                    "min_heartbeats": 2,
+                    "cookie_session": {
+                        "ok": True,
+                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
+                    "bearer_polyfill": {
+                        "ok": True,
+                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
+                },
+                "reconnect_sequence": {
+                    "cookie_session": _strict_sse_reconnect_cookie(),
                     "bearer_polyfill": _strict_sse_reconnect_bearer(attempt_count=2),
                 },
             }
@@ -1035,8 +1159,18 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
+                    "cookie_session": {
+                        "ok": True,
+                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
                     "bearer_polyfill": {
                         "ok": True,
+                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
                         "missing_expected_event_ids": [],
                         "blocks": {
                             "heartbeat_count": 2,
@@ -1045,6 +1179,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
                     },
                 },
                 "reconnect_sequence": {
+                    "cookie_session": _strict_sse_reconnect_cookie(),
                     "bearer_polyfill": _strict_sse_reconnect_bearer(
                         detail_ok=False,
                         duplicate_observed=True,
@@ -1114,8 +1249,18 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
+                    "cookie_session": {
+                        "ok": True,
+                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
                     "bearer_polyfill": {
                         "ok": True,
+                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
                         "missing_expected_event_ids": [],
                         "blocks": {
                             "heartbeat_count": 2,
@@ -1124,6 +1269,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
                     },
                 },
                 "reconnect_sequence": {
+                    "cookie_session": _strict_sse_reconnect_cookie(),
                     "bearer_polyfill": _strict_sse_reconnect_bearer(lineage_ok=False),
                 },
             }
@@ -1190,8 +1336,18 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
+                    "cookie_session": {
+                        "ok": True,
+                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
                     "bearer_polyfill": {
                         "ok": True,
+                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
                         "missing_expected_event_ids": [],
                         "blocks": {
                             "heartbeat_count": 2,
@@ -1200,6 +1356,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
                     },
                 },
                 "reconnect_sequence": {
+                    "cookie_session": _strict_sse_reconnect_cookie(),
                     "bearer_polyfill": _strict_sse_reconnect_bearer(event_type_link_ok=False),
                 },
             }
@@ -1266,8 +1423,18 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
+                    "cookie_session": {
+                        "ok": True,
+                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
                     "bearer_polyfill": {
                         "ok": True,
+                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
                         "missing_expected_event_ids": [],
                         "blocks": {
                             "heartbeat_count": 2,
