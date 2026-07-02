@@ -1,6 +1,6 @@
 # Management Console Production Gap Execution Packet - 2026-06-30
 
-Status: ready for fleet dispatch
+Status: production closeout complete; post-closeout adjustment packet linked
 
 Source gap spec:
 
@@ -12,6 +12,11 @@ Evidence archive:
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md`
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md`
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.json`
+- `docs/04/pantheon_management_console_gap_2026-06-30/archive/management-adjustment-development-plan-2026-07-02.md`
+
+Post-closeout adjustment packet:
+
+- `docs/bff/execution-tasks/2026-07-02-management-console-adjustment-development/INDEX.md`
 
 Active tracking:
 
