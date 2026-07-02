@@ -13,10 +13,10 @@ Acceptance criteria covered:
    session_id generates a new one.
 
 BFF-B6-002 audit/evidence grounding fields:
-7. Response includes data.auditRef with targetType/targetId/href.
-8. Response includes data.evidenceRefs as a list; when evidence is seeded,
+7. Response includes data.audit_ref with target_type/target_id/href.
+8. Response includes data.evidence_refs as a list; when evidence is seeded,
    each ref carries an href pointing to /api/v1/knowledge/evidence/{ref_id}.
-9. Response includes meta.redactedEvidenceCount as a non-negative integer.
+9. Response includes meta.redacted_evidence_count as a non-negative integer.
 10. Completed exchanges expose completed lifecycle fields and publish completion
    SSE events on the ask channel.
 """
@@ -76,26 +76,28 @@ def test_nl_ask_authenticated_returns_202_with_data_fields() -> None:
             assert body["status"] == "accepted"
             data = body["data"]
             assert data["status"] == "completed"
-            assert data["lifecycleStatus"] == "completed"
             assert data["lifecycle_status"] == "completed"
+            assert "lifecycleStatus" not in data
             assert isinstance(data["answer"], str) and data["answer"]
-            assert isinstance(data["sessionId"], str) and data["sessionId"]
             assert isinstance(data["session_id"], str) and data["session_id"]
-            assert data["sessionId"] == data["session_id"]
+            assert "sessionId" not in data
             assert isinstance(data["message_id"], str) and data["message_id"]
-            assert isinstance(data["traceId"], str) and data["traceId"]
-            assert isinstance(data["providerStatus"], dict)
+            assert isinstance(data["trace_id"], str) and data["trace_id"]
+            assert "traceId" not in data
+            assert isinstance(data["provider_status"], dict)
+            assert "providerStatus" not in data
             assert isinstance(data["actions"], list)
             assert data["conversation"]["href"].startswith("/bff/management/ai/conversations/")
             assert "trace_id=" not in data["conversation"]["href"]
-            assert data["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
+            assert data["session"]["ttl_seconds"] >= 7 * 24 * 60 * 60
+            assert "ttlSeconds" not in data["session"]
             assert data["question"] == "What is the current portfolio PnL?"
             assert isinstance(data["sources"], list)
             assert data["confidence"] in {"high", "partial", "unavailable"}
             assert "meta" in body
             assert body["meta"]["status"] == "completed"
-            assert body["meta"]["lifecycleStatus"] == "completed"
             assert body["meta"]["lifecycle_status"] == "completed"
+            assert "lifecycleStatus" not in body["meta"]
             assert "surfaces" in body["meta"]
             sse_events = [event for _, event in bff_main._sse_buffers["ask"]]
             event_types = [event.get("type") for event in sse_events]
@@ -108,13 +110,15 @@ def test_nl_ask_authenticated_returns_202_with_data_fields() -> None:
             assert generic_completed["data"]["status"] == "completed"
             assert generic_completed["data"]["session_id"] == data["session_id"]
             assert generic_completed["data"]["trace_id"] == data["trace_id"]
-            assert generic_completed["data"]["provider_status"] == data["providerStatus"]
+            assert generic_completed["data"]["provider_status"] == data["provider_status"]
+            assert "providerStatus" not in generic_completed["data"]
             domain_completed = next(
                 event for event in sse_events if event.get("type") == "management.nl.ask.completed"
             )
             assert domain_completed["data"]["status"] == "completed"
             assert domain_completed["data"]["message_id"] == data["message_id"]
-            assert domain_completed["data"]["audit_log"]["href"] == data["auditLog"]["href"]
+            assert domain_completed["data"]["audit_log"]["href"] == data["audit_log"]["href"]
+            assert "auditLog" not in domain_completed["data"]
             assert domain_completed["data"]["conversation"]["href"] == data["conversation"]["href"]
         finally:
             bff_main.read_store = original
@@ -390,8 +394,8 @@ def test_nl_ask_session_id_echoed_when_supplied() -> None:
                 headers={**OPERATOR_HEADERS, "Idempotency-Key": "ik-sess-001"},
             )
             assert resp.status_code == 202, resp.text
-            assert resp.json()["data"]["sessionId"] == supplied_id
             assert resp.json()["data"]["session_id"] == supplied_id
+            assert "sessionId" not in resp.json()["data"]
         finally:
             bff_main.read_store = original
 
@@ -504,7 +508,7 @@ def _nl_evidence_client() -> Iterator[TestClient]:
 
 
 # ---------------------------------------------------------------------------
-# AC#7 — response includes data.auditRef with required fields
+# AC#7 — response includes data.audit_ref with required fields
 # ---------------------------------------------------------------------------
 
 def test_nl_ask_response_includes_audit_ref() -> None:
@@ -519,21 +523,24 @@ def test_nl_ask_response_includes_audit_ref() -> None:
             )
             assert resp.status_code == 202, resp.text
             body = resp.json()
-            audit_ref = body["data"].get("auditRef") or body["data"].get("audit_ref")
-            assert audit_ref is not None, "auditRef missing from data"
-            assert audit_ref.get("targetType") == "ManagementNLExchange" or audit_ref.get("target_type") == "ManagementNLExchange"
-            target_id = audit_ref.get("targetId") or audit_ref.get("target_id")
-            assert isinstance(target_id, str) and target_id, "auditRef.targetId must be non-empty string"
+            assert "auditRef" not in body["data"]
+            audit_ref = body["data"].get("audit_ref")
+            assert audit_ref is not None, "audit_ref missing from data"
+            assert "targetType" not in audit_ref
+            assert "targetId" not in audit_ref
+            assert audit_ref.get("target_type") == "ManagementNLExchange"
+            target_id = audit_ref.get("target_id")
+            assert isinstance(target_id, str) and target_id, "audit_ref.target_id must be non-empty string"
             href = audit_ref.get("href")
             assert isinstance(href, str) and "ManagementNLExchange" in href, (
-                f"auditRef.href must reference ManagementNLExchange, got: {href}"
+                f"audit_ref.href must reference ManagementNLExchange, got: {href}"
             )
         finally:
             bff_main.read_store = original
 
 
 # ---------------------------------------------------------------------------
-# AC#8 — data.evidenceRefs is a list; seeded refs carry /api/v1/knowledge/evidence href
+# AC#8 — data.evidence_refs is a list; seeded refs carry /api/v1/knowledge/evidence href
 # ---------------------------------------------------------------------------
 
 def test_nl_ask_response_includes_evidence_refs_with_api_href() -> None:
@@ -545,8 +552,9 @@ def test_nl_ask_response_includes_evidence_refs_with_api_href() -> None:
         )
         assert resp.status_code == 202, resp.text
         body = resp.json()
-        evidence_refs = body["data"].get("evidenceRefs") or body["data"].get("evidence_refs")
-        assert isinstance(evidence_refs, list), "evidenceRefs must be a list"
+        assert "evidenceRefs" not in body["data"]
+        evidence_refs = body["data"].get("evidence_refs")
+        assert isinstance(evidence_refs, list), "evidence_refs must be a list"
         assert len(evidence_refs) >= 1, "At least one seeded evidence ref must appear"
         ref = evidence_refs[0]
         href = ref.get("href")
@@ -556,7 +564,7 @@ def test_nl_ask_response_includes_evidence_refs_with_api_href() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC#9 — meta.redactedEvidenceCount is a non-negative integer
+# AC#9 — meta.redacted_evidence_count is a non-negative integer
 # ---------------------------------------------------------------------------
 
 def test_nl_ask_response_includes_redacted_evidence_count() -> None:
@@ -572,10 +580,11 @@ def test_nl_ask_response_includes_redacted_evidence_count() -> None:
             assert resp.status_code == 202, resp.text
             body = resp.json()
             meta = body.get("meta", {})
-            count = meta.get("redactedEvidenceCount") if "redactedEvidenceCount" in meta else meta.get("redacted_evidence_count")
-            assert count is not None, "meta.redactedEvidenceCount must be present"
+            assert "redactedEvidenceCount" not in meta
+            count = meta.get("redacted_evidence_count")
+            assert count is not None, "meta.redacted_evidence_count must be present"
             assert isinstance(count, int) and count >= 0, (
-                f"meta.redactedEvidenceCount must be non-negative int, got: {count!r}"
+                f"meta.redacted_evidence_count must be non-negative int, got: {count!r}"
             )
         finally:
             bff_main.read_store = original

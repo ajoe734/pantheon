@@ -31,63 +31,61 @@ def _seeded_client(
     evidence_refs: dict | None = None,
 ) -> Iterator[TestClient]:
     read_surface_path = tmp_path / "read_surfaces.json"
-    _write_json(
-        read_surface_path,
-        {
-            "capital_pools": {
-                "pool-alpha": {
-                    "pool_id": "pool-alpha",
-                    "name": "Alpha Pool",
-                    "status": "active",
-                    "tenant_id": "tenant-alpha",
-                },
-                "pool-beta": {
-                    "pool_id": "pool-beta",
-                    "name": "Beta Pool",
-                    "status": "active",
-                    "tenant_id": "tenant-beta",
-                },
+    seeded_data = {
+        "capital_pools": {
+            "pool-alpha": {
+                "pool_id": "pool-alpha",
+                "name": "Alpha Pool",
+                "status": "active",
+                "tenant_id": "tenant-alpha",
             },
-            "runtime_bindings": {
-                "rb-alpha": {
-                    "binding_id": "rb-alpha",
-                    "runtime_id": "rt-alpha",
-                    "status": "running",
-                    "deployment_stage": "paper",
-                    "capital_pool_id": "pool-alpha",
-                    "tenant_id": "tenant-alpha",
-                },
-                "rb-beta": {
-                    "binding_id": "rb-beta",
-                    "runtime_id": "rt-beta",
-                    "status": "running",
-                    "deployment_stage": "paper",
-                    "capital_pool_id": "pool-beta",
-                    "tenant_id": "tenant-beta",
-                },
+            "pool-beta": {
+                "pool_id": "pool-beta",
+                "name": "Beta Pool",
+                "status": "active",
+                "tenant_id": "tenant-beta",
             },
-            "telemetry_summaries": {
-                "rt-alpha": {
-                    "runtime_id": "rt-alpha",
-                    "pnl": 1.25,
-                    "fill_rate": 0.9,
-                    "total_trades": 3,
-                    "metrics": {"pnl": 1.25, "fill_rate": 0.9, "total_trades": 3},
-                    "collected_at": "2026-05-25T12:00:00Z",
-                },
-                "rt-beta": {
-                    "runtime_id": "rt-beta",
-                    "pnl": 9.99,
-                    "fill_rate": 0.5,
-                    "total_trades": 99,
-                    "metrics": {"pnl": 9.99, "fill_rate": 0.5, "total_trades": 99},
-                    "collected_at": "2026-05-25T12:00:00Z",
-                },
-            },
-            "agora_audit_events": {},
-            "agora_sessions": {},
         },
-    )
+        "runtime_bindings": {
+            "rb-alpha": {
+                "binding_id": "rb-alpha",
+                "runtime_id": "rt-alpha",
+                "status": "running",
+                "deployment_stage": "paper",
+                "capital_pool_id": "pool-alpha",
+                "tenant_id": "tenant-alpha",
+            },
+            "rb-beta": {
+                "binding_id": "rb-beta",
+                "runtime_id": "rt-beta",
+                "status": "running",
+                "deployment_stage": "paper",
+                "capital_pool_id": "pool-beta",
+                "tenant_id": "tenant-beta",
+            },
+        },
+        "telemetry_summaries": {
+            "rt-alpha": {
+                "runtime_id": "rt-alpha",
+                "pnl": 1.25,
+                "fill_rate": 0.9,
+                "total_trades": 3,
+                "metrics": {"pnl": 1.25, "fill_rate": 0.9, "total_trades": 3},
+                "collected_at": "2026-05-25T12:00:00Z",
+            },
+            "rt-beta": {
+                "runtime_id": "rt-beta",
+                "pnl": 9.99,
+                "fill_rate": 0.5,
+                "total_trades": 99,
+                "metrics": {"pnl": 9.99, "fill_rate": 0.5, "total_trades": 99},
+                "collected_at": "2026-05-25T12:00:00Z",
+            },
+        },
+        "agora_audit_events": {},
+        "agora_sessions": {},
+    }
+    _write_json(read_surface_path, seeded_data)
     if evidence_refs is not None:
         evidence_path = tmp_path / "evidence_refs.json"
         _write_json(evidence_path, evidence_refs)
@@ -97,10 +95,38 @@ def _seeded_client(
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
     original_store = bff_main.read_store
-    bff_main.read_store = ReadSurfaceStore(
+    store = ReadSurfaceStore(
         str(read_surface_path),
-        allow_local_snapshot_fallback=True,
+        allow_local_snapshot_fallback=False,
     )
+    capital_pools = list(seeded_data["capital_pools"].values())
+    runtime_bindings = list(seeded_data["runtime_bindings"].values())
+    telemetry_summaries = seeded_data["telemetry_summaries"]
+    evidence_records = list((evidence_refs or {}).values())
+    store.list_capital_pools = lambda *args, **kwargs: json.loads(json.dumps(capital_pools))
+    store.list_runtime_bindings = lambda *args, **kwargs: json.loads(json.dumps(runtime_bindings))
+    store.get_telemetry_summary = lambda runtime_id: json.loads(
+        json.dumps(telemetry_summaries.get(str(runtime_id)))
+    ) if telemetry_summaries.get(str(runtime_id)) is not None else None
+
+    def list_evidence_refs(*, tenant_id=None, include_tenant_agnostic=True, linked_entities=None, source_types=None, **kwargs):
+        return [
+            json.loads(json.dumps(record))
+            for record in evidence_records
+            if store._record_matches_tenant(
+                record,
+                tenant_id,
+                include_tenant_agnostic=include_tenant_agnostic,
+            )
+            and store._evidence_matches_scope(
+                record,
+                linked_entities=linked_entities,
+                source_types=source_types,
+            )
+        ]
+
+    store.list_evidence_refs = list_evidence_refs
+    bff_main.read_store = store
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
         storage_path="off",
@@ -171,7 +197,9 @@ def test_nl_ask_filters_evidence_by_tenant_and_used_entities(tmp_path, monkeypat
         )
 
     assert resp.status_code == 202, resp.text
-    refs = resp.json()["data"]["evidenceRefs"]
+    data = resp.json()["data"]
+    assert "evidenceRefs" not in data
+    refs = data["evidence_refs"]
     ref_ids = {ref["ref_id"] for ref in refs}
     assert "ev-same-runtime" in ref_ids
     assert "ev-tenant-agnostic" in ref_ids
