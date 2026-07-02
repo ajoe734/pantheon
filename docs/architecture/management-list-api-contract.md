@@ -17,6 +17,9 @@ can sort it out later.
 This contract applies to new endpoints immediately. Existing endpoints are
 tracked in `management-list-contract-baseline.json`; every migration must remove
 baseline entries rather than add new ones.
+The guardrail audits route handlers and Management builder helpers such as
+`_build_management_*`; moving a duplicate envelope into a helper is still a
+contract violation.
 
 ## Required Envelope
 

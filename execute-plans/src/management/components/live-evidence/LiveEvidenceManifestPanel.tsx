@@ -167,7 +167,7 @@ function normalizeCriteria(value: unknown): LiveEvidenceCriterionView[] {
 
 function manifestTitle(item: ManagementEvidenceItem, fallbackId: string): string {
   return textFrom(
-    item.title ?? item.displayLabel ?? item.display_label ?? item.refId ?? item.ref_id ?? item.id,
+    item.title ?? item.display_label ?? item.ref_id ?? item.id,
     fallbackId,
   );
 }
@@ -179,7 +179,7 @@ function normalizeManifestView(item: ManagementEvidenceItem, index: number): Liv
   const limits = asRecord(manifest.limits);
   const itemPayload = asRecord(item.payload);
   const criteria = normalizeCriteria(findVerificationCriteria(item));
-  const id = textFrom(item.refId ?? item.ref_id ?? item.id, `live-evidence-${index}`);
+  const id = textFrom(item.ref_id ?? item.id, `live-evidence-${index}`);
   return {
     id,
     title: manifestTitle(item, id),
@@ -382,7 +382,7 @@ export function LiveEvidenceManifestPanel() {
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>Source: {surfaceSource}</span>
             <span>Manifests: {manifests.length}</span>
-            <span>Evidence: {response?.data.summary.visibleEvidence ?? 0}/{response?.data.summary.totalEvidence ?? 0}</span>
+            <span>Evidence: {response?.data.summary.visible_evidence ?? 0}/{response?.data.summary.total_evidence ?? 0}</span>
           </div>
         </div>
         <button

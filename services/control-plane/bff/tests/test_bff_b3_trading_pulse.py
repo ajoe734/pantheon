@@ -198,33 +198,37 @@ def test_trading_pulse_returns_card_aggregate_and_runtime_rankings() -> None:
 
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["data"]["id"] == "management-trading-pulse"
-            assert body["items"] == body["cards"]
-            assert body["summary"]["runtimeCount"] == 2
-            assert body["summary"]["telemetryCoverageCount"] == 2
-            assert body["summary"]["totalPnl"] == 0.3
-            assert body["summary"]["worstDrawdown"] == 0.11
-            assert body["summary"]["averageFillRate"] == 0.89
-            assert body["summary"]["worstSlippageBps"] == 4.8
-            assert body["summary"]["totalTrades"] == 42
-            assert body["summary"]["byStatus"] == {"running": 1, "paused": 1}
-            assert body["summary"]["byStage"] == {"paper": 1, "canary": 1}
-            assert body["summary"]["baselineComparisonCount"] == 2
-            assert body["summary"]["baselineBreachedCount"] == 1
-            assert body["summary"]["baselineWatchCount"] == 1
-            assert body["summary"]["byBaselineStatus"] == {"watch": 1, "breached": 1}
+            assert set(body) == {"data", "page_info", "meta"}
+            data = body["data"]
+            summary = data["summary"]
+            assert data["id"] == "management-trading-pulse"
+            assert "items" not in body
+            assert "summary" not in body
+            assert summary["runtime_count"] == 2
+            assert summary["telemetry_coverage_count"] == 2
+            assert summary["total_pnl"] == 0.3
+            assert summary["worst_drawdown"] == 0.11
+            assert summary["average_fill_rate"] == 0.89
+            assert summary["worst_slippage_bps"] == 4.8
+            assert summary["total_trades"] == 42
+            assert summary["by_status"] == {"running": 1, "paused": 1}
+            assert summary["by_stage"] == {"paper": 1, "canary": 1}
+            assert summary["baseline_comparison_count"] == 2
+            assert summary["baseline_breached_count"] == 1
+            assert summary["baseline_watch_count"] == 1
+            assert summary["by_baseline_status"] == {"watch": 1, "breached": 1}
 
-            assert len(body["cards"]) == 5
-            assert body["rankings"][0]["runtimeId"] == "runtime-alpha"
-            assert body["rankings"][0]["rank"] == 1
-            assert body["rankings"][0]["baselineComparisonStatus"] == "watch"
-            assert body["runtimeRows"][0]["telemetry_summary"]["metrics"]["pnl"] == 0.42
+            assert len(data["cards"]) == 5
+            assert data["rankings"][0]["runtime_id"] == "runtime-alpha"
+            assert data["rankings"][0]["rank"] == 1
+            assert data["rankings"][0]["baseline_comparison_status"] == "watch"
+            assert data["runtime_rows"][0]["telemetry_summary"]["metrics"]["pnl"] == 0.42
             assert (
-                body["runtimeRows"][0]["baseline_comparison"]["paper_baseline"]["metrics"]["pnl"]
+                data["runtime_rows"][0]["baseline_comparison"]["paper_baseline"]["metrics"]["pnl"]
                 == 0.25
             )
-            assert body["baselineComparisons"][1]["status"] == "breached"
-            assert body["baselineComparisons"][1]["paper_live_drift"]["available"] is True
+            assert data["baseline_comparisons"][1]["status"] == "breached"
+            assert data["baseline_comparisons"][1]["paper_live_drift"]["available"] is True
             assert body["page_info"] == {
                 "next_page_token": None,
                 "total": 5,
@@ -251,24 +255,29 @@ def test_trading_pulse_rankings_returns_computed_blocks_with_limit() -> None:
 
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["data"] == body["items"] == body["rankings"]
-            assert body["summary"]["runtimeCount"] == 2
-            assert body["summary"]["rankingBlockCount"] == 4
-            assert body["summary"]["rankedItemCount"] == 4
-            assert body["summary"]["limit"] == 1
+            assert set(body) == {"data", "page_info", "meta"}
+            data = body["data"]
+            summary = data["summary"]
+            assert set(data) == {"id", "items", "summary"}
+            assert "items" not in body
+            assert "rankings" not in body
+            assert summary["runtime_count"] == 2
+            assert summary["ranking_block_count"] == 4
+            assert summary["ranked_item_count"] == 4
+            assert summary["limit"] == 1
             assert body["page_info"] == {
                 "next_page_token": None,
                 "total": 4,
                 "page_size": 4,
             }
 
-            blocks = {block["blockId"]: block for block in body["rankingBlocks"]}
-            assert blocks["pnl-leaders"]["items"][0]["runtimeId"] == "runtime-alpha"
-            assert blocks["pnl-leaders"]["items"][0]["rankingMetric"] == "pnl"
-            assert blocks["drawdown-control"]["items"][0]["runtimeId"] == "runtime-beta"
-            assert blocks["execution-quality"]["items"][0]["rankingMetric"] == "fill_rate"
-            assert blocks["sharpe-leaders"]["items"][0]["runtimeId"] == "runtime-alpha"
-            assert blocks["pnl-leaders"]["items"][0]["baselineComparisonStatus"] == "watch"
+            blocks = {block["block_id"]: block for block in data["items"]}
+            assert blocks["pnl-leaders"]["items"][0]["runtime_id"] == "runtime-alpha"
+            assert blocks["pnl-leaders"]["items"][0]["ranking_metric"] == "pnl"
+            assert blocks["drawdown-control"]["items"][0]["runtime_id"] == "runtime-beta"
+            assert blocks["execution-quality"]["items"][0]["ranking_metric"] == "fill_rate"
+            assert blocks["sharpe-leaders"]["items"][0]["runtime_id"] == "runtime-alpha"
+            assert blocks["pnl-leaders"]["items"][0]["baseline_comparison_status"] == "watch"
             assert (
                 body["meta"]["surfaces"]["management_trading_pulse_rankings"]["source"]
                 == "bff_composed"
