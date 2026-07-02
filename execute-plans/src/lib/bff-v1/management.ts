@@ -1138,9 +1138,21 @@ export interface ManagementPersonaLeagueRow {
   [key: string]: unknown;
 }
 
+export interface ManagementPersonaLeagueSummary {
+  personaCount: number;
+  persona_count: number;
+  returnedCount: number;
+  returned_count: number;
+  [key: string]: unknown;
+}
+
 export interface ManagementPersonaLeagueResponse {
-  data: ManagementPersonaLeagueRow[];
-  items: ManagementPersonaLeagueRow[];
+  data: {
+    id: "management-persona-league" | string;
+    items: ManagementPersonaLeagueRow[];
+    summary: ManagementPersonaLeagueSummary;
+    [key: string]: unknown;
+  };
   page_info: {
     next_page_token: string | null;
     total: number;
@@ -1204,17 +1216,17 @@ export interface ManagementPersonaLeagueRankingBlock {
 }
 
 export interface ManagementPersonaLeagueRankingsResponse {
-  data: ManagementPersonaLeagueRankingBlock[];
-  items: ManagementPersonaLeagueRankingBlock[];
-  rankings: ManagementPersonaLeagueRankingBlock[];
-  rankingBlocks: ManagementPersonaLeagueRankingBlock[];
-  ranking_blocks: ManagementPersonaLeagueRankingBlock[];
-  summary: {
-    personaCount: number;
-    persona_count: number;
-    criteria: string[];
-    topPersonaId?: string | null;
-    top_persona_id?: string | null;
+  data: {
+    id: "management-persona-league-rankings" | string;
+    items: ManagementPersonaLeagueRankingBlock[];
+    summary: {
+      personaCount: number;
+      persona_count: number;
+      criteria: string[];
+      topPersonaId?: string | null;
+      top_persona_id?: string | null;
+      [key: string]: unknown;
+    };
     [key: string]: unknown;
   };
   page_info: {
@@ -1304,14 +1316,10 @@ export interface ManagementPersonaLeagueMoversResponse {
   data: {
     id: "management-persona-league-movers" | string;
     items: ManagementPersonaLeagueMover[];
-    movers: ManagementPersonaLeagueMover[];
     summary: ManagementPersonaLeagueMoversSummary;
     policy?: string;
     [key: string]: unknown;
   };
-  items: ManagementPersonaLeagueMover[];
-  movers: ManagementPersonaLeagueMover[];
-  summary: ManagementPersonaLeagueMoversSummary;
   page_info: {
     next_page_token: string | null;
     total: number;
@@ -1368,21 +1376,27 @@ export interface ManagementPersonaLeagueTier {
 }
 
 export interface ManagementPersonaLeagueTiersResponse {
-  data: ManagementPersonaLeagueTier[];
-  items: ManagementPersonaLeagueTier[];
-  tiers: ManagementPersonaLeagueTier[];
-  assignments: ManagementPersonaLeagueTierAssignment[];
-  summary: {
-    seasonId: string;
-    season_id: string;
-    formulaVersion: string;
-    formula_version: string;
-    personaCount: number;
-    persona_count: number;
-    tierCount: number;
-    tier_count: number;
-    byTier: Record<string, number>;
-    by_tier: Record<string, number>;
+  data: {
+    id: "management-persona-league-tiers" | string;
+    items: ManagementPersonaLeagueTier[];
+    related: {
+      assignments: ManagementPersonaLeagueTierAssignment[];
+      [key: string]: unknown;
+    };
+    summary: {
+      seasonId: string;
+      season_id: string;
+      formulaVersion: string;
+      formula_version: string;
+      personaCount: number;
+      persona_count: number;
+      tierCount: number;
+      tier_count: number;
+      byTier: Record<string, number>;
+      by_tier: Record<string, number>;
+      [key: string]: unknown;
+    };
+    policy?: string;
     [key: string]: unknown;
   };
   page_info: {
@@ -1477,20 +1491,14 @@ export interface ManagementPersonaLeagueHeatmapResponse {
     heatmapId: string;
     heatmap_id: string;
     bucket: string;
+    items: ManagementPersonaLeagueHeatmapRow[];
     buckets: ManagementPersonaLeagueHeatmapBucket[];
-    rows: ManagementPersonaLeagueHeatmapRow[];
-    cells: ManagementPersonaLeagueHeatmapCell[];
     summary: Record<string, unknown>;
     formulaVersion: string;
     formula_version: string;
     basis: string;
     [key: string]: unknown;
   };
-  items: ManagementPersonaLeagueHeatmapRow[];
-  rows: ManagementPersonaLeagueHeatmapRow[];
-  buckets: ManagementPersonaLeagueHeatmapBucket[];
-  cells: ManagementPersonaLeagueHeatmapCell[];
-  summary: Record<string, unknown>;
   page_info: {
     next_page_token: string | null;
     total: number;
@@ -1646,7 +1654,6 @@ export interface ManagementQuarterlyRankingData {
   quarter_window: ManagementQuarterlyRankingWindow;
   formula: ManagementQuarterlyRankingFormula;
   items: ManagementQuarterlyRankingItem[];
-  rankings: ManagementQuarterlyRankingItem[];
   evidenceRefs: ManagementEvidenceItem[];
   evidence_refs: ManagementEvidenceItem[];
   summary: ManagementQuarterlyRankingSummary;
@@ -1655,14 +1662,6 @@ export interface ManagementQuarterlyRankingData {
 
 export interface ManagementQuarterlyRankingResponse {
   data: ManagementQuarterlyRankingData;
-  items: ManagementQuarterlyRankingItem[];
-  rankings: ManagementQuarterlyRankingItem[];
-  formula: ManagementQuarterlyRankingFormula;
-  quarterWindow: ManagementQuarterlyRankingWindow;
-  quarter_window: ManagementQuarterlyRankingWindow;
-  evidenceRefs: ManagementEvidenceItem[];
-  evidence_refs: ManagementEvidenceItem[];
-  summary: ManagementQuarterlyRankingSummary;
   page_info: {
     next_page_token: string | null;
     total: number;
@@ -1907,7 +1906,6 @@ export interface ManagementQuarterlyRankingRecommendationsData {
   quarter_window: ManagementQuarterlyRankingWindow;
   formula: ManagementQuarterlyRankingFormula;
   items: ManagementQuarterlyRankingRecommendationItem[];
-  recommendations: ManagementQuarterlyRankingRecommendationItem[];
   evidenceRefs: ManagementEvidenceItem[];
   evidence_refs: ManagementEvidenceItem[];
   summary: ManagementQuarterlyRankingRecommendationsSummary;
@@ -1921,14 +1919,6 @@ export interface ManagementQuarterlyRankingRecommendationsData {
 
 export interface ManagementQuarterlyRankingRecommendationsResponse {
   data: ManagementQuarterlyRankingRecommendationsData;
-  items: ManagementQuarterlyRankingRecommendationItem[];
-  recommendations: ManagementQuarterlyRankingRecommendationItem[];
-  formula: ManagementQuarterlyRankingFormula;
-  quarterWindow: ManagementQuarterlyRankingWindow;
-  quarter_window: ManagementQuarterlyRankingWindow;
-  evidenceRefs: ManagementEvidenceItem[];
-  evidence_refs: ManagementEvidenceItem[];
-  summary: ManagementQuarterlyRankingRecommendationsSummary;
   page_info: {
     next_page_token: string | null;
     total: number;
