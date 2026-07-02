@@ -3104,16 +3104,10 @@ export interface ManagementCostAttributionResponse {
   data: {
     id: "management-cost-attribution" | string;
     items: ManagementCostAttributionRow[];
-    rows: ManagementCostAttributionRow[];
-    attributions: ManagementCostAttributionRow[];
     summary: ManagementCostAttributionSummary;
     policy?: string;
     [key: string]: unknown;
   };
-  items: ManagementCostAttributionRow[];
-  rows: ManagementCostAttributionRow[];
-  attributions: ManagementCostAttributionRow[];
-  summary: ManagementCostAttributionSummary;
   page_info: {
     next_page_token: string | null;
     total: number;

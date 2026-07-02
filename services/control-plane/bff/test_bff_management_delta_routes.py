@@ -1017,18 +1017,19 @@ def test_cost_attribution_success() -> None:
             body = response.json()
             data = body["data"]
 
+            assert set(body) == {"data", "page_info", "meta"}
             assert data["id"] == "management-cost-attribution"
-            assert body["items"] == body["rows"] == data["rows"]
-            assert body["attributions"] == body["items"]
-            assert body["summary"] == data["summary"]
+            assert set(data) >= {"items", "summary"}
+            assert "rows" not in data
+            assert "attributions" not in data
             assert body["page_info"]["page_size"] == 20
-            assert body["summary"]["policy"] == "read_only_cost_attribution"
+            assert data["summary"]["policy"] == "read_only_cost_attribution"
             assert body["meta"]["policy"] == "read_only_cost_attribution"
             assert "cost_attribution" in body["meta"]["surfaces"]
             assert body["meta"]["surfaces"]["cost_attribution"]["source"] == "bff_composed"
             assert "GET /bff/capital-pools" in body["meta"]["composition_sources"]
-            assert "row_count" in body["summary"]
-            assert "total_cost" in body["summary"]
+            assert "row_count" in data["summary"]
+            assert "total_cost" in data["summary"]
         finally:
             bff_main.read_store = original
 
@@ -1048,7 +1049,7 @@ def test_cost_attribution_filter_by_persona() -> None:
             assert response.status_code == 200, response.text
             body = response.json()
             assert body["page_info"]["total"] == 0
-            assert body["items"] == []
+            assert body["data"]["items"] == []
         finally:
             bff_main.read_store = original
 
