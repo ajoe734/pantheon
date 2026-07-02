@@ -53,6 +53,9 @@ Rules:
   expose richer nested records when the user explicitly opens a row.
 - `meta.related` may expose href-only links to child aggregates. It must not
   embed child aggregate payloads.
+- Backend and adapter tests for every new or migrated list route must assert
+  that top-level aliases such as `items`, `rows`, `summary`, `rankings`,
+  `pools`, and domain-specific plural list names are absent.
 
 ## Slim Row DTO
 
@@ -142,5 +145,7 @@ Before adding or changing a Management list endpoint:
 - document which filters are server-side and prove the frontend passes them;
 - keep one envelope and one casing;
 - move source/detail/health aggregates to detail endpoints;
+- add or update route and frontend adapter tests that consume only
+  `data.items` and `data.summary`;
 - run the contract guardrail with `--fail-on-new`;
 - remove baseline fingerprints when an existing endpoint is slimmed.

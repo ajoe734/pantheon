@@ -40,11 +40,14 @@ def test_persona_intent_composes_redacted_trace_trainer_and_agora_sources() -> N
 
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["data"] == body["items"]
-            assert body["summary"]["persona_trace_count"] >= 1
-            assert body["summary"]["trainer_session_count"] >= 1
-            assert body["summary"]["agora_session_count"] >= 1
-            assert body["summary"]["redacted_item_count"] == body["summary"]["total_items"]
+            assert set(body.keys()) == {"data", "page_info", "meta"}
+            assert set(body["data"].keys()) == {"id", "items", "summary"}
+            items = body["data"]["items"]
+            summary = body["data"]["summary"]
+            assert summary["persona_trace_count"] >= 1
+            assert summary["trainer_session_count"] >= 1
+            assert summary["agora_session_count"] >= 1
+            assert summary["redacted_item_count"] == summary["total_items"]
             assert body["meta"]["surfaces"]["management_persona_intent"]["source"] == "bff_composed"
             for surface in [
                 "persona_traces",
@@ -55,7 +58,7 @@ def test_persona_intent_composes_redacted_trace_trainer_and_agora_sources() -> N
             ]:
                 assert surface in body["meta"]["surfaces"]
 
-            by_type = {item["source_type"]: item for item in body["items"]}
+            by_type = {item["source_type"]: item for item in items}
             assert by_type["persona_trace"]["trace"]["trace_id"]
             assert by_type["persona_trace"]["trace"]["capability_summary"]["effective_tool_count"] >= 1
             assert by_type["trainer_session"]["trainer"]["outcome_count"] >= 1
@@ -87,8 +90,9 @@ def test_persona_intent_supports_filters_and_pagination() -> None:
             body = resp.json()
             assert body["page_info"]["page_size"] == 1
             assert body["page_info"]["total"] == 1
-            assert len(body["items"]) == 1
-            item = body["items"][0]
+            items = body["data"]["items"]
+            assert len(items) == 1
+            item = items[0]
             assert item["source_type"] == "persona_trace"
             assert item["persona_id"] == "persona-alpha"
             assert item["status"] == "active"

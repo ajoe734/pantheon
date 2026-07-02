@@ -2270,9 +2270,12 @@ export interface ManagementEvolutionJournalSummary {
 }
 
 export interface ManagementEvolutionJournalResponse {
-  data: ManagementEvolutionJournalItem[];
-  items: ManagementEvolutionJournalItem[];
-  summary: ManagementEvolutionJournalSummary;
+  data: {
+    id: string;
+    items: ManagementEvolutionJournalItem[];
+    summary: ManagementEvolutionJournalSummary;
+    [key: string]: unknown;
+  };
   page_info: {
     next_page_token: string | null;
     total: number;
@@ -2364,9 +2367,12 @@ export interface ManagementPersonaIntentSummary {
 }
 
 export interface ManagementPersonaIntentResponse {
-  data: ManagementPersonaIntentItem[];
-  items: ManagementPersonaIntentItem[];
-  summary: ManagementPersonaIntentSummary;
+  data: {
+    id: string;
+    items: ManagementPersonaIntentItem[];
+    summary: ManagementPersonaIntentSummary;
+    [key: string]: unknown;
+  };
   page_info: {
     next_page_token: string | null;
     total: number;
