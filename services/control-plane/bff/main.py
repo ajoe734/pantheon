@@ -27169,14 +27169,10 @@ def _management_strategy_allocation_response(
     data = {
         "id": "management-strategy-allocation",
         "items": page_items,
-        "rows": page_items,
         "summary": summary,
     }
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -27554,16 +27550,10 @@ def _management_capital_flow_response(
     data = {
         "id": "management-capital-flow",
         "items": page_items,
-        "rows": page_items,
-        "flows": page_items,
         "summary": summary,
     }
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "flows": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -27977,16 +27967,10 @@ def _management_risk_radar_response(
     data = {
         "id": "management-risk-radar",
         "items": page_items,
-        "rows": page_items,
-        "indicators": page_items,
         "summary": summary,
     }
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "indicators": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -28246,22 +28230,11 @@ def _management_incident_timeline_response(
     data = {
         "id": "management-incident-timeline",
         "items": page_items,
-        "rows": page_items,
-        "incidents": page_items,
-        "events": page_items,
         "summary": summary,
-        "severityBuckets": severity_buckets,
         "severity_buckets": severity_buckets,
     }
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "incidents": page_items,
-        "events": page_items,
-        "summary": summary,
-        "severityBuckets": severity_buckets,
-        "severity_buckets": severity_buckets,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -28556,8 +28529,6 @@ def _management_loop_throughput_response(
     data = {
         "id": "management-loop-throughput",
         "items": page_items,
-        "rows": page_items,
-        "loops": page_items,
         "summary": summary,
         "metrics": summary,
     }
@@ -28569,11 +28540,6 @@ def _management_loop_throughput_response(
         surfaces["incidents"] = loop_surface
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "loops": page_items,
-        "summary": summary,
-        "metrics": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -41417,14 +41383,10 @@ def _pm12_performance_attribution_response(
         "period": period_key,
         "dimensions": dimensions,
         "items": page_items,
-        "rows": page_items,
         "summary": summary,
     }
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,

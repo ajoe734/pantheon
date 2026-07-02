@@ -312,26 +312,26 @@ def test_incident_timeline_returns_chronological_bucketed_incidents(monkeypatch)
     data = body["data"]
 
     assert data["id"] == "management-incident-timeline"
-    assert body["items"] == body["rows"] == body["incidents"] == body["events"] == data["items"]
-    assert data["rows"] == data["incidents"] == data["events"] == body["items"]
-    assert [item["incident_id"] for item in body["items"]] == [
+    assert set(body) == {"data", "page_info", "meta"}
+    assert set(data) == {"id", "items", "summary", "severity_buckets"}
+    assert [item["incident_id"] for item in data["items"]] == [
         "inc-delta-low",
         "inc-delta-medium",
         "inc-delta-high",
     ]
-    assert [item["sequence"] for item in body["items"]] == [1, 2, 3]
-    assert body["items"][2]["severity_bucket"] == "high"
-    assert body["items"][2]["lineage_ref"] == "artifact-alpha@v1"
-    assert body["items"][2]["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
-    assert body["items"][2]["links"]["incident"] == "/bff/incidents/inc-delta-high"
+    assert [item["sequence"] for item in data["items"]] == [1, 2, 3]
+    assert data["items"][2]["severity_bucket"] == "high"
+    assert data["items"][2]["lineage_ref"] == "artifact-alpha@v1"
+    assert data["items"][2]["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
+    assert data["items"][2]["links"]["incident"] == "/bff/incidents/inc-delta-high"
 
-    assert body["severityBuckets"] == {"high": 1, "medium": 1, "low": 1}
-    assert body["summary"]["severityBuckets"] == body["severityBuckets"]
-    assert body["summary"]["incident_count"] == 3
-    assert body["summary"]["active_incident_count"] == 2
-    assert body["summary"]["resolved_incident_count"] == 1
-    assert body["summary"]["first_incident_at"] == "2026-05-24T07:00:00Z"
-    assert body["summary"]["latest_incident_at"] == "2026-05-24T09:15:00Z"
+    assert data["severity_buckets"] == {"high": 1, "medium": 1, "low": 1}
+    assert data["summary"]["severity_buckets"] == data["severity_buckets"]
+    assert data["summary"]["incident_count"] == 3
+    assert data["summary"]["active_incident_count"] == 2
+    assert data["summary"]["resolved_incident_count"] == 1
+    assert data["summary"]["first_incident_at"] == "2026-05-24T07:00:00Z"
+    assert data["summary"]["latest_incident_at"] == "2026-05-24T09:15:00Z"
     assert body["page_info"] == {"next_page_token": None, "total": 3, "page_size": 10}
     assert body["meta"]["surfaces"]["incident_timeline"]["source"] == "bff_composed"
     assert body["meta"]["surfaces"]["incidents"]["source"] == "service_store"
@@ -350,9 +350,9 @@ def test_incident_timeline_filters_by_runtime(monkeypatch) -> None:
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["summary"]["incident_count"] == 1
-    assert body["items"][0]["incident_id"] == "inc-delta-low"
-    assert body["severityBuckets"] == {"high": 0, "medium": 0, "low": 1}
+    assert body["data"]["summary"]["incident_count"] == 1
+    assert body["data"]["items"][0]["incident_id"] == "inc-delta-low"
+    assert body["data"]["severity_buckets"] == {"high": 0, "medium": 0, "low": 1}
 
 
 def test_incident_timeline_requires_auth(monkeypatch) -> None:
@@ -440,22 +440,22 @@ def test_loop_throughput_reports_queue_depth_lag_and_rate(monkeypatch) -> None:
     data = body["data"]
 
     assert data["id"] == "management-loop-throughput"
-    assert body["items"] == body["rows"] == body["loops"] == data["items"]
-    assert data["rows"] == data["loops"] == body["items"]
+    assert set(body) == {"data", "page_info", "meta"}
+    assert set(data) == {"id", "items", "summary", "metrics"}
     assert body["page_info"] == {"next_page_token": None, "total": 3, "page_size": 10}
-    assert body["summary"] == data["summary"] == body["metrics"]
-    assert body["summary"]["loop_count"] == 3
-    assert body["summary"]["queue_depth"] == 1
-    assert body["summary"]["active_loop_count"] == 1
-    assert body["summary"]["completed_loop_count"] == 1
-    assert body["summary"]["runs_per_minute"] == 0.375
-    assert body["summary"]["max_queue_lag_seconds"] == 120.0
-    assert body["summary"]["average_queue_lag_seconds"] == 120.0
-    assert body["summary"]["by_status"] == {"completed": 1, "running": 1, "queued": 1}
-    assert body["items"][0]["loop_run_id"] == "loop-completed"
-    assert body["items"][0]["queue_lag_seconds"] == 120.0
-    assert body["items"][0]["duration_seconds"] == 240.0
-    assert body["items"][0]["links"]["loop_run"] == "/bff/v5/loop-runs/loop-completed"
+    assert data["summary"] == data["metrics"]
+    assert data["summary"]["loop_count"] == 3
+    assert data["summary"]["queue_depth"] == 1
+    assert data["summary"]["active_loop_count"] == 1
+    assert data["summary"]["completed_loop_count"] == 1
+    assert data["summary"]["runs_per_minute"] == 0.375
+    assert data["summary"]["max_queue_lag_seconds"] == 120.0
+    assert data["summary"]["average_queue_lag_seconds"] == 120.0
+    assert data["summary"]["by_status"] == {"completed": 1, "running": 1, "queued": 1}
+    assert data["items"][0]["loop_run_id"] == "loop-completed"
+    assert data["items"][0]["queue_lag_seconds"] == 120.0
+    assert data["items"][0]["duration_seconds"] == 240.0
+    assert data["items"][0]["links"]["loop_run"] == "/bff/v5/loop-runs/loop-completed"
     assert body["meta"]["surfaces"]["loop_throughput"]["source"] == "bff_composed"
     assert body["meta"]["surfaces"]["loop_runs"]["source"] == "service_store"
     assert body["meta"]["policy"] == "read_only_loop_throughput"
@@ -467,8 +467,8 @@ def test_loop_throughput_reports_queue_depth_lag_and_rate(monkeypatch) -> None:
         params={"status": "queued"},
     )
     assert queued.status_code == 200, queued.text
-    assert queued.json()["summary"]["queue_depth"] == 1
-    assert queued.json()["items"][0]["loop_run_id"] == "loop-queued"
+    assert queued.json()["data"]["summary"]["queue_depth"] == 1
+    assert queued.json()["data"]["items"][0]["loop_run_id"] == "loop-queued"
 
 
 def test_loop_throughput_cors_preflight_and_openapi(monkeypatch) -> None:
