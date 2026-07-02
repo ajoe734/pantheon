@@ -64,13 +64,27 @@ def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfaceStore]]:
 
 def _empty_evidence_payload(**_kwargs):
     return {
-        "data": [],
-        "items": [],
-        "summary": {},
-        "facets": {},
-        "page_info": {},
-        "pagination": {},
-        "meta": {},
+        "data": {
+            "id": "management-evidence",
+            "items": [],
+            "summary": {
+                "total_evidence": 0,
+                "returned_evidence": 0,
+                "visible_evidence": 0,
+                "redacted_evidence": 0,
+                "verified_evidence": 0,
+                "by_source_type": {},
+                "by_link_type": {},
+                "by_credibility_tier": {},
+            },
+            "facets": {
+                "source_types": {},
+                "link_types": {},
+                "credibility_tiers": {},
+            },
+        },
+        "page_info": {"next_page_token": None, "total": 0, "page_size": 0},
+        "meta": {"surfaces": {}},
     }
 
 
@@ -137,8 +151,9 @@ def test_evidence_timeout_returns_degraded_envelope_without_hanging(monkeypatch)
     assert response.status_code == 200, response.text
     assert elapsed < 0.25, f"evidence route took {elapsed:.3f}s; it should degrade near the timeout budget"
     payload = response.json()
-    assert payload["data"] == []
-    assert payload["items"] == []
+    assert payload["data"]["items"] == []
+    assert payload["data"]["summary"]["total_evidence"] == 0
+    assert "items" not in payload
     surface = payload["meta"]["surfaces"]["management_evidence"]
     assert surface["status"] == "degraded"
     assert surface["reason"] == "read_timeout"

@@ -138,7 +138,8 @@ def _evidence_client() -> Iterator[TestClient]:
                 os.path.join(td, "read_surfaces.json"),
                 allow_local_snapshot_fallback=True,
             )
-            yield TestClient(bff_main.app)
+            with TestClient(bff_main.app) as client:
+                yield client
         finally:
             bff_main.read_store = original_store
             for key, value in tracked_env.items():
@@ -181,6 +182,10 @@ def test_management_evidence_composes_explorer_envelope_with_filters() -> None:
         assert item["linked_object_summary"]["entity_ref"] == "exp-b3-alpha"
         assert item["route_href"] == "/knowledge/evidence/evref-b3-metric-001"
         assert item["redacted"] is False
+        assert "refId" not in item
+        assert "sourceType" not in item
+        assert "linkedObjectSummary" not in item
+        assert "routeHref" not in item
 
 
 def test_management_evidence_preserves_artifact_manifest_from_store() -> None:
@@ -208,6 +213,7 @@ def test_management_evidence_preserves_artifact_manifest_from_store() -> None:
         assert all(entry["current_run_allowed"] is True for entry in manifest["files"])
         assert item["criteria"]["rbac_matrix"]["status"] == "pass"
         assert item["criteria"]["current_run_only"]["note"] == "2 artifact file(s); current-run scope only"
+        assert "artifactManifest" not in item
 
 
 @contextmanager
@@ -226,7 +232,8 @@ def _current_run_evidence_client(verifier_path: Path) -> Iterator[TestClient]:
             str(verifier_path.parent / "read_surfaces.json"),
             allow_local_snapshot_fallback=False,
         )
-        yield TestClient(bff_main.app)
+        with TestClient(bff_main.app) as client:
+            yield client
     finally:
         bff_main.read_store = original_store
         for key, value in tracked_env.items():
@@ -338,6 +345,10 @@ def test_management_evidence_projects_current_run_verifier_when_store_missing(tm
     assert item["criteria"]["rbac_matrix"]["status"] == "fail"
     assert item["criteria"]["rbac_matrix"]["note"] == "missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON"
     assert item["criteria"]["current_run_only"]["status"] == "pass"
+    assert "sourceType" not in item
+    assert "linkType" not in item
+    assert "linkedObjectSummary" not in item
+    assert "artifactManifest" not in item
 
 
 def test_management_evidence_ignores_malformed_current_run_verifier(tmp_path: Path) -> None:
@@ -371,6 +382,7 @@ def test_management_evidence_preserves_capability_redaction() -> None:
         assert item["redacted"] is True
         assert item["required_capability"] == "metric.read"
         assert item["reason"] == "insufficient_capability"
+        assert "requiredCapability" not in item
 
 
 def test_knowledge_evidence_detail_exposes_linked_object_summary() -> None:

@@ -454,6 +454,7 @@ describe("managementClient — Evidence Explorer aggregate live adapter", () => 
     expect("summary" in aggregate).toBe(false);
     expect("facets" in aggregate).toBe(false);
     expect(aggregate.data.items[0].ref_id).toBe("evref-b3-metric-001");
+    expect("refId" in aggregate.data.items[0]).toBe(false);
     expect(aggregate.data.summary.total_evidence).toBe(1);
     expect(aggregate.data.facets.source_types).toEqual({ metric: 1 });
     expect(aggregate.meta.redacted_evidence_count).toBe(0);
