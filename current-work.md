@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-07-02 23:29:04
+Last updated: 2026-07-02 23:41:44
 
 ## Objective
 
@@ -27,7 +27,7 @@ Implement the paper-first persona lifecycle: create persona directly into paper 
 
 - `Claude`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.
+- `Codex`: integration, status-system, schema, acceptance; next: Risk guardrail evaluator now emits pause/reduce/risk_off/frozen events with incident evidence, no promotion/allocation authority, and human-review resume markers for risk_off/frozen. Validation: pytest capital risk policy, persona paper/live schema, fleet contract regressions.
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: Assignment created
@@ -47,7 +47,7 @@ Implement the paper-first persona lifecycle: create persona directly into paper 
 | `PPLG-003` | EPIC PPLG / fleet read model | Persona Fleet readiness projection and payload cleanup | Codex2 | todo | `PPLG-001` | 補 Fleet readiness/competition projection 並移除重複大 payload，讓 row 在同一 cohort 顯示 paper challengers、canary challengers、live incumbents。 |
 | `PPLG-004` | EPIC PPLG / evaluation ranking | Paper eligibility and unified competition ranking engine | Claude2 | todo | `PPLG-001` | 實作 paper hard gates、promotion_score、paper/canary/live 同 cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。 |
 | `PPLG-005` | EPIC PPLG / human review | Human review workflows for canary live and quarterly ranking | Claude | todo | `PPLG-004` | 實作 promotion/canary/live/quarterly/replacement/resume human review，所有真錢資金進出與季度重排都需人審。 |
-| `PPLG-006` | EPIC PPLG / risk guardrails | Automatic risk guardrails and incident review evidence | Codex | todo | `PPLG-001` | 實作虧損、drawdown、exposure、slippage、order/data/runtime/policy/correlation guardrails，可自動 pause/reduce/risk_off/freeze 並建立事件審核。 |
+| `PPLG-006` | EPIC PPLG / risk guardrails | Automatic risk guardrails and incident review evidence | Codex | review | `PPLG-001` | 實作虧損、drawdown、exposure、slippage、order/data/runtime/policy/correlation guardrails，可自動 pause/reduce/risk_off/freeze 並建立事件審核。 |
 | `PPLG-007` | EPIC PPLG / frontend UX | Frontend Create Paper Persona and unified Fleet UX | Codex2 | todo | `PPLG-002`, `PPLG-003`, `PPLG-005` | 更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，研究/模擬/正式只控制命令上下文，不拆開 paper/live 競爭視圖。 |
 | `PPLG-008` | EPIC PPLG / verification | End-to-end release gate and fleet closeout | Gemini2 | todo | `PPLG-002`, `PPLG-003`, `PPLG-004`, `PPLG-005`, `PPLG-006`, `PPLG-007` | 建立完整驗證包：create->paper runtime->evaluation->human review->canary/live/quarterly/risk-off 全流程證據。 |
 
@@ -94,7 +94,7 @@ Implement the paper-first persona lifecycle: create persona directly into paper 
 | `PPLG-003` | EPIC PPLG / fleet read model | Persona Fleet readiness projection and payload cleanup | 補 Fleet readiness/competition projection 並移除重複大 payload，讓 row 在同一 cohort 顯示 paper challengers、canary challengers、live incumbents。 | Codex2 | Claude2 | todo | `PPLG-001` | 2026-07-02 21:48:00 | Assignment created |
 | `PPLG-004` | EPIC PPLG / evaluation ranking | Paper eligibility and unified competition ranking engine | 實作 paper hard gates、promotion_score、paper/canary/live 同 cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。 | Claude2 | Codex | todo | `PPLG-001` | 2026-07-02 21:48:10 | Assignment created |
 | `PPLG-005` | EPIC PPLG / human review | Human review workflows for canary live and quarterly ranking | 實作 promotion/canary/live/quarterly/replacement/resume human review，所有真錢資金進出與季度重排都需人審。 | Claude | Codex2 | todo | `PPLG-004` | 2026-07-02 21:48:22 | Assignment created |
-| `PPLG-006` | EPIC PPLG / risk guardrails | Automatic risk guardrails and incident review evidence | 實作虧損、drawdown、exposure、slippage、order/data/runtime/policy/correlation guardrails，可自動 pause/reduce/risk_off/freeze 並建立事件審核。 | Codex | Claude2 | todo | `PPLG-001` | 2026-07-02 21:48:33 | Assignment created |
+| `PPLG-006` | EPIC PPLG / risk guardrails | Automatic risk guardrails and incident review evidence | 實作虧損、drawdown、exposure、slippage、order/data/runtime/policy/correlation guardrails，可自動 pause/reduce/risk_off/freeze 並建立事件審核。 | Codex | Claude2 | review | `PPLG-001` | 2026-07-02 23:41:44 | Risk guardrail evaluator now emits pause/reduce/risk_off/frozen events with incident evidence, no promotion/allocation authority, and human-review resume markers for risk_off/frozen. Validation: pytest capital risk policy, persona paper/live schema, fleet contract regressions. |
 | `PPLG-007` | EPIC PPLG / frontend UX | Frontend Create Paper Persona and unified Fleet UX | 更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，研究/模擬/正式只控制命令上下文，不拆開 paper/live 競爭視圖。 | Codex2 | Claude | todo | `PPLG-002`, `PPLG-003`, `PPLG-005` | 2026-07-02 21:48:46 | Assignment created |
 | `PPLG-008` | EPIC PPLG / verification | End-to-end release gate and fleet closeout | 建立完整驗證包：create->paper runtime->evaluation->human review->canary/live/quarterly/risk-off 全流程證據。 | Gemini2 | Codex | todo | `PPLG-002`, `PPLG-003`, `PPLG-004`, `PPLG-005`, `PPLG-006`, `PPLG-007` | 2026-07-02 21:48:57 | Assignment created |
 
@@ -103,6 +103,7 @@ Implement the paper-first persona lifecycle: create persona directly into paper 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `PPLG-001` | Codex | Claude | Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review. | pending | 2026-07-02 23:29:04 |
+| `PPLG-006` | Codex | Claude2 | Risk guardrail evaluator now emits pause/reduce/risk_off/frozen events with incident evidence, no promotion/allocation authority, and human-review resume markers for risk_off/frozen. Validation: pytest capital risk policy, persona paper/live schema, fleet contract regressions. | pending | 2026-07-02 23:41:44 |
 
 ## Blockers
 
@@ -162,5 +163,5 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-07-02 23:28:55 Codex: `PPLG-001` Implementing canonical persona paper/live schema, BFF contract, and regression tests.
-- 2026-07-02 23:29:04 Codex: `PPLG-001` Handoff to Claude: Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.
+- 2026-07-02 23:41:38 Codex: `PPLG-006` Implementing automatic risk guardrails with incident evidence and human-review resume semantics.
+- 2026-07-02 23:41:44 Codex: `PPLG-006` Handoff to Claude2: Risk guardrail evaluator now emits pause/reduce/risk_off/frozen events with incident evidence, no promotion/allocation authority, and human-review resume markers for risk_off/frozen. Validation: pytest capital risk policy, persona paper/live schema, fleet contract regressions.

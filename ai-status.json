@@ -3,7 +3,7 @@
   "sprint": "2026-07-02-persona-paper-live-gap",
   "sprint_started_at": "2026-07-02T00:00:00Z",
   "objective": "Implement the paper-first persona lifecycle: create persona directly into paper runtime, evaluate paper cohorts, require human approval for canary, live, and quarterly allocation changes, and enforce automatic risk guardrails that can pause, reduce, risk-off, or freeze immediately.",
-  "updated_at": "2026-07-02T15:29:04Z",
+  "updated_at": "2026-07-02T15:41:44Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -127,11 +127,12 @@
       ],
       "status": "reviewing",
       "current_task_ids": [
-        "PPLG-001"
+        "PPLG-001",
+        "PPLG-006"
       ],
       "branch": "task/ASST-OCGW-001",
-      "next": "Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.",
-      "last_update": "2026-07-02T15:29:04Z"
+      "next": "Risk guardrail evaluator now emits pause/reduce/risk_off/frozen events with incident evidence, no promotion/allocation authority, and human-review resume markers for risk_off/frozen. Validation: pytest capital risk policy, persona paper/live schema, fleet contract regressions.",
+      "last_update": "2026-07-02T15:41:44Z"
     },
     {
       "name": "Codex2",
@@ -392,7 +393,7 @@
       "phase": "EPIC PPLG / risk guardrails",
       "owner": "Codex",
       "reviewer": "Claude2",
-      "status": "todo",
+      "status": "review",
       "depends_on": [
         "PPLG-001"
       ],
@@ -407,8 +408,8 @@
       "acceptance": [
         "loss/drawdown/policy/data/runtime triggers act immediately;each action records incident and trace;guardrails cannot promote or increase allocation;resume requires human review"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-07-02T13:48:33Z",
+      "next": "Risk guardrail evaluator now emits pause/reduce/risk_off/frozen events with incident evidence, no promotion/allocation authority, and human-review resume markers for risk_off/frozen. Validation: pytest capital risk policy, persona paper/live schema, fleet contract regressions.",
+      "last_update": "2026-07-02T15:41:44Z",
       "source_packet": "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
       "task_packet_dir": "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap",
       "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
@@ -497,6 +498,14 @@
       "message": "Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.",
       "status": "pending",
       "created_at": "2026-07-02T15:29:04Z"
+    },
+    {
+      "task_id": "PPLG-006",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Risk guardrail evaluator now emits pause/reduce/risk_off/frozen events with incident evidence, no promotion/allocation authority, and human-review resume markers for risk_off/frozen. Validation: pytest capital risk policy, persona paper/live schema, fleet contract regressions.",
+      "status": "pending",
+      "created_at": "2026-07-02T15:41:44Z"
     }
   ],
   "blockers": [],
@@ -569,12 +578,12 @@
     },
     "Codex": {
       "total": 2,
-      "active": 1,
+      "active": 2,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 2,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex2": {
       "total": 2,
