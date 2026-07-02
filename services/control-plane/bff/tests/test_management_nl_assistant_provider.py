@@ -824,11 +824,13 @@ def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_pat
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"].startswith("Management summary for question:")
-        assert body["data"]["providerStatus"]["status"] == "disabled"
-        assert body["data"]["providerStatus"]["reason"] == "feature_disabled"
-        assert body["data"]["providerStatus"]["used"] is False
-        assert body["data"]["contextPack"]["mode"] == "user"
-        assert body["data"]["contextPack"]["backend"]["management_nl"]["data"]["tenant_id"] == "tenant-alpha"
+        assert "providerStatus" not in body["data"]
+        assert body["data"]["provider_status"]["status"] == "disabled"
+        assert body["data"]["provider_status"]["reason"] == "feature_disabled"
+        assert body["data"]["provider_status"]["used"] is False
+        assert "contextPack" not in body["data"]
+        assert body["data"]["context_pack"]["mode"] == "user"
+        assert body["data"]["context_pack"]["backend"]["management_nl"]["data"]["tenant_id"] == "tenant-alpha"
         assert fake.calls == []
     finally:
         bff_main.read_store = original_store
@@ -855,8 +857,8 @@ def test_provider_enabled_invokes_openclaw_with_tenant_scoped_context(tmp_path, 
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"] == "Provider grounded management answer."
-        assert body["data"]["providerStatus"]["status"] == "completed"
-        assert body["data"]["providerStatus"]["used"] is True
+        assert body["data"]["provider_status"]["status"] == "completed"
+        assert body["data"]["provider_status"]["used"] is True
         assert body["data"]["confidence"] in {"high", "partial", "unavailable"}
         assert body["data"]["sources"] == ["portfolio"]
         assert len(fake.calls) == 1
@@ -953,18 +955,22 @@ def test_management_nl_passes_conversation_and_ui_context_to_provider(tmp_path, 
 
         assert resp.status_code == 202, resp.text
         body = resp.json()
-        assert body["data"]["sessionId"] == "mgmt-multi-session"
+        assert "sessionId" not in body["data"]
+        assert body["data"]["session_id"] == "mgmt-multi-session"
         assert body["data"]["conversation"]["href"].endswith(
             "/bff/management/ai/conversations/mgmt-multi-session"
         )
         assert "trace_id=" not in body["data"]["conversation"]["href"]
-        assert body["data"]["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
+        assert body["data"]["session"]["ttl_seconds"] >= 7 * 24 * 60 * 60
+        assert "ttlSeconds" not in body["data"]["session"]
 
         management_context = fake.calls[0]["context_pack"]["backend"]["management_nl"]["data"]
         assert management_context["focus"] == "persona_fleet"
         assert management_context["conversation"]["source"] == "server"
-        assert management_context["conversation"]["recentTurns"][0]["content"] == "Continue from the previous answer."
-        assert management_context["conversation"]["clientHint"]["recentTurns"][0]["content"] == "What is unhealthy?"
+        assert management_context["conversation"]["recent_turns"][0]["content"] == "Continue from the previous answer."
+        assert management_context["conversation"]["client_hint"]["recent_turns"][0]["content"] == "What is unhealthy?"
+        assert "recentTurns" not in management_context["conversation"]
+        assert "clientHint" not in management_context["conversation"]
         assert management_context["conversation"]["summary"] == "The operator is reviewing degraded personas."
         assert management_context["ui"]["currentRoute"] == "/management/personas"
         assert management_context["ui"]["selectedEntity"] == {"kind": "persona", "id": "persona-alpha"}
@@ -1011,14 +1017,16 @@ def test_management_nl_context_pack_reflects_active_control_mode(tmp_path, monke
 
         assert resp.status_code == 202, resp.text
         body = resp.json()
-        assert body["data"]["controlMode"]["active"] is True
-        assert body["data"]["controlMode"]["mode"] == "kernel_debug"
-        context_pack = body["data"]["contextPack"]
+        assert body["data"]["control_mode"]["active"] is True
+        assert body["data"]["control_mode"]["mode"] == "kernel_debug"
+        assert "controlMode" not in body["data"]
+        context_pack = body["data"]["context_pack"]
         assert context_pack["mode"] == "kernel_debug"
         assert "assistant.kernel.debug" in context_pack["actor"]["capabilities"]
         management_context = context_pack["backend"]["management_nl"]["data"]
-        assert management_context["controlMode"]["active"] is True
-        assert management_context["controlMode"]["mode"] == "kernel_debug"
+        assert management_context["control_mode"]["active"] is True
+        assert management_context["control_mode"]["mode"] == "kernel_debug"
+        assert "controlMode" not in management_context
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
@@ -1162,8 +1170,8 @@ def test_management_nl_provider_uses_active_kernel_debug_mode(tmp_path, monkeypa
 
         assert resp.status_code == 202, resp.text
         body = resp.json()
-        assert body["data"]["controlMode"]["active"] is True
-        assert body["data"]["providerStatus"]["mode"] == "kernel_debug"
+        assert body["data"]["control_mode"]["active"] is True
+        assert body["data"]["provider_status"]["mode"] == "kernel_debug"
         call = fake.calls[0]
         assert call["mode"] == "kernel_debug"
         assert call["metadata"]["control_mode"]["active"] is True
@@ -1250,11 +1258,13 @@ def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, mon
 
         assert resp.status_code == 202, resp.text
         body = resp.json()
-        provider_status = body["data"]["providerStatus"]
+        provider_status = body["data"]["provider_status"]
         assert provider_status["mode"] == "kernel_repair"
         assert provider_status["sandbox"] == "workspace-write"
-        assert provider_status["workspaceClass"] == "task_worktree"
-        assert provider_status["repairWorkflow"]["task_id"] == "ASST-REPAIR-123"
+        assert provider_status["workspace_class"] == "task_worktree"
+        assert provider_status["repair_workflow"]["task_id"] == "ASST-REPAIR-123"
+        assert "workspaceClass" not in provider_status
+        assert "repairWorkflow" not in provider_status
         call = fake.calls[0]
         assert call["mode"] == "kernel_repair"
         assert call["metadata"]["task_id"] == "ASST-REPAIR-123"
@@ -1314,14 +1324,15 @@ def test_management_nl_direct_passphrase_activates_control_mode_without_provider
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["status"] == "completed"
-        assert body["data"]["lifecycleStatus"] == "completed"
+        assert body["data"]["lifecycle_status"] == "completed"
+        assert "lifecycleStatus" not in body["data"]
         assert body["meta"]["status"] == "completed"
         assert body["data"]["question"] == "[CONTROL MODE COMMAND REDACTED]"
-        assert body["data"]["controlMode"]["active"] is True
-        assert body["data"]["controlMode"]["mode"] == "kernel_debug"
-        assert body["data"]["controlCommand"] == "activate"
-        assert body["data"]["contextPack"] is None
-        provider_status = body["data"]["providerStatus"]
+        assert body["data"]["control_mode"]["active"] is True
+        assert body["data"]["control_mode"]["mode"] == "kernel_debug"
+        assert body["data"]["control_command"] == "activate"
+        assert body["data"]["context_pack"] is None
+        provider_status = body["data"]["provider_status"]
         assert provider_status["provider"] == "pantheon_bff"
         assert provider_status["runtime"] == "management_nl_control_command_interceptor"
         assert provider_status["used"] is True
@@ -1334,7 +1345,8 @@ def test_management_nl_direct_passphrase_activates_control_mode_without_provider
             event for event in sse_events if event.get("type") == "management.nl.ask.completed"
         )
         assert domain_completed["data"]["status"] == "completed"
-        assert domain_completed["data"]["controlCommand"] == "activate"
+        assert domain_completed["data"]["control_command"] == "activate"
+        assert "controlCommand" not in domain_completed["data"]
         assert domain_completed["data"]["conversation"]["href"].endswith("/mgmt-chat-control-session")
 
         conversation_resp = client.get(
@@ -1383,7 +1395,7 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
             headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-prefix"},
         )
         assert activate_resp.status_code == 202, activate_resp.text
-        assert activate_resp.json()["data"]["controlMode"]["active"] is True
+        assert activate_resp.json()["data"]["control_mode"]["active"] is True
 
         status_resp = client.post(
             "/bff/management/nl/ask",
@@ -1391,8 +1403,8 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
             headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-status"},
         )
         assert status_resp.status_code == 202, status_resp.text
-        assert status_resp.json()["data"]["controlMode"]["active"] is True
-        assert status_resp.json()["data"]["controlCommand"] == "status"
+        assert status_resp.json()["data"]["control_mode"]["active"] is True
+        assert status_resp.json()["data"]["control_command"] == "status"
 
         off_resp = client.post(
             "/bff/management/nl/ask",
@@ -1400,8 +1412,8 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
             headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-off"},
         )
         assert off_resp.status_code == 202, off_resp.text
-        assert off_resp.json()["data"]["controlMode"]["active"] is False
-        assert off_resp.json()["data"]["controlCommand"] == "deactivate"
+        assert off_resp.json()["data"]["control_mode"]["active"] is False
+        assert off_resp.json()["data"]["control_command"] == "deactivate"
         assert fake.calls == []
 
         conversation_resp = client.get(
@@ -1517,8 +1529,10 @@ def test_management_nl_stream_records_openclaw_provider_audit_and_usage(tmp_path
         rows = usage_resp.json()["data"]["providers"]
         openclaw = next(row for row in rows if row["provider"] == "openclaw")
         assert openclaw["calls"] == 1
-        assert openclaw["successCount"] == 1
-        assert openclaw["observedUsage"]["source"] == "management_ai_bff_audit"
+        assert openclaw["success_count"] == 1
+        assert "successCount" not in openclaw
+        assert openclaw["observed_usage"]["source"] == "management_ai_bff_audit"
+        assert "observedUsage" not in openclaw
         assert openclaw["models"][0]["model"] == "openclaw/main"
     finally:
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
@@ -1756,9 +1770,10 @@ def test_provider_enabled_extracts_codex_item_completed_text(tmp_path, monkeypat
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"] == "Codex transcript answer."
-        assert body["data"]["providerStatus"]["status"] == "completed"
-        assert body["data"]["providerStatus"]["used"] is True
-        assert "reason" not in body["data"]["providerStatus"]
+        assert body["data"]["provider_status"]["status"] == "completed"
+        assert body["data"]["provider_status"]["used"] is True
+        assert "providerStatus" not in body["data"]
+        assert "reason" not in body["data"]["provider_status"]
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
@@ -1833,18 +1848,19 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         )
         assert conversation_resp.status_code == 200, conversation_resp.text
         conversation = conversation_resp.json()["data"]
-        assert conversation["sessionId"] == "mgmt-audit-session"
         assert conversation["session_id"] == "mgmt-audit-session"
+        assert "sessionId" not in conversation
         turns = conversation["turns"]
         assert [turn["role"] for turn in turns] == ["user", "assistant"]
         assert turns[0]["id"] == turns[0]["message_id"]
         assert turns[0]["text"] == "What is the scoped portfolio?"
-        assert turns[0]["createdAt"]
+        assert turns[0]["created_at"]
+        assert "createdAt" not in turns[0]
         assert turns[0]["content"] == "What is the scoped portfolio?"
         assert turns[1]["text"] == "Audited provider answer."
         assert turns[1]["content"] == "Audited provider answer."
-        assert turns[1]["providerStatus"]["used"] is True
         assert turns[1]["provider_status"]["used"] is True
+        assert "providerStatus" not in turns[1]
 
         audit_resp = client.get(
             "/bff/management/ai/audit?session_id=mgmt-audit-session&trace_id=mgmt-audit-trace",
@@ -1946,26 +1962,32 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
     assert body["status"] == "ok"
     data = body["data"]
     assert data["totals"]["calls"] == 2
-    assert data["totals"]["successCount"] == 1
-    assert data["totals"]["failedCount"] == 1
+    assert data["totals"]["success_count"] == 1
+    assert data["totals"]["failed_count"] == 1
+    assert "successCount" not in data["totals"]
+    assert "failedCount" not in data["totals"]
     providers = {row["provider"]: row for row in data["providers"]}
     codex = providers["codex_cli"]
-    assert codex["liveAuth"] is True
+    assert codex["live_auth"] is True
+    assert "liveAuth" not in codex
     assert codex["quota"]["source"] == "provider_snapshot"
     assert codex["quota"]["remaining"] == 12
     assert codex["quota"]["used"] == 38
-    assert codex["observedUsage"]["source"] == "management_ai_bff_audit"
-    assert codex["observedUsage"]["coverage"] == "bff_observed_management_ai_only"
-    assert codex["observedUsage"]["stale"] is False
-    assert codex["observedUsage"]["totalTokens"] == 14
+    assert codex["observed_usage"]["source"] == "management_ai_bff_audit"
+    assert codex["observed_usage"]["coverage"] == "bff_observed_management_ai_only"
+    assert codex["observed_usage"]["stale"] is False
+    assert codex["observed_usage"]["total_tokens"] == 14
+    assert "observedUsage" not in codex
     assert codex["models"][0]["model"] == "gpt-5-codex"
-    assert codex["models"][0]["inputTokens"] == 10
+    assert codex["models"][0]["input_tokens"] == 10
     claude = providers["claude"]
-    assert claude["liveAuth"] is False
-    assert claude["failedCount"] == 1
+    assert claude["live_auth"] is False
+    assert claude["failed_count"] == 1
     assert claude["quota"]["source"] == "not_configured"
-    assert data["quota"]["missingSourceMeans"] == "quota remaining is unknown, not zero"
-    assert data["usage"]["truthPolicy"] == "observed_bff_events_only"
+    assert data["quota"]["missing_source_means"] == "quota remaining is unknown, not zero"
+    assert data["usage"]["truth_policy"] == "observed_bff_events_only"
+    assert "missingSourceMeans" not in data["quota"]
+    assert "truthPolicy" not in data["usage"]
 
 
 def test_management_ai_conversation_reader_returns_full_session_and_ignores_trace_filter(
@@ -2014,7 +2036,8 @@ def test_management_ai_conversation_reader_returns_full_session_and_ignores_trac
         )
         assert conversation_resp.status_code == 200, conversation_resp.text
         body = conversation_resp.json()
-        assert body["data"]["sessionId"] == "mgmt-full-session"
+        assert body["data"]["session_id"] == "mgmt-full-session"
+        assert "sessionId" not in body["data"]
         assert body["meta"]["filters"]["trace_id_ignored"] is True
         turns = body["data"]["turns"]
         assert [turn["role"] for turn in turns] == ["user", "assistant", "user", "assistant"]
@@ -2024,18 +2047,20 @@ def test_management_ai_conversation_reader_returns_full_session_and_ignores_trac
             "Question 2?",
             "Threaded provider answer.",
         ]
-        assert turns[1]["providerStatus"]["provider"] == "codex_cli"
+        assert turns[1]["provider_status"]["provider"] == "codex_cli"
         assert turns[1]["actions"] == []
-        assert body["data"]["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
+        assert body["data"]["session"]["ttl_seconds"] >= 7 * 24 * 60 * 60
 
         list_resp = client.get("/bff/management/ai/conversations", headers=OPERATOR_HEADERS)
         assert list_resp.status_code == 200, list_resp.text
         list_body = list_resp.json()
         assert "items" not in list_body
         sessions = list_body["data"]["items"]
-        assert sessions[0]["sessionId"] == "mgmt-full-session"
+        assert sessions[0]["session_id"] == "mgmt-full-session"
         assert sessions[0]["href"] == "/bff/management/ai/conversations/mgmt-full-session"
-        assert sessions[0]["turnCount"] == 4
+        assert sessions[0]["turn_count"] == 4
+        assert "sessionId" not in sessions[0]
+        assert "turnCount" not in sessions[0]
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
@@ -2085,10 +2110,10 @@ def test_management_ai_persists_30_messages_as_60_ordered_turns(tmp_path, monkey
 
         last_management_context = fake.calls[-1]["context_pack"]["backend"]["management_nl"]["data"]
         assert last_management_context["conversation"]["source"] == "server"
-        assert last_management_context["conversation"]["historySource"] == "management_ai_store"
-        assert last_management_context["conversation"]["historyCharBudget"] > 32 * 1024
-        assert len(last_management_context["conversation"]["recentTurns"]) == 59
-        assert last_management_context["conversation"]["recentTurns"][0]["content"] == "Persistence question 1?"
+        assert last_management_context["conversation"]["history_source"] == "management_ai_store"
+        assert last_management_context["conversation"]["history_char_budget"] > 32 * 1024
+        assert len(last_management_context["conversation"]["recent_turns"]) == 59
+        assert last_management_context["conversation"]["recent_turns"][0]["content"] == "Persistence question 1?"
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
@@ -2130,22 +2155,22 @@ def test_management_ai_uses_server_history_when_fe_recent_turns_are_truncated(
         management_context = fake.calls[-1]["context_pack"]["backend"]["management_nl"]["data"]
         conversation = management_context["conversation"]
         assert conversation["source"] == "server"
-        assert [turn["content"] for turn in conversation["recentTurns"]] == [
+        assert [turn["content"] for turn in conversation["recent_turns"]] == [
             "Server history question 1?",
             "Provider grounded management answer.",
             "Server history question 2?",
             "Provider grounded management answer.",
             "Server history question 3?",
         ]
-        assert conversation["historySource"] == "management_ai_store"
-        assert conversation["storedTurnCount"] == 5
-        assert conversation["historyTruncated"] is False
-        assert conversation["historyCharBudget"] > 32 * 1024
+        assert conversation["history_source"] == "management_ai_store"
+        assert conversation["stored_turn_count"] == 5
+        assert conversation["history_truncated"] is False
+        assert conversation["history_char_budget"] > 32 * 1024
         prompt = fake.calls[-1]["prompt"]
         assert "Server-side conversation history JSON" in prompt
         assert "Server history question 1?" in prompt
         assert "Only the latest FE-window hint remains." in prompt
-        assert conversation["clientHint"]["recentTurns"] == [
+        assert conversation["client_hint"]["recent_turns"] == [
             {
                 "role": "user",
                 "content": "Only the latest FE-window hint remains.",
@@ -2174,12 +2199,12 @@ def test_management_ai_provider_history_window_exceeds_fe_budget_and_truncates()
 
     windowed, budget = bff_main._management_ai_provider_history_window(turns)
 
-    assert budget["historyCharBudget"] > 32 * 1024
-    assert budget["historyTruncated"] is True
-    assert budget["historyOmittedTurnCount"] > 0
-    assert budget["historyEstimatedChars"] <= budget["historyCharBudget"]
+    assert budget["history_char_budget"] > 32 * 1024
+    assert budget["history_truncated"] is True
+    assert budget["history_omitted_turn_count"] > 0
+    assert budget["history_estimated_chars"] <= budget["history_char_budget"]
     assert windowed[-1]["id"] == "turn-39"
-    assert [turn["createdAt"] for turn in windowed] == sorted(turn["createdAt"] for turn in windowed)
+    assert [turn["created_at"] for turn in windowed] == sorted(turn["created_at"] for turn in windowed)
 
 
 def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
@@ -2356,16 +2381,16 @@ def test_management_ai_inline_attachment_is_stored_and_read_back_as_proxy_url(
         attachment = conversation_resp.json()["data"]["turns"][0]["attachments"][0]
         assert attachment == {
             "id": stored_attachment["id"],
-            "attachmentId": stored_attachment["id"],
             "attachment_id": stored_attachment["id"],
             "kind": "image",
-            "mimeType": "image/png",
             "mime_type": "image/png",
             "filename": "screen.png",
-            "sizeBytes": len(image_bytes),
             "size_bytes": len(image_bytes),
             "url": f"/bff/management/ai/attachments/{stored_attachment['id']}",
         }
+        assert "attachmentId" not in attachment
+        assert "mimeType" not in attachment
+        assert "sizeBytes" not in attachment
         assert "dataBase64" not in json.dumps(conversation_resp.json(), ensure_ascii=False)
 
         attachment_resp = client.get(attachment["url"], headers=OPERATOR_HEADERS)
@@ -2407,7 +2432,8 @@ def test_provider_degraded_falls_back_to_deterministic_answer(tmp_path, monkeypa
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"].startswith("Management summary for question:")
-        provider_status = body["data"]["providerStatus"]
+        provider_status = body["data"]["provider_status"]
+        assert "providerStatus" not in body["data"]
         assert provider_status["status"] == "degraded"
         assert provider_status["reason"] == "OPENCLAW_ADAPTER_UNREACHABLE"
         assert provider_status["fallback"] == "deterministic_synthesis"
@@ -2444,16 +2470,16 @@ def test_codex_auth_unavailable_status_has_operator_notice(tmp_path, monkeypatch
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"].startswith("Management summary for question:")
-        provider_status = body["data"]["providerStatus"]
+        provider_status = body["data"]["provider_status"]
         assert provider_status["status"] == "degraded"
         assert provider_status["reason"] == "CODEX_AUTH_UNAVAILABLE"
-        assert provider_status["reasonCode"] == "CODEX_AUTH_UNAVAILABLE"
         assert provider_status["reason_code"] == "CODEX_AUTH_UNAVAILABLE"
         assert provider_status["severity"] == "warning"
-        assert "Codex service-user session expired" in provider_status["displayMessage"]
-        assert provider_status["display_message"] == provider_status["displayMessage"]
-        assert provider_status["operatorAction"] == "reauth_codex_service_user"
+        assert "reasonCode" not in provider_status
+        assert "Codex service-user session expired" in provider_status["display_message"]
+        assert "displayMessage" not in provider_status
         assert provider_status["operator_action"] == "reauth_codex_service_user"
+        assert "operatorAction" not in provider_status
         assert provider_status["fallback"] == "deterministic_synthesis"
         assert provider_status["used"] is False
         assert len(fake.calls) == 1
@@ -2602,7 +2628,7 @@ def test_claude_provider_enabled_invokes_openclaw_claude_route(tmp_path, monkeyp
         assert call["provider"] == "claude_cli"
         assert call["mode"] == "user"
         assert call["operator_id"] == "asst-bff-002"
-        provider_status = body["data"]["providerStatus"]
+        provider_status = body["data"]["provider_status"]
         assert provider_status["used"] is True
     finally:
         bff_main.read_store = original_store
@@ -2636,7 +2662,7 @@ def test_claude_provider_degraded_falls_back_to_deterministic_answer(tmp_path, m
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"].startswith("Management summary for question:")
-        provider_status = body["data"]["providerStatus"]
+        provider_status = body["data"]["provider_status"]
         assert provider_status["status"] == "degraded"
         assert provider_status["reason"] == "CLAUDE_BINARY_NOT_FOUND"
         assert provider_status["fallback"] == "deterministic_synthesis"
@@ -2678,9 +2704,11 @@ def test_provider_async_returns_processing_under_slow_provider(tmp_path, monkeyp
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["status"] == "processing"
-        assert body["data"]["lifecycleStatus"] == "processing"
-        assert body["data"]["providerStatus"]["status"] == "processing"
-        assert body["data"]["providerStatus"]["used"] is False
+        assert body["data"]["lifecycle_status"] == "processing"
+        assert "lifecycleStatus" not in body["data"]
+        assert body["data"]["provider_status"]["status"] == "processing"
+        assert body["data"]["provider_status"]["used"] is False
+        assert "providerStatus" not in body["data"]
         # Deterministic answer is served immediately; the provider answer is
         # finalised asynchronously by the background task.
         assert body["data"]["answer"].startswith("Management summary for question:")
@@ -2717,7 +2745,7 @@ def test_mgmt_nl_finalize_provider_turn_appends_assistant_turn_and_idempotency(t
     )
     base_result = {
         "status": "accepted",
-        "data": {"status": "processing", "lifecycleStatus": "processing", "answer": "deterministic"},
+        "data": {"status": "processing", "lifecycle_status": "processing", "answer": "deterministic"},
         "meta": {"status": "processing", "idempotency": {"idempotencyKey": "k-fin", "replayed": False}},
     }
     provider_status = bff_main._mgmt_nl_provider_status(
@@ -2752,4 +2780,7 @@ def test_mgmt_nl_finalize_provider_turn_appends_assistant_turn_and_idempotency(t
     assert cached is not None
     assert cached["result"]["data"]["answer"] == "Async provider answer."
     assert cached["result"]["data"]["status"] == "completed"
+    assert cached["result"]["data"]["lifecycle_status"] == "completed"
+    assert "lifecycleStatus" not in cached["result"]["data"]
+    assert "providerStatus" not in cached["result"]["data"]
     bff_main._MGMT_NL_IDEMPOTENCY.clear()

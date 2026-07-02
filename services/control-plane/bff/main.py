@@ -32905,16 +32905,12 @@ def _management_ai_quota_snapshot(provider: Dict[str, Any]) -> Dict[str, Any]:
         "status": str(source.get("status") or "unknown"),
         "source": str(source.get("source") or "not_configured"),
         "remaining": source.get("remaining"),
-        "remainingPercent": source.get("remainingPercent", source.get("remaining_percent")),
         "remaining_percent": source.get("remaining_percent", source.get("remainingPercent")),
         "limit": source.get("limit"),
         "used": source.get("used"),
         "unit": source.get("unit"),
-        "resetAt": source.get("resetAt", source.get("reset_at")),
         "reset_at": source.get("reset_at", source.get("resetAt")),
-        "updatedAt": source.get("updatedAt", source.get("updated_at")),
         "updated_at": source.get("updated_at", source.get("updatedAt")),
-        "checkedAt": source.get("checkedAt", source.get("checked_at")),
         "checked_at": source.get("checked_at", source.get("checkedAt")),
         "reason": source.get("reason") or (
             "provider_usage_source_not_configured" if not source else None
@@ -32926,47 +32922,30 @@ def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
     observed_usage = {
         "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
         "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
-        "truthPolicy": "observed_bff_events_only",
         "truth_policy": "observed_bff_events_only",
     }
     return {
         "provider": provider,
-        "providerName": _management_ai_provider_display(provider),
         "provider_name": _management_ai_provider_display(provider),
         "runtime": None,
         "ready": None,
-        "authStatus": None,
         "auth_status": None,
         "status": "unknown",
-        "liveAuth": False,
         "live_auth": False,
         "calls": 0,
-        "successCount": 0,
         "success_count": 0,
-        "failedCount": 0,
         "failed_count": 0,
-        "startedCount": 0,
         "started_count": 0,
-        "promptBytes": 0,
         "prompt_bytes": 0,
-        "inputTokens": 0,
         "input_tokens": 0,
-        "outputTokens": 0,
         "output_tokens": 0,
-        "totalTokens": 0,
         "total_tokens": 0,
-        "durationMs": 0,
         "duration_ms": 0,
-        "averageDurationMs": None,
         "average_duration_ms": None,
-        "lastUsedAt": None,
         "last_used_at": None,
-        "lastStatus": None,
         "last_status": None,
-        "lastError": None,
         "last_error": None,
         "quota": _management_ai_quota_snapshot({}),
-        "observedUsage": dict(observed_usage),
         "observed_usage": dict(observed_usage),
         "models": {},
     }
@@ -32976,37 +32955,25 @@ def _management_ai_empty_model_row(model: str) -> Dict[str, Any]:
     return {
         "model": model,
         "calls": 0,
-        "successCount": 0,
         "success_count": 0,
-        "failedCount": 0,
         "failed_count": 0,
-        "promptBytes": 0,
         "prompt_bytes": 0,
-        "inputTokens": 0,
         "input_tokens": 0,
-        "outputTokens": 0,
         "output_tokens": 0,
-        "totalTokens": 0,
         "total_tokens": 0,
-        "durationMs": 0,
         "duration_ms": 0,
-        "averageDurationMs": None,
         "average_duration_ms": None,
-        "lastUsedAt": None,
         "last_used_at": None,
-        "lastStatus": None,
         "last_status": None,
     }
 
 
 def _management_ai_touch_last(row: Dict[str, Any], event: Dict[str, Any], status: str) -> None:
     recorded_at = str(event.get("recorded_at") or "")
-    current = _audit_datetime(row.get("lastUsedAt"))
+    current = _audit_datetime(row.get("last_used_at") or row.get("lastUsedAt"))
     candidate = _audit_datetime(recorded_at)
     if candidate is None or current is None or candidate >= current:
-        row["lastUsedAt"] = recorded_at
         row["last_used_at"] = recorded_at
-        row["lastStatus"] = status
         row["last_status"] = status
 
 
@@ -33026,53 +32993,37 @@ def _management_ai_finalize_usage_row(
     stale_after_hours: int = _MGMT_AI_USAGE_STALE_AFTER_HOURS,
 ) -> Dict[str, Any]:
     calls = int(row.get("calls") or 0)
-    duration = int(row.get("durationMs") or 0)
+    duration = int(row.get("duration_ms") or row.get("durationMs") or 0)
     avg = round(duration / calls) if calls else None
-    row["averageDurationMs"] = avg
     row["average_duration_ms"] = avg
-    age_hours = _management_ai_usage_age_hours(row.get("lastUsedAt"), now_dt)
+    age_hours = _management_ai_usage_age_hours(row.get("last_used_at") or row.get("lastUsedAt"), now_dt)
     stale = bool(calls > 0 and age_hours is not None and age_hours > stale_after_hours)
     observed = {
         "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
         "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
-        "coverageLabel": "BFF observed",
         "coverage_label": "BFF observed",
-        "truthPolicy": "observed_bff_events_only",
         "truth_policy": "observed_bff_events_only",
         "calls": row["calls"],
-        "successCount": row["successCount"],
         "success_count": row["success_count"],
-        "failedCount": row["failedCount"],
         "failed_count": row["failed_count"],
-        "promptBytes": row["promptBytes"],
         "prompt_bytes": row["prompt_bytes"],
-        "inputTokens": row["inputTokens"],
         "input_tokens": row["input_tokens"],
-        "outputTokens": row["outputTokens"],
         "output_tokens": row["output_tokens"],
-        "totalTokens": row["totalTokens"],
         "total_tokens": row["total_tokens"],
-        "lastObservedAt": row.get("lastUsedAt"),
         "last_observed_at": row.get("last_used_at"),
-        "ageHours": age_hours,
         "age_hours": age_hours,
         "stale": stale,
-        "staleAfterHours": stale_after_hours,
         "stale_after_hours": stale_after_hours,
-        "windowHours": window_hours,
         "window_hours": window_hours,
-        "eventLimit": event_limit,
         "event_limit": event_limit,
         "message": "Only Management AI calls observed by the BFF audit stream are counted; direct provider CLI usage is not included.",
     }
-    row["observedUsage"] = observed
     row["observed_usage"] = observed
     models = []
     for model_row in row["models"].values():
         model_calls = int(model_row.get("calls") or 0)
-        model_duration = int(model_row.get("durationMs") or 0)
+        model_duration = int(model_row.get("duration_ms") or model_row.get("durationMs") or 0)
         model_avg = round(model_duration / model_calls) if model_calls else None
-        model_row["averageDurationMs"] = model_avg
         model_row["average_duration_ms"] = model_avg
         models.append(model_row)
     row["models"] = sorted(models, key=lambda item: (-int(item.get("calls") or 0), str(item.get("model") or "")))
@@ -33115,17 +33066,14 @@ def _assistant_provider_usage_summary(
         if not isinstance(item, dict):
             continue
         row = ensure_provider(item.get("provider") or item.get("provider_id") or item.get("providerName"))
-        provider_name = str(item.get("provider_name") or item.get("providerName") or row["providerName"])
-        row["providerName"] = provider_name
+        provider_name = str(item.get("provider_name") or item.get("providerName") or row["provider_name"])
         row["provider_name"] = provider_name
         row["runtime"] = item.get("runtime")
         row["ready"] = item.get("ready")
         auth_status = item.get("auth_status") or item.get("authStatus") or item.get("auth") or item.get("status")
-        row["authStatus"] = auth_status
         row["auth_status"] = auth_status
         row["status"] = item.get("status") or row["status"]
         live_auth = bool(item.get("ready") is True and str(auth_status or "").lower() in {"ready", "account_session", "authorized"})
-        row["liveAuth"] = live_auth
         row["live_auth"] = live_auth
         row["quota"] = _management_ai_quota_snapshot(item)
 
@@ -33151,11 +33099,8 @@ def _assistant_provider_usage_summary(
             if run_id:
                 started_by_run[run_id] = event
             prompt_bytes = int(_management_ai_number(event.get("prompt_bytes")) or 0)
-            row["startedCount"] += 1
             row["started_count"] += 1
-            row["promptBytes"] += prompt_bytes
             row["prompt_bytes"] += prompt_bytes
-            model_row["promptBytes"] += prompt_bytes
             model_row["prompt_bytes"] += prompt_bytes
             _management_ai_touch_last(row, event, "started")
             _management_ai_touch_last(model_row, event, "started")
@@ -33166,10 +33111,8 @@ def _assistant_provider_usage_summary(
         source_started = started_by_run.get(run_id)
         if source_started is not None:
             prompt_bytes = int(_management_ai_number(source_started.get("prompt_bytes")) or 0)
-            if row["startedCount"] == 0:
-                row["promptBytes"] += prompt_bytes
+            if row["started_count"] == 0:
                 row["prompt_bytes"] += prompt_bytes
-                model_row["promptBytes"] += prompt_bytes
                 model_row["prompt_bytes"] += prompt_bytes
         duration_ms = int(_management_ai_number(event.get("duration_ms")) or 0)
         output_summary = event.get("output_summary") if isinstance(event.get("output_summary"), dict) else {}
@@ -33183,24 +33126,17 @@ def _assistant_provider_usage_summary(
         status = "failed" if failed else str(event.get("provider_state") or "completed")
         for target in (row, model_row):
             target["calls"] += 1
-            target["durationMs"] += duration_ms
             target["duration_ms"] += duration_ms
-            target["inputTokens"] += input_tokens
             target["input_tokens"] += input_tokens
-            target["outputTokens"] += output_tokens
             target["output_tokens"] += output_tokens
-            target["totalTokens"] += total_tokens
             target["total_tokens"] += total_tokens
             if failed:
-                target["failedCount"] += 1
                 target["failed_count"] += 1
             else:
-                target["successCount"] += 1
                 target["success_count"] += 1
             _management_ai_touch_last(target, event, status)
         if failed:
-            row["lastError"] = event.get("error_code") or event.get("error_message")
-            row["last_error"] = row["lastError"]
+            row["last_error"] = event.get("error_code") or event.get("error_message")
 
     provider_rows = [
         _management_ai_finalize_usage_row(
@@ -33211,22 +33147,16 @@ def _assistant_provider_usage_summary(
         )
         for row in rows.values()
     ]
-    provider_rows.sort(key=lambda item: (not bool(item.get("liveAuth")), -int(item.get("calls") or 0), str(item.get("provider") or "")))
+    provider_rows.sort(key=lambda item: (not bool(item.get("live_auth")), -int(item.get("calls") or 0), str(item.get("provider") or "")))
     totals = {
         "providers": len(provider_rows),
-        "liveAuthCount": sum(1 for row in provider_rows if row.get("liveAuth")),
-        "live_auth_count": sum(1 for row in provider_rows if row.get("liveAuth")),
+        "live_auth_count": sum(1 for row in provider_rows if row.get("live_auth")),
         "calls": sum(int(row.get("calls") or 0) for row in provider_rows),
-        "successCount": sum(int(row.get("successCount") or 0) for row in provider_rows),
-        "success_count": sum(int(row.get("successCount") or 0) for row in provider_rows),
-        "failedCount": sum(int(row.get("failedCount") or 0) for row in provider_rows),
-        "failed_count": sum(int(row.get("failedCount") or 0) for row in provider_rows),
-        "inputTokens": sum(int(row.get("inputTokens") or 0) for row in provider_rows),
-        "input_tokens": sum(int(row.get("inputTokens") or 0) for row in provider_rows),
-        "outputTokens": sum(int(row.get("outputTokens") or 0) for row in provider_rows),
-        "output_tokens": sum(int(row.get("outputTokens") or 0) for row in provider_rows),
-        "totalTokens": sum(int(row.get("totalTokens") or 0) for row in provider_rows),
-        "total_tokens": sum(int(row.get("totalTokens") or 0) for row in provider_rows),
+        "success_count": sum(int(row.get("success_count") or 0) for row in provider_rows),
+        "failed_count": sum(int(row.get("failed_count") or 0) for row in provider_rows),
+        "input_tokens": sum(int(row.get("input_tokens") or 0) for row in provider_rows),
+        "output_tokens": sum(int(row.get("output_tokens") or 0) for row in provider_rows),
+        "total_tokens": sum(int(row.get("total_tokens") or 0) for row in provider_rows),
     }
     return {
         "status": "ok",
@@ -33234,19 +33164,14 @@ def _assistant_provider_usage_summary(
             "providers": provider_rows,
             "totals": totals,
             "quota": {
-                "truthPolicy": "provider_snapshot_only",
                 "truth_policy": "provider_snapshot_only",
-                "missingSourceMeans": "quota remaining is unknown, not zero",
                 "missing_source_means": "quota remaining is unknown, not zero",
             },
             "usage": {
-                "truthPolicy": "observed_bff_events_only",
                 "truth_policy": "observed_bff_events_only",
                 "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
                 "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
-                "staleAfterHours": _MGMT_AI_USAGE_STALE_AFTER_HOURS,
                 "stale_after_hours": _MGMT_AI_USAGE_STALE_AFTER_HOURS,
-                "missingSourceMeans": "direct provider CLI usage is unknown unless a provider usage source is configured",
                 "missing_source_means": "direct provider CLI usage is unknown unless a provider usage source is configured",
             },
         },
@@ -33316,12 +33241,10 @@ def _management_ai_conversation_turns(
                     "id": message_id,
                     "turn_id": message_id,
                     "message_id": message_id,
-                    "traceId": event.get("trace_id"),
                     "trace_id": event.get("trace_id"),
                     "role": "user",
                     "text": event.get("question") or "",
                     "content": event.get("question") or "",
-                    "createdAt": event.get("recorded_at"),
                     "created_at": event.get("recorded_at"),
                     "focus": event.get("focus"),
                     "tenant_id": event.get("tenant_id"),
@@ -33345,14 +33268,11 @@ def _management_ai_conversation_turns(
                     "id": assistant_turn_id,
                     "turn_id": assistant_turn_id,
                     "message_id": message_id,
-                    "traceId": event.get("trace_id"),
                     "trace_id": event.get("trace_id"),
                     "role": "assistant",
                     "text": event.get("answer") or "",
                     "content": event.get("answer") or "",
-                    "createdAt": event.get("recorded_at"),
                     "created_at": event.get("recorded_at"),
-                    "providerStatus": provider_status,
                     "provider_status": provider_status,
                     "actions": event.get("actions") or [],
                     "fallback": event.get("fallback"),
@@ -33388,13 +33308,10 @@ def _management_ai_attachment_api_payload(attachment: Dict[str, Any]) -> Dict[st
     size_bytes = int(attachment.get("sizeBytes") or attachment.get("size_bytes") or 0)
     return {
         "id": attachment_id,
-        "attachmentId": attachment_id,
         "attachment_id": attachment_id,
         "kind": str(attachment.get("kind") or "file"),
-        "mimeType": mime_type,
         "mime_type": mime_type,
         "filename": str(attachment.get("filename") or attachment_id or "attachment"),
-        "sizeBytes": size_bytes,
         "size_bytes": size_bytes,
         "url": _management_ai_attachment_url(attachment_id) if attachment_id else "",
     }
@@ -33406,31 +33323,43 @@ def _management_ai_turn_api_payload(turn: Dict[str, Any]) -> Dict[str, Any]:
         for item in (turn.get("attachments") or [])
         if isinstance(item, dict)
     ]
-    provider_status = turn.get("providerStatus") if isinstance(turn.get("providerStatus"), dict) else None
-    ui_actions = turn.get("uiActions") if isinstance(turn.get("uiActions"), list) else []
+    provider_status = (
+        turn.get("provider_status")
+        if isinstance(turn.get("provider_status"), dict)
+        else turn.get("providerStatus")
+        if isinstance(turn.get("providerStatus"), dict)
+        else None
+    )
+    ui_actions = (
+        turn.get("ui_actions")
+        if isinstance(turn.get("ui_actions"), list)
+        else turn.get("uiActions")
+        if isinstance(turn.get("uiActions"), list)
+        else []
+    )
     payload = {
         "id": turn.get("id"),
         "turn_id": turn.get("turn_id") or turn.get("turnId") or turn.get("id"),
         "message_id": turn.get("message_id") or turn.get("id"),
-        "sessionId": turn.get("sessionId") or turn.get("session_id"),
         "session_id": turn.get("session_id") or turn.get("sessionId"),
-        "traceId": turn.get("traceId"),
-        "trace_id": turn.get("trace_id"),
+        "trace_id": turn.get("trace_id") or turn.get("traceId"),
         "role": turn.get("role"),
         "text": turn.get("text") or "",
         "content": turn.get("text") or "",
-        "createdAt": turn.get("createdAt") or turn.get("created_at"),
         "created_at": turn.get("created_at") or turn.get("createdAt"),
-        "providerStatus": provider_status,
         "provider_status": provider_status,
         "attachments": attachments,
-        "uiActions": ui_actions,
         "ui_actions": ui_actions,
         "actions": ui_actions,
     }
-    ui_snapshot = turn.get("uiSnapshot") if isinstance(turn.get("uiSnapshot"), dict) else None
+    ui_snapshot = (
+        turn.get("ui_snapshot")
+        if isinstance(turn.get("ui_snapshot"), dict)
+        else turn.get("uiSnapshot")
+        if isinstance(turn.get("uiSnapshot"), dict)
+        else None
+    )
     if ui_snapshot is not None:
-        payload["uiSnapshot"] = ui_snapshot
         payload["ui_snapshot"] = ui_snapshot
     return payload
 
@@ -33630,40 +33559,26 @@ def _management_ai_server_conversation_context(
                 "role": api_turn.get("role"),
                 "content": api_turn.get("text") or "",
                 "text": api_turn.get("text") or "",
-                "createdAt": api_turn.get("createdAt"),
                 "created_at": api_turn.get("created_at"),
                 "attachments": api_turn.get("attachments") or [],
-                "providerStatus": api_turn.get("providerStatus"),
                 "provider_status": api_turn.get("provider_status"),
-                "traceId": api_turn.get("traceId"),
                 "trace_id": api_turn.get("trace_id"),
             }
         )
     provider_turns, history_budget = _management_ai_provider_history_window(turns)
     return {
-        "recentTurns": provider_turns,
         "recent_turns": provider_turns,
-        "allTurns": provider_turns,
         "all_turns": provider_turns,
-        "turnCount": len(provider_turns),
         "turn_count": len(provider_turns),
-        "storedTurnCount": len(turns),
         "stored_turn_count": len(turns),
         "source": "server",
-        "historySource": "management_ai_store",
         "history_source": "management_ai_store",
-        "historyCharBudget": history_budget["historyCharBudget"],
-        "history_char_budget": history_budget["historyCharBudget"],
-        "historyEstimatedChars": history_budget["historyEstimatedChars"],
-        "history_estimated_chars": history_budget["historyEstimatedChars"],
-        "historyTruncated": history_budget["historyTruncated"],
-        "history_truncated": history_budget["historyTruncated"],
-        "historyOmittedTurnCount": history_budget["historyOmittedTurnCount"],
-        "history_omitted_turn_count": history_budget["historyOmittedTurnCount"],
+        "history_char_budget": history_budget["history_char_budget"],
+        "history_estimated_chars": history_budget["history_estimated_chars"],
+        "history_truncated": history_budget["history_truncated"],
+        "history_omitted_turn_count": history_budget["history_omitted_turn_count"],
         "summary": client_hint.get("summary") or "",
-        "clientHint": client_hint,
         "client_hint": client_hint,
-        "maxRecentTurns": None,
         "max_recent_turns": None,
     }
 
@@ -33679,10 +33594,10 @@ def _management_ai_provider_history_window(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     if _management_ai_provider_history_size(turns) <= char_budget:
         return list(turns), {
-            "historyCharBudget": char_budget,
-            "historyEstimatedChars": _management_ai_provider_history_size(turns),
-            "historyTruncated": False,
-            "historyOmittedTurnCount": 0,
+            "history_char_budget": char_budget,
+            "history_estimated_chars": _management_ai_provider_history_size(turns),
+            "history_truncated": False,
+            "history_omitted_turn_count": 0,
         }
 
     selected: List[Dict[str, Any]] = []
@@ -33696,10 +33611,10 @@ def _management_ai_provider_history_window(
         selected = candidate
 
     return selected, {
-        "historyCharBudget": char_budget,
-        "historyEstimatedChars": _management_ai_provider_history_size(selected),
-        "historyTruncated": True,
-        "historyOmittedTurnCount": max(0, len(turns) - len(selected)),
+        "history_char_budget": char_budget,
+        "history_estimated_chars": _management_ai_provider_history_size(selected),
+        "history_truncated": True,
+        "history_omitted_turn_count": max(0, len(turns) - len(selected)),
     }
 
 
@@ -33711,10 +33626,8 @@ def _management_ai_provider_history_minimal_turn(turn: Dict[str, Any]) -> Dict[s
         "role": turn.get("role"),
         "content": trimmed_text,
         "text": trimmed_text,
-        "createdAt": turn.get("createdAt"),
-        "created_at": turn.get("created_at"),
-        "traceId": turn.get("traceId"),
-        "trace_id": turn.get("trace_id"),
+        "created_at": turn.get("created_at") or turn.get("createdAt"),
+        "trace_id": turn.get("trace_id") or turn.get("traceId"),
     }
 
 
@@ -33755,10 +33668,8 @@ def _mgmt_nl_normalize_conversation_context(value: Any) -> Dict[str, Any]:
             recent_turns.append({"role": role, "content": content, "text": content})
     summary = _mgmt_nl_trim_text(conversation.get("summary"), max_len=4000)
     return {
-        "recentTurns": recent_turns,
         "recent_turns": recent_turns,
         "summary": summary,
-        "maxRecentTurns": _MGMT_NL_MAX_RECENT_TURNS,
         "max_recent_turns": _MGMT_NL_MAX_RECENT_TURNS,
     }
 
@@ -34211,9 +34122,7 @@ def _mgmt_nl_record_control_audit(
     now: Any,
 ) -> Dict[str, Any]:
     audit_ref = {
-        "targetType": "ManagementNLExchange",
         "target_type": "ManagementNLExchange",
-        "targetId": message_id,
         "target_id": message_id,
         "href": f"/bff/audit/entities/ManagementNLExchange/{message_id}",
     }
@@ -34242,8 +34151,7 @@ def _mgmt_nl_record_control_audit(
             precondition_failed="audit_write",
             suggestion="Retry after the Agora audit store is available",
         )
-    audit_ref["auditId"] = accepted_audit.get("auditId") or accepted_audit.get("eventId")
-    audit_ref["audit_id"] = audit_ref["auditId"]
+    audit_ref["audit_id"] = accepted_audit.get("auditId") or accepted_audit.get("eventId")
     return audit_ref
 
 
@@ -34263,26 +34171,17 @@ def _management_nl_publish_completed_events(
     provider_state = str(provider_status.get("status") or "unknown")
     completed_event: Dict[str, Any] = {
         "session_id": session_id,
-        "sessionId": session_id,
         "message_id": message_id,
-        "messageId": message_id,
         "assistant_turn_id": assistant_turn_id,
-        "assistantTurnId": assistant_turn_id,
         "trace_id": trace_id,
-        "traceId": trace_id,
         "focus": focus,
         "status": "completed",
-        "lifecycleStatus": "completed",
         "lifecycle_status": "completed",
-        "providerStatus": provider_status,
         "provider_status": provider_status,
-        "providerStatusState": provider_state,
         "provider_status_state": provider_state,
-        "actionCount": action_count,
         "action_count": action_count,
     }
     if control_command is not None:
-        completed_event["controlCommand"] = control_command
         completed_event["control_command"] = control_command
     _publish_event(
         _sse_buffers["ask"],
@@ -34296,13 +34195,10 @@ def _management_nl_publish_completed_events(
         "management.nl.ask.completed",
         {
             **completed_event,
-            "auditLog": {"href": audit_log_href, "traceId": trace_id, "trace_id": trace_id},
-            "audit_log": {"href": audit_log_href, "traceId": trace_id, "trace_id": trace_id},
+            "audit_log": {"href": audit_log_href, "trace_id": trace_id},
             "conversation": {
                 "href": conversation_href,
-                "sessionId": session_id,
                 "session_id": session_id,
-                "traceId": trace_id,
                 "trace_id": trace_id,
             },
         },
@@ -34486,79 +34382,51 @@ def _mgmt_nl_handle_control_command(
         "status": "accepted",
         "data": {
             "status": exchange_status,
-            "lifecycleStatus": exchange_status,
             "lifecycle_status": exchange_status,
             "answer": answer,
-            "sessionId": session_id,
             "session_id": session_id,
             "message_id": message_id,
-            "traceId": trace_id,
             "trace_id": trace_id,
             "question": _MGMT_NL_CONTROL_REDACTED_QUESTION,
             "focus": focus,
             "sources": [],
             "confidence": "high",
             "summary_context": {},
-            "contextPack": None,
             "context_pack": None,
-            "providerStatus": provider_status,
             "provider_status": provider_status,
-            "controlMode": control_mode,
             "control_mode": control_mode,
-            "controlCommand": command_kind,
             "control_command": command_kind,
-            "uiActions": [],
             "ui_actions": [],
             "actions": [],
-            "auditRef": audit_ref,
             "audit_ref": audit_ref,
-            "auditLog": {
-                "href": audit_log_href,
-                "traceId": trace_id,
-                "trace_id": trace_id,
-            },
             "audit_log": {
                 "href": audit_log_href,
-                "traceId": trace_id,
                 "trace_id": trace_id,
             },
             "conversation": {
                 "href": conversation_href,
-                "sessionId": session_id,
                 "session_id": session_id,
-                "traceId": trace_id,
                 "trace_id": trace_id,
             },
             "session": {
-                "sessionId": session_id,
                 "session_id": session_id,
-                "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
                 "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             },
-            "evidenceRefs": [],
             "evidence_refs": [],
             "redaction": redaction,
         },
         "meta": {
             "status": exchange_status,
-            "lifecycleStatus": exchange_status,
             "lifecycle_status": exchange_status,
             "snapshot_at": now,
             "surfaces": {"management_nl_control_command": {"status": "ok", "source": "bff_interceptor"}},
             "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
-            "providerStatus": provider_status,
             "provider_status": provider_status,
-            "traceId": trace_id,
             "trace_id": trace_id,
-            "contextPackId": None,
             "context_pack_id": None,
-            "redactedEvidenceCount": 0,
             "redacted_evidence_count": 0,
-            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "controlMode": control_mode,
             "control_mode": control_mode,
-            "controlCommand": command_kind,
             "control_command": command_kind,
             "redaction": redaction,
         },
@@ -35249,9 +35117,7 @@ def _mgmt_nl_provider_status_notice(
         )
     return {
         "severity": "warning" if clean_status in {"degraded", "disabled"} else "info",
-        "displayMessage": message,
         "display_message": message,
-        "operatorAction": action or "inspect_management_ai_provider_status",
         "operator_action": action or "inspect_management_ai_provider_status",
     }
 
@@ -35275,7 +35141,6 @@ def _mgmt_nl_provider_status(
     }
     if reason:
         payload["reason"] = reason
-        payload["reasonCode"] = reason
         payload["reason_code"] = reason
     payload.update(
         _mgmt_nl_provider_status_notice(
@@ -35450,13 +35315,10 @@ def _mgmt_nl_build_context_pack(
         "confidence": confidence,
         "conversation": conversation_context,
         "ui": ui_snapshot,
-        "controlMode": control_mode,
         "control_mode": control_mode,
         "operator_context": operator_context,
         "session": {
-            "sessionId": session_id,
             "session_id": session_id,
-            "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
         },
         "summary_context": snippets,
@@ -35725,12 +35587,12 @@ def _mgmt_nl_provider_prompt(
     )
     server_history = {
         "source": conversation_context.get("source"),
-        "historySource": conversation_context.get("historySource") or conversation_context.get("history_source"),
-        "historyCharBudget": conversation_context.get("historyCharBudget"),
-        "historyTruncated": conversation_context.get("historyTruncated"),
-        "historyOmittedTurnCount": conversation_context.get("historyOmittedTurnCount"),
-        "storedTurnCount": conversation_context.get("storedTurnCount"),
-        "turns": conversation_context.get("allTurns") or conversation_context.get("recentTurns") or [],
+        "history_source": conversation_context.get("history_source") or conversation_context.get("historySource"),
+        "history_char_budget": conversation_context.get("history_char_budget") or conversation_context.get("historyCharBudget"),
+        "history_truncated": conversation_context.get("history_truncated") if "history_truncated" in conversation_context else conversation_context.get("historyTruncated"),
+        "history_omitted_turn_count": conversation_context.get("history_omitted_turn_count") or conversation_context.get("historyOmittedTurnCount"),
+        "stored_turn_count": conversation_context.get("stored_turn_count") or conversation_context.get("storedTurnCount"),
+        "turns": conversation_context.get("all_turns") or conversation_context.get("allTurns") or conversation_context.get("recent_turns") or conversation_context.get("recentTurns") or [],
     }
     server_history_json = json.dumps(server_history, sort_keys=True, ensure_ascii=True)
     context_json = json.dumps(context_pack, sort_keys=True, ensure_ascii=True)
@@ -35741,7 +35603,7 @@ def _mgmt_nl_provider_prompt(
             *_mgmt_nl_provider_mode_prompt_lines(provider_mode),
             "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
             "Use backend.orchestrator_status.data for supervisor, worker, queue, PR/check, DevTaskPacket bridge, and provider readiness questions.",
-            "Treat backend.management_nl.data.conversation.clientHint as a frontend hint, never as the conversation source of truth.",
+            "Treat backend.management_nl.data.conversation.client_hint as a frontend hint, never as the conversation source of truth.",
             "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
             "Any runBffAction or write-style action must require confirmation.",
             "If evidence is missing or stale, say so and keep the answer concise.",
@@ -36079,10 +35941,8 @@ def _mgmt_nl_maybe_provider_answer(
         if output.get("sandbox") is not None:
             status["sandbox"] = output.get("sandbox")
         if output.get("workspace_class") is not None:
-            status["workspaceClass"] = output.get("workspace_class")
             status["workspace_class"] = output.get("workspace_class")
         if output.get("repair_workflow") is not None:
-            status["repairWorkflow"] = output.get("repair_workflow")
             status["repair_workflow"] = output.get("repair_workflow")
     if multimodal_summary:
         status["multimodal"] = multimodal_summary
@@ -36157,21 +36017,16 @@ def _mgmt_nl_finalize_result(
     completed_data = {
         **base_result.get("data", {}),
         "status": "completed",
-        "lifecycleStatus": "completed",
         "lifecycle_status": "completed",
         "answer": answer,
-        "providerStatus": provider_status,
         "provider_status": provider_status,
-        "uiActions": actions,
         "ui_actions": actions,
         "actions": actions,
     }
     completed_meta = {
         **base_result.get("meta", {}),
         "status": "completed",
-        "lifecycleStatus": "completed",
         "lifecycle_status": "completed",
-        "providerStatus": provider_status,
         "provider_status": provider_status,
     }
     return {**base_result, "data": completed_data, "meta": completed_meta}
@@ -36351,12 +36206,9 @@ async def bff_management_nl_ask(
         return _dry_run_success_response(
             {
                 "status": "accepted",
-                "lifecycleStatus": "accepted",
                 "lifecycle_status": "accepted",
-                "sessionId": str(payload.get("sessionId") or payload.get("session_id") or ""),
                 "session_id": str(payload.get("session_id") or payload.get("sessionId") or ""),
                 "message_id": "",
-                "traceId": str(payload.get("traceId") or payload.get("trace_id") or ""),
                 "trace_id": str(payload.get("trace_id") or payload.get("traceId") or ""),
                 "question": question,
                 "focus": focus,
@@ -36487,9 +36339,7 @@ async def bff_management_nl_ask(
     )
 
     audit_ref = {
-        "targetType": "ManagementNLExchange",
         "target_type": "ManagementNLExchange",
-        "targetId": message_id,
         "target_id": message_id,
         "href": f"/bff/audit/entities/ManagementNLExchange/{message_id}",
     }
@@ -36521,8 +36371,7 @@ async def bff_management_nl_ask(
             suggestion="Retry after the Agora audit store is available",
         )
 
-    audit_ref["auditId"] = accepted_audit.get("auditId") or accepted_audit.get("eventId")
-    audit_ref["audit_id"] = audit_ref["auditId"]
+    audit_ref["audit_id"] = accepted_audit.get("auditId") or accepted_audit.get("eventId")
 
     _management_ai_record_event(
         {
@@ -36538,8 +36387,8 @@ async def bff_management_nl_ask(
             "confidence": confidence,
             "source_keys": source_keys,
             "context_pack_id": context_pack.get("context_pack_id"),
-            "conversation_recent_turn_count": len(conversation_context.get("recentTurns") or []),
-            "client_conversation_recent_turn_count": len(client_conversation_hint.get("recentTurns") or []),
+            "conversation_recent_turn_count": len(conversation_context.get("recent_turns") or []),
+            "client_conversation_recent_turn_count": len(client_conversation_hint.get("recent_turns") or []),
             "conversation_summary_present": bool(conversation_context.get("summary")),
             "ui": ui_snapshot,
             "attachment_count": len(user_attachments),
@@ -36588,7 +36437,7 @@ async def bff_management_nl_ask(
             message_id=message_id,
             trace_id=trace_id,
             context_pack=context_pack,
-            audit_id=audit_ref.get("auditId"),
+            audit_id=audit_ref.get("audit_id"),
             allowed_action_kinds=allowed_action_kinds,
             current_user_attachments=current_user_attachments,
             openclaw_repair_metadata=openclaw_repair_metadata,
@@ -36624,74 +36473,48 @@ async def bff_management_nl_ask(
         "status": "accepted",
         "data": {
             "status": exchange_status,
-            "lifecycleStatus": exchange_status,
             "lifecycle_status": exchange_status,
             "answer": answer,
-            "sessionId": session_id,
             "session_id": session_id,
             "message_id": message_id,
-            "traceId": trace_id,
             "trace_id": trace_id,
             "question": question,
             "focus": focus,
             "sources": source_keys,
             "confidence": confidence,
             "summary_context": snippets,
-            "contextPack": context_pack,
             "context_pack": context_pack,
-            "providerStatus": provider_status,
             "provider_status": provider_status,
-            "controlMode": control_mode,
             "control_mode": control_mode,
-            "uiActions": actions,
             "ui_actions": actions,
             "actions": actions,
-            "auditRef": audit_ref,
             "audit_ref": audit_ref,
-            "auditLog": {
-                "href": audit_log_href,
-                "traceId": trace_id,
-                "trace_id": trace_id,
-            },
             "audit_log": {
                 "href": audit_log_href,
-                "traceId": trace_id,
                 "trace_id": trace_id,
             },
             "conversation": {
                 "href": conversation_href,
-                "sessionId": session_id,
                 "session_id": session_id,
-                "traceId": trace_id,
                 "trace_id": trace_id,
             },
             "session": {
-                "sessionId": session_id,
                 "session_id": session_id,
-                "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
                 "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             },
-            "evidenceRefs": processed_evidence_refs,
             "evidence_refs": processed_evidence_refs,
         },
         "meta": {
             "status": exchange_status,
-            "lifecycleStatus": exchange_status,
             "lifecycle_status": exchange_status,
             "snapshot_at": now,
             "surfaces": surfaces,
             "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
-            "providerStatus": provider_status,
             "provider_status": provider_status,
-            "traceId": trace_id,
             "trace_id": trace_id,
-            "contextPackId": context_pack.get("context_pack_id"),
             "context_pack_id": context_pack.get("context_pack_id"),
-            "redactedEvidenceCount": redacted_evidence_count,
             "redacted_evidence_count": redacted_evidence_count,
-            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "controlMode": control_mode,
             "control_mode": control_mode,
         },
     }
@@ -36835,12 +36658,9 @@ def bff_management_nl_ask_stream(
             yield _mgmt_nl_sse_frame(
                 {
                     "type": "meta",
-                    "sessionId": (control_data or {}).get("sessionId") or session_id,
                     "session_id": (control_data or {}).get("session_id") or session_id,
-                    "traceId": (control_data or {}).get("traceId") or trace_id,
                     "trace_id": (control_data or {}).get("trace_id") or trace_id,
-                    "messageId": (control_data or {}).get("message_id") or message_id,
-                    "controlCommand": command_kind,
+                    "message_id": (control_data or {}).get("message_id") or message_id,
                     "control_command": command_kind,
                 }
             )
@@ -36850,14 +36670,10 @@ def bff_management_nl_ask_stream(
                 {
                     "type": "done",
                     "text": answer,
-                    "providerStatus": provider_status,
                     "provider_status": provider_status,
-                    "auditLog": audit_log,
                     "audit_log": audit_log,
                     "conversation": conversation,
-                    "uiActions": ui_actions,
                     "ui_actions": ui_actions,
-                    "controlCommand": command_kind,
                     "control_command": command_kind,
                 }
             )
@@ -36925,8 +36741,8 @@ def bff_management_nl_ask_stream(
         )
         yield _mgmt_nl_sse_frame(
             {
-                "type": "meta", "sessionId": session_id, "session_id": session_id,
-                "traceId": trace_id, "trace_id": trace_id, "messageId": message_id,
+                "type": "meta", "session_id": session_id,
+                "trace_id": trace_id, "message_id": message_id,
             }
         )
         chunks: List[str] = []
@@ -37039,7 +36855,7 @@ def bff_management_nl_ask_stream(
                 trace_id=trace_id,
                 provider_status=provider_status,
             )
-            yield _mgmt_nl_sse_frame({"type": "done", "text": answer, "providerStatus": provider_status})
+            yield _mgmt_nl_sse_frame({"type": "done", "text": answer, "provider_status": provider_status})
         elif failure_event is not None:
             _management_ai_record_event(failure_event)
         yield _mgmt_nl_sse_frame("[DONE]")
@@ -37144,18 +36960,12 @@ async def bff_management_ai_conversations(
         items.append(
             {
                 "id": session_id,
-                "sessionId": session_id,
                 "session_id": session_id,
                 "title": session.get("title") or "",
-                "ownerId": session.get("ownerId") or session.get("owner_id"),
                 "owner_id": session.get("owner_id") or session.get("ownerId"),
-                "tenantId": session.get("tenantId") or session.get("tenant_id"),
                 "tenant_id": session.get("tenant_id") or session.get("tenantId"),
-                "createdAt": session.get("createdAt") or session.get("created_at"),
                 "created_at": session.get("created_at") or session.get("createdAt"),
-                "updatedAt": session.get("updatedAt") or session.get("updated_at"),
                 "updated_at": session.get("updated_at") or session.get("updatedAt"),
-                "turnCount": turn_count,
                 "turn_count": turn_count,
                 "href": _management_ai_conversation_href(session_id),
             }
@@ -37177,7 +36987,6 @@ async def bff_management_ai_conversations(
         "meta": {
             "count": len(items),
             "limit": limit,
-            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "surfaces": {
                 "management_ai_conversation_list": {
@@ -37217,42 +37026,28 @@ async def bff_management_ai_conversation(
     ][:limit]
     audit_log = {
         "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
-        "traceId": trace_id,
         "trace_id": trace_id,
     }
     return {
         "data": {
-            "sessionId": clean_session_id,
             "session_id": clean_session_id,
-            "traceId": trace_id,
             "trace_id": trace_id,
             "turns": turns,
-            "localOnly": False,
             "local_only": False,
-            "missingInStore": False,
             "missing_in_store": False,
-            "ownerId": session.get("ownerId") or session.get("owner_id"),
             "owner_id": session.get("owner_id") or session.get("ownerId"),
-            "tenantId": session.get("tenantId") or session.get("tenant_id"),
             "tenant_id": session.get("tenant_id") or session.get("tenantId"),
-            "createdAt": session.get("createdAt") or session.get("created_at"),
             "created_at": session.get("created_at") or session.get("createdAt"),
-            "updatedAt": session.get("updatedAt") or session.get("updated_at"),
             "updated_at": session.get("updated_at") or session.get("updatedAt"),
-            "auditLog": audit_log,
             "audit_log": audit_log,
             "session": {
-                "sessionId": clean_session_id,
                 "session_id": clean_session_id,
-                "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
                 "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             },
         },
         "meta": {
             "count": len(turns),
-            "turnCap": limit,
             "turn_cap": limit,
-            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "filters": {
                 "session_id": clean_session_id,
