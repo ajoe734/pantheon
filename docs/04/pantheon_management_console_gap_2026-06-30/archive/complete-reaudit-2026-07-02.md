@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Complete re-audit after the 2026-07-01 addendum and the first six list-contract remediation slices |
+| Status | Complete re-audit, re-run after the user challenge that the prior read was too partial |
 | Re-audit basis | Clean worktree `/tmp/pantheon-mgmt-reaudit-20260702`, branch `task/mgmt-complete-reaudit-20260702` |
 | Base commit | `e2eb5ba90483ba2eeaf22c97f1465a7ee244eafa` (`origin/dev`, PR `#2762`) |
-| Scope | Current repo frontend entrypoints, Management BFF routes, list-contract audit, authenticated route smoke, focused validation |
-| Important correction | The earlier audit blended hosted historical FE route inventory, BFF API inventory, and the current repo's mounted management UI. This pass keeps those layers separate. |
+| Scope | Current repo frontend entrypoints, isolated legacy widgets, Management BFF routes, typed frontend adapters, list-contract audit, historical hosted route/control evidence, focused validation |
+| Important correction | The earlier audit blended hosted historical FE route inventory, BFF API inventory, typed adapters, and the current repo's mounted management UI. This pass keeps those layers separate and does not treat every endpoint as a finished page. |
 
 ## Executive Finding
 
@@ -24,8 +24,8 @@ In the current repo, the mounted Management frontend is thin:
 
 The large repeated surface is mostly in the BFF/API and typed adapter layer:
 
-- `services/control-plane/bff/main.py` defines 57 `/bff/management*` route
-  decorators, including duplicate route declarations.
+- `services/control-plane/bff/main.py` currently defines 55 unique
+  `/bff/management*` route decorators.
 - `execute-plans/src/lib/bff-v1/management.ts` defines 30-plus Management
   response contracts and fetchers.
 - `execute-plans/src/lib/bff/client.ts` exposes 29 `MANAGEMENT_FAMILIES` in a
@@ -63,18 +63,36 @@ Findings:
 | Typed BFF management module | Many fetchers exist for cockpit, board pack, readiness, portfolio, persona league, quarterly ranking, attribution, cost, etc. | Keep as typed API only after contract cleanup; do not expose all as first-level pages. |
 | Generic `managementClient` | Useful live/mock adapter but normalizes around many families that are not visible UI workflows. | Keep for now; future UI should call canonical envelope shapes only. |
 
+### Re-Run Surface Matrix
+
+This re-run classifies the Management system by actual ownership layer, not by
+endpoint count.
+
+| Surface group | Current evidence | Decision |
+|---|---|---|
+| Mounted truth shell | `management-main.tsx` mounts Live Evidence, Loop Truth, and OODA packet drawer only. | Keep and harden; this is the current repo's real visible shell. |
+| Isolated readiness widgets | `apps/management` has HumanGate, Broker Go/No-Go, and Capital Binding Go/No-Go widgets but no proven import from `execute-plans`. | Migrate deliberately into the shell or archive/delete as legacy; do not leave as a second quiet app. |
+| Evidence/Loop/OODA | Current mounted components directly read Evidence Explorer, Loop Health, and OODA packet detail. | Deepen as the first real operator workflow because it is already visible. |
+| PM12 performance suite | Persona League, Quarterly Ranking, Performance Attribution, Cost Attribution, and Portfolio Book exist as BFF/typed contracts, not mounted pages. | Keep as one performance-review suite with drilldowns; do not create one first-level page per endpoint. |
+| Decision/ops queues | Human Inbox, Sentinel, Intervention Stream, HIQ Backlog, Governance Ledger, Readiness, Incidents, Alerts, Approvals are valid operator jobs but currently spread across API/family names. | Adjust and merge into fewer queue/workbench views with canonical filters, owners, evidence, and receipts. |
+| Strategy/capital/risk/loop analytics | Strategy Allocation, Capital Flow, Risk Radar, Incident Timeline, Loop Throughput still carry casing debt. | Keep as analytical slices, but finish snake_case contracts and page-before-projection before UI expansion. |
+| Management AI/NL | NL ask, stream, AI audit/conversations/attachments are a separate governance/product surface. | Deep develop as an AI Ops workflow with audit, paging, provider auth, and trace semantics. |
+| Capability studios and seed details | Historical route crawl found Formula Studio, Skill Sandbox, Tools/MCP/Skills seed/detail surfaces and demo evidence ids. | Hide/demote unless backed by real runners, receipts, readback, and fixture gating. |
+| Compatibility aliases | Historical hosted UI had route aliases and some direct-render detail aliases. | Keep aliases only as redirects; delete duplicate render paths and duplicate payload aliases. |
+
 ### Management BFF Route Inventory
 
-Static route extraction found 57 `/bff/management*` route decorators.
+Static route extraction now finds 55 `/bff/management*` route decorators and
+55 unique `(method, path)` pairs.
 
 Important structural issues:
 
-- `/bff/management/persona-league` is declared twice:
-  - `bff_management_persona_league` near the PM12 ranking family;
-  - `bff_persona_league` near the persona fleet family.
-- Several families still return the same list under multiple names.
-- Several endpoints are list-shaped but still include detail-grade rows,
-  raw source records, or casing duplicates.
+- The earlier duplicate `/bff/management/persona-league` declaration has been
+  removed; the management route now has one registered owner.
+- Several endpoint families still have typed fetchers without a differentiated
+  mounted workflow in the current Management entrypoint.
+- Remaining contract debt is P1-only: casing duplicates and four
+  project-before-page helpers.
 
 ## Authenticated Route Smoke
 
@@ -248,24 +266,30 @@ Later remediation slices continued from this re-audit:
   recommendation row, governance payload, and HumanGate command fixture
   wire-casing mirrors; drilldown source breakdowns now expose lightweight
   counts/summaries instead of nested capability/session/memory helper payloads.
+- `MGMT-LIST-CONTRACT-018` removed PM12 performance attribution metrics, row,
+  source-ref, summary, and typed-contract wire-casing mirrors; moved row DTO
+  projection behind page slicing; and re-aligned PM12 persona-league DTOs and
+  focused tests to snake_case-only league rows, ranking rows, movers, tiers,
+  heatmap cells, and quarterly score fields without detail-grade row helper
+  payloads.
 
-The current list-contract guardrail result after `MGMT-LIST-CONTRACT-017` is:
+The current list-contract guardrail result after `MGMT-LIST-CONTRACT-018` is:
 
 ```text
-source=services/control-plane/bff/main.py baseline=docs/architecture/management-list-contract-baseline.json issues=91 new=0 retired=0
+source=services/control-plane/bff/main.py baseline=docs/architecture/management-list-contract-baseline.json issues=65 new=0 retired=0
 ```
 
 Current remaining categories:
 
 | Category | Count |
 |---|---:|
-| `camel-snake-duplicate` | 84 |
-| `project-before-page` | 5 |
-| `heavy-row-helper` | 2 |
+| `camel-snake-duplicate` | 61 |
+| `project-before-page` | 4 |
+| `heavy-row-helper` | 0 |
 
 All P0 categories are now zero in the Management list-contract audit. The next
-cleanup work is P1-only: remaining casing duplicates plus project-before-page
-and heavy-row-helper fixes.
+cleanup work is P1-only: remaining casing duplicates plus four
+project-before-page fixes.
 
 ## Validation
 
@@ -312,20 +336,21 @@ Interpretation:
 |---|---|
 | BFF list contract | Continue the `MGMT-LIST-CONTRACT-*` burn-down until all Management list routes use only `data.items`, `data.summary`, `page_info`, and `meta`. |
 | Frontend shell | Decide whether the current three-panel management entry is the intended shell. If not, build a real route shell intentionally instead of letting API inventory masquerade as UI pages. |
+| Layer separation | Treat mounted UI, typed fetchers, BFF routes, and historical hosted routes as separate inventories. Do not count typed fetchers as finished pages. |
 | Adapter layer | Keep compatibility adapters temporarily, but new UI should consume one canonical envelope and one wire casing. |
 | IA | Group endpoints into operator workflows: Evidence/Truth, Decision Inbox, Performance Review, Readiness Gates, Persona Ranking, AI Ops. Do not expose one first-level page per endpoint. |
-| Human Inbox | Slim list DTOs, remove raw source/detail payloads from list rows, and move expansion to detail routes. |
-| Governance Ledger | Normalize envelope, remove source-record leakage, and make source coverage/page ordering deterministic. |
-| AI Audit | Add real paging/limit behavior and canonical list envelope. |
-| Readiness routes | Keep as release-gate surfaces, but normalize envelope and avoid treating checks/items/evidence refs as multiple list roots. |
-| Persona League/Quarterly Ranking | Keep as domain views, but split list rows, ranking detail, formula, and recommendation detail contracts. |
-| Performance/Cost Attribution | The top-level aliases are now removed by `MGMT-LIST-CONTRACT-006`; continue with filter/page-before-projection and casing cleanup. |
+| Human Inbox | Fix the remaining project-before-page helper and keep list rows slim; expansion belongs to detail routes. |
+| Governance Ledger | Keep the canonical envelope and make source coverage/page ordering deterministic for tests and operators. |
+| AI Audit | Add real paging/limit behavior and remove the remaining AI/NL casing mirrors. |
+| Readiness routes | Keep as release-gate surfaces, but present them inside a readiness workflow rather than as repeated first-level pages. |
+| Persona League/Quarterly Ranking | Keep as domain views inside one PM12 performance suite; the focused contract is now snake_case-only. |
+| Performance/Cost Attribution | Performance Attribution is remediated in `MGMT-LIST-CONTRACT-018`; continue Cost Attribution casing and page-before-projection cleanup. |
 
 ## What Should Be Deleted, Hidden, Or Not Built
 
 | Surface | Recommendation |
 |---|---|
-| Duplicate `/bff/management/persona-league` list declaration | Delete or rename the legacy duplicate route. Keep one canonical list route and one detail route. |
+| Duplicate `/bff/management/persona-league` list declaration | Done: the duplicate route is gone. Keep this as an invariant rather than a new deletion task. |
 | `apps/management` isolated screens | Delete/archive if no active import owner exists; otherwise migrate deliberately into `execute-plans` with route tests. |
 | One-page-per-fetcher UI expansion | Do not build every `fetchManagement*` function into a page. Collapse into fewer workflows. |
 | Top-level compatibility aliases | Remove after frontend consumers migrate. Do not preserve aliases forever in payloads. |
@@ -342,7 +367,7 @@ Interpretation:
 | Command truth | Every action-like control must go through governed command/receipt/audit flow or be visibly disabled. |
 | Payload budgets | Add route-level payload assertions for large list routes, especially Human Inbox, AI Audit, and Governance Ledger. |
 | Hosted acceptance | Restore browser-level route/control evidence after the repo has installable frontend dependencies, including mock/unavailable/undefined/NaN detection. |
-| Test contract cleanup | Fix Governance Ledger source/page determinism and keep list-contract guardrails in CI. |
+| Test contract cleanup | Keep PM12 tests on snake_case-only contracts, fix Governance Ledger source/page determinism, and keep list-contract guardrails in CI. |
 
 ## Priority Order
 
@@ -370,11 +395,18 @@ Interpretation:
    drilldown, recommendation row, governance payload, typed contract, and
    HumanGate command fixture camel/snake wire-key mirrors; slim drilldown
    source breakdowns to summaries/counts.
-12. Continue casing cleanup and filter/page-before-projection work for the PM12
-   analytics helpers after `MGMT-LIST-CONTRACT-006`.
-13. Decide the frontend product shape: keep the current three-panel shell, or
+12. Done in `MGMT-LIST-CONTRACT-018`: remove PM12 performance attribution
+   metrics, row, source-ref, summary, and typed-contract camel/snake wire-key
+   mirrors; page group entries before row DTO projection; keep PM12
+   persona-league row, ranking, mover, tier, heatmap, quarterly score-field,
+   typed-contract, and focused-test DTOs snake_case-only.
+13. Continue casing cleanup in Management AI/NL, Strategy Allocation, Capital
+   Flow, Risk Radar, Incident Timeline, Loop Throughput, and Cost Attribution.
+14. Fix the four remaining project-before-page helpers: Human Inbox, Cost
+   Attribution, Portfolio Exposure, and Portfolio Holdings.
+15. Decide the frontend product shape: keep the current three-panel shell, or
    deliberately build a smaller workflow-based Management router.
-14. Add payload-size and route-smoke acceptance evidence before exposing more
+16. Add payload-size and route-smoke acceptance evidence before exposing more
    first-level management pages.
 
 ## Bottom Line

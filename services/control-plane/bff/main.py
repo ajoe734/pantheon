@@ -26703,50 +26703,33 @@ def _pm12_attribution_metrics(facts: List[Dict[str, Any]]) -> Dict[str, Any]:
         for fact in facts
         if str(fact.get("runtime_id") or "") and fact.get("telemetry_available")
     })
-    metrics = {
-        "runtimeCount": len(runtime_ids),
+    return {
         "runtime_count": len(runtime_ids),
-        "telemetryRuntimeCount": len(telemetry_runtime_ids),
         "telemetry_runtime_count": len(telemetry_runtime_ids),
-        "holdingCount": len(facts),
         "holding_count": len(facts),
-        "totalPnl": _pm12_metric_sum(facts, "total_pnl"),
         "total_pnl": _pm12_metric_sum(facts, "total_pnl"),
-        "unrealizedPnl": _pm12_metric_sum(facts, "unrealized_pnl"),
         "unrealized_pnl": _pm12_metric_sum(facts, "unrealized_pnl"),
-        "realizedPnl": _pm12_metric_sum(facts, "realized_pnl"),
         "realized_pnl": _pm12_metric_sum(facts, "realized_pnl"),
-        "totalNotional": _pm12_metric_sum(facts, "notional"),
         "total_notional": _pm12_metric_sum(facts, "notional"),
-        "totalMarketValue": _pm12_metric_sum(facts, "market_value"),
         "total_market_value": _pm12_metric_sum(facts, "market_value"),
-        "totalExposure": _pm12_metric_sum(facts, "exposure"),
         "total_exposure": _pm12_metric_sum(facts, "exposure"),
-        "worstDrawdown": max(drawdown_values) if drawdown_values else None,
         "worst_drawdown": max(drawdown_values) if drawdown_values else None,
-        "averageFillRate": _pm12_metric_avg(facts, "fill_rate"),
         "average_fill_rate": _pm12_metric_avg(facts, "fill_rate"),
-        "averageSlippageBps": _pm12_metric_avg(facts, "avg_slippage_bps"),
         "average_slippage_bps": _pm12_metric_avg(facts, "avg_slippage_bps"),
-        "totalTrades": int(trade_total) if trade_total is not None else 0,
         "total_trades": int(trade_total) if trade_total is not None else 0,
-        "latestTelemetryAt": _management_latest_timestamp(facts, "collected_at"),
         "latest_telemetry_at": _management_latest_timestamp(facts, "collected_at"),
     }
-    return metrics
 
 
-def _pm12_performance_attribution_rows(
+def _pm12_performance_attribution_group_entries(
     facts: List[Dict[str, Any]],
     *,
     dimensions: List[str],
-    period_key: str,
-    sources: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     total_metrics = _pm12_attribution_metrics(facts)
     portfolio_pnl = _management_as_float(total_metrics.get("total_pnl"))
     portfolio_notional = _management_as_float(total_metrics.get("total_notional"))
-    rows: List[Dict[str, Any]] = []
+    entries: List[Dict[str, Any]] = []
 
     for dimension in dimensions:
         grouped: Dict[str, List[Dict[str, Any]]] = {}
@@ -26775,83 +26758,101 @@ def _pm12_performance_attribution_rows(
             notional_weight = None
             if notional is not None and portfolio_notional not in (None, 0):
                 notional_weight = round(notional / portfolio_notional, 6)
-            runtime_ids = sorted({
-                str(fact.get("runtime_id") or "")
-                for fact in group_facts
-                if str(fact.get("runtime_id") or "")
-            })
-            pool_ids = sorted({
-                str(fact.get("capital_pool_id") or "")
-                for fact in group_facts
-                if str(fact.get("capital_pool_id") or "")
-            })
-            persona_ids = sorted({
-                str(fact.get("persona_id") or "")
-                for fact in group_facts
-                if str(fact.get("persona_id") or "")
-            })
-            strategy_ids = sorted({
-                str(fact.get("strategy_id") or "")
-                for fact in group_facts
-                if str(fact.get("strategy_id") or "")
-            })
-            label = _pm12_attribution_dimension_label(
-                dimension,
-                key,
-                personas_by_id=sources["personas_by_id"],
-                strategies_by_id=sources["strategies_by_id"],
-                pools_by_id=sources["pools_by_id"],
-            )
-            row = {
-                "id": f"pm12-performance-attribution-{dimension}-{key}",
+            entries.append({
                 "dimension": dimension,
-                "dimensionKey": key,
                 "dimension_key": key,
-                "label": label,
-                "period": period_key,
-                "rank": rank,
-                "metrics": {
-                    **metrics,
-                    "pnlContributionPct": pnl_contribution,
-                    "pnl_contribution_pct": pnl_contribution,
-                    "notionalWeight": notional_weight,
-                    "notional_weight": notional_weight,
-                },
-                "totalPnl": metrics["totalPnl"],
-                "total_pnl": metrics["total_pnl"],
-                "pnlContributionPct": pnl_contribution,
-                "pnl_contribution_pct": pnl_contribution,
-                "notionalWeight": notional_weight,
+                "group_facts": group_facts,
+                "metrics": metrics,
                 "notional_weight": notional_weight,
-                "runtimeCount": metrics["runtimeCount"],
-                "runtime_count": metrics["runtime_count"],
-                "holdingCount": metrics["holdingCount"],
-                "holding_count": metrics["holding_count"],
-                "sourceRefs": {
-                    "runtimeIds": runtime_ids,
-                    "runtime_ids": runtime_ids,
-                    "capitalPoolIds": pool_ids,
-                    "capital_pool_ids": pool_ids,
-                    "personaIds": persona_ids,
-                    "persona_ids": persona_ids,
-                    "strategyIds": strategy_ids,
-                    "strategy_ids": strategy_ids,
-                },
-                "source_refs": {
-                    "runtime_ids": runtime_ids,
-                    "capital_pool_ids": pool_ids,
-                    "persona_ids": persona_ids,
-                    "strategy_ids": strategy_ids,
-                },
-                "links": {
-                    "runtime": _management_link("/bff/runtimes", key) if dimension == "runtime" else None,
-                    "capitalPool": _management_link("/bff/capital-pools", key) if dimension == "pool" else None,
-                    "capital_pool": _management_link("/bff/capital-pools", key) if dimension == "pool" else None,
-                    "persona": _management_link("/bff/personas", key) if dimension == "persona" else None,
-                    "strategy": _management_link("/bff/strategies", key) if dimension == "strategy" else None,
-                },
-            }
-            rows.append(row)
+                "pnl_contribution_pct": pnl_contribution,
+                "rank": rank,
+            })
+
+    return entries
+
+
+def _pm12_performance_attribution_page_entries(
+    facts: List[Dict[str, Any]],
+    *,
+    dimensions: List[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> tuple[List[Dict[str, Any]], int, Optional[str], Dict[str, Any]]:
+    entries = _pm12_performance_attribution_group_entries(facts, dimensions=dimensions)
+    page_entries, next_page_token = _page_slice(entries, page_token, page_size)
+    return page_entries, len(entries), next_page_token, _pm12_attribution_metrics(facts)
+
+
+def _pm12_performance_attribution_rows(
+    entries: List[Dict[str, Any]],
+    *,
+    period_key: str,
+    sources: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+
+    for entry in entries:
+        dimension = str(entry.get("dimension") or "")
+        key = str(entry.get("dimension_key") or "")
+        group_facts = entry.get("group_facts") if isinstance(entry.get("group_facts"), list) else []
+        metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
+        runtime_ids = sorted({
+            str(fact.get("runtime_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_id") or "")
+        })
+        pool_ids = sorted({
+            str(fact.get("capital_pool_id") or "")
+            for fact in group_facts
+            if str(fact.get("capital_pool_id") or "")
+        })
+        persona_ids = sorted({
+            str(fact.get("persona_id") or "")
+            for fact in group_facts
+            if str(fact.get("persona_id") or "")
+        })
+        strategy_ids = sorted({
+            str(fact.get("strategy_id") or "")
+            for fact in group_facts
+            if str(fact.get("strategy_id") or "")
+        })
+        label = _pm12_attribution_dimension_label(
+            dimension,
+            key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        rows.append({
+            "id": f"pm12-performance-attribution-{dimension}-{key}",
+            "dimension": dimension,
+            "dimension_key": key,
+            "label": label,
+            "period": period_key,
+            "rank": entry.get("rank"),
+            "metrics": {
+                **metrics,
+                "pnl_contribution_pct": entry.get("pnl_contribution_pct"),
+                "notional_weight": entry.get("notional_weight"),
+            },
+            "total_pnl": metrics["total_pnl"],
+            "pnl_contribution_pct": entry.get("pnl_contribution_pct"),
+            "notional_weight": entry.get("notional_weight"),
+            "runtime_count": metrics["runtime_count"],
+            "holding_count": metrics["holding_count"],
+            "source_refs": {
+                "runtime_ids": runtime_ids,
+                "capital_pool_ids": pool_ids,
+                "persona_ids": persona_ids,
+                "strategy_ids": strategy_ids,
+            },
+            "links": {
+                "runtime": _management_link("/bff/runtimes", key) if dimension == "runtime" else None,
+                "capital_pool": _management_link("/bff/capital-pools", key) if dimension == "pool" else None,
+                "persona": _management_link("/bff/personas", key) if dimension == "persona" else None,
+                "strategy": _management_link("/bff/strategies", key) if dimension == "strategy" else None,
+            },
+        })
 
     return rows
 
@@ -39094,10 +39095,10 @@ def _pm12_persona_route_summary(persona_id: str) -> Dict[str, Any]:
             blocking_count += 1
     return {
         "version": policy.get("version") or consult_policy.get("version"),
-        "ruleCount": len(rules),
-        "consultRuleCount": len(trigger_rules),
-        "blockingRuleCount": blocking_count,
-        "hasPolicy": bool(policy or consult_policy),
+        "rule_count": len(rules),
+        "consult_rule_count": len(trigger_rules),
+        "blocking_rule_count": blocking_count,
+        "has_policy": bool(policy or consult_policy),
     }
 
 
@@ -39108,14 +39109,14 @@ def _pm12_persona_capability_summary(persona_id: str) -> Dict[str, Any]:
     workflows = list(snapshot.get("effective_workflows") or [])
     restrictions = list(snapshot.get("restrictions") or [])
     return {
-        "snapshotId": snapshot.get("snapshot_id") or snapshot.get("id"),
-        "generatedAt": snapshot.get("generated_at"),
-        "skillCount": len(skills),
-        "toolCount": len(tools),
-        "workflowCount": len(workflows),
-        "restrictionCount": len(restrictions),
-        "sourceRefCount": len(snapshot.get("source_refs") or []),
-        "hasSnapshot": bool(snapshot),
+        "snapshot_id": snapshot.get("snapshot_id") or snapshot.get("id"),
+        "generated_at": snapshot.get("generated_at"),
+        "skill_count": len(skills),
+        "tool_count": len(tools),
+        "workflow_count": len(workflows),
+        "restriction_count": len(restrictions),
+        "source_ref_count": len(snapshot.get("source_refs") or []),
+        "has_snapshot": bool(snapshot),
     }
 
 
@@ -39142,10 +39143,10 @@ def _pm12_persona_binding_summary(persona_id: str) -> Dict[str, Any]:
     return {
         "total": len(bindings),
         "active": active_count,
-        "capitalPoolIds": pool_ids,
-        "capitalPools": pool_refs,
-        "deploymentScopes": deployment_scopes,
-        "statusCounts": _pm12_status_counts(bindings),
+        "capital_pool_ids": pool_ids,
+        "capital_pools": pool_refs,
+        "deployment_scopes": deployment_scopes,
+        "status_counts": _pm12_status_counts(bindings),
     }
 
 
@@ -39155,13 +39156,13 @@ def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
     return {
         "total": len(sessions),
         "active": len(active),
-        "lastHeartbeatAt": _pm12_latest_timestamp(
+        "last_heartbeat_at": _pm12_latest_timestamp(
             sessions,
             ("last_heartbeat_at", "updated_at", "started_at"),
         ),
-        "runtimeBindingIds": _pm12_compact_ids(sessions, ("runtime_binding_id", "runtime_id")),
-        "poolScopes": _pm12_compact_ids(sessions, ("pool_scope", "capital_pool_id")),
-        "statusCounts": _pm12_status_counts(sessions),
+        "runtime_binding_ids": _pm12_compact_ids(sessions, ("runtime_binding_id", "runtime_id")),
+        "pool_scopes": _pm12_compact_ids(sessions, ("pool_scope", "capital_pool_id")),
+        "status_counts": _pm12_status_counts(sessions),
     }
 
 
@@ -39179,12 +39180,12 @@ def _pm12_persona_evaluation_summary(persona_id: str) -> Dict[str, Any]:
     return {
         "total": len(teaching),
         "completed": len(completed),
-        "latestAt": _pm12_latest_timestamp(
+        "latest_at": _pm12_latest_timestamp(
             teaching,
             ("completed_at", "updated_at", "started_at", "created_at"),
         ),
-        "outcomeCount": outcome_count,
-        "statusCounts": _pm12_status_counts(teaching),
+        "outcome_count": outcome_count,
+        "status_counts": _pm12_status_counts(teaching),
     }
 
 
@@ -39192,8 +39193,8 @@ def _pm12_persona_memory_summary(persona_id: str) -> Dict[str, Any]:
     memory = _pm12_memory_items_for_persona(persona_id)
     return {
         "total": len(memory),
-        "latestAt": _pm12_latest_timestamp(memory, ("updated_at", "created_at", "recorded_at")),
-        "statusCounts": _pm12_status_counts(memory),
+        "latest_at": _pm12_latest_timestamp(memory, ("updated_at", "created_at", "recorded_at")),
+        "status_counts": _pm12_status_counts(memory),
     }
 
 
@@ -39201,13 +39202,13 @@ def _pm12_persona_health_summary(persona: Dict[str, Any], sessions: Dict[str, An
     state = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
     is_operational = _is_persona_lifecycle_operational(state)
     health = "healthy" if is_operational else "degraded"
-    if is_operational and capabilities.get("hasSnapshot") is False:
+    if is_operational and capabilities.get("has_snapshot") is False:
         health = "degraded"
     return {
         "health": health,
-        "lifecycleState": state or "unknown",
-        "activeSessionCount": sessions.get("active", 0),
-        "hasCapabilitySnapshot": bool(capabilities.get("hasSnapshot")),
+        "lifecycle_state": state or "unknown",
+        "active_session_count": sessions.get("active", 0),
+        "has_capability_snapshot": bool(capabilities.get("has_snapshot")),
     }
 
 
@@ -39218,11 +39219,11 @@ _PM12_LEAGUE_SCORE_WEIGHTS = {
     "activity": 0.15,
 }
 _PM12_LEAGUE_RANKING_CRITERIA = {
-    "overall": ("overallScore", "Overall"),
-    "pnl": ("pnlScore", "PnL"),
-    "risk": ("riskScore", "Risk"),
-    "execution": ("executionScore", "Execution"),
-    "activity": ("activityScore", "Activity"),
+    "overall": ("overall_score", "Overall"),
+    "pnl": ("pnl_score", "PnL"),
+    "risk": ("risk_score", "Risk"),
+    "execution": ("execution_score", "Execution"),
+    "activity": ("activity_score", "Activity"),
 }
 _PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
@@ -39321,50 +39322,34 @@ _PM12_QUARTERLY_RECOMMENDATION_ACTIONS = {
 _PM12_LEAGUE_TIER_DEFINITIONS = [
     {
         "id": "tier-1",
-        "tierId": "tier-1",
         "tier_id": "tier-1",
         "label": "League Leader",
-        "minScore": 85.0,
         "min_score": 85.0,
-        "maxScore": 100.0,
         "max_score": 100.0,
-        "governancePosture": "promotion_candidate",
         "governance_posture": "promotion_candidate",
     },
     {
         "id": "tier-2",
-        "tierId": "tier-2",
         "tier_id": "tier-2",
         "label": "Production Candidate",
-        "minScore": 70.0,
         "min_score": 70.0,
-        "maxScore": 84.999,
         "max_score": 84.999,
-        "governancePosture": "maintain_or_expand_paper",
         "governance_posture": "maintain_or_expand_paper",
     },
     {
         "id": "tier-3",
-        "tierId": "tier-3",
         "tier_id": "tier-3",
         "label": "Observation",
-        "minScore": 55.0,
         "min_score": 55.0,
-        "maxScore": 69.999,
         "max_score": 69.999,
-        "governancePosture": "continue_observation",
         "governance_posture": "continue_observation",
     },
     {
         "id": "tier-4",
-        "tierId": "tier-4",
         "tier_id": "tier-4",
         "label": "Incubation",
-        "minScore": 0.0,
         "min_score": 0.0,
-        "maxScore": 54.999,
         "max_score": 54.999,
-        "governancePosture": "research_only",
         "governance_posture": "research_only",
     },
 ]
@@ -39375,8 +39360,10 @@ def _pm12_clamp_score(value: float) -> float:
 
 
 def _pm12_persona_runtime_ids(row: Dict[str, Any]) -> List[str]:
-    sessions = row.get("sessions") if isinstance(row.get("sessions"), dict) else {}
-    raw_ids = sessions.get("runtimeBindingIds") or sessions.get("runtime_binding_ids") or []
+    sessions = row.get("session_summary") if isinstance(row.get("session_summary"), dict) else {}
+    if not sessions:
+        sessions = row.get("sessions") if isinstance(row.get("sessions"), dict) else {}
+    raw_ids = sessions.get("runtime_binding_ids") or sessions.get("runtimeBindingIds") or []
     values: List[str] = []
     seen = set()
     for raw_id in (raw_ids if isinstance(raw_ids, list) else []):
@@ -39442,21 +39429,14 @@ def _pm12_telemetry_metrics_from_records(
     latest_timestamp = _pm12_telemetry_record_timestamp(telemetry[0]) if telemetry else None
     latest_timestamp_iso = _pm12_iso_z(latest_timestamp) if latest_timestamp else None
     return {
-        "runtimeIds": runtime_ids,
         "runtime_ids": runtime_ids,
-        "runtimeCount": len(runtime_ids),
         "runtime_count": len(runtime_ids),
-        "telemetryCoverageCount": len(telemetry),
         "telemetry_coverage_count": len(telemetry),
         "pnl": round(sum(pnl_values), 6) if pnl_values else None,
         "drawdown": max(drawdown_values) if drawdown_values else None,
-        "fillRate": _management_avg(fill_rate_values),
         "fill_rate": _management_avg(fill_rate_values),
-        "avgSlippageBps": _management_avg(slippage_values),
         "avg_slippage_bps": _management_avg(slippage_values),
-        "totalTrades": int(sum(trade_values)) if trade_values else 0,
         "total_trades": int(sum(trade_values)) if trade_values else 0,
-        "latestTelemetryAt": latest_timestamp_iso,
         "latest_telemetry_at": latest_timestamp_iso,
     }
 
@@ -39511,11 +39491,12 @@ def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
 def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, float]:
     pnl = _management_number(metrics.get("pnl"))
     drawdown = _management_number(metrics.get("drawdown"))
-    fill_rate = _management_number(metrics.get("fillRate"))
-    slippage = _management_number(metrics.get("avgSlippageBps"))
-    sessions = row.get("sessions") if isinstance(row.get("sessions"), dict) else {}
-    evaluations = row.get("evaluations") if isinstance(row.get("evaluations"), dict) else {}
-    capabilities = row.get("capabilities") if isinstance(row.get("capabilities"), dict) else {}
+    fill_rate = _management_number(metrics.get("fill_rate"))
+    slippage = _management_number(metrics.get("avg_slippage_bps"))
+    sessions = row.get("session_summary") if isinstance(row.get("session_summary"), dict) else {}
+    evaluations = row.get("evaluation_summary") if isinstance(row.get("evaluation_summary"), dict) else {}
+    capabilities = row.get("capability_summary") if isinstance(row.get("capability_summary"), dict) else {}
+    memory = row.get("memory_summary") if isinstance(row.get("memory_summary"), dict) else {}
 
     pnl_score = 50.0 if pnl is None else _pm12_clamp_score(50.0 + (pnl * 100.0))
     risk_floor = {
@@ -39536,9 +39517,9 @@ def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) ->
     activity_score = _pm12_clamp_score(
         (float(sessions.get("active") or 0) * 20.0)
         + (float(evaluations.get("completed") or 0) * 15.0)
-        + (10.0 if capabilities.get("hasSnapshot") else 0.0)
-        + (float(row.get("routedStrategies") or 0) * 5.0)
-        + min(float((row.get("memory") or {}).get("total") or 0) * 2.0, 10.0)
+        + (10.0 if capabilities.get("has_snapshot") else 0.0)
+        + (float(row.get("routed_strategy_count") or 0) * 5.0)
+        + min(float(memory.get("total") or 0) * 2.0, 10.0)
     )
     overall = (
         pnl_score * _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]
@@ -39547,17 +39528,17 @@ def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) ->
         + activity_score * _PM12_LEAGUE_SCORE_WEIGHTS["activity"]
     )
     return {
-        "overallScore": round(overall, 6),
-        "pnlScore": pnl_score,
-        "riskScore": risk_score,
-        "executionScore": execution_score,
-        "activityScore": activity_score,
+        "overall_score": round(overall, 6),
+        "pnl_score": pnl_score,
+        "risk_score": risk_score,
+        "execution_score": execution_score,
+        "activity_score": activity_score,
     }
 
 
 def _pm12_tier_for_score(score: float) -> Dict[str, Any]:
     for tier in _PM12_LEAGUE_TIER_DEFINITIONS:
-        if score >= float(tier["minScore"]):
+        if score >= float(tier["min_score"]):
             return tier
     return _PM12_LEAGUE_TIER_DEFINITIONS[-1]
 
@@ -39671,7 +39652,7 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
         "version": _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
-        "score_field": "overallScore",
+        "score_field": "overall_score",
         "components": [
             {"key": "pnl", "label": "PnL", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]},
             {"key": "risk", "label": "Risk", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["risk"]},
@@ -39746,19 +39727,19 @@ def _pm12_quarterly_ranking_items(
     ranked = sorted(
         (_pm12_persona_league_ranking_item(row) for row in rows),
         key=lambda item: (
-            _management_number(item.get("overallScore")) or 0.0,
-            str(item.get("personaId") or ""),
+            _management_number(item.get("overall_score")) or 0.0,
+            str(item.get("persona_id") or ""),
         ),
         reverse=True,
     )
     items: List[Dict[str, Any]] = []
     for rank, item in enumerate(ranked, start=1):
-        score = _management_number(item.get("overallScore")) or 0.0
+        score = _management_number(item.get("overall_score")) or 0.0
         items.append({
             **item,
             "rank": rank,
             "score": score,
-            "score_field": "overallScore",
+            "score_field": "overall_score",
             "quarter": quarter_window["quarter"],
             "quarter_window": quarter_window,
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
@@ -39775,7 +39756,7 @@ def _pm12_quarterly_find_persona_item(
     if not clean_persona_id:
         return None
     for item in ranked_items:
-        item_persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "").strip()
+        item_persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "").strip()
         if item_persona_id == clean_persona_id:
             return item
     return None
@@ -39787,7 +39768,7 @@ def _pm12_quarterly_find_persona_row(
 ) -> Dict[str, Any]:
     clean_persona_id = str(persona_id or "").strip()
     for row in rows:
-        row_persona_id = str(row.get("personaId") or row.get("persona_id") or row.get("id") or "").strip()
+        row_persona_id = str(row.get("persona_id") or row.get("personaId") or row.get("id") or "").strip()
         if row_persona_id == clean_persona_id:
             return row
     return {}
@@ -39797,15 +39778,16 @@ def _pm12_quarterly_component_score(
     components: Dict[str, Any],
     score_field: str,
 ) -> float:
-    snake_score_fields = {
-        "pnlScore": "pnl_score",
-        "riskScore": "risk_score",
-        "executionScore": "execution_score",
-        "activityScore": "activity_score",
+    camel_score_fields = {
+        "pnl_score": "pnlScore",
+        "risk_score": "riskScore",
+        "execution_score": "executionScore",
+        "activity_score": "activityScore",
+        "overall_score": "overallScore",
     }
     value = _management_number(components.get(score_field))
     if value is None:
-        value = _management_number(components.get(snake_score_fields.get(score_field, "")))
+        value = _management_number(components.get(camel_score_fields.get(score_field, "")))
     return value or 0.0
 
 
@@ -39825,7 +39807,7 @@ def _pm12_quarterly_drilldown_contributions(item: Dict[str, Any]) -> List[Dict[s
         weighted = round(score * weight, 6)
         total_weighted += weighted
         contribution_rows.append({
-            "id": f"{item.get('personaId')}-{key}",
+            "id": f"{item.get('persona_id') or item.get('id')}-{key}",
             "key": key,
             "label": label,
             "score_field": score_field,
@@ -39852,29 +39834,31 @@ def _pm12_quarterly_drilldown_payload(
     ranked_count: int,
     evidence_refs: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
+    persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     formula = _pm12_quarter_formula_payload()
     contributions = _pm12_quarterly_drilldown_contributions(item)
     total_weighted = round(
         sum(_management_number(entry.get("weighted_contribution")) or 0.0 for entry in contributions),
         6,
     )
-    score = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or total_weighted
-    route_policy = row.get("routePolicy") if isinstance(row.get("routePolicy"), dict) else {}
-    capabilities = row.get("capabilities") if isinstance(row.get("capabilities"), dict) else {}
-    bindings = row.get("bindings") if isinstance(row.get("bindings"), dict) else {}
-    sessions = row.get("sessions") if isinstance(row.get("sessions"), dict) else {}
-    evaluations = row.get("evaluations") if isinstance(row.get("evaluations"), dict) else {}
-    memory = row.get("memory") if isinstance(row.get("memory"), dict) else {}
+    score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or total_weighted
+    route_policy = row.get("route_policy_summary") if isinstance(row.get("route_policy_summary"), dict) else {}
+    capabilities = row.get("capability_summary") if isinstance(row.get("capability_summary"), dict) else {}
+    bindings = row.get("binding_summary") if isinstance(row.get("binding_summary"), dict) else {}
+    sessions = row.get("session_summary") if isinstance(row.get("session_summary"), dict) else {}
+    evaluations = row.get("evaluation_summary") if isinstance(row.get("evaluation_summary"), dict) else {}
+    memory = row.get("memory_summary") if isinstance(row.get("memory_summary"), dict) else {}
     source_breakdown = {
         "metrics": item.get("metrics") or {},
         "components": item.get("components") or {},
-        "health": row.get("health") or {},
+        "health": row.get("health_summary") or {},
         "route_policy_summary": {
-            "rule_count": route_policy.get("ruleCount") or route_policy.get("rule_count") or 0,
-            "default_route": route_policy.get("defaultRoute") or route_policy.get("default_route"),
+            "rule_count": route_policy.get("rule_count") or route_policy.get("ruleCount") or 0,
+            "consult_rule_count": route_policy.get("consult_rule_count") or route_policy.get("consultRuleCount") or 0,
+            "blocking_rule_count": route_policy.get("blocking_rule_count") or route_policy.get("blockingRuleCount") or 0,
+            "has_policy": bool(route_policy.get("has_policy") or route_policy.get("hasPolicy")),
         },
-        "capability_count": capabilities.get("skillCount") or capabilities.get("skill_count") or 0,
+        "capability_count": capabilities.get("skill_count") or capabilities.get("skillCount") or 0,
         "binding_count": bindings.get("total") or 0,
         "session_count": sessions.get("total") or 0,
         "evaluation_count": evaluations.get("total") or 0,
@@ -39921,10 +39905,10 @@ def _pm12_add_recommendation_action(action_ids: List[str], action_id: str) -> No
 
 def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
     components = item.get("components") if isinstance(item.get("components"), dict) else {}
-    overall = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or 0.0
-    risk_score = _management_number(components.get("riskScore"))
-    execution_score = _management_number(components.get("executionScore"))
-    activity_score = _management_number(components.get("activityScore"))
+    overall = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
+    risk_score = _management_number(components.get("risk_score"))
+    execution_score = _management_number(components.get("execution_score"))
+    activity_score = _management_number(components.get("activity_score"))
     action_ids: List[str] = []
 
     if overall >= 85.0 and (risk_score is None or risk_score >= 70.0) and (
@@ -39970,8 +39954,8 @@ def _pm12_quarterly_recommendation_item(
     evidence_refs: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
-    persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
-    score = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or 0.0
+    persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
+    score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
     evidence_sample = evidence_refs[:5]
     evidence_ref_ids = [
         str(ref.get("refId") or ref.get("ref_id") or ref.get("id"))
@@ -40063,8 +40047,8 @@ def _pm12_quarterly_recommendations(
 
 def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+    metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     routed = _routed_strategies_for_persona(persona_id)
-    dto = _project_persona_dto(raw, routed_strategies=routed)
     route_policy = _pm12_persona_route_summary(persona_id)
     capabilities = _pm12_persona_capability_summary(persona_id)
     bindings = _pm12_persona_binding_summary(persona_id)
@@ -40073,22 +40057,45 @@ def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
     memory = _pm12_persona_memory_summary(persona_id)
     health = _pm12_persona_health_summary(raw, sessions, capabilities)
     allowed_actions = read_store.get_persona_allowed_actions(persona_id) or {}
+    enabled_actions = sorted(
+        str(action_id)
+        for action_id, enabled in allowed_actions.items()
+        if enabled
+    )
+    archetype = str(
+        metadata.get("archetype")
+        or raw.get("strategy_family")
+        or raw.get("mandate")
+        or "generalist"
+    )
     return {
-        **dto,
-        "personaId": persona_id,
-        "mandate": raw.get("mandate"),
-        "strategyFamily": raw.get("strategy_family"),
-        "routePolicy": route_policy,
-        "capabilities": capabilities,
-        "bindings": bindings,
-        "sessions": sessions,
-        "evaluations": evaluations,
-        "memory": memory,
-        "health": health,
-        "allowedActions": allowed_actions,
+        "id": persona_id,
+        "persona_id": persona_id,
+        "name": raw.get("name") or persona_id,
+        "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
+        "updated_at": raw.get("updated_at") or raw.get("created_at") or utc_now(),
+        "state": _normalize_lifecycle_state(raw.get("lifecycle_state") or raw.get("state")),
+        "risk": _normalize_risk_level(metadata.get("risk_level") or raw.get("risk")),
+        "archetype": archetype,
+        "routed_strategy_count": int(routed or 0),
+        "success_rate": float(metadata.get("success_rate") or 0.0),
+        "mandate": raw.get("mandate") or "",
+        "strategy_family": raw.get("strategy_family") or "",
+        "route_policy_summary": route_policy,
+        "capability_summary": capabilities,
+        "binding_summary": bindings,
+        "session_summary": sessions,
+        "evaluation_summary": evaluations,
+        "memory_summary": memory,
+        "health_summary": health,
+        "allowed_action_summary": {
+            "count": len(allowed_actions),
+            "enabled_count": len(enabled_actions),
+            "enabled_actions": enabled_actions,
+        },
         "links": {
             "detail": f"/bff/personas/{persona_id}",
-            "routePolicy": f"/bff/personas/{persona_id}/route-policy",
+            "route_policy": f"/bff/personas/{persona_id}/route-policy",
             "capabilities": f"/bff/personas/{persona_id}/capabilities",
             "evaluations": f"/bff/personas/{persona_id}/evaluations",
             "memory": f"/bff/personas/{persona_id}/memory",
@@ -40138,31 +40145,20 @@ def _pm12_persona_league_source_surfaces(snapshot_at: str) -> Dict[str, Dict[str
 def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
     metrics = _pm12_persona_telemetry_metrics(row)
     scores = _pm12_persona_league_scores(row, metrics)
-    tier = _pm12_tier_for_score(scores["overallScore"])
-    components = {
-        **scores,
-        "overall_score": scores["overallScore"],
-        "pnl_score": scores["pnlScore"],
-        "risk_score": scores["riskScore"],
-        "execution_score": scores["executionScore"],
-        "activity_score": scores["activityScore"],
-    }
+    tier = _pm12_tier_for_score(scores["overall_score"])
+    components = dict(scores)
     return {
         "id": row.get("id"),
-        "personaId": row.get("personaId") or row.get("id"),
-        "persona_id": row.get("personaId") or row.get("id"),
+        "persona_id": row.get("persona_id") or row.get("id"),
         "name": row.get("name"),
         "owner": row.get("owner"),
         "state": row.get("state"),
         "risk": row.get("risk"),
         "archetype": row.get("archetype"),
         "tier": tier["id"],
-        "tierId": tier["id"],
         "tier_id": tier["id"],
-        "tierLabel": tier["label"],
         "tier_label": tier["label"],
-        "overallScore": scores["overallScore"],
-        "overall_score": scores["overallScore"],
+        "overall_score": scores["overall_score"],
         "metrics": metrics,
         "components": components,
         "links": row.get("links") or {},
@@ -40192,7 +40188,7 @@ def _pm12_persona_league_rankings(
             base_items,
             key=lambda item: (
                 _management_number((item.get("components") or {}).get(score_key)) or 0.0,
-                str(item.get("personaId") or ""),
+                str(item.get("persona_id") or ""),
             ),
             reverse=True,
         )[:limit]
@@ -40203,20 +40199,16 @@ def _pm12_persona_league_rankings(
                 **item,
                 "rank": rank,
                 "score": score,
-                "scoreField": score_key,
                 "score_field": score_key,
             })
         blocks.append({
             "id": f"persona-league-{criterion}",
-            "rankingId": f"persona-league-{criterion}",
             "ranking_id": f"persona-league-{criterion}",
             "criteria": criterion,
             "label": label,
-            "formulaVersion": "pm12-default-v1",
             "formula_version": "pm12-default-v1",
             "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
             "items": block_items,
-            "rankedCount": len(block_items),
             "ranked_count": len(block_items),
         })
     return blocks
@@ -40227,53 +40219,42 @@ def _pm12_persona_league_tier_payload(rows: List[Dict[str, Any]]) -> tuple[List[
     ranking_items = sorted(
         ranking_items,
         key=lambda item: (
-            _management_number(item.get("overallScore")) or 0.0,
-            str(item.get("personaId") or ""),
+            _management_number(item.get("overall_score")) or 0.0,
+            str(item.get("persona_id") or ""),
         ),
         reverse=True,
     )
     assignments = [
         {
-            "personaId": item.get("personaId"),
-            "persona_id": item.get("personaId"),
+            "persona_id": item.get("persona_id"),
             "name": item.get("name"),
             "tier": item.get("tier"),
-            "tierId": item.get("tierId"),
-            "tier_id": item.get("tierId"),
-            "tierLabel": item.get("tierLabel"),
-            "tier_label": item.get("tierLabel"),
-            "overallScore": item.get("overallScore"),
-            "overall_score": item.get("overallScore"),
+            "tier_id": item.get("tier_id"),
+            "tier_label": item.get("tier_label"),
+            "overall_score": item.get("overall_score"),
             "metrics": item.get("metrics") or {},
         }
         for item in ranking_items
     ]
     by_tier: Dict[str, int] = {}
     for assignment in assignments:
-        tier_id = str(assignment.get("tierId") or "unknown")
+        tier_id = str(assignment.get("tier_id") or "unknown")
         by_tier[tier_id] = by_tier.get(tier_id, 0) + 1
     tiers: List[Dict[str, Any]] = []
     for definition in _PM12_LEAGUE_TIER_DEFINITIONS:
         tier_id = str(definition["id"])
-        tier_assignments = [item for item in assignments if item.get("tierId") == tier_id]
+        tier_assignments = [item for item in assignments if item.get("tier_id") == tier_id]
         tiers.append({
             **definition,
-            "personaCount": len(tier_assignments),
             "persona_count": len(tier_assignments),
-            "personaIds": [item["personaId"] for item in tier_assignments],
-            "persona_ids": [item["personaId"] for item in tier_assignments],
+            "persona_ids": [item["persona_id"] for item in tier_assignments],
             "assignments": tier_assignments,
         })
     summary = {
-        "seasonId": "current",
         "season_id": "current",
-        "formulaVersion": "pm12-default-v1",
         "formula_version": "pm12-default-v1",
-        "personaCount": len(assignments),
         "persona_count": len(assignments),
-        "tierCount": len(tiers),
         "tier_count": len(tiers),
-        "byTier": by_tier,
         "by_tier": by_tier,
     }
     return tiers, assignments, summary
@@ -40302,46 +40283,35 @@ def _pm12_persona_league_mover_items(
     ranked_items = sorted(
         (_pm12_persona_league_ranking_item(row) for row in rows),
         key=lambda item: (
-            _management_number(item.get("overallScore")) or 0.0,
-            str(item.get("personaId") or ""),
+            _management_number(item.get("overall_score")) or 0.0,
+            str(item.get("persona_id") or ""),
         ),
         reverse=True,
     )
     movers: List[Dict[str, Any]] = []
     direction_counts = {"up": 0, "down": 0, "flat": 0, "new": 0}
     for current_rank, item in enumerate(ranked_items, start=1):
-        persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
-        current_score = _management_number(item.get("overallScore")) or 0.0
+        persona_id = str(item.get("persona_id") or item.get("id") or "")
+        current_score = _management_number(item.get("overall_score")) or 0.0
         movement_direction = "new"
         direction_counts[movement_direction] += 1
         mover = {
             **item,
             "id": f"persona-league-mover-{persona_id}",
-            "moverId": f"persona-league-mover-{persona_id}",
             "mover_id": f"persona-league-mover-{persona_id}",
-            "currentRank": current_rank,
             "current_rank": current_rank,
-            "previousRank": None,
             "previous_rank": None,
-            "rankDelta": None,
             "rank_delta": None,
             "direction": movement_direction,
-            "currentScore": current_score,
             "current_score": current_score,
-            "previousScore": None,
             "previous_score": None,
-            "scoreDelta": None,
             "score_delta": None,
-            "scoreDeltaDisplay": "baseline unavailable",
             "score_delta_display": "baseline unavailable",
-            "baselineStatus": "unavailable",
             "baseline_status": "unavailable",
             "basis": "current_persona_league_snapshot_no_historical_baseline",
             "rank": current_rank,
             "score": current_score,
-            "scoreField": "overallScore",
-            "score_field": "overallScore",
-            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "score_field": "overall_score",
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
             "movement": {
                 "direction": movement_direction,
@@ -40358,39 +40328,28 @@ def _pm12_persona_league_mover_items(
     movers = sorted(
         movers,
         key=lambda item: (
-            item.get("baselineStatus") != "unavailable",
-            abs(_management_number(item.get("scoreDelta")) or 0.0),
-            -int(item.get("currentRank") or 0),
-            str(item.get("personaId") or ""),
+            item.get("baseline_status") != "unavailable",
+            abs(_management_number(item.get("score_delta")) or 0.0),
+            -int(item.get("current_rank") or 0),
+            str(item.get("persona_id") or ""),
         ),
         reverse=True,
     )
     limited = movers[:limit]
     top_mover = limited[0] if limited else None
     summary = {
-        "personaCount": len(rows),
         "persona_count": len(rows),
-        "moverCount": len(movers),
         "mover_count": len(movers),
-        "returnedCount": len(limited),
         "returned_count": len(limited),
         "direction": direction,
-        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-        "baselineStatus": "unavailable",
         "baseline_status": "unavailable",
-        "baselineUnavailableCount": len(ranked_items),
         "baseline_unavailable_count": len(ranked_items),
-        "upCount": direction_counts["up"],
         "up_count": direction_counts["up"],
-        "downCount": direction_counts["down"],
         "down_count": direction_counts["down"],
-        "flatCount": direction_counts["flat"],
         "flat_count": direction_counts["flat"],
-        "newCount": direction_counts["new"],
         "new_count": direction_counts["new"],
-        "topMoverPersonaId": (top_mover or {}).get("personaId") if isinstance(top_mover, dict) else None,
-        "top_mover_persona_id": (top_mover or {}).get("personaId") if isinstance(top_mover, dict) else None,
+        "top_mover_persona_id": (top_mover or {}).get("persona_id") if isinstance(top_mover, dict) else None,
         "basis": "current_persona_league_snapshot_no_historical_baseline",
     }
     return limited, summary
@@ -40448,15 +40407,11 @@ def _pm12_heatmap_buckets(
         end_iso = _pm12_iso_z(end_at)
         buckets.append({
             "id": f"{bucket_key}-{start_iso}",
-            "bucketId": f"{bucket_key}-{start_iso}",
             "bucket_id": f"{bucket_key}-{start_iso}",
             "index": index,
             "label": _pm12_heatmap_bucket_label(start_at, bucket_key),
-            "startAt": start_iso,
             "start_at": start_iso,
-            "endAt": end_iso,
             "end_at": end_iso,
-            "endExclusiveAt": end_iso,
             "end_exclusive_at": end_iso,
         })
     return bucket_key, buckets
@@ -40500,8 +40455,8 @@ def _pm12_persona_league_heatmap_cell(
     records: List[Dict[str, Any]],
     latest_metrics: Dict[str, Any],
 ) -> Dict[str, Any]:
-    start_at = _audit_datetime(bucket.get("startAt")) or datetime.now(timezone.utc)
-    end_at = _audit_datetime(bucket.get("endAt")) or start_at
+    start_at = _audit_datetime(bucket.get("start_at") or bucket.get("startAt")) or datetime.now(timezone.utc)
+    end_at = _audit_datetime(bucket.get("end_at") or bucket.get("endAt")) or start_at
     bucket_records, source = _pm12_records_for_heatmap_bucket(
         records,
         start_at=start_at,
@@ -40513,36 +40468,23 @@ def _pm12_persona_league_heatmap_cell(
         else latest_metrics
     )
     scores = _pm12_persona_league_scores(row, metrics)
-    overall_score = scores["overallScore"]
-    components = {
-        **scores,
-        "overall_score": scores["overallScore"],
-        "pnl_score": scores["pnlScore"],
-        "risk_score": scores["riskScore"],
-        "execution_score": scores["executionScore"],
-        "activity_score": scores["activityScore"],
-    }
+    overall_score = scores["overall_score"]
+    components = dict(scores)
+    bucket_id = str(bucket.get("bucket_id") or bucket.get("bucketId") or bucket.get("id") or "")
+    persona_id = row.get("persona_id") or row.get("id")
     return {
-        "id": f"{row.get('personaId') or row.get('id')}:{bucket['bucketId']}",
-        "personaId": row.get("personaId") or row.get("id"),
-        "persona_id": row.get("personaId") or row.get("id"),
-        "bucketId": bucket["bucketId"],
-        "bucket_id": bucket["bucketId"],
-        "bucketIndex": bucket["index"],
+        "id": f"{persona_id}:{bucket_id}",
+        "persona_id": persona_id,
+        "bucket_id": bucket_id,
         "bucket_index": bucket["index"],
         "score": overall_score,
-        "compositeScore": overall_score,
         "composite_score": overall_score,
-        "overallScore": overall_score,
         "overall_score": overall_score,
         "components": components,
         "metrics": metrics,
-        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "source": source,
-        "observedTelemetryCount": len(bucket_records),
         "observed_telemetry_count": len(bucket_records),
-        "latestTelemetryAt": metrics.get("latestTelemetryAt"),
         "latest_telemetry_at": metrics.get("latest_telemetry_at"),
     }
 
@@ -40575,8 +40517,7 @@ def _pm12_persona_league_heatmap_rows(
                 score_values.append(score)
         cells.extend(row_cells)
         heatmap_rows.append({
-            "id": ranking_item.get("personaId"),
-            "personaId": ranking_item.get("personaId"),
+            "id": ranking_item.get("persona_id"),
             "persona_id": ranking_item.get("persona_id"),
             "name": ranking_item.get("name"),
             "owner": ranking_item.get("owner"),
@@ -40584,31 +40525,20 @@ def _pm12_persona_league_heatmap_rows(
             "risk": ranking_item.get("risk"),
             "archetype": ranking_item.get("archetype"),
             "tier": ranking_item.get("tier"),
-            "tierId": ranking_item.get("tierId"),
             "tier_id": ranking_item.get("tier_id"),
-            "tierLabel": ranking_item.get("tierLabel"),
             "tier_label": ranking_item.get("tier_label"),
-            "latestScore": ranking_item.get("overallScore"),
-            "latest_score": ranking_item.get("overallScore"),
-            "runtimeIds": runtime_ids,
+            "latest_score": ranking_item.get("overall_score"),
             "runtime_ids": runtime_ids,
             "cells": row_cells,
             "links": ranking_item.get("links") or {},
         })
     summary = {
-        "personaCount": len(rows),
         "persona_count": len(rows),
-        "bucketCount": len(buckets),
         "bucket_count": len(buckets),
-        "cellCount": len(cells),
         "cell_count": len(cells),
-        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-        "minScore": min(score_values) if score_values else None,
         "min_score": min(score_values) if score_values else None,
-        "maxScore": max(score_values) if score_values else None,
         "max_score": max(score_values) if score_values else None,
-        "averageScore": _management_avg(score_values),
         "average_score": _management_avg(score_values),
     }
     return heatmap_rows, cells, summary
@@ -40631,9 +40561,7 @@ async def bff_management_persona_league(
     total = len(rows)
     page_items, next_page_token = _page_slice(rows, page_token, page_size)
     summary = {
-        "personaCount": total,
         "persona_count": total,
-        "returnedCount": len(page_items),
         "returned_count": len(page_items),
     }
     persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
@@ -40697,10 +40625,8 @@ async def bff_management_persona_league_rankings(
     )
     top_item = (blocks[0].get("items") or [None])[0] if blocks else None
     summary = {
-        "personaCount": len(rows),
         "persona_count": len(rows),
         "criteria": [block["criteria"] for block in blocks],
-        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
         "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
     }
     return {
@@ -40769,7 +40695,7 @@ async def bff_management_persona_league_movers(
         "data": data,
         "page_info": {
             "next_page_token": None,
-            "total": summary["moverCount"],
+            "total": summary["mover_count"],
             "page_size": len(movers),
         },
         "meta": {
@@ -40865,7 +40791,6 @@ async def bff_management_persona_league_heatmap(
     summary = {
         **summary,
         "bucket": bucket_key,
-        "returnedPersonaCount": len(heatmap_rows),
         "returned_persona_count": len(heatmap_rows),
     }
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
@@ -40878,13 +40803,11 @@ async def bff_management_persona_league_heatmap(
     )
     data = {
         "id": "persona-league-heatmap",
-        "heatmapId": "persona-league-heatmap",
         "heatmap_id": "persona-league-heatmap",
         "bucket": bucket_key,
         "items": heatmap_rows,
         "buckets": buckets,
         "summary": summary,
-        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "basis": "persona_x_time_bucket_composite_score",
     }
@@ -41325,15 +41248,17 @@ def _pm12_performance_attribution_response(
     period_key = str(period or "").strip() or "latest"
     sources = _pm12_performance_attribution_sources()
     facts = _pm12_performance_attribution_facts(sources, period_key)
-    rows = _pm12_performance_attribution_rows(
+    page_entries, total, next_page_token, aggregate_metrics = _pm12_performance_attribution_page_entries(
         facts,
         dimensions=dimensions,
+        page_token=page_token,
+        page_size=page_size,
+    )
+    page_items = _pm12_performance_attribution_rows(
+        page_entries,
         period_key=period_key,
         sources=sources,
     )
-    total = len(rows)
-    page_items, next_page_token = _page_slice(rows, page_token, page_size)
-    aggregate_metrics = _pm12_attribution_metrics(facts)
 
     source_surfaces = {
         "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
@@ -41365,33 +41290,19 @@ def _pm12_performance_attribution_response(
     summary = {
         "period": period_key,
         "dimensions": dimensions,
-        "supportedDimensions": list(_PM12_ATTRIBUTION_DIMENSIONS),
         "supported_dimensions": list(_PM12_ATTRIBUTION_DIMENSIONS),
-        "rowCount": total,
         "row_count": total,
-        "returnedRowCount": len(page_items),
         "returned_row_count": len(page_items),
-        "runtimeCount": aggregate_metrics["runtimeCount"],
         "runtime_count": aggregate_metrics["runtime_count"],
-        "telemetryRuntimeCount": aggregate_metrics["telemetryRuntimeCount"],
         "telemetry_runtime_count": aggregate_metrics["telemetry_runtime_count"],
-        "holdingCount": aggregate_metrics["holdingCount"],
         "holding_count": aggregate_metrics["holding_count"],
-        "totalPnl": aggregate_metrics["totalPnl"],
         "total_pnl": aggregate_metrics["total_pnl"],
-        "totalNotional": aggregate_metrics["totalNotional"],
         "total_notional": aggregate_metrics["total_notional"],
-        "totalExposure": aggregate_metrics["totalExposure"],
         "total_exposure": aggregate_metrics["total_exposure"],
-        "worstDrawdown": aggregate_metrics["worstDrawdown"],
         "worst_drawdown": aggregate_metrics["worst_drawdown"],
-        "averageFillRate": aggregate_metrics["averageFillRate"],
         "average_fill_rate": aggregate_metrics["average_fill_rate"],
-        "averageSlippageBps": aggregate_metrics["averageSlippageBps"],
         "average_slippage_bps": aggregate_metrics["average_slippage_bps"],
-        "totalTrades": aggregate_metrics["totalTrades"],
         "total_trades": aggregate_metrics["total_trades"],
-        "latestTelemetryAt": aggregate_metrics["latestTelemetryAt"],
         "latest_telemetry_at": aggregate_metrics["latest_telemetry_at"],
         "basis": "latest_runtime_telemetry_snapshot",
     }

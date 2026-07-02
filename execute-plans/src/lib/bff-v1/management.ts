@@ -920,40 +920,31 @@ export interface ManagementPersonaLeagueQuery {
 
 export interface ManagementPersonaLeagueRow {
   id: string;
-  personaId?: string;
   persona_id?: string;
   name?: string;
   owner?: string;
-  updatedAt?: string;
   updated_at?: string;
   state?: string;
   risk?: string;
   archetype?: string;
-  routedStrategies?: number;
-  routed_strategies?: number;
-  successRate?: number;
+  routed_strategy_count?: number;
   success_rate?: number;
   mandate?: string;
-  strategyFamily?: string;
   strategy_family?: string;
-  routePolicy?: Record<string, unknown>;
-  route_policy?: Record<string, unknown>;
-  capabilities?: Record<string, unknown>;
-  bindings?: Record<string, unknown>;
-  sessions?: Record<string, unknown>;
-  evaluations?: Record<string, unknown>;
-  memory?: Record<string, unknown>;
-  health?: Record<string, unknown>;
-  allowedActions?: Record<string, unknown>;
-  allowed_actions?: Record<string, unknown>;
+  route_policy_summary?: Record<string, unknown>;
+  capability_summary?: Record<string, unknown>;
+  binding_summary?: Record<string, unknown>;
+  session_summary?: Record<string, unknown>;
+  evaluation_summary?: Record<string, unknown>;
+  memory_summary?: Record<string, unknown>;
+  health_summary?: Record<string, unknown>;
+  allowed_action_summary?: Record<string, unknown>;
   links?: Record<string, string | null | undefined>;
   [key: string]: unknown;
 }
 
 export interface ManagementPersonaLeagueSummary {
-  personaCount: number;
   persona_count: number;
-  returnedCount: number;
   returned_count: number;
   [key: string]: unknown;
 }
@@ -988,7 +979,6 @@ export interface ManagementPersonaLeagueRankingsQuery {
 
 export interface ManagementPersonaLeagueRankingItem {
   id: string;
-  personaId: string;
   persona_id: string;
   name?: string;
   owner?: string;
@@ -996,15 +986,11 @@ export interface ManagementPersonaLeagueRankingItem {
   risk?: string;
   archetype?: string;
   tier: string;
-  tierId: string;
   tier_id: string;
-  tierLabel: string;
   tier_label: string;
   rank: number;
   score: number;
-  overallScore: number;
   overall_score: number;
-  scoreField?: string;
   score_field?: string;
   metrics: Record<string, unknown>;
   components: Record<string, number>;
@@ -1014,15 +1000,12 @@ export interface ManagementPersonaLeagueRankingItem {
 
 export interface ManagementPersonaLeagueRankingBlock {
   id: string;
-  rankingId: string;
   ranking_id: string;
   criteria: string;
   label: string;
-  formulaVersion: string;
   formula_version: string;
   weights: Record<string, number>;
   items: ManagementPersonaLeagueRankingItem[];
-  rankedCount: number;
   ranked_count: number;
   [key: string]: unknown;
 }
@@ -1032,10 +1015,8 @@ export interface ManagementPersonaLeagueRankingsResponse {
     id: "management-persona-league-rankings" | string;
     items: ManagementPersonaLeagueRankingBlock[];
     summary: {
-      personaCount: number;
       persona_count: number;
       criteria: string[];
-      topPersonaId?: string | null;
       top_persona_id?: string | null;
       [key: string]: unknown;
     };
@@ -1063,26 +1044,16 @@ export interface ManagementPersonaLeagueMoversQuery {
 }
 
 export interface ManagementPersonaLeagueMover extends ManagementPersonaLeagueRankingItem {
-  moverId: string;
   mover_id: string;
-  currentRank: number;
   current_rank: number;
-  previousRank?: number | null;
   previous_rank?: number | null;
-  rankDelta?: number | null;
   rank_delta?: number | null;
   direction: "up" | "down" | "flat" | "new" | string;
-  currentScore: number;
   current_score: number;
-  previousScore?: number | null;
   previous_score?: number | null;
-  scoreDelta?: number | null;
   score_delta?: number | null;
-  scoreDeltaDisplay?: string | null;
   score_delta_display?: string | null;
-  baselineStatus: "ok" | "unavailable" | string;
   baseline_status: "ok" | "unavailable" | string;
-  formulaVersion: string;
   formula_version: string;
   movement: {
     direction: string;
@@ -1097,28 +1068,17 @@ export interface ManagementPersonaLeagueMover extends ManagementPersonaLeagueRan
 }
 
 export interface ManagementPersonaLeagueMoversSummary {
-  personaCount: number;
   persona_count: number;
-  moverCount: number;
   mover_count: number;
-  returnedCount: number;
   returned_count: number;
   direction: string;
-  formulaVersion: string;
   formula_version: string;
-  baselineStatus: string;
   baseline_status: string;
-  baselineUnavailableCount: number;
   baseline_unavailable_count: number;
-  upCount: number;
   up_count: number;
-  downCount: number;
   down_count: number;
-  flatCount: number;
   flat_count: number;
-  newCount: number;
   new_count: number;
-  topMoverPersonaId?: string | null;
   top_mover_persona_id?: string | null;
   basis?: string;
   [key: string]: unknown;
@@ -1154,15 +1114,11 @@ export interface ManagementPersonaLeagueTiersQuery {
 }
 
 export interface ManagementPersonaLeagueTierAssignment {
-  personaId: string;
   persona_id: string;
   name?: string;
   tier: string;
-  tierId: string;
   tier_id: string;
-  tierLabel: string;
   tier_label: string;
-  overallScore: number;
   overall_score: number;
   metrics: Record<string, unknown>;
   [key: string]: unknown;
@@ -1170,18 +1126,12 @@ export interface ManagementPersonaLeagueTierAssignment {
 
 export interface ManagementPersonaLeagueTier {
   id: string;
-  tierId: string;
   tier_id: string;
   label: string;
-  minScore: number;
   min_score: number;
-  maxScore: number;
   max_score: number;
-  governancePosture: string;
   governance_posture: string;
-  personaCount: number;
   persona_count: number;
-  personaIds: string[];
   persona_ids: string[];
   assignments: ManagementPersonaLeagueTierAssignment[];
   [key: string]: unknown;
@@ -1196,15 +1146,10 @@ export interface ManagementPersonaLeagueTiersResponse {
       [key: string]: unknown;
     };
     summary: {
-      seasonId: string;
       season_id: string;
-      formulaVersion: string;
       formula_version: string;
-      personaCount: number;
       persona_count: number;
-      tierCount: number;
       tier_count: number;
-      byTier: Record<string, number>;
       by_tier: Record<string, number>;
       [key: string]: unknown;
     };
@@ -1236,47 +1181,34 @@ export interface ManagementPersonaLeagueHeatmapQuery {
 
 export interface ManagementPersonaLeagueHeatmapBucket {
   id: string;
-  bucketId: string;
   bucket_id: string;
   index: number;
   label: string;
-  startAt: string;
   start_at: string;
-  endAt: string;
   end_at: string;
-  endExclusiveAt: string;
   end_exclusive_at: string;
   [key: string]: unknown;
 }
 
 export interface ManagementPersonaLeagueHeatmapCell {
   id: string;
-  personaId: string;
   persona_id: string;
-  bucketId: string;
   bucket_id: string;
-  bucketIndex: number;
   bucket_index: number;
   score: number;
-  compositeScore: number;
   composite_score: number;
-  overallScore: number;
   overall_score: number;
   components: Record<string, number>;
   metrics: Record<string, unknown>;
-  formulaVersion: string;
   formula_version: string;
   source: string;
-  observedTelemetryCount: number;
   observed_telemetry_count: number;
-  latestTelemetryAt?: string | null;
   latest_telemetry_at?: string | null;
   [key: string]: unknown;
 }
 
 export interface ManagementPersonaLeagueHeatmapRow {
   id: string;
-  personaId: string;
   persona_id: string;
   name?: string;
   owner?: string;
@@ -1284,13 +1216,9 @@ export interface ManagementPersonaLeagueHeatmapRow {
   risk?: string;
   archetype?: string;
   tier?: string;
-  tierId?: string;
   tier_id?: string;
-  tierLabel?: string;
   tier_label?: string;
-  latestScore?: number;
   latest_score?: number;
-  runtimeIds: string[];
   runtime_ids: string[];
   cells: ManagementPersonaLeagueHeatmapCell[];
   links?: Record<string, string | null | undefined>;
@@ -1300,13 +1228,11 @@ export interface ManagementPersonaLeagueHeatmapRow {
 export interface ManagementPersonaLeagueHeatmapResponse {
   data: {
     id: string;
-    heatmapId: string;
     heatmap_id: string;
     bucket: string;
     items: ManagementPersonaLeagueHeatmapRow[];
     buckets: ManagementPersonaLeagueHeatmapBucket[];
     summary: Record<string, unknown>;
-    formulaVersion: string;
     formula_version: string;
     basis: string;
     [key: string]: unknown;
@@ -1689,49 +1615,29 @@ export type ManagementPerformanceAttributionByPoolQuery = Omit<
 >;
 
 export interface ManagementPerformanceAttributionMetrics {
-  runtimeCount: number;
   runtime_count: number;
-  telemetryRuntimeCount: number;
   telemetry_runtime_count: number;
-  holdingCount: number;
   holding_count: number;
-  totalPnl?: number | null;
   total_pnl?: number | null;
-  unrealizedPnl?: number | null;
   unrealized_pnl?: number | null;
-  realizedPnl?: number | null;
   realized_pnl?: number | null;
-  totalNotional?: number | null;
   total_notional?: number | null;
-  totalMarketValue?: number | null;
   total_market_value?: number | null;
-  totalExposure?: number | null;
   total_exposure?: number | null;
-  worstDrawdown?: number | null;
   worst_drawdown?: number | null;
-  averageFillRate?: number | null;
   average_fill_rate?: number | null;
-  averageSlippageBps?: number | null;
   average_slippage_bps?: number | null;
-  totalTrades: number;
   total_trades: number;
-  latestTelemetryAt?: string | null;
   latest_telemetry_at?: string | null;
-  pnlContributionPct?: number | null;
   pnl_contribution_pct?: number | null;
-  notionalWeight?: number | null;
   notional_weight?: number | null;
   [key: string]: unknown;
 }
 
 export interface ManagementPerformanceAttributionSourceRefs {
-  runtimeIds?: string[];
   runtime_ids?: string[];
-  capitalPoolIds?: string[];
   capital_pool_ids?: string[];
-  personaIds?: string[];
   persona_ids?: string[];
-  strategyIds?: string[];
   strategy_ids?: string[];
   [key: string]: unknown;
 }
@@ -1739,23 +1645,16 @@ export interface ManagementPerformanceAttributionSourceRefs {
 export interface ManagementPerformanceAttributionRow {
   id: string;
   dimension: ManagementPerformanceAttributionDimension;
-  dimensionKey: string;
   dimension_key: string;
   label: string;
   period: string;
   rank: number;
   metrics: ManagementPerformanceAttributionMetrics;
-  totalPnl?: number | null;
   total_pnl?: number | null;
-  pnlContributionPct?: number | null;
   pnl_contribution_pct?: number | null;
-  notionalWeight?: number | null;
   notional_weight?: number | null;
-  runtimeCount: number;
   runtime_count: number;
-  holdingCount: number;
   holding_count: number;
-  sourceRefs?: ManagementPerformanceAttributionSourceRefs;
   source_refs?: ManagementPerformanceAttributionSourceRefs;
   links?: Record<string, string | null | undefined>;
   [key: string]: unknown;
@@ -1764,33 +1663,19 @@ export interface ManagementPerformanceAttributionRow {
 export interface ManagementPerformanceAttributionSummary {
   period: string;
   dimensions: string[];
-  supportedDimensions: string[];
   supported_dimensions: string[];
-  rowCount: number;
   row_count: number;
-  returnedRowCount: number;
   returned_row_count: number;
-  runtimeCount: number;
   runtime_count: number;
-  telemetryRuntimeCount: number;
   telemetry_runtime_count: number;
-  holdingCount: number;
   holding_count: number;
-  totalPnl?: number | null;
   total_pnl?: number | null;
-  totalNotional?: number | null;
   total_notional?: number | null;
-  totalExposure?: number | null;
   total_exposure?: number | null;
-  worstDrawdown?: number | null;
   worst_drawdown?: number | null;
-  averageFillRate?: number | null;
   average_fill_rate?: number | null;
-  averageSlippageBps?: number | null;
   average_slippage_bps?: number | null;
-  totalTrades: number;
   total_trades: number;
-  latestTelemetryAt?: string | null;
   latest_telemetry_at?: string | null;
   basis: string;
   [key: string]: unknown;
@@ -1801,16 +1686,12 @@ export interface ManagementPerformanceAttributionData {
   period: string;
   dimensions: string[];
   items: ManagementPerformanceAttributionRow[];
-  rows: ManagementPerformanceAttributionRow[];
   summary: ManagementPerformanceAttributionSummary;
   [key: string]: unknown;
 }
 
 export interface ManagementPerformanceAttributionResponse {
   data: ManagementPerformanceAttributionData;
-  items: ManagementPerformanceAttributionRow[];
-  rows: ManagementPerformanceAttributionRow[];
-  summary: ManagementPerformanceAttributionSummary;
   page_info: {
     next_page_token: string | null;
     total: number;
