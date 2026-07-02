@@ -202,6 +202,10 @@ def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch)
     assert response.status_code == 200, response.text
     assert len(response.content) < 250_000
     payload = response.json()
+    assert set(payload) == {"data", "page_info", "meta"}
+    assert set(payload["data"]) == {"items", "summary"}
+    assert "items" not in payload
+    assert "pools" not in payload
     summary = payload["data"]["summary"]
     assert summary["capital_pool_count"] == 2
     assert summary["active_capital_pool_count"] == 1
@@ -220,7 +224,7 @@ def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch)
     assert summary["total_trades"] == 16
     assert summary["latest_telemetry_at"] == "2026-05-23T08:05:00Z"
 
-    alpha = payload["items"][0]
+    alpha = payload["data"]["items"][0]
     assert alpha["pool_id"] == "pool-alpha"
     assert alpha["binding_count"] == 1
     assert alpha["active_binding_count"] == 1
@@ -231,8 +235,10 @@ def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch)
     assert alpha["risk_budget_utilization"] == 0.4
     assert alpha["pnl"] == 8.0
     assert alpha["telemetry"]["total_pnl"] == 8.0
-    assert payload["data"]["items"] == payload["items"]
-    assert payload["data"]["pools"] == payload["items"]
+    assert "riskBudget" not in alpha
+    assert "currentExposure" not in alpha
+    assert "riskBudgetUtilization" not in alpha
+    assert "riskBudget" not in alpha["exposure"]
     assert payload["page_info"] == {"next_page_token": None, "total": 2}
     assert payload["meta"]["surfaces"]["portfolio_book"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["capital_pools"]["source"] == "canonical"
@@ -1156,22 +1162,27 @@ def test_portfolio_book_pools_returns_pool_risk_exposure_and_pnl(monkeypatch) ->
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["data"] == payload["items"]
-    assert payload["pools"] == payload["items"]
+    assert set(payload) == {"data", "page_info", "meta"}
+    assert set(payload["data"]) == {"items", "summary"}
+    assert "items" not in payload
+    assert "pools" not in payload
+    assert "summary" not in payload
     assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 50}
 
-    alpha = payload["items"][0]
+    alpha = payload["data"]["items"][0]
     assert alpha["pool_id"] == "pool-alpha"
     assert alpha["risk_budget"] == 100.0
-    assert alpha["riskBudget"] == 100.0
+    assert "riskBudget" not in alpha
     assert alpha["current_exposure"] == 40.0
-    assert alpha["currentExposure"] == 40.0
+    assert "currentExposure" not in alpha
     assert alpha["risk_budget_utilization"] == 0.4
+    assert "riskBudgetUtilization" not in alpha
     assert alpha["exposure"]["source"] == "capital_pool"
+    assert "riskBudget" not in alpha["exposure"]
     assert alpha["pnl"] == 8.0
     assert alpha["pnl_summary"]["total_pnl"] == 8.0
 
-    summary = payload["summary"]
+    summary = payload["data"]["summary"]
     assert summary["total_pools"] == 2
     assert summary["returned_pools"] == 2
     assert summary["risk_budget_total"] == 150.0
@@ -1196,8 +1207,8 @@ def test_portfolio_book_pools_filters_and_paginates(monkeypatch) -> None:
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["page_info"] == {"next_page_token": None, "total": 1, "page_size": 1}
-    assert payload["items"][0]["pool_id"] == "pool-alpha"
-    assert payload["summary"]["total_pools"] == 1
+    assert payload["data"]["items"][0]["pool_id"] == "pool-alpha"
+    assert payload["data"]["summary"]["total_pools"] == 1
 
 
 def test_portfolio_book_pools_requires_read_auth(monkeypatch) -> None:

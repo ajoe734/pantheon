@@ -25401,27 +25401,19 @@ def _management_exposure_payload(
 
     return {
         "risk_budget": risk_budget,
-        "riskBudget": risk_budget,
         "max_drawdown_pct": max_drawdown_pct,
-        "maxDrawdownPct": max_drawdown_pct,
         "current_exposure": current_exposure,
-        "currentExposure": current_exposure,
         "risk_budget_utilization": utilization,
-        "riskBudgetUtilization": utilization,
         "exposure": {
             "amount": current_exposure,
             "risk_budget": risk_budget,
-            "riskBudget": risk_budget,
             "risk_budget_utilization": utilization,
-            "riskBudgetUtilization": utilization,
             "source": exposure_source,
         },
         "risk": {
             "policy_ref": pool.get("risk_policy_ref"),
-            "policyRef": pool.get("risk_policy_ref"),
             "budget": risk_budget,
             "max_drawdown_pct": max_drawdown_pct,
-            "maxDrawdownPct": max_drawdown_pct,
         },
     }
 
@@ -28863,9 +28855,7 @@ async def bff_management_portfolio_book(
         "data": {
             "summary": summary,
             "items": page_items,
-            "pools": page_items,
         },
-        "items": page_items,
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
     }
@@ -28933,25 +28923,25 @@ async def bff_management_portfolio_book_pools(
     )
 
     return {
-        "data": page_items,
-        "items": page_items,
-        "pools": page_items,
-        "summary": {
-            "total_pools": total,
-            "returned_pools": len(page_items),
-            "active_pool_count": len([
-                entry for entry in entries
-                if str(entry.get("status") or "").strip().lower() in {"active", "ready"}
-            ]),
-            "risk_budget_total": risk_budget_total,
-            "current_exposure_total": current_exposure_total,
-            "risk_budget_utilization": utilization,
-            "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
-            "total_pnl": portfolio_telemetry["total_pnl"],
-            "max_drawdown": portfolio_telemetry["max_drawdown"],
-            "average_fill_rate": portfolio_telemetry["average_fill_rate"],
-            "total_trades": portfolio_telemetry["total_trades"],
-            "latest_telemetry_at": portfolio_telemetry["latest_collected_at"],
+        "data": {
+            "items": page_items,
+            "summary": {
+                "total_pools": total,
+                "returned_pools": len(page_items),
+                "active_pool_count": len([
+                    entry for entry in entries
+                    if str(entry.get("status") or "").strip().lower() in {"active", "ready"}
+                ]),
+                "risk_budget_total": risk_budget_total,
+                "current_exposure_total": current_exposure_total,
+                "risk_budget_utilization": utilization,
+                "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+                "total_pnl": portfolio_telemetry["total_pnl"],
+                "max_drawdown": portfolio_telemetry["max_drawdown"],
+                "average_fill_rate": portfolio_telemetry["average_fill_rate"],
+                "total_trades": portfolio_telemetry["total_trades"],
+                "latest_telemetry_at": portfolio_telemetry["latest_collected_at"],
+            },
         },
         "page_info": {
             "next_page_token": next_page_token,
