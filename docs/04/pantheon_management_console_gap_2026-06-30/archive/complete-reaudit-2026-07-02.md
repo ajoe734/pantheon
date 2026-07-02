@@ -229,18 +229,20 @@ Later remediation slices continued from this re-audit:
   Ledger, and Sentinel Pulse helpers.
 - `MGMT-LIST-CONTRACT-012` removed the first Human/Ops P1 wire-casing cluster
   from HIQ Backlog, Intervention Stream, and Governance Ledger rows/summaries.
+- `MGMT-LIST-CONTRACT-013` removed the remaining Human Inbox readiness blocker
+  and summary wire-casing mirrors.
 
-The current list-contract guardrail result after `MGMT-LIST-CONTRACT-012` is:
+The current list-contract guardrail result after `MGMT-LIST-CONTRACT-013` is:
 
 ```text
-source=services/control-plane/bff/main.py baseline=docs/architecture/management-list-contract-baseline.json issues=124 new=0 retired=0
+source=services/control-plane/bff/main.py baseline=docs/architecture/management-list-contract-baseline.json issues=122 new=0 retired=0
 ```
 
 Current remaining categories:
 
 | Category | Count |
 |---|---:|
-| `camel-snake-duplicate` | 116 |
+| `camel-snake-duplicate` | 114 |
 | `project-before-page` | 5 |
 | `heavy-row-helper` | 3 |
 
@@ -336,11 +338,13 @@ Interpretation:
    in Human/Ops, Evidence, and Sentinel list helpers.
 5. Done in `MGMT-LIST-CONTRACT-012`: remove HIQ Backlog, Intervention Stream,
    and Governance Ledger camel/snake wire-key mirrors.
-6. Continue casing cleanup and filter/page-before-projection work for the PM12
+6. Done in `MGMT-LIST-CONTRACT-013`: remove Human Inbox readiness/summary
+   camel/snake wire-key mirrors.
+7. Continue casing cleanup and filter/page-before-projection work for the PM12
    analytics helpers after `MGMT-LIST-CONTRACT-006`.
-7. Decide the frontend product shape: keep the current three-panel shell, or
+8. Decide the frontend product shape: keep the current three-panel shell, or
    deliberately build a smaller workflow-based Management router.
-8. Add payload-size and route-smoke acceptance evidence before exposing more
+9. Add payload-size and route-smoke acceptance evidence before exposing more
    first-level management pages.
 
 ## Bottom Line
