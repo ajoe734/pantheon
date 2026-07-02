@@ -522,6 +522,21 @@ class AssistantClaudeProvider:
                         returncode=returncode,
                     )
                     return
+                with self._reauth_lock:
+                    session = dict(self._reauth_sessions.get(session_id) or {})
+                if returncode == 0 and session.get("code_submitted_at"):
+                    completed_at = self._clock().isoformat().replace("+00:00", "Z")
+                    self._update_reauth_session(
+                        session_id,
+                        status="completed",
+                        updated_at=completed_at,
+                        completed_at=completed_at,
+                        readiness=readiness,
+                        warning_code="CLAUDE_REAUTH_READY_PROBE_DEGRADED",
+                        message="Claude auth login accepted the authorization code; readiness probe is still degraded.",
+                        returncode=returncode,
+                    )
+                    return
                 self._update_reauth_session(
                     session_id,
                     status="failed",
@@ -806,6 +821,8 @@ def _reauth_public_payload(session: Mapping[str, Any]) -> dict[str, Any]:
         "readiness": session.get("readiness"),
         "error_code": session.get("error_code"),
         "errorCode": session.get("error_code"),
+        "warning_code": session.get("warning_code"),
+        "warningCode": session.get("warning_code"),
         "message": session.get("message"),
         "returncode": session.get("returncode"),
     }

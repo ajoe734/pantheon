@@ -228,16 +228,17 @@ class _FakeLoginProcess:
         self.stdout = io.StringIO("Open https://console.anthropic.com/login\nCode: WXYZ-1234\n")
         self.stderr = io.StringIO("")
         self.stdin = io.StringIO()
+        self.returncode = None
         self.terminated = False
 
     def poll(self):
-        return None
+        return self.returncode
 
     def terminate(self):
         self.terminated = True
 
     def wait(self, timeout=None):
-        return 0
+        return 0 if self.returncode is None else self.returncode
 
 
 def test_start_device_reauth_runs_claude_auth_login_and_captures_url():
@@ -314,6 +315,50 @@ def test_submit_reauth_code_writes_to_live_claude_auth_process():
     rendered = repr(result)
     assert "claude-auth-code-123" not in rendered
     assert result.get("user_code") is None
+
+
+def test_submitted_reauth_code_exit_zero_completes_even_when_probe_degraded():
+    fake_process = _FakeLoginProcess()
+    fake_process.stdout = io.StringIO(
+        "Open https://console.anthropic.com/oauth/authorize?client_id=abc&code=true\n"
+    )
+
+    provider = AssistantClaudeProvider(
+        mounts=_mock_mounts_ready(),
+        popen_func=lambda *args, **kwargs: fake_process,
+    )
+    degraded_readiness = {
+        "ready": False,
+        "auth_status": "failed",
+        "degraded_reason": "claude_auth_probe_non_zero_exit",
+    }
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch.object(provider, "readiness", return_value=degraded_readiness),
+        patch.object(provider, "_readiness_after_process_exit", return_value=degraded_readiness),
+    ):
+        started = provider.start_device_reauth(
+            operator_id="op-1",
+            capture_timeout_seconds=2,
+            poll_interval_seconds=30,
+            max_wait_seconds=30,
+        )
+        provider.submit_reauth_code(
+            started["reauth_session_id"],
+            code="claude-auth-code-123",
+            operator_id="op-1",
+        )
+        fake_process.returncode = 0
+        provider._monitor_reauth_session(started["reauth_session_id"], fake_process, 30, 30)  # noqa: SLF001
+
+    result = provider.reauth_status(started["reauth_session_id"])
+    assert result["status"] == "completed"
+    assert result["code_submitted_at"]
+    assert result["completed_at"]
+    assert result["returncode"] == 0
+    assert result["warning_code"] == "CLAUDE_REAUTH_READY_PROBE_DEGRADED"
+    assert result["readiness"]["ready"] is False
+    assert "claude-auth-code-123" not in repr(result)
 
 
 def test_start_device_reauth_requires_writable_claude_mount():

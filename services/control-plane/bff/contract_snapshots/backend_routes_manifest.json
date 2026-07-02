@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-07-01",
+    "snapshot_date": "2026-07-02",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 599,
+    "total_routes": 600,
     "status_values": [
       "implemented",
       "alias",
@@ -3376,6 +3376,12 @@
     {
       "method": "GET",
       "path": "/bff/management/sentinel-pulse",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/shell-summary",
       "family": "unknown",
       "status": "implemented"
     },

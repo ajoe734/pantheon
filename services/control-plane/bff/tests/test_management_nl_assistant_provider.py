@@ -1744,11 +1744,15 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
     monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
     client = _seeded_client(tmp_path, monkeypatch)
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+    now = bff_main.datetime.now(bff_main.timezone.utc).replace(microsecond=0)
+    started_at = (now - bff_main.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    completed_at = (now - bff_main.timedelta(minutes=4, seconds=57)).isoformat().replace("+00:00", "Z")
+    failed_at = (now - bff_main.timedelta(minutes=4)).isoformat().replace("+00:00", "Z")
 
     bff_main._management_ai_record_event(
         {
             "event_type": "management_ai.provider.started",
-            "recorded_at": "2026-06-29T10:00:00Z",
+            "recorded_at": started_at,
             "session_id": "usage-session",
             "message_id": "usage-message",
             "trace_id": "usage-trace",
@@ -1761,7 +1765,7 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
     bff_main._management_ai_record_event(
         {
             "event_type": "management_ai.provider.completed",
-            "recorded_at": "2026-06-29T10:00:03Z",
+            "recorded_at": completed_at,
             "session_id": "usage-session",
             "message_id": "usage-message",
             "trace_id": "usage-trace",
@@ -1782,7 +1786,7 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
     bff_main._management_ai_record_event(
         {
             "event_type": "management_ai.provider.failed",
-            "recorded_at": "2026-06-29T10:01:00Z",
+            "recorded_at": failed_at,
             "session_id": "usage-session",
             "message_id": "usage-message-2",
             "trace_id": "usage-trace-2",
@@ -1811,6 +1815,9 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
     assert codex["quota"]["source"] == "provider_snapshot"
     assert codex["quota"]["remaining"] == 12
     assert codex["quota"]["used"] == 38
+    assert codex["observedUsage"]["source"] == "management_ai_bff_audit"
+    assert codex["observedUsage"]["coverage"] == "bff_observed_management_ai_only"
+    assert codex["observedUsage"]["stale"] is False
     assert codex["observedUsage"]["totalTokens"] == 14
     assert codex["models"][0]["model"] == "gpt-5-codex"
     assert codex["models"][0]["inputTokens"] == 10
@@ -1819,6 +1826,7 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
     assert claude["failedCount"] == 1
     assert claude["quota"]["source"] == "not_configured"
     assert data["quota"]["missingSourceMeans"] == "quota remaining is unknown, not zero"
+    assert data["usage"]["truthPolicy"] == "observed_bff_events_only"
 
 
 def test_management_ai_conversation_reader_returns_full_session_and_ignores_trace_filter(

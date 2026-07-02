@@ -32538,6 +32538,9 @@ _MGMT_NL_CONTROL_DEACTIVATE_COMMANDS = {
     "关闭控制模式",
     "停用控制模式",
 }
+_MGMT_AI_USAGE_OBSERVED_SOURCE = "management_ai_bff_audit"
+_MGMT_AI_USAGE_OBSERVED_COVERAGE = "bff_observed_management_ai_only"
+_MGMT_AI_USAGE_STALE_AFTER_HOURS = 24
 
 _MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS = [
     {
@@ -32875,6 +32878,12 @@ def _management_ai_quota_snapshot(provider: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
+    observed_usage = {
+        "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
+        "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
+        "truthPolicy": "observed_bff_events_only",
+        "truth_policy": "observed_bff_events_only",
+    }
     return {
         "provider": provider,
         "providerName": _management_ai_provider_display(provider),
@@ -32912,8 +32921,8 @@ def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
         "lastError": None,
         "last_error": None,
         "quota": _management_ai_quota_snapshot({}),
-        "observedUsage": {"source": "management_ai_audit"},
-        "observed_usage": {"source": "management_ai_audit"},
+        "observedUsage": dict(observed_usage),
+        "observed_usage": dict(observed_usage),
         "models": {},
     }
 
@@ -32956,14 +32965,35 @@ def _management_ai_touch_last(row: Dict[str, Any], event: Dict[str, Any], status
         row["last_status"] = status
 
 
-def _management_ai_finalize_usage_row(row: Dict[str, Any]) -> Dict[str, Any]:
+def _management_ai_usage_age_hours(last_used_at: Any, now_dt: datetime) -> Optional[float]:
+    last_dt = _audit_datetime(last_used_at)
+    if last_dt is None:
+        return None
+    return round(max(0.0, (now_dt - last_dt).total_seconds() / 3600), 2)
+
+
+def _management_ai_finalize_usage_row(
+    row: Dict[str, Any],
+    *,
+    now_dt: datetime,
+    window_hours: Optional[int],
+    event_limit: int,
+    stale_after_hours: int = _MGMT_AI_USAGE_STALE_AFTER_HOURS,
+) -> Dict[str, Any]:
     calls = int(row.get("calls") or 0)
     duration = int(row.get("durationMs") or 0)
     avg = round(duration / calls) if calls else None
     row["averageDurationMs"] = avg
     row["average_duration_ms"] = avg
+    age_hours = _management_ai_usage_age_hours(row.get("lastUsedAt"), now_dt)
+    stale = bool(calls > 0 and age_hours is not None and age_hours > stale_after_hours)
     observed = {
-        "source": "management_ai_audit",
+        "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
+        "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
+        "coverageLabel": "BFF observed",
+        "coverage_label": "BFF observed",
+        "truthPolicy": "observed_bff_events_only",
+        "truth_policy": "observed_bff_events_only",
         "calls": row["calls"],
         "successCount": row["successCount"],
         "success_count": row["success_count"],
@@ -32977,6 +33007,18 @@ def _management_ai_finalize_usage_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "output_tokens": row["output_tokens"],
         "totalTokens": row["totalTokens"],
         "total_tokens": row["total_tokens"],
+        "lastObservedAt": row.get("lastUsedAt"),
+        "last_observed_at": row.get("last_used_at"),
+        "ageHours": age_hours,
+        "age_hours": age_hours,
+        "stale": stale,
+        "staleAfterHours": stale_after_hours,
+        "stale_after_hours": stale_after_hours,
+        "windowHours": window_hours,
+        "window_hours": window_hours,
+        "eventLimit": event_limit,
+        "event_limit": event_limit,
+        "message": "Only Management AI calls observed by the BFF audit stream are counted; direct provider CLI usage is not included.",
     }
     row["observedUsage"] = observed
     row["observed_usage"] = observed
@@ -33115,7 +33157,15 @@ def _assistant_provider_usage_summary(
             row["lastError"] = event.get("error_code") or event.get("error_message")
             row["last_error"] = row["lastError"]
 
-    provider_rows = [_management_ai_finalize_usage_row(row) for row in rows.values()]
+    provider_rows = [
+        _management_ai_finalize_usage_row(
+            row,
+            now_dt=now_dt,
+            window_hours=window_hours,
+            event_limit=event_limit,
+        )
+        for row in rows.values()
+    ]
     provider_rows.sort(key=lambda item: (not bool(item.get("liveAuth")), -int(item.get("calls") or 0), str(item.get("provider") or "")))
     totals = {
         "providers": len(provider_rows),
@@ -33143,6 +33193,16 @@ def _assistant_provider_usage_summary(
                 "truth_policy": "provider_snapshot_only",
                 "missingSourceMeans": "quota remaining is unknown, not zero",
                 "missing_source_means": "quota remaining is unknown, not zero",
+            },
+            "usage": {
+                "truthPolicy": "observed_bff_events_only",
+                "truth_policy": "observed_bff_events_only",
+                "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
+                "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
+                "staleAfterHours": _MGMT_AI_USAGE_STALE_AFTER_HOURS,
+                "stale_after_hours": _MGMT_AI_USAGE_STALE_AFTER_HOURS,
+                "missingSourceMeans": "direct provider CLI usage is unknown unless a provider usage source is configured",
+                "missing_source_means": "direct provider CLI usage is unknown unless a provider usage source is configured",
             },
         },
         "meta": {
