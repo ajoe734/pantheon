@@ -8,12 +8,14 @@ It is not a re-open of `MGMT-GAP-*`; those tasks remain production-closed.
 Source plan:
 
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/management-adjustment-development-plan-2026-07-02.md`
+- `docs/04/pantheon_management_console_gap_2026-06-30/archive/complete-reaudit-2026-07-02.md`
 
 Primary evidence:
 
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/mgmt-gap-007-final-closeout-2026-07-01.md`
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md`
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/hosted-render-rerun-2026-07-01.md`
+- `docs/04/pantheon_management_console_gap_2026-06-30/archive/complete-reaudit-2026-07-02.md`
 - `docs/architecture/management-list-contract-audit-2026-07-02.md`
 - `docs/architecture/management-list-api-contract.md`
 

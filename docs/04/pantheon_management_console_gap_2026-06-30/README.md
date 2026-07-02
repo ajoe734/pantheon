@@ -11,6 +11,7 @@
 | Supersedes | `docs/04/pantheon_bff_console_gap_2026-06-15/README.md` for management-console gap status |
 | Archive evidence | `archive/live-audit-2026-06-30.md` |
 | Re-audit addendum | `archive/full-reaudit-addendum-2026-07-01.md` |
+| Complete re-audit | `archive/complete-reaudit-2026-07-02.md` |
 | Route/control re-audit | `archive/route-control-reaudit-2026-07-01.md` |
 | Route/control raw artifact | `archive/route-control-reaudit-2026-07-01.json` |
 | Post-closeout adjustment plan | `archive/management-adjustment-development-plan-2026-07-02.md` |
@@ -79,6 +80,15 @@ It adds hosted authenticated detail-route evidence, live-id BFF availability,
 mock/unavailable flags, DTO honesty issues such as `status.undefined` and
 `NaN%`, and updated recommendations for which surfaces should be adjusted,
 hidden/deleted, or deeply developed.
+
+The 2026-07-02 complete re-audit is archived in
+`docs/04/pantheon_management_console_gap_2026-06-30/archive/complete-reaudit-2026-07-02.md`.
+It separates the historical hosted FE route inventory from the current repo's
+mounted management UI, typed frontend BFF fetchers, and backend Management API
+surfaces. It confirms the current repo mounts only a thin three-panel
+Management entrypoint while the BFF/API layer exposes dozens of management
+surfaces, and it reclassifies what should be adjusted, deleted/hidden, or deeply
+developed.
 
 The supplemental 2026-07-01 route/control re-audit is archived in
 `docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md`,
