@@ -38080,6 +38080,960 @@ async def bff_create_persona(
     return result
 
 
+_PAPER_LAUNCH_STEPS = (
+    "persona_identity_created",
+    "policy_snapshots_created",
+    "paper_capital_pool_ready",
+    "paper_binding_active",
+    "paper_deployment_plan_created",
+    "paper_approval_recorded",
+    "paper_runtime_binding_created",
+    "paper_runtime_started",
+    "telemetry_heartbeat_verified",
+)
+
+
+class _PaperLaunchStepFailure(Exception):
+    def __init__(self, step: str, reason: str) -> None:
+        super().__init__(reason)
+        self.step = step
+        self.reason = reason
+
+
+def _paper_launch_required_string(payload: Dict[str, Any], field: str) -> str:
+    value = str(payload.get(field) or "").strip()
+    if value:
+        return value
+    raise _bff_error(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        f"{field} is required",
+        f"Paper persona launch requires a non-empty {field}.",
+        precondition_failed=field,
+    )
+
+
+def _paper_launch_required_list(payload: Dict[str, Any], field: str) -> List[str]:
+    raw = payload.get(field)
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, list):
+        values = raw
+    else:
+        values = []
+    cleaned = [str(item).strip() for item in values if str(item).strip()]
+    if cleaned:
+        return cleaned
+    raise _bff_error(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        f"{field} is required",
+        f"Paper persona launch requires {field} to contain at least one value.",
+        precondition_failed=field,
+    )
+
+
+def _paper_launch_normalized_pool_selection(payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw = payload.get("paper_capital_pool") or payload.get("paperCapitalPool")
+    pool = raw if isinstance(raw, dict) else {}
+    mode = str(pool.get("mode") or "").strip()
+    if mode not in {"select_existing", "create_from_template"}:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "paper_capital_pool.mode is invalid",
+            "paper_capital_pool.mode must be select_existing or create_from_template.",
+            precondition_failed="paper_capital_pool.mode",
+        )
+    capital_scope = str(pool.get("capital_scope") or pool.get("capitalScope") or "paper").strip().lower()
+    if capital_scope != "paper":
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "paper_capital_pool.capital_scope must be paper",
+            "Create Paper Persona cannot bind canary or live capital.",
+            precondition_failed="paper_capital_pool.capital_scope",
+        )
+    capital_pool_id = str(pool.get("capital_pool_id") or pool.get("capitalPoolId") or "").strip() or None
+    template_id = str(pool.get("template_id") or pool.get("templateId") or "").strip() or None
+    if mode == "select_existing" and not capital_pool_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "paper_capital_pool.capital_pool_id is required",
+            "Selecting an existing paper pool requires capital_pool_id.",
+            precondition_failed="paper_capital_pool.capital_pool_id",
+        )
+    return {
+        "mode": mode,
+        "capital_scope": "paper",
+        "capital_pool_id": capital_pool_id,
+        "template_id": template_id,
+    }
+
+
+def _normalize_paper_launch_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    paper_budget = payload.get("paper_budget", payload.get("paperBudget"))
+    try:
+        clean_budget = float(paper_budget)
+    except (TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "paper_budget is required",
+            "Paper persona launch requires a numeric paper_budget.",
+            precondition_failed="paper_budget",
+        ) from exc
+    if clean_budget < 0:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "paper_budget must be non-negative",
+            "Paper persona launch requires paper_budget >= 0.",
+            precondition_failed="paper_budget",
+        )
+    normalized = {
+        "name": _paper_launch_required_string(payload, "name"),
+        "mandate": _paper_launch_required_string(payload, "mandate"),
+        "strategy_family": _paper_launch_required_list(payload, "strategy_family")
+        if "strategy_family" in payload
+        else _paper_launch_required_list(payload, "strategyFamily"),
+        "market_scope": _paper_launch_required_list(payload, "market_scope")
+        if "market_scope" in payload
+        else _paper_launch_required_list(payload, "marketScope"),
+        "source_scope": _paper_launch_required_list(payload, "source_scope")
+        if "source_scope" in payload
+        else _paper_launch_required_list(payload, "sourceScope"),
+        "risk_profile_id": str(payload.get("risk_profile_id") or payload.get("riskProfileId") or "").strip(),
+        "paper_capital_pool": _paper_launch_normalized_pool_selection(payload),
+        "paper_budget": clean_budget,
+        "artifact_id": _paper_launch_required_string(
+            {"artifact_id": payload.get("artifact_id") or payload.get("artifactId")},
+            "artifact_id",
+        ),
+        "operator_note": (
+            str(payload.get("operator_note") or payload.get("operatorNote")).strip()
+            if payload.get("operator_note") or payload.get("operatorNote")
+            else None
+        ),
+    }
+    if not normalized["risk_profile_id"]:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "risk_profile_id is required",
+            "Paper persona launch requires risk_profile_id.",
+            precondition_failed="risk_profile_id",
+        )
+    optional_id_aliases = {
+        "persona_id": ("persona_id", "personaId"),
+        "launch_id": ("launch_id", "launchId"),
+    }
+    for optional_id, aliases in optional_id_aliases.items():
+        value = ""
+        for alias in aliases:
+            value = str(payload.get(alias) or "").strip()
+            if value:
+                break
+        if value:
+            normalized[optional_id] = value
+    simulate_step = str(
+        payload.get("simulate_failure_step")
+        or payload.get("simulateFailureStep")
+        or payload.get("_simulate_failure_step")
+        or ""
+    ).strip()
+    if simulate_step:
+        normalized["simulate_failure_step"] = simulate_step
+    return normalized
+
+
+def _paper_launch_slug(value: str, default: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or default
+
+
+def _paper_launch_project(record: Dict[str, Any]) -> Dict[str, Any]:
+    fields = {
+        "launch_id",
+        "name",
+        "mandate",
+        "strategy_family",
+        "market_scope",
+        "source_scope",
+        "risk_profile_id",
+        "paper_capital_pool",
+        "paper_budget",
+        "artifact_id",
+        "operator_note",
+        "status",
+        "persona_id",
+        "capital_pool_id",
+        "binding_id",
+        "deployment_plan_id",
+        "approval_decision_id",
+        "runtime_binding_id",
+        "runtime_id",
+        "completed_steps",
+        "failed_step",
+        "retryable",
+        "repair_url",
+        "trace_id",
+        "created_at",
+        "updated_at",
+    }
+    return {field: json.loads(json.dumps(record.get(field))) for field in fields if field in record}
+
+
+def _paper_launch_idempotency_hash(record: Dict[str, Any], idempotency_key: str) -> Optional[str]:
+    key_map = record.get("idempotency_keys")
+    if isinstance(key_map, dict):
+        value = key_map.get(idempotency_key)
+        if value:
+            return str(value)
+    if str(record.get("idempotency_key") or "") == idempotency_key:
+        return str(record.get("request_hash") or "")
+    return None
+
+
+def _paper_launch_idempotency_conflict(idempotency_key: str) -> HTTPException:
+    return _bff_error(
+        409,
+        ErrorCode.IDEMPOTENCY_CONFLICT,
+        "Idempotency key already used with a different payload",
+        f"Key {idempotency_key!r} is bound to a different paper launch payload.",
+        precondition_failed="idempotency_conflict",
+        suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged.",
+    )
+
+
+def _paper_launch_envelope(
+    record: Dict[str, Any],
+    *,
+    idempotency_key: str,
+    replayed: bool,
+) -> Dict[str, Any]:
+    data = _paper_launch_project(record)
+    meta = _snapshot_meta(str(record.get("updated_at") or record.get("created_at") or utc_now()))
+    meta["idempotency"] = {"idempotencyKey": idempotency_key, "replayed": replayed}
+    meta["trace_id"] = record.get("trace_id")
+    meta["surfaces"] = {
+        "personas": _dataset_surface_status("personas", snapshot_at=meta["snapshot_at"]),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=meta["snapshot_at"]),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=meta["snapshot_at"]),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=meta["snapshot_at"]),
+        "approval_decisions": _dataset_surface_status("approval_decisions", snapshot_at=meta["snapshot_at"]),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=meta["snapshot_at"]),
+    }
+    meta["audit_events"] = json.loads(json.dumps(record.get("audit_events") or []))
+    return {"data": data, "launch": data, "meta": meta}
+
+
+def _paper_launch_failure_injection_step(payload: Dict[str, Any]) -> Optional[str]:
+    if os.getenv("PANTHEON_BFF_ENABLE_PAPER_LAUNCH_FAILURE_INJECTION") != "1":
+        return None
+    step = str(payload.get("simulate_failure_step") or "").strip()
+    return step if step in _PAPER_LAUNCH_STEPS else None
+
+
+def _paper_launch_fail_if_requested(payload: Dict[str, Any], step: str) -> None:
+    if _paper_launch_failure_injection_step(payload) == step:
+        raise _PaperLaunchStepFailure(step, f"Injected paper launch failure at {step}.")
+
+
+def _paper_launch_add_step(completed_steps: List[str], step: str) -> None:
+    if step not in completed_steps:
+        completed_steps.append(step)
+
+
+def _paper_launch_audit_event(
+    *,
+    launch_id: str,
+    step: str,
+    status: str,
+    actor_id: str,
+    persona_id: str,
+    trace_id: str,
+    timestamp: str,
+    target_id: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    return read_store.record_governance_audit_event(
+        {
+            "entry_id": f"audit-{launch_id}-{step}-{uuid.uuid4().hex[:8]}",
+            "actor": actor_id,
+            "action_type": "PaperPersonaLaunchStep",
+            "target_type": "Persona",
+            "target_id": target_id or persona_id,
+            "timestamp": timestamp,
+            "outcome": status,
+            "audit_context": {
+                "launch_id": launch_id,
+                "step": step,
+                "trace_id": trace_id,
+                "reason": reason or f"paper launch {step}",
+                "live_capital_side_effects": False,
+            },
+            "evidence_refs": [],
+        }
+    )
+
+
+def _paper_pool_is_live_capable(pool: Dict[str, Any]) -> bool:
+    scope = str(pool.get("capital_scope") or pool.get("scope") or "").strip().lower()
+    if scope in {"live", "canary"}:
+        return True
+    return pool.get("live_capital_enabled") is True
+
+
+def _paper_launch_record_failure(
+    *,
+    record: Dict[str, Any],
+    step: str,
+    reason: str,
+    actor_id: str,
+    request_payload: Dict[str, Any],
+    request_hash: str,
+    idempotency_key: str,
+) -> Dict[str, Any]:
+    timestamp = utc_now()
+    persona_id = str(record.get("persona_id") or "")
+    if persona_id and read_store.get_persona(persona_id):
+        metadata = {
+            "persona_status": "setup_failed",
+            "setup_status": "setup_failed",
+            "setup_failed_step": step,
+            "failed_step": step,
+            "repair_url": f"/bff/management/personas/{persona_id}/setup/retry",
+            "paper_launch_id": record.get("launch_id"),
+            "paper_launch_trace_id": record.get("trace_id"),
+        }
+        read_store.update_persona(
+            persona_id,
+            actor_id=actor_id,
+            lifecycle_state="setup_failed",
+            metadata=metadata,
+            updated_at=timestamp,
+        )
+    audit_event = _paper_launch_audit_event(
+        launch_id=str(record.get("launch_id")),
+        step=step,
+        status="failed",
+        actor_id=actor_id,
+        persona_id=persona_id,
+        trace_id=str(record.get("trace_id")),
+        timestamp=timestamp,
+        reason=reason,
+    )
+    key_map = dict(record.get("idempotency_keys") if isinstance(record.get("idempotency_keys"), dict) else {})
+    key_map[idempotency_key] = request_hash
+    failed = {
+        **record,
+        "status": "setup_failed",
+        "failed_step": step,
+        "retryable": True,
+        "repair_url": f"/bff/management/personas/{persona_id}/setup/retry" if persona_id else None,
+        "updated_at": timestamp,
+        "request_payload": json.loads(json.dumps(request_payload)),
+        "request_hash": record.get("request_hash") or request_hash,
+        "idempotency_key": record.get("idempotency_key") or idempotency_key,
+        "idempotency_keys": key_map,
+        "failure_reason": reason,
+        "audit_events": list(record.get("audit_events") or []) + [audit_event],
+    }
+    return read_store.upsert_paper_persona_launch(failed)
+
+
+def _execute_paper_persona_launch(
+    *,
+    payload: Dict[str, Any],
+    identity: OperatorIdentity,
+    idempotency_key: str,
+    request_hash: str,
+    trace_id: str,
+    existing_launch: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    timestamp = utc_now()
+    existing = dict(existing_launch or {})
+    suffix = uuid.uuid4().hex[:8]
+    launch_id = str(existing.get("launch_id") or payload.get("launch_id") or f"launch-{timestamp[:10].replace('-', '')}-{suffix}")
+    persona_id = str(existing.get("persona_id") or payload.get("persona_id") or f"persona-paper-{suffix}")
+    name_slug = _paper_launch_slug(str(payload["name"]), "paper-persona")
+    capital_pool_id = str(existing.get("capital_pool_id") or payload["paper_capital_pool"].get("capital_pool_id") or "")
+    if not capital_pool_id:
+        capital_pool_id = f"pool-paper-{name_slug}-{suffix}"
+    binding_id = str(existing.get("binding_id") or f"pcb-{persona_id}")
+    deployment_plan_id = str(existing.get("deployment_plan_id") or f"plan-paper-{persona_id}")
+    approval_decision_id = str(existing.get("approval_decision_id") or f"approval-paper-{persona_id}")
+    runtime_binding_id = str(existing.get("runtime_binding_id") or f"rb-paper-{persona_id}")
+    runtime_id = str(existing.get("runtime_id") or f"runtime-paper-{persona_id}")
+    completed_steps = list(existing.get("completed_steps") or [])
+    audit_events = list(existing.get("audit_events") or [])
+    key_map = dict(existing.get("idempotency_keys") if isinstance(existing.get("idempotency_keys"), dict) else {})
+    key_map[idempotency_key] = request_hash
+    record: Dict[str, Any] = {
+        **existing,
+        "launch_id": launch_id,
+        "name": payload["name"],
+        "mandate": payload["mandate"],
+        "strategy_family": list(payload["strategy_family"]),
+        "market_scope": list(payload["market_scope"]),
+        "source_scope": list(payload["source_scope"]),
+        "risk_profile_id": payload["risk_profile_id"],
+        "paper_capital_pool": json.loads(json.dumps(payload["paper_capital_pool"])),
+        "paper_budget": payload["paper_budget"],
+        "artifact_id": payload["artifact_id"],
+        "operator_note": payload.get("operator_note"),
+        "status": "paper_provisioning",
+        "persona_id": persona_id,
+        "capital_pool_id": capital_pool_id,
+        "binding_id": binding_id,
+        "deployment_plan_id": deployment_plan_id,
+        "approval_decision_id": approval_decision_id,
+        "runtime_binding_id": runtime_binding_id,
+        "runtime_id": runtime_id,
+        "completed_steps": completed_steps,
+        "failed_step": None,
+        "retryable": True,
+        "repair_url": f"/bff/management/personas/{persona_id}/setup/retry",
+        "trace_id": trace_id,
+        "created_at": existing.get("created_at") or timestamp,
+        "updated_at": timestamp,
+        "request_payload": json.loads(json.dumps(payload)),
+        "request_hash": existing.get("request_hash") or request_hash,
+        "idempotency_key": existing.get("idempotency_key") or idempotency_key,
+        "idempotency_keys": key_map,
+        "audit_events": audit_events,
+    }
+    read_store.upsert_paper_persona_launch(record)
+
+    try:
+        _paper_launch_fail_if_requested(payload, "persona_identity_created")
+        persona = read_store.get_persona(persona_id)
+        if persona is None:
+            persona = read_store.create_persona(
+                persona_id=persona_id,
+                name=payload["name"],
+                actor_id=identity.operator_id,
+                created_at=timestamp,
+                archetype=payload["strategy_family"][0],
+                lifecycle_state="paper_provisioning",
+                risk_level="low",
+                mandate=payload["mandate"],
+                strategy_family=",".join(payload["strategy_family"]),
+                metadata={
+                    "owner": identity.operator_id,
+                    "paper_launch_id": launch_id,
+                    "paper_launch_trace_id": trace_id,
+                    "market_scope": list(payload["market_scope"]),
+                    "source_scope": list(payload["source_scope"]),
+                    "risk_profile_id": payload["risk_profile_id"],
+                    "paper_budget": payload["paper_budget"],
+                    "artifact_id": payload["artifact_id"],
+                    "persona_status": "paper_provisioning",
+                    "setup_status": "provisioning",
+                    "deployment_stage": "paper",
+                    "governance_required": True,
+                },
+            )
+        _paper_launch_add_step(completed_steps, "persona_identity_created")
+
+        _paper_launch_fail_if_requested(payload, "policy_snapshots_created")
+        policy_snapshot_id = f"policy-snapshot-{launch_id}"
+        read_store.update_persona(
+            persona_id,
+            actor_id=identity.operator_id,
+            lifecycle_state="paper_provisioning",
+            metadata={
+                "policy_snapshot_id": policy_snapshot_id,
+                "risk_profile_id": payload["risk_profile_id"],
+                "persona_status": "paper_provisioning",
+                "setup_status": "provisioning",
+            },
+            updated_at=timestamp,
+        )
+        _paper_launch_add_step(completed_steps, "policy_snapshots_created")
+
+        _paper_launch_fail_if_requested(payload, "paper_capital_pool_ready")
+        pool_selection = payload["paper_capital_pool"]
+        pool = read_store.get_capital_pool(capital_pool_id)
+        if pool_selection["mode"] == "select_existing":
+            if pool is None:
+                raise _PaperLaunchStepFailure(
+                    "paper_capital_pool_ready",
+                    f"Paper capital pool {capital_pool_id} does not exist.",
+                )
+            if _paper_pool_is_live_capable(pool):
+                raise _PaperLaunchStepFailure(
+                    "paper_capital_pool_ready",
+                    f"Capital pool {capital_pool_id} is live/canary capable and cannot be bound during paper create.",
+                )
+        elif pool is None:
+            pool = read_store.create_capital_pool(
+                pool_id=capital_pool_id,
+                name=f"{payload['name']} Paper Pool",
+                actor_id=identity.operator_id,
+                created_at=timestamp,
+                risk_policy_ref=payload["risk_profile_id"],
+                params={
+                    "template_id": pool_selection.get("template_id"),
+                    "paper_budget": payload["paper_budget"],
+                    "created_via": "POST /bff/management/personas/paper-launch",
+                },
+                status="ready",
+                capital_scope="paper",
+                live_capital_enabled=False,
+                nav=payload["paper_budget"],
+                cash=payload["paper_budget"],
+                market_scope=list(payload["market_scope"]),
+            )
+        _paper_launch_add_step(completed_steps, "paper_capital_pool_ready")
+
+        _paper_launch_fail_if_requested(payload, "paper_binding_active")
+        binding = read_store.get_binding(binding_id)
+        if binding is None:
+            binding = read_store.create_persona_binding(
+                binding_id=binding_id,
+                persona_id=persona_id,
+                capital_pool_id=capital_pool_id,
+                actor_id=identity.operator_id,
+                created_at=timestamp,
+                role="paper_owner",
+                status="active",
+                allowed_deployment_scope="paper",
+                approval_decision_id=approval_decision_id,
+                metadata={
+                    "paper_launch_id": launch_id,
+                    "live_capital_side_effects": False,
+                },
+            )
+        elif (
+            str(binding.get("persona_id") or "") != persona_id
+            or str(binding.get("capital_pool_id") or "") != capital_pool_id
+            or str(binding.get("allowed_deployment_scope") or "").lower() != "paper"
+        ):
+            raise _PaperLaunchStepFailure(
+                "paper_binding_active",
+                f"Binding {binding_id} does not match the requested paper persona launch.",
+            )
+        _paper_launch_add_step(completed_steps, "paper_binding_active")
+
+        _paper_launch_fail_if_requested(payload, "paper_deployment_plan_created")
+        plan = read_store.get_deployment_plan(deployment_plan_id)
+        if plan is None:
+            plan = read_store.create_deployment_plan(
+                plan_id=deployment_plan_id,
+                binding_id=binding_id,
+                artifact_id=payload["artifact_id"],
+                deployment_mode="paper",
+                capital_pool_id=capital_pool_id,
+                actor_id=identity.operator_id,
+                created_at=timestamp,
+                params={
+                    "paper_launch_id": launch_id,
+                    "trace_id": trace_id,
+                    "paper_budget": payload["paper_budget"],
+                    "live_capital_side_effects": False,
+                },
+                locked=True,
+                status="approved",
+                approval_decision_id=approval_decision_id,
+            )
+        _paper_launch_add_step(completed_steps, "paper_deployment_plan_created")
+
+        _paper_launch_fail_if_requested(payload, "paper_approval_recorded")
+        approval = read_store.get_approval_decision(approval_decision_id)
+        if approval is None:
+            approval = read_store.create_approval_decision(
+                decision_id=approval_decision_id,
+                actor_id=identity.operator_id,
+                created_at=timestamp,
+                outcome="approved",
+                state="decided",
+                risk_level="low",
+                decision_type="paper_launch",
+                target_type="DeploymentPlan",
+                target_id=deployment_plan_id,
+                rationale="Automated paper-only approval; canary/live remains blocked until human review.",
+                evidence_refs=[
+                    {
+                        "ref_id": f"ev-{launch_id}-paper-policy",
+                        "type": "PaperLaunchPolicyCheck",
+                        "url": f"/bff/management/personas/{persona_id}/readiness",
+                    }
+                ],
+                metadata={
+                    "paper_launch_id": launch_id,
+                    "system_authority": "paper_only",
+                    "may_promote": False,
+                    "may_increase_allocation": False,
+                },
+            )
+        _paper_launch_add_step(completed_steps, "paper_approval_recorded")
+
+        _paper_launch_fail_if_requested(payload, "paper_runtime_binding_created")
+        runtime = read_store.get_runtime_binding(runtime_binding_id)
+        if runtime is None:
+            runtime = read_store.create_runtime_binding(
+                runtime_id=runtime_id,
+                name=f"{payload['name']} Paper Runtime",
+                persona_id=persona_id,
+                binding_id=runtime_binding_id,
+                persona_capital_binding_id=binding_id,
+                deployment_plan_id=deployment_plan_id,
+                runtime_kind="paper",
+                actor_id=identity.operator_id,
+                created_at=timestamp,
+                params={
+                    "paper_launch_id": launch_id,
+                    "trace_id": trace_id,
+                    "paper_budget": payload["paper_budget"],
+                },
+                status="starting",
+                state="starting",
+                capital_pool_id=capital_pool_id,
+                artifact_id=payload["artifact_id"],
+                artifact_version="paper-launch",
+                metadata={
+                    "created_via": "POST /bff/management/personas/paper-launch",
+                    "paper_launch_id": launch_id,
+                    "market_scope": list(payload["market_scope"]),
+                    "source_scope": list(payload["source_scope"]),
+                    "live_write_enabled": False,
+                    "fail_closed": True,
+                },
+            )
+        _paper_launch_add_step(completed_steps, "paper_runtime_binding_created")
+
+        _paper_launch_fail_if_requested(payload, "paper_runtime_started")
+        runtime = read_store.create_runtime_binding(
+            runtime_id=runtime_id,
+            name=f"{payload['name']} Paper Runtime",
+            persona_id=persona_id,
+            binding_id=runtime_binding_id,
+            persona_capital_binding_id=binding_id,
+            deployment_plan_id=deployment_plan_id,
+            runtime_kind="paper",
+            actor_id=identity.operator_id,
+            created_at=timestamp,
+            params={
+                "paper_launch_id": launch_id,
+                "trace_id": trace_id,
+                "paper_budget": payload["paper_budget"],
+            },
+            status="active",
+            state="active",
+            capital_pool_id=capital_pool_id,
+            artifact_id=payload["artifact_id"],
+            artifact_version="paper-launch",
+            metadata={
+                "created_via": "POST /bff/management/personas/paper-launch",
+                "paper_launch_id": launch_id,
+                "market_scope": list(payload["market_scope"]),
+                "source_scope": list(payload["source_scope"]),
+                "live_write_enabled": False,
+                "fail_closed": True,
+            },
+        )
+        _paper_launch_add_step(completed_steps, "paper_runtime_started")
+
+        _paper_launch_fail_if_requested(payload, "telemetry_heartbeat_verified")
+        read_store.upsert_paper_runtime_monitoring_session(
+            session_id=f"session-{runtime_id}",
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            persona_id=persona_id,
+            capital_pool_id=capital_pool_id,
+            actor_id=identity.operator_id,
+            started_at=timestamp,
+            status="active",
+            heartbeat_status="fresh",
+            metadata={"paper_launch_id": launch_id, "trace_id": trace_id},
+        )
+        _paper_launch_add_step(completed_steps, "telemetry_heartbeat_verified")
+
+        persona_metadata = {
+            "paper_launch_id": launch_id,
+            "paper_launch_trace_id": trace_id,
+            "persona_status": "paper_running",
+            "setup_status": "paper_runtime_active",
+            "deployment_stage": "paper",
+            "capital_pool_id": capital_pool_id,
+            "runtime_binding_id": runtime_id,
+            "runtime_id": runtime_id,
+            "persona_capital_binding_id": binding_id,
+            "deployment_plan_id": deployment_plan_id,
+            "approval_decision_id": approval_decision_id,
+            "artifact_id": payload["artifact_id"],
+            "market_scope": list(payload["market_scope"]),
+            "source_scope": list(payload["source_scope"]),
+            "risk_profile_id": payload["risk_profile_id"],
+            "paper_budget": payload["paper_budget"],
+            "governance_required": True,
+            "recommended_governance_action": "none",
+        }
+        read_store.update_persona(
+            persona_id,
+            actor_id=identity.operator_id,
+            lifecycle_state="paper_running",
+            metadata=persona_metadata,
+            updated_at=timestamp,
+        )
+
+        for step in completed_steps:
+            if any(event.get("audit_context", {}).get("step") == step for event in audit_events if isinstance(event, dict)):
+                continue
+            audit_events.append(
+                _paper_launch_audit_event(
+                    launch_id=launch_id,
+                    step=step,
+                    status="success",
+                    actor_id=identity.operator_id,
+                    persona_id=persona_id,
+                    trace_id=trace_id,
+                    timestamp=timestamp,
+                )
+            )
+
+        record.update(
+            {
+                "status": "paper_running",
+                "completed_steps": completed_steps,
+                "failed_step": None,
+                "retryable": False,
+                "repair_url": None,
+                "updated_at": timestamp,
+                "audit_events": audit_events,
+                "idempotency_keys": key_map,
+            }
+        )
+        stored = read_store.upsert_paper_persona_launch(record)
+        _publish_event(
+            _sse_buffers["runtime"],
+            _sse_subscribers["runtime"],
+            "paper-persona-launch.completed",
+            {
+                "launch_id": launch_id,
+                "persona_id": persona_id,
+                "runtime_id": runtime_id,
+                "runtime_binding_id": runtime_binding_id,
+                "capital_pool_id": capital_pool_id,
+                "trace_id": trace_id,
+                "created_at": timestamp,
+            },
+        )
+        return stored
+    except _PaperLaunchStepFailure as exc:
+        return _paper_launch_record_failure(
+            record={**record, "completed_steps": completed_steps, "audit_events": audit_events},
+            step=exc.step,
+            reason=exc.reason,
+            actor_id=identity.operator_id,
+            request_payload=payload,
+            request_hash=request_hash,
+            idempotency_key=idempotency_key,
+        )
+
+
+@app.post("/bff/management/personas/paper-launch", status_code=201)
+async def bff_management_paper_launch(
+    response: Response,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+):
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/management/personas/paper-launch", "payload": payload})
+    existing = read_store.get_paper_persona_launch_by_idempotency_key(resolved_key)
+    if existing is not None:
+        stored_hash = _paper_launch_idempotency_hash(existing, resolved_key)
+        if stored_hash != request_hash:
+            raise _paper_launch_idempotency_conflict(resolved_key)
+        response.status_code = 200
+        return _paper_launch_envelope(existing, idempotency_key=resolved_key, replayed=True)
+
+    normalized_payload = _normalize_paper_launch_payload(payload)
+    trace_id = str(x_trace_id or "").strip() or f"trace-paper-launch-{uuid.uuid4().hex[:12]}"
+    record = _execute_paper_persona_launch(
+        payload=normalized_payload,
+        identity=identity,
+        idempotency_key=resolved_key,
+        request_hash=request_hash,
+        trace_id=trace_id,
+    )
+    if record.get("status") == "setup_failed":
+        response.status_code = 202
+    return _paper_launch_envelope(record, idempotency_key=resolved_key, replayed=False)
+
+
+def _paper_launch_latest_for_persona(persona_id: str) -> Optional[Dict[str, Any]]:
+    launches = read_store.list_paper_persona_launches(persona_id=persona_id)
+    return launches[0] if launches else None
+
+
+def _paper_launch_readiness_for_persona(persona_id: str, snapshot_at: str) -> Optional[Dict[str, Any]]:
+    for item in _build_persona_health_items(snapshot_at, include_market_persona_defaults=True):
+        if str(item.get("persona_id") or item.get("id") or "") == persona_id:
+            readiness = item.get("readinessProjection") or item.get("readiness_projection")
+            if isinstance(readiness, dict):
+                return json.loads(json.dumps(readiness))
+    latest_launch = _paper_launch_latest_for_persona(persona_id)
+    if latest_launch is None:
+        return None
+    status = str(latest_launch.get("status") or "repair_required")
+    runtime_status = "active" if status == "paper_running" else "failed" if status == "setup_failed" else "missing"
+    setup_status = "paper_runtime_active" if status == "paper_running" else "setup_failed"
+    return {
+        "persona_id": persona_id,
+        "product_lifecycle_state": status,
+        "setup_status": setup_status,
+        "paper_runtime": {
+            "runtime_binding_id": latest_launch.get("runtime_binding_id"),
+            "runtime_id": latest_launch.get("runtime_id"),
+            "status": runtime_status,
+            "heartbeat_status": "fresh" if runtime_status == "active" else "missing",
+        },
+        "competition_track": "paper_challenger" if status == "paper_running" else "watchlist_incumbent",
+        "capital_scope": "paper",
+        "required_human_review": None,
+        "repair": {
+            "retryable": bool(latest_launch.get("retryable")),
+            "failed_step": latest_launch.get("failed_step"),
+            "repair_url": latest_launch.get("repair_url"),
+        },
+        "trace_id": latest_launch.get("trace_id") or f"readiness-{persona_id}",
+        "snapshot_at": snapshot_at,
+    }
+
+
+@app.get("/bff/management/personas/{persona_id}/readiness")
+async def bff_management_persona_readiness(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = persona_id.strip()
+    snapshot_at = utc_now()
+    readiness = _paper_launch_readiness_for_persona(clean_id, snapshot_at)
+    if readiness is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Persona readiness not found",
+            f"Persona {clean_id} does not have a readiness projection.",
+        )
+    latest_launch = _paper_launch_latest_for_persona(clean_id)
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "persona_fleet": _composed_dataset_surface_status(
+            "persona_fleet",
+            [readiness],
+            snapshot_at=snapshot_at,
+            source="bff_composed",
+        ),
+        "paper_persona_launches": _composed_dataset_surface_status(
+            "paper_persona_launches",
+            [latest_launch] if latest_launch else [],
+            snapshot_at=snapshot_at,
+            source="bff_local_dev_store",
+        ),
+    }
+    return {
+        "data": readiness,
+        "readinessProjection": readiness,
+        "latest_launch": _paper_launch_project(latest_launch) if latest_launch else None,
+        "meta": meta,
+    }
+
+
+def _paper_launch_retry_payload(
+    latest_launch: Dict[str, Any],
+    override_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    base = json.loads(json.dumps(latest_launch.get("request_payload") or {}))
+    for key, value in override_payload.items():
+        if key in {"paper_capital_pool", "paperCapitalPool"} and isinstance(value, dict):
+            current = base.get("paper_capital_pool") if isinstance(base.get("paper_capital_pool"), dict) else {}
+            current.update(value)
+            base["paper_capital_pool"] = current
+            continue
+        base[key] = value
+    base.pop("simulate_failure_step", None)
+    base.pop("simulateFailureStep", None)
+    base.pop("_simulate_failure_step", None)
+    return base
+
+
+@app.post("/bff/management/personas/{persona_id}/setup/retry")
+async def bff_management_persona_setup_retry(
+    persona_id: str,
+    response: Response,
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+):
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    retry_payload = payload or {}
+    _reject_body_idempotency_key(retry_payload)
+    clean_id = persona_id.strip()
+    latest_launch = _paper_launch_latest_for_persona(clean_id)
+    if latest_launch is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Paper launch not found",
+            f"Persona {clean_id} does not have a repairable paper launch.",
+        )
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /bff/management/personas/{persona_id}/setup/retry",
+            "persona_id": clean_id,
+            "payload": retry_payload,
+        }
+    )
+    existing = read_store.get_paper_persona_launch_by_idempotency_key(resolved_key)
+    if existing is not None:
+        stored_hash = _paper_launch_idempotency_hash(existing, resolved_key)
+        if stored_hash != request_hash:
+            raise _paper_launch_idempotency_conflict(resolved_key)
+        response.status_code = 200
+        return _paper_launch_envelope(existing, idempotency_key=resolved_key, replayed=True)
+
+    if latest_launch.get("status") in {"paper_running", "paper_warming_up"}:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Persona setup is already running",
+            f"Persona {clean_id} already has a running paper setup.",
+            precondition_failed="setup_status",
+        )
+
+    merged_payload = _paper_launch_retry_payload(latest_launch, retry_payload)
+    normalized_payload = _normalize_paper_launch_payload({**merged_payload, "persona_id": clean_id})
+    trace_id = str(x_trace_id or "").strip() or str(latest_launch.get("trace_id") or f"trace-paper-retry-{uuid.uuid4().hex[:12]}")
+    record = _execute_paper_persona_launch(
+        payload=normalized_payload,
+        identity=identity,
+        idempotency_key=resolved_key,
+        request_hash=request_hash,
+        trace_id=trace_id,
+        existing_launch=latest_launch,
+    )
+    if record.get("status") == "setup_failed":
+        response.status_code = 202
+    return _paper_launch_envelope(record, idempotency_key=resolved_key, replayed=False)
+
+
 @app.get("/bff/personas/{persona_id}")
 async def bff_get_persona(
     persona_id: str,

@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "snapshot_date": "2026-06-28",
+    "snapshot_date": "2026-07-02",
     "owner_task": "BFF-LUV-GAP-001",
     "source_repo": "/home/lupin/code/execute-plans",
     "source_scope": [
@@ -11,7 +11,7 @@
       "execute-plans/src/**",
       "execute-plans/README.md"
     ],
-    "audited_active_endpoint_references": 175,
+    "audited_active_endpoint_references": 178,
     "status_values": [
       "implemented",
       "implemented_by_alias",
@@ -1327,6 +1327,30 @@
       "family": "execute-plans-cutover-smoke",
       "status": "deferred_with_task",
       "task_id": "BFF-LUV-GAP-012"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/personas/paper-launch",
+      "family": "management-console",
+      "status": "implemented",
+      "task_id": "PPLG-002",
+      "proof": "test_paper_launch_creates_complete_paper_runtime_and_fleet_row"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/personas/{personaId}/readiness",
+      "family": "management-console",
+      "status": "implemented",
+      "task_id": "PPLG-002",
+      "proof": "test_paper_launch_creates_complete_paper_runtime_and_fleet_row"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/personas/{personaId}/setup/retry",
+      "family": "management-console",
+      "status": "implemented",
+      "task_id": "PPLG-002",
+      "proof": "test_paper_launch_step_failure_is_repairable_and_retry_starts_runtime"
     },
     {
       "method": "GET",
