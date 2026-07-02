@@ -244,20 +244,24 @@ Later remediation slices continued from this re-audit:
 - `MGMT-LIST-CONTRACT-016` hardened frontend live transport mode/base URL and
   strict fallback handling so live-mode tests prove they call the configured
   BFF URL instead of silently returning mock data.
+- `MGMT-LIST-CONTRACT-017` removed PM12 quarterly ranking row, drilldown,
+  recommendation row, governance payload, and HumanGate command fixture
+  wire-casing mirrors; drilldown source breakdowns now expose lightweight
+  counts/summaries instead of nested capability/session/memory helper payloads.
 
-The current list-contract guardrail result after `MGMT-LIST-CONTRACT-016` is:
+The current list-contract guardrail result after `MGMT-LIST-CONTRACT-017` is:
 
 ```text
-source=services/control-plane/bff/main.py baseline=docs/architecture/management-list-contract-baseline.json issues=102 new=0 retired=0
+source=services/control-plane/bff/main.py baseline=docs/architecture/management-list-contract-baseline.json issues=91 new=0 retired=0
 ```
 
 Current remaining categories:
 
 | Category | Count |
 |---|---:|
-| `camel-snake-duplicate` | 94 |
+| `camel-snake-duplicate` | 84 |
 | `project-before-page` | 5 |
-| `heavy-row-helper` | 3 |
+| `heavy-row-helper` | 2 |
 
 All P0 categories are now zero in the Management list-contract audit. The next
 cleanup work is P1-only: remaining casing duplicates plus project-before-page
@@ -362,11 +366,15 @@ Interpretation:
    recommendation outer-summary camel/snake wire-key mirrors.
 10. Done in `MGMT-LIST-CONTRACT-016`: harden frontend live transport mode/base
    URL and strict fallback handling.
-11. Continue casing cleanup and filter/page-before-projection work for the PM12
+11. Done in `MGMT-LIST-CONTRACT-017`: remove PM12 quarterly ranking row,
+   drilldown, recommendation row, governance payload, typed contract, and
+   HumanGate command fixture camel/snake wire-key mirrors; slim drilldown
+   source breakdowns to summaries/counts.
+12. Continue casing cleanup and filter/page-before-projection work for the PM12
    analytics helpers after `MGMT-LIST-CONTRACT-006`.
-12. Decide the frontend product shape: keep the current three-panel shell, or
+13. Decide the frontend product shape: keep the current three-panel shell, or
    deliberately build a smaller workflow-based Management router.
-13. Add payload-size and route-smoke acceptance evidence before exposing more
+14. Add payload-size and route-smoke acceptance evidence before exposing more
    first-level management pages.
 
 ## Bottom Line

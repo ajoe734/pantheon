@@ -5,7 +5,7 @@
 | Scope | Static audit of `services/control-plane/bff/main.py` Management list/table/board contracts |
 | Tool | `scripts/audit_management_list_contract.py` |
 | Baseline | `docs/architecture/management-list-contract-baseline.json` |
-| Result | 102 existing contract smells after `MGMT-LIST-CONTRACT-016`: 0 P0, 102 P1 |
+| Result | 91 existing contract smells after `MGMT-LIST-CONTRACT-017`: 0 P0, 91 P1 |
 
 ## Trigger
 
@@ -49,9 +49,11 @@ on snake_case typed/frontend consumers and closed the remaining focused fixture
 gaps around public rows, summary counts, facets, and degraded envelopes, and
 `MGMT-LIST-CONTRACT-015` removed PM12 quarterly ranking formula/window,
 governance evidence, ranking summary, formula summary, and recommendation
-summary casing mirrors. `MGMT-LIST-CONTRACT-016` hardened frontend live
+summary casing mirrors, `MGMT-LIST-CONTRACT-016` hardened frontend live
 transport so live-mode tests must prove they call the configured BFF URL
-instead of silently returning mock data:
+instead of silently returning mock data, and `MGMT-LIST-CONTRACT-017` removed PM12 quarterly
+ranking row, drilldown, recommendation row, and HumanGate command fixture
+casing mirrors while slimming drilldown source breakdowns:
 
 | Category | Count | Severity | Meaning |
 |---|---:|---|---|
@@ -60,9 +62,9 @@ instead of silently returning mock data:
 | `source-record-in-list-dto` | 0 | P0 | Raw source record/document fields appear in list DTO helpers |
 | `embedded-aggregate-payload` | 0 | P0 | List/board payload embeds related aggregate collections |
 | `board-pack-full-child-payloads` | 0 | P0 | Board pack nests complete child endpoint responses |
-| `camel-snake-duplicate` | 94 | P1 | DTOs return both casing variants for the same fields |
+| `camel-snake-duplicate` | 84 | P1 | DTOs return both casing variants for the same fields |
 | `project-before-page` | 5 | P1 | Endpoint/helper projects broad aggregates before page slicing |
-| `heavy-row-helper` | 3 | P1 | Row helper includes detail-grade nested policy/session/memory/source data |
+| `heavy-row-helper` | 2 | P1 | Row helper includes detail-grade nested policy/session/memory/source data |
 
 The complete machine-readable list is in
 `docs/architecture/management-list-contract-baseline.json`.
@@ -82,7 +84,7 @@ The complete machine-readable list is in
 | NL/AI Management Surfaces | Remediated in `MGMT-LIST-CONTRACT-009`: AI audit, conversation list/detail, Evolution Journal, Persona Intent, Python tests, and typed client adapters no longer expose top-level list aliases | Continue removing row-level casing duplicates in Management AI helper payloads |
 | Remaining P0 Cluster | Remediated in `MGMT-LIST-CONTRACT-010`: Evidence Explorer, HIQ Backlog, Intervention Stream, Sentinel Pulse, Human Inbox, and Governance Ledger no longer expose duplicate list envelopes, embedded child aggregates, or raw source records in list DTOs | Keep source/debug payloads on detail endpoints and enforce canonical `data.items` list envelopes |
 | Evidence Explorer Wire Casing | Remediated in `MGMT-LIST-CONTRACT-014`: Evidence Explorer rows, summaries, facets, degraded envelopes, typed contracts, and focused frontend fixtures now use snake_case wire keys without camelCase mirrors | Keep temporary frontend fallback reads only at adapter boundaries while formal Management DTOs remain single-casing |
-| PM12 Quarterly Ranking Casing | Remediated in `MGMT-LIST-CONTRACT-015`: formula/window/governance evidence helpers plus quarterly ranking/formula/recommendation outer summaries now use snake_case wire keys | Continue with drilldown and recommendation-row casing in separate focused slices |
+| PM12 Quarterly Ranking Casing | Remediated across `MGMT-LIST-CONTRACT-015` and `MGMT-LIST-CONTRACT-017`: formula/window/governance evidence helpers, ranking rows, drilldown summaries/data, recommendation rows, and focused command fixtures now use snake_case wire keys; drilldown source breakdowns expose counts/summaries instead of detail-grade helper blobs | Continue with remaining PM12 analytics table casing and page-before-projection issues |
 | Builder Blind Spot | Remediated in `MGMT-LIST-CONTRACT-011`: `_build_management_*` helpers are now audited, and newly visible Trading Pulse, Sentinel Pulse, Cockpit, Anomalies, EP5 readiness, and Evidence Explorer builder smells were fixed instead of added to the baseline | Keep helper builders under the same list contract as route handlers; no hidden builder aliases |
 | Frontend Live Transport | Hardened in `MGMT-LIST-CONTRACT-016`: frontend live reads now honor `VITE_BFF_MODE`, `VITE_BFF_BASE_URL`, and strict fallback settings instead of silently returning mock data | Live-mode tests must prove they actually call the configured BFF URL |
 | Frontend Consumption Pattern | Remediated contracts now reject top-level aliases in focused tests; Human Inbox, Evidence, Trading Pulse, and Live Evidence adapters consume canonical `data.items`/`data.summary` shapes | Frontend must request server filters/page and adapt one canonical envelope only |
@@ -139,9 +141,14 @@ The complete machine-readable list is in
 14. Done in `MGMT-LIST-CONTRACT-016`: frontend live transport now honors live
     mode/base URL/strict fallback settings instead of silently returning mock
     data.
-15. Remove camel/snake duplicates from the remaining migrated endpoints and
+15. Done in `MGMT-LIST-CONTRACT-017`: PM12 quarterly ranking row, drilldown,
+    recommendation row, governance payload, typed contracts, and HumanGate
+    command fixture reads now use snake_case wire keys; drilldown source
+    breakdowns now expose lightweight summaries/counts instead of nested
+    capability/session/memory helper payloads.
+16. Remove camel/snake duplicates from the remaining migrated endpoints and
     delete retired fingerprints from the baseline.
-16. Fix remaining project-before-page and heavy-row-helper findings so large
+17. Fix remaining project-before-page and heavy-row-helper findings so large
     list endpoints filter and page before detail-grade projection.
 
 ## Enforcement
