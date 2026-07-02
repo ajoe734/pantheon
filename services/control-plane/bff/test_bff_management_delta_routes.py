@@ -192,25 +192,25 @@ def test_persona_league_heatmap() -> None:
             cells = [cell for row in rows for cell in row["cells"]]
             assert len(data["buckets"]) == 3
             assert data["summary"]["bucket"] == "day"
-            assert data["summary"]["cellCount"] == len(rows) * len(buckets)
+            assert data["summary"]["cell_count"] == len(rows) * len(buckets)
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["surfaces"]["persona_league_heatmap"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/persona-league" in body["meta"]["composition_sources"]
-            assert len(cells) == data["summary"]["cellCount"]
+            assert len(cells) == data["summary"]["cell_count"]
 
-            alpha = next(row for row in rows if row["personaId"] == "persona-alpha")
+            alpha = next(row for row in rows if row["persona_id"] == "persona-alpha")
             assert len(alpha["cells"]) == 3
             latest_cell = alpha["cells"][-1]
-            assert isinstance(latest_cell["compositeScore"], (int, float))
-            assert latest_cell["score"] == latest_cell["compositeScore"]
-            assert latest_cell["overallScore"] == latest_cell["compositeScore"]
-            assert latest_cell["formulaVersion"] == "pm12-default-v1"
+            assert isinstance(latest_cell["composite_score"], (int, float))
+            assert latest_cell["score"] == latest_cell["composite_score"]
+            assert latest_cell["overall_score"] == latest_cell["composite_score"]
+            assert latest_cell["formula_version"] == "pm12-default-v1"
             assert set(latest_cell["components"]) >= {
-                "overallScore",
-                "pnlScore",
-                "riskScore",
-                "executionScore",
-                "activityScore",
+                "overall_score",
+                "pnl_score",
+                "risk_score",
+                "execution_score",
+                "activity_score",
             }
         finally:
             bff_main.read_store = original
@@ -883,19 +883,19 @@ def test_quarterly_ranking_drilldown_returns_persona_contribution_breakdown() ->
             body = response.json()
             data = body["data"]
 
-            assert data["personaId"] == "persona-alpha"
+            assert data["persona_id"] == "persona-alpha"
             assert data["quarter"] == "2026-Q1"
-            assert data["quarterWindow"]["startAt"] == "2026-01-01T00:00:00Z"
-            assert data["quarterWindow"]["endExclusiveAt"] == "2026-04-01T00:00:00Z"
-            assert data["rankingItem"]["personaId"] == "persona-alpha"
-            assert body["rankingItem"] == data["rankingItem"]
-            assert body["contributionBreakdown"] == data["contributionBreakdown"]
-            assert body["summary"]["personaId"] == "persona-alpha"
+            assert data["quarter_window"]["start_at"] == "2026-01-01T00:00:00Z"
+            assert data["quarter_window"]["end_exclusive_at"] == "2026-04-01T00:00:00Z"
+            assert data["ranking_item"]["persona_id"] == "persona-alpha"
+            assert "rankingItem" not in body
+            assert "contributionBreakdown" not in body
+            assert body["summary"]["persona_id"] == "persona-alpha"
             assert body["summary"]["quarter"] == "2026-Q1"
-            assert body["summary"]["componentCount"] == 4
-            assert body["summary"]["rankedCount"] >= 1
-            assert body["summary"]["totalWeightedContribution"] == data["summary"]["totalWeightedContribution"]
-            assert body["meta"]["correlationId"] == "corr-bff-management-delta"
+            assert body["summary"]["component_count"] == 4
+            assert body["summary"]["ranked_count"] >= 1
+            assert body["summary"]["total_weighted_contribution"] == data["summary"]["total_weighted_contribution"]
+            assert "correlationId" not in body["meta"]
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["surfaces"]["quarterly_ranking_drilldown"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/quarterly-ranking" in body["meta"]["composition_sources"]
@@ -905,8 +905,8 @@ def test_quarterly_ranking_drilldown_returns_persona_contribution_breakdown() ->
             assert contribution_keys == {"pnl", "risk", "execution", "activity"}
             for row in data["contributions"]:
                 assert row["basis"] == "component_score_x_formula_weight"
-                assert row["weightedContribution"] == row["weighted_contribution"]
-                assert 0 <= row["contributionShare"] <= 1
+                assert row["weighted_contribution"] >= 0
+                assert 0 <= row["contribution_share"] <= 1
         finally:
             bff_main.read_store = original
 

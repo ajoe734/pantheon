@@ -517,7 +517,7 @@ def test_performance_attribution_groups_requested_dimension(monkeypatch) -> None
     assert "summary" not in payload
     assert payload["data"]["summary"]["period"] == "30d"
     assert payload["data"]["summary"]["dimensions"] == ["asset"]
-    assert payload["data"]["summary"]["supportedDimensions"] == [
+    assert payload["data"]["summary"]["supported_dimensions"] == [
         "persona",
         "strategy",
         "pool",
@@ -533,14 +533,14 @@ def test_performance_attribution_groups_requested_dimension(monkeypatch) -> None
     assert txf["dimension"] == "asset"
     assert txf["label"] == "TXF"
     assert txf["period"] == "30d"
-    assert txf["metrics"]["totalPnl"] == 10.0
-    assert txf["metrics"]["totalTrades"] == 12
-    assert txf["metrics"]["runtimeCount"] == 1
-    assert txf["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
+    assert txf["metrics"]["total_pnl"] == 10.0
+    assert txf["metrics"]["total_trades"] == 12
+    assert txf["metrics"]["runtime_count"] == 1
+    assert txf["source_refs"]["runtime_ids"] == ["runtime-alpha"]
 
-    assert rows["NQ"]["metrics"]["totalPnl"] == -2.0
-    assert payload["data"]["summary"]["totalPnl"] == 8.0
-    assert payload["data"]["summary"]["telemetryRuntimeCount"] == 2
+    assert rows["NQ"]["metrics"]["total_pnl"] == -2.0
+    assert payload["data"]["summary"]["total_pnl"] == 8.0
+    assert payload["data"]["summary"]["telemetry_runtime_count"] == 2
     assert payload["meta"]["policy"] == "read_only_performance_attribution"
     assert payload["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
     assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
@@ -575,11 +575,11 @@ def test_attribution_by_strategy_route_contract(monkeypatch) -> None:
     assert {row["dimension"] for row in payload["data"]["items"]} == {"strategy"}
 
     rows = {row["dimension_key"]: row for row in payload["data"]["items"]}
-    assert rows["strategy-alpha"]["metrics"]["totalPnl"] == 10.0
-    assert rows["strategy-alpha"]["sourceRefs"]["strategyIds"] == ["strategy-alpha"]
+    assert rows["strategy-alpha"]["metrics"]["total_pnl"] == 10.0
+    assert rows["strategy-alpha"]["source_refs"]["strategy_ids"] == ["strategy-alpha"]
     assert rows["strategy-alpha"]["links"]["strategy"] == "/bff/strategies/strategy-alpha"
-    assert rows["unassigned"]["metrics"]["totalPnl"] == -2.0
-    assert rows["strategy-beta"]["metrics"]["totalPnl"] is None
+    assert rows["unassigned"]["metrics"]["total_pnl"] == -2.0
+    assert rows["strategy-beta"]["metrics"]["total_pnl"] is None
     assert payload["meta"]["policy"] == "read_only_performance_attribution"
     assert payload["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
 
@@ -607,7 +607,7 @@ def test_performance_attribution_supports_all_pm12_dimensions(monkeypatch) -> No
         if row["dimension"] == "persona" and row["dimension_key"] == "persona-alpha"
     )
     assert persona_alpha["label"] == "persona-alpha"
-    assert persona_alpha["metrics"]["totalPnl"] == 10.0
+    assert persona_alpha["metrics"]["total_pnl"] == 10.0
     assert persona_alpha["links"]["persona"] == "/bff/personas/persona-alpha"
 
     pool_alpha = next(
@@ -615,14 +615,14 @@ def test_performance_attribution_supports_all_pm12_dimensions(monkeypatch) -> No
         if row["dimension"] == "pool" and row["dimension_key"] == "pool-alpha"
     )
     assert pool_alpha["label"] == "Alpha Book"
-    assert pool_alpha["metrics"]["totalPnl"] == 8.0
+    assert pool_alpha["metrics"]["total_pnl"] == 8.0
 
     broker_alpha = next(
         row for row in payload["data"]["items"]
         if row["dimension"] == "broker" and row["dimension_key"] == "broker-alpha"
     )
-    assert broker_alpha["metrics"]["runtimeCount"] == 2
-    assert broker_alpha["metrics"]["totalPnl"] == 8.0
+    assert broker_alpha["metrics"]["runtime_count"] == 2
+    assert broker_alpha["metrics"]["total_pnl"] == 8.0
 
     runtime_alpha = next(
         row for row in payload["data"]["items"]
@@ -662,12 +662,12 @@ def test_performance_attribution_by_persona_route(monkeypatch) -> None:
 
     rows = {row["dimension_key"]: row for row in payload["data"]["items"]}
     assert rows["persona-alpha"]["label"] == "persona-alpha"
-    assert rows["persona-alpha"]["metrics"]["totalPnl"] == 10.0
+    assert rows["persona-alpha"]["metrics"]["total_pnl"] == 10.0
     assert rows["persona-alpha"]["links"]["persona"] == "/bff/personas/persona-alpha"
-    assert rows["persona-alpha"]["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
+    assert rows["persona-alpha"]["source_refs"]["runtime_ids"] == ["runtime-alpha"]
     assert rows["unassigned"]["label"] == "Unassigned"
-    assert rows["unassigned"]["metrics"]["totalPnl"] == -2.0
-    assert payload["data"]["summary"]["totalPnl"] == 8.0
+    assert rows["unassigned"]["metrics"]["total_pnl"] == -2.0
+    assert payload["data"]["summary"]["total_pnl"] == 8.0
     assert payload["meta"]["surfaces"]["performance_attribution_by_persona"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
     assert payload["meta"]["policy"] == "read_only_performance_attribution"
@@ -698,16 +698,15 @@ def test_performance_attribution_by_pool_route(monkeypatch) -> None:
     rows = {row["dimension_key"]: row for row in payload["data"]["items"]}
     alpha = rows["pool-alpha"]
     assert alpha["label"] == "Alpha Book"
-    assert alpha["metrics"]["totalPnl"] == 8.0
-    assert alpha["metrics"]["runtimeCount"] == 2
-    assert alpha["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
+    assert alpha["metrics"]["total_pnl"] == 8.0
+    assert alpha["metrics"]["runtime_count"] == 2
     assert alpha["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
-    assert alpha["sourceRefs"]["runtimeIds"] == ["runtime-alpha", "runtime-alpha-live"]
-    assert alpha["sourceRefs"]["capitalPoolIds"] == ["pool-alpha"]
+    assert alpha["source_refs"]["runtime_ids"] == ["runtime-alpha", "runtime-alpha-live"]
+    assert alpha["source_refs"]["capital_pool_ids"] == ["pool-alpha"]
     assert rows["pool-beta"]["label"] == "Beta Book"
-    assert rows["pool-beta"]["metrics"]["totalPnl"] is None
-    assert rows["pool-beta"]["metrics"]["telemetryRuntimeCount"] == 0
-    assert payload["data"]["summary"]["totalPnl"] == 8.0
+    assert rows["pool-beta"]["metrics"]["total_pnl"] is None
+    assert rows["pool-beta"]["metrics"]["telemetry_runtime_count"] == 0
+    assert payload["data"]["summary"]["total_pnl"] == 8.0
     assert payload["meta"]["surfaces"]["performance_attribution_by_pool"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
     assert payload["meta"]["policy"] == "read_only_performance_attribution"
@@ -887,11 +886,11 @@ def test_risk_radar_composes_persona_strategy_exposure_drawdown_and_var(monkeypa
     assert row["strategy_id"] == "strategy-alpha"
     assert row["capital_pool_id"] == "pool-alpha"
     assert row["risk_state"] == "critical"
-    assert row["metrics"]["worstDrawdown"] == 0.05
-    assert row["metrics"]["totalExposure"] == 30600.0
-    assert row["metrics"]["valueAtRisk"] == 3.5
-    assert row["metrics"]["valueAtRiskSource"] == "telemetry_value_at_risk"
-    assert row["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
+    assert row["metrics"]["worst_drawdown"] == 0.05
+    assert row["metrics"]["total_exposure"] == 30600.0
+    assert row["metrics"]["value_at_risk"] == 3.5
+    assert row["metrics"]["value_at_risk_source"] == "telemetry_value_at_risk"
+    assert row["source_refs"]["runtime_ids"] == ["runtime-alpha"]
 
     indicator_statuses = {indicator["id"]: indicator["status"] for indicator in row["indicators"]}
     assert indicator_statuses["drawdown"] == "ok"
