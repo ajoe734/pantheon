@@ -48,8 +48,19 @@ class RiskPolicyTargetType(str, Enum):
     RUNTIME_ACTION = "runtime_action"
 
 
+class RiskGuardrailAction(str, Enum):
+    PAUSE_NEW_ORDERS = "pause_new_orders"
+    REDUCE_EXPOSURE = "reduce_exposure"
+    RISK_OFF = "risk_off"
+    FROZEN = "frozen"
+
+
 _ACTIVE_POLICY_STATUSES = {"active"}
 _DRAW_DOWN_ACTIONS = ("liquidate", "risk_off", "warn")
+_RESUME_HUMAN_REVIEW_ACTIONS = {
+    RiskGuardrailAction.RISK_OFF.value,
+    RiskGuardrailAction.FROZEN.value,
+}
 
 
 @dataclass(frozen=True)
@@ -234,6 +245,119 @@ class RiskPolicyEvaluationContext:
 
 
 @dataclass(frozen=True)
+class RiskGuardrailContext:
+    """Runtime, pool, persona, and telemetry facts for automatic guardrails."""
+
+    persona_id: str
+    runtime_binding_id: str
+    runtime_id: str
+    capital_pool_id: str
+    deployment_stage: str
+    deployment_plan_id: str
+    persona_capital_binding_id: str
+    artifact_id: str
+    artifact_version: str
+    trace_id: str | None = None
+    daily_loss_pct: float | None = None
+    daily_loss_limit_pct: float | None = None
+    exposure_pct: float | None = None
+    exposure_limit_pct: float | None = None
+    slippage_bps: float | None = None
+    slippage_limit_bps: float | None = None
+    order_reject_rate: float | None = None
+    order_reject_rate_limit: float | None = None
+    broker_error_count: float | None = None
+    broker_error_limit: float | None = None
+    data_freshness_pct: float | None = None
+    min_data_freshness_pct: float | None = None
+    runtime_heartbeat_age_seconds: float | None = None
+    max_runtime_heartbeat_age_seconds: float | None = None
+    policy_violation_severity: str | None = None
+    correlation: float | None = None
+    correlation_limit: float | None = None
+    telemetry_event_ids: tuple[str, ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "RiskGuardrailContext":
+        binding = _mapping(payload.get("runtime_binding"))
+        metadata = {
+            **_mapping(binding.get("metadata")),
+            **_mapping(payload.get("metadata")),
+        }
+        return cls(
+            persona_id=_first_text(payload, "persona_id", default=str(metadata.get("persona_id") or "")),
+            runtime_binding_id=_first_text(
+                payload,
+                "runtime_binding_id",
+                "binding_id",
+                default=str(binding.get("binding_id") or binding.get("runtime_binding_id") or ""),
+            ),
+            runtime_id=_first_text(payload, "runtime_id", default=str(binding.get("runtime_id") or "")),
+            capital_pool_id=_first_text(payload, "capital_pool_id", default=str(binding.get("capital_pool_id") or "")),
+            deployment_stage=_first_text(
+                payload,
+                "deployment_stage",
+                "deployment_mode",
+                "stage",
+                default=str(binding.get("deployment_mode") or "paper"),
+            ),
+            deployment_plan_id=_first_text(
+                payload,
+                "deployment_plan_id",
+                "plan_id",
+                default=str(binding.get("plan_id") or ""),
+            ),
+            persona_capital_binding_id=_first_text(
+                payload,
+                "persona_capital_binding_id",
+                default=str(binding.get("persona_capital_binding_id") or ""),
+            ),
+            artifact_id=_first_text(payload, "artifact_id", default=str(binding.get("artifact_id") or "")),
+            artifact_version=_first_text(
+                payload,
+                "artifact_version",
+                default=str(binding.get("artifact_version") or ""),
+            ),
+            trace_id=_first_text_or_none(payload, "trace_id") or _optional_text(metadata.get("trace_id")),
+            daily_loss_pct=_optional_float(payload.get("daily_loss_pct", metadata.get("daily_loss_pct"))),
+            daily_loss_limit_pct=_optional_float(
+                payload.get("daily_loss_limit_pct", metadata.get("daily_loss_limit_pct"))
+            ),
+            exposure_pct=_optional_float(payload.get("exposure_pct", metadata.get("exposure_pct"))),
+            exposure_limit_pct=_optional_float(payload.get("exposure_limit_pct", metadata.get("exposure_limit_pct"))),
+            slippage_bps=_optional_float(payload.get("slippage_bps", metadata.get("slippage_bps"))),
+            slippage_limit_bps=_optional_float(payload.get("slippage_limit_bps", metadata.get("slippage_limit_bps"))),
+            order_reject_rate=_optional_float(payload.get("order_reject_rate", metadata.get("order_reject_rate"))),
+            order_reject_rate_limit=_optional_float(
+                payload.get("order_reject_rate_limit", metadata.get("order_reject_rate_limit"))
+            ),
+            broker_error_count=_optional_float(payload.get("broker_error_count", metadata.get("broker_error_count"))),
+            broker_error_limit=_optional_float(payload.get("broker_error_limit", metadata.get("broker_error_limit"))),
+            data_freshness_pct=_optional_float(payload.get("data_freshness_pct", metadata.get("data_freshness_pct"))),
+            min_data_freshness_pct=_optional_float(
+                payload.get("min_data_freshness_pct", metadata.get("min_data_freshness_pct"))
+            ),
+            runtime_heartbeat_age_seconds=_optional_float(
+                payload.get("runtime_heartbeat_age_seconds", metadata.get("runtime_heartbeat_age_seconds"))
+            ),
+            max_runtime_heartbeat_age_seconds=_optional_float(
+                payload.get("max_runtime_heartbeat_age_seconds", metadata.get("max_runtime_heartbeat_age_seconds"))
+            ),
+            policy_violation_severity=_first_text_or_none(payload, "policy_violation_severity")
+            or _optional_text(metadata.get("policy_violation_severity")),
+            correlation=_optional_float(payload.get("correlation", metadata.get("correlation"))),
+            correlation_limit=_optional_float(payload.get("correlation_limit", metadata.get("correlation_limit"))),
+            telemetry_event_ids=_string_tuple(payload.get("telemetry_event_ids", metadata.get("telemetry_event_ids"))),
+            metadata=metadata,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        return {key: value for key, value in payload.items() if value not in (None, (), {})}
+
+
+@dataclass(frozen=True)
 class RiskPolicyCheck:
     check_name: str
     status: str
@@ -316,6 +440,48 @@ class RiskPolicyEvaluation:
             evaluated_at=str(payload.get("evaluated_at") or ""),
             trace_id=str(payload.get("trace_id") or ""),
         )
+
+
+@dataclass(frozen=True)
+class RiskGuardrailEvent:
+    event_id: str
+    persona_id: str
+    runtime_binding_id: str
+    capital_pool_id: str
+    trigger_name: str
+    observed_value: float | str
+    threshold: float | str
+    automatic_action: str
+    effective_at: str
+    incident_id: str
+    review_required: bool
+    may_promote: bool
+    may_increase_allocation: bool
+    trace_id: str
+    resume_requires_human_review: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class RiskGuardrailEvaluation:
+    events: tuple[RiskGuardrailEvent, ...]
+    incident_records: tuple[dict[str, Any], ...]
+    evaluated_at: str
+    trace_id: str
+
+    @property
+    def triggered(self) -> bool:
+        return bool(self.events)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "events": [event.to_dict() for event in self.events],
+            "incident_records": list(self.incident_records),
+            "evaluated_at": self.evaluated_at,
+            "trace_id": self.trace_id,
+        }
 
 
 class RiskPolicyEvaluator:
@@ -742,6 +908,205 @@ class RiskPolicyEvaluator:
         )
 
 
+class RiskGuardrailEvaluator:
+    """Convert runtime/pool/persona telemetry breaches into protection events."""
+
+    def evaluate(
+        self,
+        policy: RiskPolicy | Mapping[str, Any],
+        context: RiskGuardrailContext | Mapping[str, Any],
+    ) -> RiskGuardrailEvaluation:
+        resolved_policy = policy if isinstance(policy, RiskPolicy) else RiskPolicy.from_mapping(policy)
+        resolved_context = (
+            context
+            if isinstance(context, RiskGuardrailContext)
+            else RiskGuardrailContext.from_mapping(context)
+        )
+        trace_id = resolved_context.trace_id or f"risk-guardrail-{uuid.uuid4().hex[:12]}"
+        evaluated_at = utc_now()
+
+        events: list[RiskGuardrailEvent] = []
+        self._append_direct_telemetry_events(resolved_policy, resolved_context, events, trace_id, evaluated_at)
+        self._append_policy_evaluation_events(resolved_policy, resolved_context, events, trace_id, evaluated_at)
+
+        incident_records = tuple(_incident_record_from_guardrail(event, resolved_context) for event in events)
+        return RiskGuardrailEvaluation(
+            events=tuple(events),
+            incident_records=incident_records,
+            evaluated_at=evaluated_at,
+            trace_id=trace_id,
+        )
+
+    def _append_direct_telemetry_events(
+        self,
+        policy: RiskPolicy,
+        context: RiskGuardrailContext,
+        events: list[RiskGuardrailEvent],
+        trace_id: str,
+        evaluated_at: str,
+    ) -> None:
+        daily_loss_limit = _threshold(
+            context.daily_loss_limit_pct,
+            policy.pause_rules.get("daily_loss_pct"),
+            policy.pause_rules.get("daily_loss_limit_pct"),
+        )
+        if _breached_abs(context.daily_loss_pct, daily_loss_limit):
+            events.append(
+                _guardrail_event(
+                    context,
+                    trigger_name="daily_loss_pct",
+                    observed_value=abs(float(context.daily_loss_pct or 0)),
+                    threshold=daily_loss_limit,
+                    automatic_action=RiskGuardrailAction.PAUSE_NEW_ORDERS.value,
+                    trace_id=trace_id,
+                    effective_at=evaluated_at,
+                )
+            )
+
+        drawdown_limit = _threshold(
+            None,
+            policy.drawdown_actions.get("risk_off"),
+            policy.drawdown_actions.get("liquidate"),
+        )
+        drawdown_pct = _optional_float(context.metadata.get("drawdown_pct"))
+        if _breached_abs(drawdown_pct, drawdown_limit):
+            events.append(
+                _guardrail_event(
+                    context,
+                    trigger_name="max_drawdown_pct",
+                    observed_value=abs(float(drawdown_pct or 0)),
+                    threshold=drawdown_limit,
+                    automatic_action=RiskGuardrailAction.RISK_OFF.value,
+                    trace_id=trace_id,
+                    effective_at=evaluated_at,
+                )
+            )
+
+        if str(context.policy_violation_severity or "").lower() == "critical":
+            events.append(
+                _guardrail_event(
+                    context,
+                    trigger_name="critical_policy_violation",
+                    observed_value="critical",
+                    threshold="critical",
+                    automatic_action=RiskGuardrailAction.FROZEN.value,
+                    trace_id=trace_id,
+                    effective_at=evaluated_at,
+                )
+            )
+
+        direct_rules = [
+            (
+                "data_freshness_pct",
+                context.data_freshness_pct,
+                _threshold(context.min_data_freshness_pct, policy.pause_rules.get("min_data_freshness_pct")),
+                RiskGuardrailAction.PAUSE_NEW_ORDERS.value,
+                _breached_below,
+            ),
+            (
+                "runtime_heartbeat_age_seconds",
+                context.runtime_heartbeat_age_seconds,
+                _threshold(
+                    context.max_runtime_heartbeat_age_seconds,
+                    policy.pause_rules.get("max_runtime_heartbeat_age_seconds"),
+                ),
+                RiskGuardrailAction.PAUSE_NEW_ORDERS.value,
+                _breached_above,
+            ),
+            (
+                "broker_error_count",
+                context.broker_error_count,
+                _threshold(context.broker_error_limit, policy.pause_rules.get("broker_error_count")),
+                RiskGuardrailAction.PAUSE_NEW_ORDERS.value,
+                _breached_above,
+            ),
+            (
+                "order_reject_rate",
+                context.order_reject_rate,
+                _threshold(context.order_reject_rate_limit, policy.pause_rules.get("order_reject_rate")),
+                RiskGuardrailAction.PAUSE_NEW_ORDERS.value,
+                _breached_above,
+            ),
+            (
+                "slippage_bps",
+                context.slippage_bps,
+                _threshold(
+                    context.slippage_limit_bps,
+                    policy.pause_rules.get("slippage_bps"),
+                    policy.pause_rules.get("max_slippage_bps"),
+                ),
+                RiskGuardrailAction.PAUSE_NEW_ORDERS.value,
+                _breached_above,
+            ),
+            (
+                "exposure_pct",
+                context.exposure_pct,
+                _threshold(context.exposure_limit_pct, policy.pause_rules.get("exposure_pct")),
+                RiskGuardrailAction.REDUCE_EXPOSURE.value,
+                _breached_above,
+            ),
+            (
+                "correlation",
+                context.correlation,
+                _threshold(context.correlation_limit, policy.max_signal_correlation),
+                RiskGuardrailAction.REDUCE_EXPOSURE.value,
+                _breached_above,
+            ),
+        ]
+        for trigger_name, observed, threshold, action, predicate in direct_rules:
+            if not predicate(observed, threshold):
+                continue
+            events.append(
+                _guardrail_event(
+                    context,
+                    trigger_name=trigger_name,
+                    observed_value=float(observed or 0),
+                    threshold=float(threshold or 0),
+                    automatic_action=action,
+                    trace_id=trace_id,
+                    effective_at=evaluated_at,
+                )
+            )
+
+    def _append_policy_evaluation_events(
+        self,
+        policy: RiskPolicy,
+        context: RiskGuardrailContext,
+        events: list[RiskGuardrailEvent],
+        trace_id: str,
+        evaluated_at: str,
+    ) -> None:
+        policy_context = RiskPolicyEvaluationContext.from_mapping(
+            {
+                **dict(context.metadata),
+                "target_type": RiskPolicyTargetType.RUNTIME_ACTION.value,
+                "target_id": context.runtime_binding_id,
+                "capital_pool_id": context.capital_pool_id,
+                "stage": context.deployment_stage,
+                "trace_id": trace_id,
+            }
+        )
+        evaluation = RiskPolicyEvaluator().evaluate(policy, policy_context)
+        existing = {(event.trigger_name, event.automatic_action) for event in events}
+        for check in evaluation.checks:
+            if check.status != RiskPolicyCheckStatus.FAILED.value:
+                continue
+            action = _action_for_failed_policy_check(check)
+            if not action or (check.code, action) in existing:
+                continue
+            events.append(
+                _guardrail_event(
+                    context,
+                    trigger_name=check.code,
+                    observed_value=_event_value(check.observed),
+                    threshold=_event_value(check.limit),
+                    automatic_action=action,
+                    trace_id=trace_id,
+                    effective_at=evaluated_at,
+                )
+            )
+
+
 def risk_policy_rejection_message(prefix: str, evaluation: RiskPolicyEvaluation) -> str:
     reasons = "; ".join(evaluation.blocking_reasons) or "no blocking reason recorded"
     return f"{prefix}: RiskPolicy {evaluation.risk_policy_id!r} rejected {evaluation.target_type} {evaluation.target_id!r}: {reasons}"
@@ -871,3 +1236,143 @@ def _limit_for_key(limit: Mapping[str, float] | float, key: str) -> float | None
     if isinstance(limit, Mapping):
         return _optional_float(limit.get(key, limit.get("*")))
     return _optional_float(limit)
+
+
+def _threshold(*values: Any) -> float | None:
+    for value in values:
+        numeric = _optional_float(value)
+        if numeric is not None:
+            return numeric
+    return None
+
+
+def _breached_abs(observed: Any, threshold: Any) -> bool:
+    observed_value = _optional_float(observed)
+    threshold_value = _optional_float(threshold)
+    if observed_value is None or threshold_value is None:
+        return False
+    return abs(observed_value) >= threshold_value
+
+
+def _breached_above(observed: Any, threshold: Any) -> bool:
+    observed_value = _optional_float(observed)
+    threshold_value = _optional_float(threshold)
+    if observed_value is None or threshold_value is None:
+        return False
+    return observed_value >= threshold_value
+
+
+def _breached_below(observed: Any, threshold: Any) -> bool:
+    observed_value = _optional_float(observed)
+    threshold_value = _optional_float(threshold)
+    if observed_value is None or threshold_value is None:
+        return False
+    return observed_value <= threshold_value
+
+
+def _guardrail_event(
+    context: RiskGuardrailContext,
+    *,
+    trigger_name: str,
+    observed_value: float | str,
+    threshold: float | str | None,
+    automatic_action: str,
+    trace_id: str,
+    effective_at: str,
+) -> RiskGuardrailEvent:
+    RiskGuardrailAction(automatic_action)
+    event_id = f"rge-{uuid.uuid4().hex[:12]}"
+    return RiskGuardrailEvent(
+        event_id=event_id,
+        persona_id=context.persona_id,
+        runtime_binding_id=context.runtime_binding_id,
+        capital_pool_id=context.capital_pool_id,
+        trigger_name=trigger_name,
+        observed_value=observed_value,
+        threshold="" if threshold is None else threshold,
+        automatic_action=automatic_action,
+        effective_at=effective_at,
+        incident_id=f"inc-{event_id}",
+        review_required=True,
+        may_promote=False,
+        may_increase_allocation=False,
+        trace_id=trace_id,
+        resume_requires_human_review=automatic_action in _RESUME_HUMAN_REVIEW_ACTIONS,
+    )
+
+
+def _incident_record_from_guardrail(
+    event: RiskGuardrailEvent,
+    context: RiskGuardrailContext,
+) -> dict[str, Any]:
+    severity = "critical" if event.automatic_action == RiskGuardrailAction.FROZEN.value else "high"
+    if event.automatic_action == RiskGuardrailAction.PAUSE_NEW_ORDERS.value:
+        severity = "medium"
+    review_note = " Resume requires human review." if event.resume_requires_human_review else ""
+    return {
+        "incident_id": event.incident_id,
+        "title": f"Risk guardrail {event.automatic_action} for {context.persona_id or context.runtime_binding_id}",
+        "status": "open",
+        "severity": severity,
+        "created_at": event.effective_at,
+        "binding_id": context.runtime_binding_id,
+        "deployment_stage": context.deployment_stage,
+        "deployment_plan_id": context.deployment_plan_id,
+        "capital_pool_id": context.capital_pool_id,
+        "persona_capital_binding_id": context.persona_capital_binding_id,
+        "artifact_id": context.artifact_id,
+        "artifact_version": context.artifact_version,
+        "runtime_id": context.runtime_id,
+        "trace_id": event.trace_id,
+        "telemetry_event_ids": list(context.telemetry_event_ids),
+        "evidence_summary": (
+            f"{event.trigger_name} observed {event.observed_value!r} against threshold "
+            f"{event.threshold!r}; automatic_action={event.automatic_action}; "
+            "review_required=true."
+            f"{review_note}"
+        ),
+        "lineage_ref": f"{context.artifact_id}@{context.artifact_version}",
+    }
+
+
+def _action_for_failed_policy_check(check: RiskPolicyCheck) -> str | None:
+    allowed_actions = {item.value for item in RiskGuardrailAction}
+    if check.action in allowed_actions:
+        return check.action
+    if check.code in {"drawdown_risk_off", "drawdown_liquidate", "kill_switch_triggered"}:
+        return RiskGuardrailAction.RISK_OFF.value
+    if check.code in {
+        "gross_exposure_limit_exceeded",
+        "net_exposure_limit_exceeded",
+        "leverage_limit_exceeded",
+        "sector_exposure_limit_exceeded",
+        "factor_exposure_limit_exceeded",
+        "strategy_family_concentration_limit_exceeded",
+        "target_overlap_limit_exceeded",
+        "signal_correlation_limit_exceeded",
+        "canary_capital_scale_pct_limit_exceeded",
+        "canary_gross_scale_pct_limit_exceeded",
+        "pool_risk_policy",
+    }:
+        return RiskGuardrailAction.REDUCE_EXPOSURE.value
+    if check.code in {
+        "risk_policy_not_active",
+        "stage_not_allowed",
+        "forbidden_asset_class",
+        "asset_class_not_allowed",
+        "forbidden_strategy_family",
+        "strategy_family_not_allowed",
+        "order_type_not_allowed",
+        "time_in_force_not_allowed",
+    }:
+        return RiskGuardrailAction.FROZEN.value
+    if check.code in {"liquidity_min_adv_breach", "liquidity_order_pct_adv_breach"}:
+        return RiskGuardrailAction.PAUSE_NEW_ORDERS.value
+    return None
+
+
+def _event_value(value: Any) -> float | str:
+    numeric = _optional_float(value)
+    if numeric is not None:
+        return numeric
+    return str(value)

@@ -1033,6 +1033,10 @@
         "may_increase_allocation": {
           "const": false
         },
+        "resume_requires_human_review": {
+          "type": "boolean",
+          "description": "True for risk_off and frozen actions. Resume is not automatic and must flow through a human review request."
+        },
         "trace_id": {
           "$ref": "#/$defs/NonEmptyString"
         }
