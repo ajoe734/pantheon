@@ -39758,12 +39758,9 @@ def _pm12_quarterly_ranking_items(
             **item,
             "rank": rank,
             "score": score,
-            "scoreField": "overallScore",
             "score_field": "overallScore",
             "quarter": quarter_window["quarter"],
-            "quarterWindow": quarter_window,
             "quarter_window": quarter_window,
-            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
             "basis": "latest_available_persona_league_metrics_with_quarter_window",
         })
@@ -39831,20 +39828,17 @@ def _pm12_quarterly_drilldown_contributions(item: Dict[str, Any]) -> List[Dict[s
             "id": f"{item.get('personaId')}-{key}",
             "key": key,
             "label": label,
-            "scoreField": score_field,
             "score_field": score_field,
             "score": score,
             "weight": weight,
-            "weightedContribution": weighted,
             "weighted_contribution": weighted,
             "basis": "component_score_x_formula_weight",
         })
 
     denominator = total_weighted if total_weighted > 0 else None
     for row in contribution_rows:
-        weighted = _management_number(row.get("weightedContribution")) or 0.0
+        weighted = _management_number(row.get("weighted_contribution")) or 0.0
         share = round(weighted / denominator, 6) if denominator else 0.0
-        row["contributionShare"] = share
         row["contribution_share"] = share
 
     return contribution_rows
@@ -39862,66 +39856,58 @@ def _pm12_quarterly_drilldown_payload(
     formula = _pm12_quarter_formula_payload()
     contributions = _pm12_quarterly_drilldown_contributions(item)
     total_weighted = round(
-        sum(_management_number(entry.get("weightedContribution")) or 0.0 for entry in contributions),
+        sum(_management_number(entry.get("weighted_contribution")) or 0.0 for entry in contributions),
         6,
     )
     score = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or total_weighted
+    route_policy = row.get("routePolicy") if isinstance(row.get("routePolicy"), dict) else {}
+    capabilities = row.get("capabilities") if isinstance(row.get("capabilities"), dict) else {}
+    bindings = row.get("bindings") if isinstance(row.get("bindings"), dict) else {}
+    sessions = row.get("sessions") if isinstance(row.get("sessions"), dict) else {}
+    evaluations = row.get("evaluations") if isinstance(row.get("evaluations"), dict) else {}
+    memory = row.get("memory") if isinstance(row.get("memory"), dict) else {}
     source_breakdown = {
         "metrics": item.get("metrics") or {},
         "components": item.get("components") or {},
-        "routePolicy": row.get("routePolicy") or {},
-        "route_policy": row.get("routePolicy") or {},
-        "capabilities": row.get("capabilities") or {},
-        "bindings": row.get("bindings") or {},
-        "sessions": row.get("sessions") or {},
-        "evaluations": row.get("evaluations") or {},
-        "memory": row.get("memory") or {},
         "health": row.get("health") or {},
-        "allowedActions": row.get("allowedActions") or {},
-        "allowed_actions": row.get("allowedActions") or {},
+        "route_policy_summary": {
+            "rule_count": route_policy.get("ruleCount") or route_policy.get("rule_count") or 0,
+            "default_route": route_policy.get("defaultRoute") or route_policy.get("default_route"),
+        },
+        "capability_count": capabilities.get("skillCount") or capabilities.get("skill_count") or 0,
+        "binding_count": bindings.get("total") or 0,
+        "session_count": sessions.get("total") or 0,
+        "evaluation_count": evaluations.get("total") or 0,
+        "memory_count": memory.get("total") or 0,
     }
     summary = {
         "quarter": quarter_window["quarter"],
-        "personaId": persona_id,
         "persona_id": persona_id,
         "rank": item.get("rank"),
-        "rankedCount": ranked_count,
         "ranked_count": ranked_count,
         "score": score,
-        "overallScore": item.get("overallScore"),
         "overall_score": item.get("overall_score") or item.get("overallScore"),
-        "formulaVersion": item.get("formulaVersion") or formula["formula_version"],
         "formula_version": item.get("formula_version") or formula["formula_version"],
-        "componentCount": len(contributions),
         "component_count": len(contributions),
-        "totalWeightedContribution": total_weighted,
         "total_weighted_contribution": total_weighted,
-        "evidenceRefCount": len(evidence_refs),
         "evidence_ref_count": len(evidence_refs),
         "basis": item.get("basis") or formula["basis"],
     }
     return {
         "id": f"pm12-quarterly-ranking-drilldown-{quarter_window['quarter'].lower()}-{persona_id}",
         "quarter": quarter_window["quarter"],
-        "quarterWindow": quarter_window,
         "quarter_window": quarter_window,
-        "personaId": persona_id,
         "persona_id": persona_id,
         "rank": item.get("rank"),
         "score": score,
-        "rankingItem": item,
         "ranking_item": item,
         "formula": formula,
         "contributions": contributions,
-        "contributionBreakdown": contributions,
         "contribution_breakdown": contributions,
-        "sourceBreakdown": source_breakdown,
         "source_breakdown": source_breakdown,
-        "evidenceRefs": evidence_refs,
         "evidence_refs": evidence_refs,
         "summary": summary,
         "links": {
-            "parentRanking": f"/bff/management/quarterly-ranking?quarter={quarter_window['quarter']}",
             "parent_ranking": f"/bff/management/quarterly-ranking?quarter={quarter_window['quarter']}",
             "persona": f"/bff/personas/{persona_id}",
         },
@@ -39994,26 +39980,18 @@ def _pm12_quarterly_recommendation_item(
     ]
     recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
     governance = {
-        "requiresHumanGateDecision": True,
         "requires_human_gate_decision": True,
         "destinations": ["human_inbox", "governance_queue", "human_gate_decision"],
-        "humanInboxRoute": "/bff/management/human-inbox",
         "human_inbox_route": "/bff/management/human-inbox",
-        "governanceQueueRoute": "/api/v1/operator/governance/approval-queue",
         "governance_queue_route": "/api/v1/operator/governance/approval-queue",
-        "decisionType": "HumanGateDecision",
         "decision_type": "HumanGateDecision",
-        "liveCapitalMutation": False,
         "live_capital_mutation": False,
     }
     return {
         "id": recommendation_id,
-        "recommendationId": recommendation_id,
         "recommendation_id": recommendation_id,
         "quarter": quarter_window["quarter"],
-        "quarterWindow": quarter_window,
         "quarter_window": quarter_window,
-        "personaId": persona_id,
         "persona_id": persona_id,
         "name": item.get("name"),
         "owner": item.get("owner"),
@@ -40022,29 +40000,17 @@ def _pm12_quarterly_recommendation_item(
         "rank": item.get("rank"),
         "score": score,
         "tier": item.get("tier"),
-        "tierId": item.get("tierId"),
         "tier_id": item.get("tier_id"),
-        "tierLabel": item.get("tierLabel"),
         "tier_label": item.get("tier_label"),
-        "formulaVersion": item.get("formulaVersion") or _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": item.get("formula_version") or _PM12_LEAGUE_FORMULA_VERSION,
-        "actionId": action_id,
         "action_id": action_id,
-        "actionLabel": action["label"],
         "action_label": action["label"],
-        "recommendationType": "governance_advisory",
         "recommendation_type": "governance_advisory",
         "status": "recommended",
         "priority": action["priority"],
-        "riskLevel": action["riskLevel"],
         "risk_level": action["risk_level"],
         "target": {"type": "persona", "id": persona_id},
         "rationale": f"{action['rationale']} Score={score:.2f}; tier={item.get('tier') or 'unknown'}.",
-        "rationaleCodes": [
-            f"tier:{item.get('tier') or 'unknown'}",
-            f"action:{action_id}",
-            "policy:no_direct_live_capital",
-        ],
         "rationale_codes": [
             f"tier:{item.get('tier') or 'unknown'}",
             f"action:{action_id}",
@@ -40052,20 +40018,16 @@ def _pm12_quarterly_recommendation_item(
         ],
         "metrics": item.get("metrics") or {},
         "components": item.get("components") or {},
-        "evidenceRefs": evidence_sample,
         "evidence_refs": evidence_sample,
-        "evidenceRefIds": evidence_ref_ids,
         "evidence_ref_ids": evidence_ref_ids,
         "governance": governance,
-        "requiresHumanGateDecision": True,
         "requires_human_gate_decision": True,
-        "liveCapitalMutation": False,
         "live_capital_mutation": False,
         "policy": "read_only_governance_advisory",
         "links": {
             "persona": f"/bff/personas/{persona_id}",
-            "humanInbox": "/bff/management/human-inbox",
-            "governanceQueue": "/api/v1/operator/governance/approval-queue",
+            "human_inbox": "/bff/management/human-inbox",
+            "governance_queue": "/api/v1/operator/governance/approval-queue",
         },
     }
 
@@ -40091,8 +40053,8 @@ def _pm12_quarterly_recommendations(
         key=lambda entry: (
             _HUMAN_INBOX_PRIORITY_RANK.get(str(entry.get("priority") or "unknown"), 0),
             -int(entry.get("rank") or 0),
-            str(entry.get("actionId") or ""),
-            str(entry.get("personaId") or ""),
+            str(entry.get("action_id") or ""),
+            str(entry.get("persona_id") or ""),
         ),
         reverse=True,
     )
@@ -40739,7 +40701,7 @@ async def bff_management_persona_league_rankings(
         "persona_count": len(rows),
         "criteria": [block["criteria"] for block in blocks],
         "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
-        "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
     }
     return {
         "data": {
@@ -41049,7 +41011,7 @@ async def bff_management_quarterly_ranking(
         "persona_count": len(rows),
         "ranked_count": total,
         "returned_count": len(page_items),
-        "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
         "evidence_ref_count": len(public_evidence_refs),
         "redacted_evidence_count": redacted_count,
         "basis": formula["basis"],
@@ -41176,22 +41138,16 @@ async def bff_management_quarterly_ranking_drilldown(
     return {
         "data": drilldown,
         "item": ranking_item,
-        "rankingItem": ranking_item,
         "ranking_item": ranking_item,
         "contributions": drilldown["contributions"],
-        "contributionBreakdown": drilldown["contributionBreakdown"],
         "contribution_breakdown": drilldown["contribution_breakdown"],
-        "sourceBreakdown": drilldown["sourceBreakdown"],
         "source_breakdown": drilldown["source_breakdown"],
         "formula": drilldown["formula"],
-        "quarterWindow": quarter_window,
         "quarter_window": quarter_window,
-        "evidenceRefs": public_evidence_refs,
         "evidence_refs": public_evidence_refs,
         "summary": summary,
         "meta": {
             **_snapshot_meta(snapshot_at),
-            "correlationId": correlation_id,
             "correlation_id": correlation_id,
             "surfaces": {
                 "quarterly_ranking_drilldown": drilldown_surface,
@@ -41245,7 +41201,7 @@ async def bff_management_quarterly_ranking_recommendations(
 
     formula = _pm12_quarter_formula_payload()
     action_counts = {
-        action_id: len([item for item in recommendations if item.get("actionId") == action_id])
+        action_id: len([item for item in recommendations if item.get("action_id") == action_id])
         for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
     }
     top_item = ranked_items[0] if ranked_items else None
@@ -41256,7 +41212,7 @@ async def bff_management_quarterly_ranking_recommendations(
         "ranked_count": len(ranked_items),
         "recommendation_count": total,
         "returned_count": len(page_items),
-        "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
         "human_gate_decision_count": total,
         "live_capital_mutation_count": 0,
         "evidence_ref_count": len(public_evidence_refs),
