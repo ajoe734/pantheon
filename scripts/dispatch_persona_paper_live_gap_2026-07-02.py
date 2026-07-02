@@ -17,9 +17,17 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+STATE_PATH = REPO_ROOT / "ai-status.json"
 AUTO_BY = "dispatch_persona_paper_live_gap_2026-07-02"
 PACKET = "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md"
 TASK_DIR = "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap"
+SPRINT_ID = "2026-07-02-persona-paper-live-gap"
+SPRINT_OBJECTIVE = (
+    "Implement the paper-first persona lifecycle: create persona directly into "
+    "paper runtime, evaluate paper cohorts, require human approval for canary, "
+    "live, and quarterly allocation changes, and enforce automatic risk "
+    "guardrails that can pause, reduce, risk-off, or freeze immediately."
+)
 
 
 # task_id, title, summary_zh, owner, reviewer, phase, depends_on, acceptance, artifacts
@@ -132,7 +140,7 @@ def dispatch_one(task: tuple[str, str, str, str, str, str, str, str, str]) -> No
         {
             "source_packet": PACKET,
             "task_packet_dir": TASK_DIR,
-            "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
+            "dispatch_sprint": SPRINT_ID,
         },
         ensure_ascii=False,
     )
@@ -144,11 +152,21 @@ def dispatch_one(task: tuple[str, str, str, str, str, str, str, str, str]) -> No
     print(f"OK   {task_id}  owner={owner}  reviewer={reviewer}  deps={depends_on or '-'}")
 
 
+def update_sprint_metadata() -> None:
+    state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    state["sprint"] = SPRINT_ID
+    state["sprint_started_at"] = "2026-07-02T00:00:00Z"
+    state["objective"] = SPRINT_OBJECTIVE
+    STATE_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"Sprint metadata updated: {SPRINT_ID}")
+
+
 def main() -> int:
     task_ids = [task[0] for task in TASKS]
     if len(task_ids) != len(set(task_ids)):
         print("Duplicate task IDs in dispatch list", file=sys.stderr)
         return 1
+    update_sprint_metadata()
     print(f"Dispatching {len(TASKS)} persona paper/live gap tasks ...")
     for task in TASKS:
         dispatch_one(task)

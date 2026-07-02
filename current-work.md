@@ -4,15 +4,15 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-06-10 08:45:22
+Last updated: 2026-07-02 21:50:22
 
 ## Objective
 
-Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.
+Implement the paper-first persona lifecycle: create persona directly into paper runtime, evaluate paper cohorts, require human approval for canary, live, and quarterly allocation changes, and enforce automatic risk guardrails that can pause, reduce, risk-off, or freeze immediately.
 
 ## Current Sprint
 
-- Sprint: `2026-06-09-mpos-full-loop-gap-closure`
+- Sprint: `2026-07-02-persona-paper-live-gap`
 - Canonical files: `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl`, `current-work.md`, `TARGET_ARCHITECTURE.md`, `OPENCLAW_RUNTIME_CONTRACT.md`, `PERSONA_RUNTIME_MODEL.md`, `BINDING_AND_DEPLOYMENT_SEMANTICS.md`, `PAPER_CANARY_LIVE_POLICY.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`, `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`, `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`, `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`, `EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md`, `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md`, `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`, `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`, `CANONICAL_DOCUMENT_MAP.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`, `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, `OSS_INTEGRATION_CHECKLIST.md`, `WORKBENCH_DELIVERY_BACKLOG.md`, `DELIVERY_CLOSURE_AND_LOOP_STATES.md`, `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`, `CANONICAL_CONTRACT_MIGRATION_DECISION.md`, `WORK_REBASELINE.md`, `Pantheon_總索引版系統分析文件.md`, `Pantheon_資料表_Schema_設計版.md`, `Pantheon_API_Service_Contract_設計版.md`
 - Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Platform Architecture & Policy`, `L2 Planning & Execution`, `L3 Supporting Design & Migration`
 - Canonical map: `CANONICAL_DOCUMENT_MAP.md`
@@ -29,10 +29,12 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: Assignment created
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
-- `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
+- `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
 - `Human/Ops`: human-gate, operations, signoff; next: No active assignment
+- `Antigravity`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Antigravity2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
 
@@ -40,58 +42,61 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `MPOS-P1-E2E-002` | Sprint MPOS-P1 / Allocation policy runtime closure | Run approved AllocationPolicyArtifact through paper LEAN loop | Claude | todo | `MPOS-P1-ART-001`, `MPOS-P1-PER-002`, `MPOS-P1-RISK-001`, `MPOS-P1-MEM-001`, `MPOS-P1-PER-001` | 把已核准 AllocationPolicyArtifact 實際接到 DeploymentPlan、RuntimeBinding、paper LEAN、fills/telemetry 與 lineage 查詢。 |
-| `MPOS-P1-CONSULT-001` | Sprint MPOS-P1 / Consultation governance gate | Require consultation handoff for high-risk allocation approval | Claude2 | todo | `MPOS-P1-ART-001`, `MPOS-P1-PER-002` | 把 consultation/committee memo 與 sponsor decision handoff 變成 allocation approval 的硬門檻，而不是旁路資料。 |
-| `MPOS-P1-RISK-002` | Sprint MPOS-P1 / Homogeneity correlation gate | Add homogeneity and correlation review to allocation gate | Codex | todo | `MPOS-P1-RISK-001`, `MPOS-P1-PER-002` | 在 pre-LEAN allocation gate 補 homogeneity/correlation review，避免多個 persona 同時堆疊高度相關或重複 exposure。 |
-| `MPOS-P1-MEM-002` | Sprint MPOS-P1 / Learn feedback attribution | Automate persona and sponsor Learn feedback writeback | Codex2 | todo | `MPOS-P1-MEM-001`, `MPOS-P1-E2E-002` | 把 runtime telemetry、postmortem、evolution 結果自動寫回 persona memory 與 sponsor-attributed institutional memory。 |
-| `MPOS-P1-VERIFY-001` | Sprint MPOS-P1 / Supervisor closure evidence | Produce supervisor closure packet for MPOS full-loop proof | Gemini2 | todo | `MPOS-P1-PER-002`, `MPOS-P1-E2E-002`, `MPOS-P1-CONSULT-001`, `MPOS-P1-RISK-002`, `MPOS-P1-MEM-002` | 彙整所有 MPOS P1 修補任務的 PR、commit、CI 與本機驗證，產生 supervisor 可審的完整閉環證據包。 |
-| `MPOS-P2-BACKEND-001` | Sprint MPOS-P2 / Research backend clarity | Normalize MPOS Observe backend maturity matrix | Copilot | todo | `MPOS-P1-PER-002` | 整理 Qlib/vectorbt/statsmodels/QuantLib 在 MPOS Observe 流程中的 maturity、no-order-route 與驗收證據。 |
+| `PPLG-001` | EPIC PPLG / contracts | Canonical persona paper/live state and contract alignment | Codex | todo | - | 鎖定 paper-first persona lifecycle, schema, endpoint contract, 舊 onboarding spec supersession。建立完成必須是 paper runtime 或 setup_failed。 |
+| `PPLG-002` | EPIC PPLG / paper launch | Idempotent create-to-paper persona launch workflow | Claude | todo | `PPLG-001` | 實作 POST /bff/management/personas/paper-launch，一次完成 persona、paper pool binding、paper plan、paper approval、RuntimeBinding、paper runtime startup。 |
+| `PPLG-003` | EPIC PPLG / fleet read model | Persona Fleet readiness projection and payload cleanup | Codex2 | todo | `PPLG-001` | 補 Fleet readiness projection 並移除重複大 payload，讓 row 清楚顯示 paper/evaluation/review/live/risk 狀態。 |
+| `PPLG-004` | EPIC PPLG / evaluation ranking | Paper eligibility, promotion score, and cohort ranking engine | Claude2 | todo | `PPLG-001` | 實作 paper hard gates、promotion_score、cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。 |
+| `PPLG-005` | EPIC PPLG / human review | Human review workflows for canary live and quarterly ranking | Claude | todo | `PPLG-004` | 實作 promotion/canary/live/quarterly/replacement/resume human review，所有真錢資金進出與季度重排都需人審。 |
+| `PPLG-006` | EPIC PPLG / risk guardrails | Automatic risk guardrails and incident review evidence | Codex | todo | `PPLG-001` | 實作虧損、drawdown、exposure、slippage、order/data/runtime/policy/correlation guardrails，可自動 pause/reduce/risk_off/freeze 並建立事件審核。 |
+| `PPLG-007` | EPIC PPLG / frontend UX | Frontend Create Paper Persona and Fleet UX | Codex2 | todo | `PPLG-002`, `PPLG-003`, `PPLG-005` | 更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，不再對已跑 paper 的 persona 顯示啟動精靈。 |
+| `PPLG-008` | EPIC PPLG / verification | End-to-end release gate and fleet closeout | Gemini2 | todo | `PPLG-002`, `PPLG-003`, `PPLG-004`, `PPLG-005`, `PPLG-006`, `PPLG-007` | 建立完整驗證包：create->paper runtime->evaluation->human review->canary/live/quarterly/risk-off 全流程證據。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `MPOS-P1-PER-002` | Sprint MPOS-P1 / Persona OODA evidence | Prove Persona A/B/C research-to-proposal OODA packets | Copilot | todo | `MPOS-P0-VAL-001`, `MPOS-P1-PER-001`, `MPOS-P0-E2E-001` | 補三個 persona 各自從 Observe/Orient 到 PersonaAllocationProposal 的證據鏈，避免多人格 synthesis 只吃手寫 proposal fixture。 |
+| _(none)_ | - | - | - | - | - | - |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-06-10 08:45:22
-- Terminal tasks archived: `1433` total, `1410` completed, `23` superseded
+- Archive updated: 2026-06-22 16:33:56
+- Terminal tasks archived: `1697` total, `1668` completed, `29` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
-| `DATASTRAT-PERSONA-005` | EPIC DATASTRAT / Persona strategy discovery | Implement Persona strategy discovery deterministic matching | Codex | completed | 2026-06-10 08:45:22 | `ai-task-archive/tasks/DATASTRAT-PERSONA-005.json` |
-| `DATASTRAT-SEED-004` | EPIC DATASTRAT / Strategy seed store and materializer | Persist StrategySpecSeed and materialize seeds from evidence bundles | Claude | completed | 2026-06-10 08:04:38 | `ai-task-archive/tasks/DATASTRAT-SEED-004.json` |
-| `DATASTRAT-USAGE-007` | EPIC DATASTRAT / Usage based retirement | Add source usage, yield, health, and retirement recommendations | Claude | completed | 2026-06-09 23:39:35 | `ai-task-archive/tasks/DATASTRAT-USAGE-007.json` |
-| `MPOS-P1-ART-001` | EPIC MPOS / P1 governance risk and artifact integration | Wire AllocationPolicyArtifact into registry governance and deployment path | Claude2 | completed | 2026-06-09 23:23:47 | `ai-task-archive/tasks/MPOS-P1-ART-001.json` |
-| `DATASTRAT-PROPOSAL-006` | EPIC DATASTRAT / LLM proposal governance | Add governed LLM source-change proposal workflow | Claude | completed | 2026-06-09 22:58:57 | `ai-task-archive/tasks/DATASTRAT-PROPOSAL-006.json` |
-| `DATASTRAT-CATALOG-003` | EPIC DATASTRAT / Financial data source catalog | Add initial financial data source catalog and active-universe scheduling policy | Codex | completed | 2026-06-09 22:27:40 | `ai-task-archive/tasks/DATASTRAT-CATALOG-003.json` |
-| `DATASTRAT-REG-002` | EPIC DATASTRAT / Registry split layer | Implement registry split layer for data sources and strategy seed sources | Claude | completed | 2026-06-09 21:54:58 | `ai-task-archive/tasks/DATASTRAT-REG-002.json` |
-| `MPOS-P1-RISK-001` | EPIC MPOS / P1 governance risk and artifact integration | Create first class RiskPolicy evaluator contract | Codex | completed | 2026-06-09 21:25:19 | `ai-task-archive/tasks/MPOS-P1-RISK-001.json` |
-| `MPOS-P1-PER-001` | EPIC MPOS / P1 persona policy and memory | Implement PersonaPolicyResolver for route consult tool and capital eligibility | Claude | completed | 2026-06-09 21:04:21 | `ai-task-archive/tasks/MPOS-P1-PER-001.json` |
-| `MPOS-P1-MEM-001` | EPIC MPOS / P1 persona policy and memory | Add first class PersonaMemory retrieval and writeback | Codex | completed | 2026-06-09 20:48:22 | `ai-task-archive/tasks/MPOS-P1-MEM-001.json` |
-| `MPOS-P0-E2E-001` | EPIC MPOS / P0 validation and governed E2E | Add minimal governed persona proposal to runtime binding E2E | Codex | completed | 2026-06-09 20:39:21 | `ai-task-archive/tasks/MPOS-P0-E2E-001.json` |
-| `OPS-RTEL-005` | Runtime Telemetry Hardening | BFF runtime-state truth split and closeout | Codex | completed | 2026-06-09 20:29:11 | `ai-task-archive/tasks/OPS-RTEL-005.json` |
-| `OPS-RTEL-004` | Runtime Telemetry Hardening | Runtime-aware signal isolation | Claude2 | completed | 2026-06-09 20:00:27 | `ai-task-archive/tasks/OPS-RTEL-004.json` |
-| `MPOS-P0-VAL-001` | EPIC MPOS / P0 validation and governed E2E | Restore multi-persona OS validation baseline | Claude | completed | 2026-06-09 19:27:48 | `ai-task-archive/tasks/MPOS-P0-VAL-001.json` |
-| `ASST-SKILL-004` | EPIC ASST-SKILL / Remaining toolbar migration | Migrate remaining toolbar capabilities (control-mode, resync, openclaw) to skills | Codex | completed | 2026-06-09 19:18:31 | `ai-task-archive/tasks/ASST-SKILL-004.json` |
-| `OPS-RTEL-002` | Runtime Telemetry Hardening | Paper runtime fleet reconciler | Claude | completed | 2026-06-09 19:11:05 | `ai-task-archive/tasks/OPS-RTEL-002.json` |
-| `DATASTRAT-CONTRACT-001` | EPIC DATASTRAT / Contracts and semantic split | Add contracts for data sources, strategy seed sources, proposals, and persona matches | Codex | completed | 2026-06-09 16:03:02 | `ai-task-archive/tasks/DATASTRAT-CONTRACT-001.json` |
-| `ASST-SKILL-005` | EPIC ASST-SKILL / Provider re-auth skill | Add provider re-auth as device-flow skill assistant.provider.reauth | Codex | completed | 2026-06-09 14:25:15 | `ai-task-archive/tasks/ASST-SKILL-005.json` |
-| `ASST-SKILL-003` | EPIC ASST-SKILL / FE generic renderer | Frontend generic renderer: surfaces driven by the effective skill catalog | Codex | completed | 2026-06-09 12:40:16 | `ai-task-archive/tasks/ASST-SKILL-003.json` |
-| `ASST-SKILL-002` | EPIC ASST-SKILL / SA-SD pilot (template) | Pilot: migrate SA/SD button to governed skill assistant.sa_sd.generate | Codex | completed | 2026-06-09 08:58:25 | `ai-task-archive/tasks/ASST-SKILL-002.json` |
+| `AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` | EPIC AGORA-FE / Phase 2 | Prepare AG-FE-SW-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 16:33:56 | `ai-task-archive/tasks/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 16:15:20 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 16:02:31 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43.json` |
+| `AG-BE-TR-002` | EPIC AGORA-TR / Phase 4 | Governed TradingIntent / handoff | Codex | completed | 2026-06-22 15:42:08 | `ai-task-archive/tasks/AG-BE-TR-002.json` |
+| `AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6` | EPIC AGORA-TR / Phase 4 | Prepare AG-BE-TR-002 BFF and frontend handoff packet | Claude | completed | 2026-06-22 15:39:38 | `ai-task-archive/tasks/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 15:20:01 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.json` |
+| `AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | EPIC AGORA-TR / Phase 4 | Prepare AG-BE-TR-002 BFF and frontend handoff packet | Claude | superseded | 2026-06-22 15:19:03 | `ai-task-archive/tasks/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.json` |
+| `AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7` | EPIC AGORA-SW / Phase 2 | Prepare AG-BE-SW-001 BFF and frontend handoff packet | Claude2 | superseded | 2026-06-22 15:18:40 | `ai-task-archive/tasks/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-42` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 15:10:33 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-42.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 14:52:05 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 14:31:56 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 14:17:17 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-40` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 14:06:33 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-40.json` |
+| `AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` | EPIC AGORA-FE / Phase 2 | Prepare AG-FE-SW-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 13:44:25 | `ai-task-archive/tasks/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.json` |
+| `AG-FE-SW-001-SIDECAR-BFF-HANDOFF` | EPIC AGORA-FE / Phase 2 | Prepare AG-FE-SW-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 13:31:28 | `ai-task-archive/tasks/AG-FE-SW-001-SIDECAR-BFF-HANDOFF.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 13:10:34 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 13:03:48 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 12:42:28 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 12:23:44 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 12:13:45 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `MPOS-P1-PER-002` | Sprint MPOS-P1 / Persona OODA evidence | Prove Persona A/B/C research-to-proposal OODA packets | 補三個 persona 各自從 Observe/Orient 到 PersonaAllocationProposal 的證據鏈，避免多人格 synthesis 只吃手寫 proposal fixture。 | Copilot | Codex | todo | `MPOS-P0-VAL-001`, `MPOS-P1-PER-001`, `MPOS-P0-E2E-001` | 2026-06-09 23:28:07 | Assignment created |
-| `MPOS-P1-E2E-002` | Sprint MPOS-P1 / Allocation policy runtime closure | Run approved AllocationPolicyArtifact through paper LEAN loop | 把已核准 AllocationPolicyArtifact 實際接到 DeploymentPlan、RuntimeBinding、paper LEAN、fills/telemetry 與 lineage 查詢。 | Claude | Codex | todo | `MPOS-P1-ART-001`, `MPOS-P1-PER-002`, `MPOS-P1-RISK-001`, `MPOS-P1-MEM-001`, `MPOS-P1-PER-001` | 2026-06-09 23:28:09 | Assignment created |
-| `MPOS-P1-CONSULT-001` | Sprint MPOS-P1 / Consultation governance gate | Require consultation handoff for high-risk allocation approval | 把 consultation/committee memo 與 sponsor decision handoff 變成 allocation approval 的硬門檻，而不是旁路資料。 | Claude2 | Codex | todo | `MPOS-P1-ART-001`, `MPOS-P1-PER-002` | 2026-06-09 23:28:10 | Assignment created |
-| `MPOS-P1-RISK-002` | Sprint MPOS-P1 / Homogeneity correlation gate | Add homogeneity and correlation review to allocation gate | 在 pre-LEAN allocation gate 補 homogeneity/correlation review，避免多個 persona 同時堆疊高度相關或重複 exposure。 | Codex | Claude | todo | `MPOS-P1-RISK-001`, `MPOS-P1-PER-002` | 2026-06-09 23:28:10 | Assignment created |
-| `MPOS-P1-MEM-002` | Sprint MPOS-P1 / Learn feedback attribution | Automate persona and sponsor Learn feedback writeback | 把 runtime telemetry、postmortem、evolution 結果自動寫回 persona memory 與 sponsor-attributed institutional memory。 | Codex2 | Claude | todo | `MPOS-P1-MEM-001`, `MPOS-P1-E2E-002` | 2026-06-09 23:28:11 | Assignment created |
-| `MPOS-P1-VERIFY-001` | Sprint MPOS-P1 / Supervisor closure evidence | Produce supervisor closure packet for MPOS full-loop proof | 彙整所有 MPOS P1 修補任務的 PR、commit、CI 與本機驗證，產生 supervisor 可審的完整閉環證據包。 | Gemini2 | Codex | todo | `MPOS-P1-PER-002`, `MPOS-P1-E2E-002`, `MPOS-P1-CONSULT-001`, `MPOS-P1-RISK-002`, `MPOS-P1-MEM-002` | 2026-06-09 23:28:12 | Assignment created |
-| `MPOS-P2-BACKEND-001` | Sprint MPOS-P2 / Research backend clarity | Normalize MPOS Observe backend maturity matrix | 整理 Qlib/vectorbt/statsmodels/QuantLib 在 MPOS Observe 流程中的 maturity、no-order-route 與驗收證據。 | Copilot | Claude | todo | `MPOS-P1-PER-002` | 2026-06-09 23:28:12 | Assignment created |
+| `PPLG-001` | EPIC PPLG / contracts | Canonical persona paper/live state and contract alignment | 鎖定 paper-first persona lifecycle, schema, endpoint contract, 舊 onboarding spec supersession。建立完成必須是 paper runtime 或 setup_failed。 | Codex | Claude | todo | - | 2026-07-02 21:47:28 | Assignment created |
+| `PPLG-002` | EPIC PPLG / paper launch | Idempotent create-to-paper persona launch workflow | 實作 POST /bff/management/personas/paper-launch，一次完成 persona、paper pool binding、paper plan、paper approval、RuntimeBinding、paper runtime startup。 | Claude | Codex | todo | `PPLG-001` | 2026-07-02 21:47:50 | Assignment created |
+| `PPLG-003` | EPIC PPLG / fleet read model | Persona Fleet readiness projection and payload cleanup | 補 Fleet readiness projection 並移除重複大 payload，讓 row 清楚顯示 paper/evaluation/review/live/risk 狀態。 | Codex2 | Claude2 | todo | `PPLG-001` | 2026-07-02 21:48:00 | Assignment created |
+| `PPLG-004` | EPIC PPLG / evaluation ranking | Paper eligibility, promotion score, and cohort ranking engine | 實作 paper hard gates、promotion_score、cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。 | Claude2 | Codex | todo | `PPLG-001` | 2026-07-02 21:48:10 | Assignment created |
+| `PPLG-005` | EPIC PPLG / human review | Human review workflows for canary live and quarterly ranking | 實作 promotion/canary/live/quarterly/replacement/resume human review，所有真錢資金進出與季度重排都需人審。 | Claude | Codex2 | todo | `PPLG-004` | 2026-07-02 21:48:22 | Assignment created |
+| `PPLG-006` | EPIC PPLG / risk guardrails | Automatic risk guardrails and incident review evidence | 實作虧損、drawdown、exposure、slippage、order/data/runtime/policy/correlation guardrails，可自動 pause/reduce/risk_off/freeze 並建立事件審核。 | Codex | Claude2 | todo | `PPLG-001` | 2026-07-02 21:48:33 | Assignment created |
+| `PPLG-007` | EPIC PPLG / frontend UX | Frontend Create Paper Persona and Fleet UX | 更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，不再對已跑 paper 的 persona 顯示啟動精靈。 | Codex2 | Claude | todo | `PPLG-002`, `PPLG-003`, `PPLG-005` | 2026-07-02 21:48:46 | Assignment created |
+| `PPLG-008` | EPIC PPLG / verification | End-to-end release gate and fleet closeout | 建立完整驗證包：create->paper runtime->evaluation->human review->canary/live/quarterly/risk-off 全流程證據。 | Gemini2 | Codex | todo | `PPLG-002`, `PPLG-003`, `PPLG-004`, `PPLG-005`, `PPLG-006`, `PPLG-007` | 2026-07-02 21:48:57 | Assignment created |
 
 ## Handoff Queue
 
@@ -139,7 +144,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:47 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:48 Orchestrator: PostToolUse: Bash
@@ -152,10 +156,11 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-06-09 23:28:07 Operator: `MPOS-P1-PER-002` Assigned MPOS-P1-PER-002 to Copilot with reviewer Codex
-- 2026-06-09 23:28:09 Operator: `MPOS-P1-E2E-002` Assigned MPOS-P1-E2E-002 to Claude with reviewer Codex
-- 2026-06-09 23:28:10 Operator: `MPOS-P1-CONSULT-001` Assigned MPOS-P1-CONSULT-001 to Claude2 with reviewer Codex
-- 2026-06-09 23:28:10 Operator: `MPOS-P1-RISK-002` Assigned MPOS-P1-RISK-002 to Codex with reviewer Claude
-- 2026-06-09 23:28:11 Operator: `MPOS-P1-MEM-002` Assigned MPOS-P1-MEM-002 to Codex2 with reviewer Claude
-- 2026-06-09 23:28:12 Operator: `MPOS-P1-VERIFY-001` Assigned MPOS-P1-VERIFY-001 to Gemini2 with reviewer Codex
-- 2026-06-09 23:28:12 Operator: `MPOS-P2-BACKEND-001` Assigned MPOS-P2-BACKEND-001 to Copilot with reviewer Claude
+- 2026-07-02 21:47:28 Operator: `PPLG-001` Assigned PPLG-001 to Codex with reviewer Claude
+- 2026-07-02 21:47:50 Operator: `PPLG-002` Assigned PPLG-002 to Claude with reviewer Codex
+- 2026-07-02 21:48:00 Operator: `PPLG-003` Assigned PPLG-003 to Codex2 with reviewer Claude2
+- 2026-07-02 21:48:10 Operator: `PPLG-004` Assigned PPLG-004 to Claude2 with reviewer Codex
+- 2026-07-02 21:48:22 Operator: `PPLG-005` Assigned PPLG-005 to Claude with reviewer Codex2
+- 2026-07-02 21:48:33 Operator: `PPLG-006` Assigned PPLG-006 to Codex with reviewer Claude2
+- 2026-07-02 21:48:46 Operator: `PPLG-007` Assigned PPLG-007 to Codex2 with reviewer Claude
+- 2026-07-02 21:48:57 Operator: `PPLG-008` Assigned PPLG-008 to Gemini2 with reviewer Codex
