@@ -10,11 +10,12 @@ Supplemental evidence added after the second-pass route/control audit:
 
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md`
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.json`
+- `docs/04/pantheon_management_console_gap_2026-06-30/archive/hosted-render-rerun-2026-07-01.md`
 
 ## Current Batch State
 
-Updated 2026-07-01 by `MGMT-GAP-007` final closeout: all nine prerequisite
-tasks confirmed `done` via the canonical status store (`ai_status.py show`);
+Updated 2026-07-01 by `MGMT-GAP-007` final closeout: all prerequisite tasks
+and the final closeout confirmed `done` via the canonical status store;
 see `docs/04/pantheon_management_console_gap_2026-06-30/archive/mgmt-gap-007-final-closeout-2026-07-01.md`
 for full PR/merge/deploy evidence per task.
 
@@ -29,7 +30,7 @@ for full PR/merge/deploy evidence per task.
 | `MGMT-GAP-009` | session/RBAC contract | Codex2 | Codex | Done | Pantheon implementation PR #2660 and closeout PR #2672 merged into dev; BFF session/RBAC 41 tests passing with isolated `BFF_DATA_DIR` |
 | `MGMT-GAP-010` | load/release gate | Claude | Claude2 | Done | Pantheon PR #2720 merged (`74eefdba1`); `release-load-gate-2026-07-01.json` reproduced `pass:true`, zero failures, zero missing |
 | `MGMT-GAP-006` | acceptance harness | Claude | Claude2 | Done | execute-plans PR #140 merged (`d28acd7588878e82bb479f09dc6b881e393fb29c`); Pantheon evidence-archive PR #2725 and closeout PR #2729 merged; hosted harness `result.pass=true` |
-| `MGMT-GAP-007` | final closeout | Claude | Codex | In progress | Final archive drafted: `docs/04/pantheon_management_console_gap_2026-06-30/archive/mgmt-gap-007-final-closeout-2026-07-01.md`; all prerequisite rows above confirmed `done`; no blocking residual risk |
+| `MGMT-GAP-007` | final closeout | Claude | Claude2 | Done | Final archive merged via Pantheon PR #2731 at `53131e9bc19fc82aca33b80b255c4389e4295deb`; no blocking residual risk remains |
 
 ## Dependency Order
 
@@ -43,7 +44,7 @@ MGMT-GAP-008: done
 MGMT-GAP-009: done
 MGMT-GAP-010: done
 MGMT-GAP-006: done
-MGMT-GAP-007: in progress, final archive drafted, no blockers remain
+MGMT-GAP-007: done
 ```
 
 ## Watch Rules
@@ -62,3 +63,7 @@ MGMT-GAP-007: in progress, final archive drafted, no blockers remain
 6. The raw route/control artifact is not closeout by itself. It is an input that
    the hosted `MGMT-GAP-006` harness must reproduce or intentionally supersede
    with broader coverage.
+7. The hosted 69-route render re-run is clean, but it is only
+   render-regression evidence. It does not replace button/control crawling,
+   write-receipt proof, release-gate enforcement, or final strict-live
+   acceptance.
