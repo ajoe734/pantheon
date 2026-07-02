@@ -57,7 +57,7 @@ The complete machine-readable list is in
 | Board Pack | Remediated in `MGMT-LIST-CONTRACT-003`: `_management_board_pack_response` now returns section summaries, counts, status, and hrefs without child endpoint payloads | Keep board-pack summary-only; fetch full child sections from their dedicated routes |
 | Portfolio Book Family | Remediated across `MGMT-LIST-CONTRACT-004` and `MGMT-LIST-CONTRACT-005`: core, pools, exposure, holdings, and positions now use one envelope and snake_case rows | Keep the family on `data.items`/`data.summary` and move future row expansion to detail routes |
 | PM12 Analytics Tables | Remediated in `MGMT-LIST-CONTRACT-006`: performance attribution, strategy allocation, capital flow, risk radar, incident timeline, and loop throughput now use one list envelope | Continue removing row-level casing duplicates and project/page order issues in follow-up slices |
-| Persona League Family | Remediated in `MGMT-LIST-CONTRACT-007`: league, rankings, movers, tiers, heatmap, quarterly ranking, recommendations, typed client contracts, and the legacy `/bff/persona-league` helper now use one `data.items`/`data.summary` envelope | Continue removing row-level casing duplicates in a follow-up slice |
+| Persona League Family | Remediated in `MGMT-LIST-CONTRACT-007`: league, rankings, movers, tiers, heatmap, quarterly ranking, recommendations, typed client contracts, and the legacy `/bff/persona-league` helper now use one `data.items`/`data.summary` envelope. `MGMT-LIST-CONTRACT-007B` removed the shadowed legacy `/bff/management/persona-league` decorator. | Continue removing row-level casing duplicates in a follow-up slice |
 | Performance And Cost Attribution | Rows are built from runtime telemetry before slicing and returned as `items`, `rows`, and sometimes `attributions` | Filter and page before row expansion; remove aliases |
 | Human Inbox And Governance Ledger | Inbox items and ledger helpers expose source records or detail-grade context in list flows | Move raw source/debug payloads to detail endpoints |
 | NL/AI Management Surfaces | Conversation/audit payloads use duplicate list envelopes and many casing duplicates | Apply the same list envelope and casing standard |
@@ -80,7 +80,9 @@ The complete machine-readable list is in
 5. Done in `MGMT-LIST-CONTRACT-007`: Persona League and Quarterly Ranking
    family endpoints now return one `data.items`/`data.summary` envelope; related
    collections stay inside `data.related` or explicitly named nested fields, not
-   top-level aliases.
+   top-level aliases. `MGMT-LIST-CONTRACT-007B` also removed the shadowed legacy
+   `/bff/management/persona-league` decorator so that management route has one
+   registered owner.
 6. Normalize Cost Attribution and remaining PM12-adjacent duplicate envelopes.
 7. Move raw `sourceRecord` and detail-grade helper data out of Human Inbox,
    Sentinel/Governance helpers, and list DTOs.
