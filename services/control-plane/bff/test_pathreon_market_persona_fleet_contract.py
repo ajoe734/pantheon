@@ -16,6 +16,8 @@ from read_store import ReadSurfaceStore
 
 
 HEADERS = {"Authorization": "Bearer op-pathreon-fleet:operator,reviewer,admin:mfa"}
+PERSONA_FLEET_DEFAULT_TARGET_BYTES = 250_000
+PERSONA_FLEET_DEFAULT_HARD_LIMIT_BYTES = 1_000_000
 MARKET_PERSONAS = {
     "US": "persona-us-equity",
     "TW": "persona-tw-equity",
@@ -160,26 +162,28 @@ def test_management_persona_fleet_hydrates_live_persona_market_context() -> None
             response = client.get("/bff/management/persona-fleet?page_size=50", headers=HEADERS)
 
     assert response.status_code == 200, response.text
-    rows = {item["persona_id"]: item for item in response.json()["items"]}
+    rows = {item["persona_id"]: item for item in response.json()["data"]["items"]}
     crypto = rows["persona-20260528-04688755"]
     assert crypto["name"] == "Crypto-Alt-Hunter"
     assert crypto["owner"] == "pantheon-dev-browser"
-    assert crypto["data_source_status"]["state"] == "datasource_smoke_ok"
-    assert crypto["data_source_status"]["provider_statuses"]["kraken"] == "datasource_smoke_ok"
-    assert crypto["data_sources"][0]["provider_key"] == "kraken"
-    assert crypto["current_research_projects"][0]["project_id"] == "research-crypto-paper-001"
-    assert crypto["research_status"]["frameworks"] == ["vectorbt", "statsmodels", "finrl-rllib"]
+    assert crypto["data_source_summary"]["state"] == "datasource_smoke_ok"
+    assert crypto["data_source_summary"]["provider_count"] >= 1
+    assert crypto["data_source_summary"]["provider_status_counts"]["datasource_smoke_ok"] >= 1
+    assert crypto["research_summary"]["framework"] == "vectorbt"
+    assert crypto["research_summary"]["framework_count"] == 3
+    assert crypto["research_summary"]["current_project_count"] >= 1
     assert crypto["current_work"] == "paper broker sandbox readback and funding-rate stress review"
     assert crypto["perf_delta"] > 0
 
     tw = rows["persona-20260528-5937dea1"]
-    assert tw["data_source_status"]["provider_statuses"]["shioaji"] == "read_ok"
-    assert tw["current_research_projects"][0]["project_id"] == "MGMT-QLIB-006"
-    assert tw["research_status"]["stage"] == "management_review_linked"
+    assert tw["data_source_summary"]["state"] == "partial_readback"
+    assert tw["data_source_summary"]["provider_status_counts"]["read_ok"] >= 1
+    assert tw["research_summary"]["current_project_count"] >= 1
+    assert tw["research_summary"]["stage"] == "management_review_linked"
 
     us = rows["persona-20260528-597cbad2"]
-    assert us["data_source_status"]["provider_statuses"]["ibkr"] == "read_ok"
-    assert us["current_research_projects"][0]["project_id"] == "research-us-paper-001"
+    assert us["data_source_summary"]["provider_status_counts"]["read_ok"] >= 1
+    assert us["research_summary"]["current_project_count"] >= 1
     assert us["current_work"] == "paper observation and OOS cost review"
 
 
@@ -211,78 +215,77 @@ def test_management_persona_fleet_composes_personas_ooda_capital_runtime_and_hum
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
-    fleet_ids = {item["persona_id"] for item in data["persona_fleet"]}
+    assert set(data) == {"items", "summary"}
+    assert "persona_fleet" not in data
+    assert "persona_league" not in data
+    assert "capital_pools" not in data
+    assert "runtime_bindings" not in data
+    assert "human_inbox" not in data
+    fleet_ids = {item["persona_id"] for item in data["items"]}
     assert set(MARKET_PERSONAS.values()).issubset(fleet_ids)
-    assert data["capital_totals"]["total_nav"] > 0
-    assert data["human_inbox"]["pending_count"] >= 3
-    assert data["ooda_status"]["enabled"] is True
+    assert data["summary"]["capital_summary"]["total_nav"] > 0
+    assert data["summary"]["human_inbox_summary"]["pending_count"] >= 3
     meta_surfaces = response.json()["meta"]["surfaces"]
     assert meta_surfaces["persona_league"]["status"] in {"ok", "degraded"}
     assert meta_surfaces["persona_league"]["source"] != "missing"
-    assert meta_surfaces["ooda_control_room_status"]["status"] == "ok"
+    assert meta_surfaces["ooda_control_room_status"]["status"] in {"ok", "degraded"}
     assert meta_surfaces["ooda_control_room_status"]["source"] != "missing"
-    assert data["execution_boundary"] == {
+    assert response.json()["meta"]["related"]["human_inbox"]["href"] == "/bff/management/human-inbox"
+    assert data["summary"]["execution_boundary"] == {
         "approved_artifacts_only": True,
         "live_capital_side_effects": False,
         "human_gate_required_for_capital_changes": True,
     }
 
 
-def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
+def test_management_persona_fleet_returns_slim_ui_safe_rows() -> None:
     with _fleet_client() as client:
         response = client.get("/bff/management/persona-fleet", headers=HEADERS)
 
     assert response.status_code == 200, response.text
+    assert len(response.content) < PERSONA_FLEET_DEFAULT_TARGET_BYTES
+    assert len(response.content) < PERSONA_FLEET_DEFAULT_HARD_LIMIT_BYTES
     payload = response.json()
     data = payload["data"]
-    assert payload["items"] == data["items"] == data["persona_fleet"]
+    assert "items" not in payload
+    assert "summary" not in payload
+    assert set(data) == {"items", "summary"}
+    assert "persona_fleet" not in data
 
     rows = {item["persona_id"]: item for item in data["items"]}
     assert set(MARKET_PERSONAS.values()).issubset(rows)
 
     tw = rows["persona-tw-equity"]
-    assert tw["personaId"] == "persona-tw-equity"
-    assert tw["personaName"] == "Taiwan Equity Persona"
     assert tw["owner"] == "pathreon-management"
     assert tw["ooda"] == "Decide"
     assert tw["autonomy"] == "supervised"
-    assert tw["humanNeeded"] is True
+    assert tw["human_needed"] is True
     assert tw["state"] == "needs_human_approval"
-    assert tw["lastMutation"] == "2026-06-07"
-    assert tw["perfDelta"] == 0.095
-    assert tw["currentWork"] == "TW corporate-action and session-boundary evidence review"
-    assert tw["dataSourceStatus"]["state"] == "partial_readback"
-    assert tw["dataSourceStatus"]["order_side_effects_allowed"] is False
-    assert tw["dataSourceStatus"]["capital_side_effects_allowed"] is False
-    assert tw["dataSourceStatus"]["provider_statuses"] == {
-        "mops": "public_reference_unavailable",
-        "shioaji": "read_ok",
-        "finmind": "read_unavailable",
-        "tpex": "read_unavailable",
-        "twse": "read_unavailable",
-    }
-    data_sources = {source["provider_key"]: source for source in tw["dataSources"]}
-    assert [source["provider_key"] for source in tw["dataSources"][:4]] == [
-        "shioaji",
-        "twse",
-        "tpex",
-        "mops",
-    ]
-    assert data_sources["shioaji"]["status"] == "read_ok"
-    assert data_sources["shioaji"]["order_path"] == "disabled_for_marketdata_smoke"
-    assert data_sources["shioaji"]["order_side_effects_allowed"] is False
-    assert data_sources["twse"]["status"] == "read_unavailable"
-    assert data_sources["tpex"]["status"] == "read_unavailable"
-    assert data_sources["finmind"]["status"] == "read_unavailable"
-    assert tw["researchStatus"]["stage"] == "management_review_linked"
-    assert tw["researchStatus"]["framework"] == "qlib"
-    assert tw["researchStatus"]["artifact_id"] == "qlib-tw-cross-sectional-alpha-model-draft-v1"
-    assert tw["researchStatus"]["registry_admission_status"] == "pending_upstream_task"
-    assert tw["researchStatus"]["can_deploy"] is False
-    assert tw["currentResearchProjects"][0]["project_id"] == "MGMT-QLIB-006"
-    assert "support/evidence/MGMT-QLIB-006/management_linkage_packet.json" in {
-        ref.get("ref") for ref in tw["researchRefs"]
-    }
+    assert tw["last_mutation"] == "2026-06-07"
+    assert tw["perf_delta"] == 0.095
+    assert tw["current_work"] == "TW corporate-action and session-boundary evidence review"
+    assert tw["data_source_summary"]["state"] == "partial_readback"
+    assert tw["data_source_summary"]["provider_count"] == 5
+    assert tw["data_source_summary"]["provider_status_counts"]["read_ok"] == 1
+    assert tw["data_source_summary"]["provider_status_counts"]["read_unavailable"] == 3
+    assert tw["research_summary"]["stage"] == "management_review_linked"
+    assert tw["research_summary"]["framework"] == "qlib"
+    assert tw["research_summary"]["artifact_id"] == "qlib-tw-cross-sectional-alpha-model-draft-v1"
+    assert tw["research_summary"]["registry_admission_status"] == "pending_upstream_task"
+    assert tw["research_summary"]["can_deploy"] is False
+    assert tw["research_summary"]["current_project_count"] >= 1
+    assert tw["research_summary"]["evidence_ref_count"] >= 1
+    for duplicate_key in (
+        "personaId",
+        "personaName",
+        "humanNeeded",
+        "dataSourceStatus",
+        "dataSources",
+        "researchStatus",
+        "currentResearchProjects",
+        "researchRefs",
+    ):
+        assert duplicate_key not in tw
 
 
 def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_only() -> None:
@@ -314,20 +317,17 @@ def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_on
     rows = {item["persona_id"]: item for item in data["items"]}
     assert "persona-dev-probe" in rows
     assert set(MARKET_PERSONAS.values()).issubset(rows)
-    assert {pool["pool_id"] for pool in data["capital_pools"]}.issuperset(
-        {"pool-us-equity-paper", "pool-tw-equity-paper", "pool-crypto-paper"}
-    )
-    assert {item["persona_id"] for item in data["persona_league"]}.issuperset(
-        set(MARKET_PERSONAS.values())
-    )
+    assert data["summary"]["capital_summary"]["pool_count"] >= 3
+    assert "capital_pools" not in data
+    assert "persona_league" not in data
     meta_surfaces = response.json()["meta"]["surfaces"]
     assert meta_surfaces["persona_league"]["status"] == "ok"
     assert meta_surfaces["persona_league"]["source"] == "composed_market_persona_defaults"
 
     tw = rows["persona-tw-equity"]
-    assert tw["dataSourceStatus"]["state"] == "partial_readback"
-    assert tw["researchStatus"]["stage"] == "management_review_linked"
-    assert tw["currentResearchProjects"][0]["project_id"] == "MGMT-QLIB-006"
+    assert tw["data_source_summary"]["state"] == "partial_readback"
+    assert tw["research_summary"]["stage"] == "management_review_linked"
+    assert tw["research_summary"]["current_project_count"] >= 1
 
 
 def test_tw_qlib_research_experiment_drilldown_is_governed_default_not_seed() -> None:

@@ -7,6 +7,7 @@ trainer sessions, and evolution decisions.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -53,25 +54,43 @@ def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolutio
 
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert "data" in body and "items" in body and "meta" in body
-            assert body["data"]["items"] == body["items"]
-            assert body["data"]["persona_fleet"] == body["items"]
-            assert body["summary"]["total_personas"] >= 1
-            assert body["meta"]["surfaces"]["persona_fleet"]["source"] == "bff_composed"
+            assert len(json.dumps(body).encode("utf-8")) < 250_000
+            assert set(body) == {"data", "page_info", "meta"}
+            assert set(body["data"]) == {"items", "summary"}
+            assert "items" not in body
+            assert "summary" not in body
+            assert "persona_fleet" not in body["data"]
+            assert "persona_league" not in body["data"]
+            assert "capital_pools" not in body["data"]
+            assert "runtime_bindings" not in body["data"]
+            assert "human_inbox" not in body["data"]
+            assert body["data"]["summary"]["total_personas"] >= 1
+            assert body["meta"]["surfaces"]["persona_fleet"]["source"] in {
+                "bff_composed_slim_list",
+                "service_store",
+                "local_snapshot",
+            }
 
-            alpha = next(item for item in body["items"] if item["id"] == "persona-alpha")
-            assert alpha["personaName"] == "Alpha Persona"
-            assert alpha["capitalPoolId"] == "pool-main"
+            alpha = next(item for item in body["data"]["items"] if item["id"] == "persona-alpha")
+            assert alpha["name"] == "Alpha Persona"
+            assert alpha["capital_pool_id"] == "pool-main"
             assert alpha["health"] in {"healthy", "degraded", "critical"}
-            assert alpha["governanceRequired"] is True
-            assert alpha["drillDown"]["href"] == "/personas/persona-alpha"
-            assert "metrics" in alpha
-            assert "currentWork" in alpha
-            assert body["data"]["execution_boundary"] == {
+            assert alpha["governance_required"] is True
+            assert "data_source_summary" in alpha
+            assert "research_summary" in alpha
+            assert "performance_summary" in alpha
+            assert "dataSourceStatus" not in alpha
+            assert "data_source_status" not in alpha
+            assert "dataSources" not in alpha
+            assert "data_sources" not in alpha
+            assert "currentResearchProjects" not in alpha
+            assert "current_research_projects" not in alpha
+            assert body["data"]["summary"]["execution_boundary"] == {
                 "approved_artifacts_only": True,
                 "live_capital_side_effects": False,
                 "human_gate_required_for_capital_changes": True,
             }
+            assert body["meta"]["related"]["human_inbox"]["href"] == "/bff/management/human-inbox"
         finally:
             bff_main.read_store = original
 
@@ -81,18 +100,34 @@ def test_persona_fleet_supports_health_filter_and_pagination() -> None:
         original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            all_resp = client.get(
+                "/bff/management/persona-fleet?page_size=50",
+                headers=OPERATOR_HEADERS,
+            )
+            assert all_resp.status_code == 200, all_resp.text
+            existing_health = all_resp.json()["data"]["items"][0]["health"]
             resp = client.get(
-                "/bff/management/persona-fleet?health=healthy&page_size=1",
+                f"/bff/management/persona-fleet?health={existing_health}&page_size=1",
                 headers=OPERATOR_HEADERS,
             )
 
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert body["page_info"]["page_size"] == 1
-            assert len(body["items"]) == 1
-            assert body["items"][0]["health"] == "healthy"
-            assert body["summary"]["healthy_personas"] >= 1
-            assert body["data"]["page_info"] == body["page_info"]
+            assert len(body["data"]["items"]) == 1
+            assert body["data"]["items"][0]["health"] == existing_health
+            assert body["data"]["summary"]["total_personas"] >= 1
+            assert "page_info" not in body["data"]
+
+            existing_stage = all_resp.json()["data"]["items"][0]["deployment_stage"]
+            stage_resp = client.get(
+                f"/bff/management/persona-fleet?deployment_stage={existing_stage}&page_size=50",
+                headers=OPERATOR_HEADERS,
+            )
+            assert stage_resp.status_code == 200, stage_resp.text
+            stage_items = stage_resp.json()["data"]["items"]
+            assert stage_items
+            assert {item["deployment_stage"] for item in stage_items} == {existing_stage}
         finally:
             bff_main.read_store = original
 

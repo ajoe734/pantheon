@@ -61,6 +61,79 @@ async def bff_management_sample():
     assert "source-record-in-list-dto" in categories
 
 
+def test_audit_allows_link_only_related_aggregates(tmp_path: Path) -> None:
+    source = tmp_path / "sample_bff.py"
+    source.write_text(
+        """
+class App:
+    def get(self, path):
+        def decorate(fn):
+            return fn
+        return decorate
+
+app = App()
+
+@app.get("/bff/management/sample")
+async def bff_management_sample():
+    rows = [{"id": "row-1"}]
+    return {
+        "data": {"items": rows, "summary": {"total": 1}},
+        "page_info": {"total": 1},
+        "meta": {
+            "related": {
+                "persona_league": {"href": "/bff/management/persona-league"},
+                "human_inbox": {"href": "/bff/management/human-inbox"},
+            }
+        },
+    }
+""",
+        encoding="utf-8",
+    )
+
+    result = _run("--source", str(source), "--format", "json")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    categories = {issue["category"] for issue in payload["issues"]}
+    assert "embedded-aggregate-payload" not in categories
+    assert "duplicate-envelope" not in categories
+
+
+def test_audit_detects_persona_fleet_detail_helper_regression(tmp_path: Path) -> None:
+    source = tmp_path / "sample_bff.py"
+    source.write_text(
+        """
+class App:
+    def get(self, path):
+        def decorate(fn):
+            return fn
+        return decorate
+
+app = App()
+
+def _build_persona_health_items():
+    return []
+
+@app.get("/bff/management/persona-fleet")
+async def bff_management_persona_fleet():
+    rows = _build_persona_health_items()
+    return {"data": {"items": rows, "summary": {}}}
+""",
+        encoding="utf-8",
+    )
+
+    result = _run("--source", str(source), "--format", "json")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    issues = payload["issues"]
+    assert any(
+        issue["category"] == "project-before-page"
+        and issue["function"] == "bff_management_persona_fleet"
+        for issue in issues
+    )
+
+
 def test_audit_baseline_allows_current_debt_but_fails_new_findings(tmp_path: Path) -> None:
     source = tmp_path / "sample_bff.py"
     source.write_text(

@@ -19,7 +19,6 @@
     "26cb264ce8128c4a",
     "a5f51361be49e433",
     "34fe134d76546ea9",
-    "953d0fa715e53ac7",
     "e13308eb7f2009be",
     "2a8cde2ca2123d2e",
     "56492c7f745c91fa",
@@ -49,7 +48,6 @@
     "8b78c4a6c24b2564",
     "a92462c7e8e4cf16",
     "6e0ca6ff4e3c0d87",
-    "d3b18cf2795f7a78",
     "bfb4526ac8b34f87",
     "400bfba46679f617",
     "65865948f400ce3c",
@@ -68,7 +66,6 @@
     "5b90963f760f854b",
     "7572d1eb7de3d678",
     "362c9b3debb81ef6",
-    "243e2d2747213f1a",
     "08828e3a0938d6bb",
     "fa4b71f410d16062",
     "0b45126c74aaf2eb",
@@ -230,11 +227,10 @@
     "898840154db4b7e6",
     "c5cbcbddc3f326b4",
     "610c2fe7ac1d7e88",
-    "9379f43459481ee2",
     "48f50593677c72cb",
     "508c45878e0837e7"
   ],
-  "issue_count": 233,
+  "issue_count": 229,
   "issues": [
     {
       "category": "board-pack-full-child-payloads",
@@ -423,16 +419,6 @@
       "function": "bff_management_evolution_journal",
       "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
       "route": "/bff/management/evolution-journal",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items']",
-      "fingerprint": "953d0fa715e53ac7",
-      "function": "bff_management_persona_fleet",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "/bff/management/persona-fleet",
       "severity": "P0",
       "title": "List response exposes both data and top-level list aliases"
     },
@@ -728,16 +714,6 @@
     },
     {
       "category": "duplicate-list-alias",
-      "evidence": "aliases=['items', 'persona_fleet']",
-      "fingerprint": "d3b18cf2795f7a78",
-      "function": "bff_management_persona_fleet",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "/bff/management/persona-fleet",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
       "evidence": "aliases=['data', 'items']",
       "fingerprint": "bfb4526ac8b34f87",
       "function": "bff_management_persona_intent",
@@ -913,16 +889,6 @@
       "function": "_management_board_pack_response",
       "recommendation": "Return summary counts, health, and hrefs. Fetch related aggregates from dedicated endpoints only when the user opens the detail/section.",
       "route": "",
-      "severity": "P0",
-      "title": "List or board payload embeds related aggregate collections"
-    },
-    {
-      "category": "embedded-aggregate-payload",
-      "evidence": "keys=['human_inbox', 'persona_league']",
-      "fingerprint": "243e2d2747213f1a",
-      "function": "bff_management_persona_fleet",
-      "recommendation": "Return summary counts, health, and hrefs. Fetch related aggregates from dedicated endpoints only when the user opens the detail/section.",
-      "route": "/bff/management/persona-fleet",
       "severity": "P0",
       "title": "List or board payload embeds related aggregate collections"
     },
@@ -2533,16 +2499,6 @@
       "function": "_pm12_performance_attribution_response",
       "recommendation": "Apply query filters before expensive fanout/projection and page before detail-grade hydration. Use a detail endpoint for row expansion.",
       "route": "",
-      "severity": "P1",
-      "title": "Endpoint/helper projects broad aggregates before page slicing"
-    },
-    {
-      "category": "project-before-page",
-      "evidence": "Builds full persona health plus related collections before page slicing.",
-      "fingerprint": "9379f43459481ee2",
-      "function": "bff_management_persona_fleet",
-      "recommendation": "Apply query filters before expensive fanout/projection and page before detail-grade hydration. Use a detail endpoint for row expansion.",
-      "route": "/bff/management/persona-fleet",
       "severity": "P1",
       "title": "Endpoint/helper projects broad aggregates before page slicing"
     },

@@ -5,7 +5,7 @@
 | Scope | Static audit of `services/control-plane/bff/main.py` Management list/table/board contracts |
 | Tool | `scripts/audit_management_list_contract.py` |
 | Baseline | `docs/architecture/management-list-contract-baseline.json` |
-| Result | 233 existing contract smells: 79 P0, 154 P1 |
+| Result | 229 existing contract smells after the first remediation slice: 76 P0, 153 P1 |
 
 ## Trigger
 
@@ -26,17 +26,19 @@ That is not a frontend button problem. It is a list-contract problem.
 
 ## Static Audit Summary
 
-The guardrail found these categories in the current source:
+The guardrail found these categories in the current source after
+`MGMT-LIST-CONTRACT-002` retired the four `/bff/management/persona-fleet`
+findings from the initial baseline:
 
 | Category | Count | Severity | Meaning |
 |---|---:|---|---|
-| `duplicate-envelope` | 32 | P0 | Response returns `data` plus top-level list aliases such as `items`, `rows`, `rankings`, `pools` |
-| `duplicate-list-alias` | 30 | P0 | Same list value is returned under multiple semantic names |
+| `duplicate-envelope` | 31 | P0 | Response returns `data` plus top-level list aliases such as `items`, `rows`, `rankings`, `pools` |
+| `duplicate-list-alias` | 29 | P0 | Same list value is returned under multiple semantic names |
 | `source-record-in-list-dto` | 10 | P0 | Raw source record/document fields appear in list DTO helpers |
-| `embedded-aggregate-payload` | 6 | P0 | List/board payload embeds related aggregate collections |
+| `embedded-aggregate-payload` | 5 | P0 | List/board payload embeds related aggregate collections |
 | `board-pack-full-child-payloads` | 1 | P0 | Board pack nests complete child endpoint responses |
 | `camel-snake-duplicate` | 145 | P1 | DTOs return both casing variants for the same fields |
-| `project-before-page` | 6 | P1 | Endpoint/helper projects broad aggregates before page slicing |
+| `project-before-page` | 5 | P1 | Endpoint/helper projects broad aggregates before page slicing |
 | `heavy-row-helper` | 3 | P1 | Row helper includes detail-grade nested policy/session/memory/source data |
 
 The complete machine-readable list is in
@@ -46,7 +48,7 @@ The complete machine-readable list is in
 
 | Area | Evidence | Required fix |
 |---|---|---|
-| Persona Fleet | `/bff/management/persona-fleet` returns `data.items`, `data.persona_fleet`, top-level `items`, and embeds `persona_league`, `capital_pools`, `runtime_bindings`, `human_inbox` | Create a slim list DTO and move capital/runtime/league/human inbox detail to detail or section endpoints |
+| Persona Fleet | Remediated in `MGMT-LIST-CONTRACT-002`: `/bff/management/persona-fleet` now returns `data.items`, `data.summary`, top-level `page_info`, and `meta.related` links only | Keep source/research health detail on detail/health endpoints and require server-side filters such as `deployment_stage` |
 | Board Pack | `_management_board_pack_response` calls child list endpoints, then embeds full payloads under `portfolioBook`, `personaLeague`, `performanceAttribution`, etc. | Return section summaries, counts, status, and hrefs only |
 | Portfolio Book Family | Summary, pools, exposure, holdings, and positions repeat lists under `data`, top-level aliases, and domain aliases | Normalize one envelope, one list field, server filters, and slim rows |
 | Persona League Family | League, rankings, movers, tiers, heatmap, quarterly ranking, and recommendations repeat aliases and carry casing duplicates | Split list rows from ranking/detail payloads and keep one casing |
@@ -57,9 +59,9 @@ The complete machine-readable list is in
 
 ## Remediation Order
 
-1. Fix `/bff/management/persona-fleet` first because it has proven live impact:
-   slim list rows, remove duplicate row copies, add production/server filters,
-   and move connector/source health to detail.
+1. Done in `MGMT-LIST-CONTRACT-002`: `/bff/management/persona-fleet` now uses
+   slim list rows, removed duplicate row copies, added server filters, and moved
+   connector/source health out of the list contract.
 2. Fix board-pack next because it multiplies child payload mistakes.
 3. Normalize Portfolio Book, Persona League, Quarterly Ranking, Performance
    Attribution, and Cost Attribution families.

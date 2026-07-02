@@ -2,7 +2,7 @@
 """Verify SRCLIVE readback status against a live BFF.
 
 The verifier is intentionally read-only. It checks the operator-facing BFF
-persona-fleet projection and optionally the source-ingest health snapshot when
+persona-health projection and optionally the source-ingest health snapshot when
 ``--source-ingest-base`` is provided.
 """
 
@@ -92,10 +92,10 @@ def _source_health_source(item: dict[str, Any]) -> str:
 
 
 def verify_bff(base_url: str, token: str) -> dict[str, Any]:
-    payload = _get_json(f"{base_url.rstrip('/')}/bff/management/persona-fleet", token=token)
+    payload = _get_json(f"{base_url.rstrip('/')}/bff/v5/execution/persona-health", token=token)
     items = payload.get("items") if isinstance(payload, dict) else None
     if not isinstance(items, list):
-        raise RuntimeError("persona-fleet response missing items[]")
+        raise RuntimeError("persona-health response missing items[]")
     by_id = {_persona_id(item): item for item in items if isinstance(item, dict)}
 
     failures: list[str] = []

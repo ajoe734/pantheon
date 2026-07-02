@@ -70,7 +70,7 @@ def test_human_management_frontend_manifest_contract_is_complete() -> None:
         "strategy_ooda_route",
         "runtime_ooda_route",
         "evolution_program_ooda_route",
-        "persona_fleet_human_inbox",
+        "persona_fleet_summary_contract",
         "human_gate_status_component",
         "broker_go_no_go_dashboard",
         "capital_binding_go_no_go_dashboard",
@@ -215,7 +215,7 @@ def test_human_management_frontend_persona_ooda_runs_100_full_e2e_rounds(monkeyp
         assert readback["control_room_total_packet_count"] == 135
         assert readback["control_room_live_capital_side_effects"] is False
         assert readback["persona_fleet_paper_boundary"] is True
-        assert readback["persona_fleet_human_inbox_present"] is True
+        assert readback["persona_fleet_human_inbox_linked"] is True
 
     coverage = suite["coverage"]
     assert coverage == human_management_coverage_digest(results)
@@ -267,8 +267,9 @@ def _readback_from_bff(
         bodies[route_name] = response.json()
 
     control_room = bodies["control_room"]
-    persona_fleet = bodies["persona_fleet"]["data"]
-    execution_boundary = persona_fleet["execution_boundary"]
+    persona_fleet = bodies["persona_fleet"]
+    persona_summary = persona_fleet["data"]["summary"]
+    execution_boundary = persona_summary["execution_boundary"]
     return {
         "routes_verified": list(paths),
         "route_statuses": statuses,
@@ -287,7 +288,11 @@ def _readback_from_bff(
             and execution_boundary["live_capital_side_effects"] is False
             and execution_boundary["human_gate_required_for_capital_changes"] is True
         ),
-        "persona_fleet_human_inbox_present": "human_inbox" in persona_fleet,
+        "persona_fleet_human_inbox_linked": (
+            persona_summary["human_inbox_summary"]["pending_count"] >= 0
+            and persona_fleet["meta"]["related"]["human_inbox"]["href"] == "/bff/management/human-inbox"
+            and "human_inbox" not in persona_fleet["data"]
+        ),
     }
 
 

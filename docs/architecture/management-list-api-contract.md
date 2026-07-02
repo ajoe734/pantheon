@@ -35,7 +35,8 @@ List endpoints must use one canonical response shape:
   },
   "meta": {
     "snapshot_at": "2026-07-02T00:00:00Z",
-    "surfaces": {}
+    "surfaces": {},
+    "related": {}
   }
 }
 ```
@@ -50,6 +51,8 @@ Rules:
   Frontend adapters can camelize at the UI boundary.
 - Detail endpoints should use `{ "data": { ... }, "meta": { ... } }` and can
   expose richer nested records when the user explicitly opens a row.
+- `meta.related` may expose href-only links to child aggregates. It must not
+  embed child aggregate payloads.
 
 ## Slim Row DTO
 
