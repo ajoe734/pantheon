@@ -30436,17 +30436,11 @@ def _hiq_backlog_source_refs(record: Dict[str, Any], *, source_type: str, source
         if value
     ]
     return {
-        "sourceType": source_type,
         "source_type": source_type,
-        "sourceId": source_id,
         "source_id": source_id,
-        "runtimeIds": runtime_ids,
         "runtime_ids": runtime_ids,
-        "personaIds": persona_ids,
         "persona_ids": persona_ids,
-        "strategyIds": strategy_ids,
         "strategy_ids": strategy_ids,
-        "incidentIds": incident_ids,
         "incident_ids": incident_ids,
     }
 
@@ -30488,40 +30482,28 @@ def _hiq_backlog_intervention_item(
         }
     return {
         "id": f"hiq-backlog-intervention-{intervention_id}",
-        "backlogId": f"hiq-backlog-intervention-{intervention_id}",
         "backlog_id": f"hiq-backlog-intervention-{intervention_id}",
-        "sourceType": "intervention",
         "source_type": "intervention",
-        "sourceId": intervention_id,
         "source_id": intervention_id,
-        "humanInboxId": human_inbox_id,
         "human_inbox_id": human_inbox_id,
         "kind": kind,
         "status": status,
-        "actionState": action_state,
         "action_state": action_state,
         "priority": priority,
-        "riskLevel": str(record.get("risk_level") or priority).strip().lower(),
         "risk_level": str(record.get("risk_level") or priority).strip().lower(),
         "severity": record.get("severity") or priority,
         "title": record.get("title") or f"{kind.replace('_', ' ').title()} intervention",
         "summary": record.get("description") or "HIQ intervention is waiting for operator action.",
-        "createdAt": created_at,
         "created_at": created_at,
-        "updatedAt": updated_at,
         "updated_at": updated_at,
         "target": _hiq_backlog_target(record, fallback_type="Intervention", fallback_id=intervention_id),
-        "triggeredBy": record.get("triggered_by"),
         "triggered_by": record.get("triggered_by"),
-        "correlationId": record.get("correlation_id"),
         "correlation_id": record.get("correlation_id"),
-        "sourceRefs": source_refs,
         "source_refs": source_refs,
         "links": {
             "source": f"/bff/v5/interventions/{intervention_id}",
             "human_inbox": f"/bff/management/human-inbox/{human_inbox_id}",
         },
-        "allowedActions": allowed_actions,
         "allowed_actions": allowed_actions,
     }
 
@@ -30554,37 +30536,24 @@ def _hiq_backlog_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
     source_refs = _hiq_backlog_source_refs(record, source_type="sentinel_finding", source_id=finding_id)
     return {
         "id": f"hiq-backlog-sentinel-{finding_id}",
-        "backlogId": f"hiq-backlog-sentinel-{finding_id}",
         "backlog_id": f"hiq-backlog-sentinel-{finding_id}",
-        "sourceType": "sentinel_finding",
         "source_type": "sentinel_finding",
-        "sourceId": finding_id,
         "source_id": finding_id,
         "kind": kind,
         "status": status,
-        "actionState": action_state,
         "action_state": action_state,
         "priority": priority,
-        "riskLevel": str(record.get("risk_level") or priority).strip().lower(),
         "risk_level": str(record.get("risk_level") or priority).strip().lower(),
         "severity": record.get("severity") or priority,
         "title": record.get("title") or f"{kind.replace('_', ' ').title()} finding",
         "summary": record.get("description") or record.get("summary") or "Sentinel finding is waiting for HIQ review.",
-        "createdAt": created_at,
         "created_at": created_at,
-        "updatedAt": updated_at,
         "updated_at": updated_at,
         "target": _hiq_backlog_target(record, fallback_type="SentinelFinding", fallback_id=finding_id),
-        "sourceRefs": source_refs,
         "source_refs": source_refs,
         "links": {
             "source": f"/bff/v5/sentinel/findings/{finding_id}",
             "human_inbox": "/bff/management/human-inbox",
-        },
-        "allowedActions": {
-            "canReview": True,
-            "canOpenIntervention": False,
-            "canRemediate": False,
         },
         "allowed_actions": {
             "canReview": True,
@@ -30707,36 +30676,24 @@ def _management_hiq_backlog_response(
     total = len(filtered)
     page_items, next_page_token = _page_slice(filtered, page_token, page_size)
 
-    source_counts = _management_count_by(filtered, "sourceType")
+    source_counts = _management_count_by(filtered, "source_type")
     status_counts = _management_count_by(filtered, "status")
     kind_counts = _management_count_by(filtered, "kind")
     priority_counts = _management_count_by(filtered, "priority")
     latest_at = filtered[0].get("created_at") if filtered else None
     pending_count = len([item for item in filtered if item.get("action_state") == "pending"])
     summary = {
-        "backlogCount": total,
         "backlog_count": total,
-        "returnedBacklogCount": len(page_items),
         "returned_backlog_count": len(page_items),
-        "interventionCount": source_counts.get("intervention", 0),
         "intervention_count": source_counts.get("intervention", 0),
-        "sentinelFindingCount": source_counts.get("sentinel_finding", 0),
         "sentinel_finding_count": source_counts.get("sentinel_finding", 0),
-        "pendingCount": pending_count,
         "pending_count": pending_count,
-        "criticalCount": priority_counts.get("critical", 0),
         "critical_count": priority_counts.get("critical", 0),
-        "highCount": priority_counts.get("high", 0),
         "high_count": priority_counts.get("high", 0),
-        "bySourceType": source_counts,
         "by_source_type": source_counts,
-        "byStatus": status_counts,
         "by_status": status_counts,
-        "byKind": kind_counts,
         "by_kind": kind_counts,
-        "byPriority": priority_counts,
         "by_priority": priority_counts,
-        "latestAt": latest_at,
         "latest_at": latest_at,
         "policy": "read_only_hiq_backlog",
         "basis": "composed_from_v5_interventions_sentinel_findings_and_human_inbox",
@@ -30900,17 +30857,11 @@ def _intervention_stream_source_refs(
         if value
     ]
     return {
-        "sourceDataset": source_dataset,
         "source_dataset": source_dataset,
-        "interventionIds": [intervention_id],
         "intervention_ids": [intervention_id],
-        "runtimeIds": sorted(set(runtime_ids)),
         "runtime_ids": sorted(set(runtime_ids)),
-        "personaIds": sorted(set(persona_ids)),
         "persona_ids": sorted(set(persona_ids)),
-        "strategyIds": sorted(set(strategy_ids)),
         "strategy_ids": sorted(set(strategy_ids)),
-        "incidentIds": sorted(set(incident_ids)),
         "incident_ids": sorted(set(incident_ids)),
     }
 
@@ -30941,41 +30892,27 @@ def _intervention_stream_record_event(record: Dict[str, Any]) -> Optional[Dict[s
     event_id = f"intervention-stream-{intervention_id}-{status}"
     return {
         "id": event_id,
-        "eventId": event_id,
         "event_id": event_id,
-        "eventType": f"intervention.{status}",
         "event_type": f"intervention.{status}",
-        "eventSource": "v5_interventions",
         "event_source": "v5_interventions",
-        "sourceType": "intervention",
         "source_type": "intervention",
-        "sourceDataset": "v5_interventions",
         "source_dataset": "v5_interventions",
-        "interventionId": intervention_id,
         "intervention_id": intervention_id,
-        "personaId": persona_id,
         "persona_id": persona_id,
-        "runtimeId": record.get("runtime_id") or record.get("runtimeId"),
         "runtime_id": record.get("runtime_id") or record.get("runtimeId"),
-        "strategyId": record.get("strategy_id") or record.get("strategyId"),
         "strategy_id": record.get("strategy_id") or record.get("strategyId"),
         "kind": kind,
         "status": status,
         "priority": priority,
-        "riskLevel": str(record.get("risk_level") or priority).strip().lower(),
         "risk_level": str(record.get("risk_level") or priority).strip().lower(),
         "severity": record.get("severity") or priority,
-        "occurredAt": occurred_at,
         "occurred_at": occurred_at,
-        "createdAt": record.get("created_at") or record.get("createdAt") or occurred_at,
         "created_at": record.get("created_at") or record.get("createdAt") or occurred_at,
-        "updatedAt": record.get("updated_at") or record.get("updatedAt") or occurred_at,
         "updated_at": record.get("updated_at") or record.get("updatedAt") or occurred_at,
         "actor": record.get("triggered_by") or record.get("actor") or record.get("owner"),
         "title": record.get("title") or f"{kind.replace('_', ' ').title()} intervention",
         "summary": record.get("description") or record.get("summary") or "Intervention event projected from v5 interventions.",
         "target": target,
-        "sourceRefs": source_refs,
         "source_refs": source_refs,
         "links": {
             "source": f"/bff/v5/interventions/{intervention_id}",
@@ -31022,30 +30959,19 @@ def _intervention_stream_audit_event(event: Dict[str, Any]) -> Optional[Dict[str
     projected_id = f"intervention-stream-audit-{event_id}"
     return {
         "id": projected_id,
-        "eventId": projected_id,
         "event_id": projected_id,
-        "eventType": action_type,
         "event_type": action_type,
-        "eventSource": "governance_audit_events",
         "event_source": "governance_audit_events",
-        "sourceType": "intervention",
         "source_type": "intervention",
-        "sourceDataset": "governance_audit_events",
         "source_dataset": "governance_audit_events",
-        "interventionId": intervention_id,
         "intervention_id": intervention_id,
-        "personaId": persona_id,
         "persona_id": persona_id,
         "kind": kind,
         "status": status,
         "priority": _human_inbox_priority(event.get("priority") or event.get("risk_level"), fallback="medium"),
-        "riskLevel": str(event.get("risk_level") or "medium").strip().lower(),
         "risk_level": str(event.get("risk_level") or "medium").strip().lower(),
-        "occurredAt": occurred_at,
         "occurred_at": occurred_at,
-        "createdAt": occurred_at,
         "created_at": occurred_at,
-        "updatedAt": occurred_at,
         "updated_at": occurred_at,
         "actor": event.get("actor"),
         "title": f"Intervention audit: {action_type}",
@@ -31054,7 +30980,6 @@ def _intervention_stream_audit_event(event: Dict[str, Any]) -> Optional[Dict[str
             "type": target_type or "Intervention",
             "id": str(event.get("target_id") or event.get("entity_id") or intervention_id).strip(),
         },
-        "sourceRefs": source_refs,
         "source_refs": source_refs,
         "links": {
             "source": "/bff/audit",
@@ -31160,28 +31085,18 @@ def _management_intervention_stream_response(
     ]
     events.sort(key=_intervention_stream_sort_key, reverse=True)
     for sequence, item in enumerate(events, start=1):
-        item["streamSequence"] = sequence
         item["stream_sequence"] = sequence
 
     total = len(events)
     page_items, next_page_token = _page_slice(events, page_token, page_size)
-    persona_counts = _management_count_by(events, "personaId")
+    persona_counts = _management_count_by(events, "persona_id")
     status_counts = _management_count_by(events, "status")
     kind_counts = _management_count_by(events, "kind")
-    source_counts = _management_count_by(events, "eventSource")
+    source_counts = _management_count_by(events, "event_source")
     latest_at = events[0].get("occurred_at") if events else None
     summary = {
-        "eventCount": total,
         "event_count": total,
-        "returnedEventCount": len(page_items),
         "returned_event_count": len(page_items),
-        "interventionCount": len(
-            {
-                str(item.get("intervention_id") or "")
-                for item in events
-                if str(item.get("intervention_id") or "").strip()
-            }
-        ),
         "intervention_count": len(
             {
                 str(item.get("intervention_id") or "")
@@ -31189,23 +31104,14 @@ def _management_intervention_stream_response(
                 if str(item.get("intervention_id") or "").strip()
             }
         ),
-        "personaCount": len([persona for persona in persona_counts if persona != "unknown"]),
         "persona_count": len([persona for persona in persona_counts if persona != "unknown"]),
-        "windowHours": window_hours,
         "window_hours": window_hours,
-        "windowStartAt": window_start_at,
         "window_start_at": window_start_at,
-        "windowEndAt": snapshot_at,
         "window_end_at": snapshot_at,
-        "latestAt": latest_at,
         "latest_at": latest_at,
-        "byPersona": persona_counts,
         "by_persona": persona_counts,
-        "byStatus": status_counts,
         "by_status": status_counts,
-        "byKind": kind_counts,
         "by_kind": kind_counts,
-        "byEventSource": source_counts,
         "by_event_source": source_counts,
         "policy": "read_only_intervention_stream",
         "basis": "composed_from_v5_interventions_and_governance_audit_events",
@@ -41508,26 +41414,17 @@ def _governance_ledger_entry(
     return {
         "id": entry_id,
         "entry_id": entry_id,
-        "ledgerId": entry_id,
         "ledger_id": entry_id,
-        "sourceType": source_type,
         "source_type": source_type,
-        "sourceDataset": source_dataset,
         "source_dataset": source_dataset,
-        "eventType": event_type,
         "event_type": event_type,
         "status": status,
         "outcome": status,
         "actor": actor,
-        "targetType": target_type,
         "target_type": target_type,
-        "targetId": target_id,
         "target_id": target_id,
-        "riskLevel": risk_level,
         "risk_level": risk_level,
-        "occurredAt": occurred_at,
         "occurred_at": occurred_at,
-        "createdAt": occurred_at,
         "created_at": occurred_at,
         "title": title,
         "summary": summary,
@@ -41540,9 +41437,7 @@ def _governance_ledger_entry(
                 else "/bff/audit"
             ),
         },
-        "evidenceRefs": _management_json_clone(evidence_refs or []),
         "evidence_refs": _management_json_clone(evidence_refs or []),
-        "auditContext": _management_json_clone(audit_context or {}),
         "audit_context": _management_json_clone(audit_context or {}),
     }
 
@@ -41773,28 +41668,19 @@ def _management_governance_ledger_response(
     total = len(entries)
     page_items, next_page_token = _page_slice(entries, page_token, page_size)
 
-    source_counts = _management_count_by(entries, "sourceType")
+    source_counts = _management_count_by(entries, "source_type")
     status_counts = _management_count_by(entries, "status")
-    event_type_counts = _management_count_by(entries, "eventType")
+    event_type_counts = _management_count_by(entries, "event_type")
     latest_at = entries[0].get("occurred_at") if entries else None
     summary = {
-        "ledgerCount": total,
         "ledger_count": total,
-        "returnedLedgerCount": len(page_items),
         "returned_ledger_count": len(page_items),
-        "approvalCount": source_counts.get("approval", 0),
         "approval_count": source_counts.get("approval", 0),
-        "interventionCount": source_counts.get("intervention", 0),
         "intervention_count": source_counts.get("intervention", 0),
-        "overrideCount": source_counts.get("override", 0),
         "override_count": source_counts.get("override", 0),
-        "bySourceType": source_counts,
         "by_source_type": source_counts,
-        "byStatus": status_counts,
         "by_status": status_counts,
-        "byEventType": event_type_counts,
         "by_event_type": event_type_counts,
-        "latestAt": latest_at,
         "latest_at": latest_at,
         "policy": "read_only_governance_ledger",
         "basis": "composed_from_approval_intervention_override_audit_surfaces",

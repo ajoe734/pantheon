@@ -216,6 +216,38 @@ source=services/control-plane/bff/main.py baseline=docs/architecture/management-
 `/bff/management/persona-league` decorator so the management route has exactly
 one registered handler.
 
+## Post-012 Remediation Note
+
+Later remediation slices continued from this re-audit:
+
+- `MGMT-LIST-CONTRACT-008` removed Cost Attribution top-level list aliases.
+- `MGMT-LIST-CONTRACT-009` normalized NL/AI Management, Evolution Journal, and
+  Persona Intent list envelopes.
+- `MGMT-LIST-CONTRACT-010` cleared the remaining P0 list-contract cluster:
+  duplicate envelopes, embedded child aggregates, and raw source records in
+  Human Inbox, Evidence Explorer, HIQ Backlog, Intervention Stream, Governance
+  Ledger, and Sentinel Pulse helpers.
+- `MGMT-LIST-CONTRACT-012` removed the first Human/Ops P1 wire-casing cluster
+  from HIQ Backlog, Intervention Stream, and Governance Ledger rows/summaries.
+
+The current list-contract guardrail result after `MGMT-LIST-CONTRACT-012` is:
+
+```text
+source=services/control-plane/bff/main.py baseline=docs/architecture/management-list-contract-baseline.json issues=124 new=0 retired=0
+```
+
+Current remaining categories:
+
+| Category | Count |
+|---|---:|
+| `camel-snake-duplicate` | 116 |
+| `project-before-page` | 5 |
+| `heavy-row-helper` | 3 |
+
+All P0 categories are now zero in the Management list-contract audit. The next
+cleanup work is P1-only: remaining casing duplicates plus project-before-page
+and heavy-row-helper fixes.
+
 ## Validation
 
 Frontend validation attempted in the clean worktree:
@@ -297,14 +329,18 @@ Interpretation:
 
 1. Done in `MGMT-LIST-CONTRACT-007`: normalize Persona League and Quarterly
    Ranking list envelopes.
-2. Slim Human Inbox, HiQ Backlog, Intervention Stream, and Governance Ledger.
-3. Add paging and envelope cleanup for Management AI audit/conversation
-   surfaces.
-4. Continue casing cleanup and filter/page-before-projection work for the PM12
+2. Done in `MGMT-LIST-CONTRACT-008`: normalize Cost Attribution list aliases.
+3. Done in `MGMT-LIST-CONTRACT-009`: normalize NL/AI Management, Evolution
+   Journal, and Persona Intent list envelopes.
+4. Done in `MGMT-LIST-CONTRACT-010`: clear remaining P0 list-contract findings
+   in Human/Ops, Evidence, and Sentinel list helpers.
+5. Done in `MGMT-LIST-CONTRACT-012`: remove HIQ Backlog, Intervention Stream,
+   and Governance Ledger camel/snake wire-key mirrors.
+6. Continue casing cleanup and filter/page-before-projection work for the PM12
    analytics helpers after `MGMT-LIST-CONTRACT-006`.
-5. Decide the frontend product shape: keep the current three-panel shell, or
+7. Decide the frontend product shape: keep the current three-panel shell, or
    deliberately build a smaller workflow-based Management router.
-6. Add payload-size and route-smoke acceptance evidence before exposing more
+8. Add payload-size and route-smoke acceptance evidence before exposing more
    first-level management pages.
 
 ## Bottom Line

@@ -1,14 +1,7 @@
 {
   "fingerprints": [
-    "331da4f30de371c5",
-    "4f84bb0c23fbfc3c",
-    "f37d581836d30fe2",
-    "321d5862a4b9c986",
     "4b15e7443b7e217f",
     "b5802c86c86757fa",
-    "3720dcfdcf2d82ac",
-    "fdb87244a7622dcb",
-    "976af914e5f2e539",
     "05020122b7472e41",
     "52956ab8a6c0ff9a",
     "6a6fc6e1dfd3bf58",
@@ -33,13 +26,10 @@
     "6ef700c1cbe4f4c5",
     "0c4f22b140997099",
     "8058b73ad2464a87",
-    "2c7ee75a8f9a2a52",
-    "e3a284bef9d467d0",
     "15389ea7b40f474e",
     "0f5e506d9a34d6dd",
     "2728c3f9af081015",
     "f27e2bdf23c08d85",
-    "f25c40ed0cf12cc8",
     "48e1992959a88812",
     "253f4c0e6946c2db",
     "625555f5a3a17c67",
@@ -135,48 +125,8 @@
     "48f50593677c72cb",
     "508c45878e0837e7"
   ],
-  "issue_count": 134,
+  "issue_count": 124,
   "issues": [
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "auditContext+audit_context, createdAt+created_at, eventType+event_type, evidenceRefs+evidence_refs, ledgerId+ledger_id, occurredAt+occurred_at, riskLevel+risk_level, sourceDataset+source_dataset, sourceType+source_type, targetId+target_id, targetType+target_type",
-      "fingerprint": "331da4f30de371c5",
-      "function": "_governance_ledger_entry",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "actionState+action_state, allowedActions+allowed_actions, backlogId+backlog_id, correlationId+correlation_id, createdAt+created_at, humanInboxId+human_inbox_id, riskLevel+risk_level, sourceId+source_id, sourceRefs+source_refs, sourceType+source_type, triggeredBy+triggered_by, updatedAt+updated_at",
-      "fingerprint": "4f84bb0c23fbfc3c",
-      "function": "_hiq_backlog_intervention_item",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "actionState+action_state, allowedActions+allowed_actions, backlogId+backlog_id, createdAt+created_at, riskLevel+risk_level, sourceId+source_id, sourceRefs+source_refs, sourceType+source_type, updatedAt+updated_at",
-      "fingerprint": "f37d581836d30fe2",
-      "function": "_hiq_backlog_sentinel_item",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "incidentIds+incident_ids, personaIds+persona_ids, runtimeIds+runtime_ids, sourceId+source_id, sourceType+source_type, strategyIds+strategy_ids",
-      "fingerprint": "321d5862a4b9c986",
-      "function": "_hiq_backlog_source_refs",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
     {
       "category": "camel-snake-duplicate",
       "evidence": "blockingReasons+blocking_reasons, canProceed+can_proceed",
@@ -192,36 +142,6 @@
       "evidence": "byStatus+by_status, byType+by_type, highestRiskLevel+highest_risk_level",
       "fingerprint": "b5802c86c86757fa",
       "function": "_human_inbox_summary",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "createdAt+created_at, eventId+event_id, eventSource+event_source, eventType+event_type, interventionId+intervention_id, occurredAt+occurred_at, personaId+persona_id, riskLevel+risk_level, sourceDataset+source_dataset, sourceRefs+source_refs, sourceType+source_type, updatedAt+updated_at",
-      "fingerprint": "3720dcfdcf2d82ac",
-      "function": "_intervention_stream_audit_event",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "createdAt+created_at, eventId+event_id, eventSource+event_source, eventType+event_type, interventionId+intervention_id, occurredAt+occurred_at, personaId+persona_id, riskLevel+risk_level, runtimeId+runtime_id, sourceDataset+source_dataset, sourceRefs+source_refs, sourceType+source_type, ... (14 pairs)",
-      "fingerprint": "fdb87244a7622dcb",
-      "function": "_intervention_stream_record_event",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "incidentIds+incident_ids, interventionIds+intervention_ids, personaIds+persona_ids, runtimeIds+runtime_ids, sourceDataset+source_dataset, strategyIds+strategy_ids",
-      "fingerprint": "976af914e5f2e539",
-      "function": "_intervention_stream_source_refs",
       "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
       "route": "",
       "severity": "P1",
@@ -469,26 +389,6 @@
     },
     {
       "category": "camel-snake-duplicate",
-      "evidence": "approvalCount+approval_count, byEventType+by_event_type, bySourceType+by_source_type, byStatus+by_status, interventionCount+intervention_count, latestAt+latest_at, ledgerCount+ledger_count, overrideCount+override_count, returnedLedgerCount+returned_ledger_count",
-      "fingerprint": "2c7ee75a8f9a2a52",
-      "function": "_management_governance_ledger_response",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "backlogCount+backlog_count, byKind+by_kind, byPriority+by_priority, bySourceType+by_source_type, byStatus+by_status, criticalCount+critical_count, highCount+high_count, interventionCount+intervention_count, latestAt+latest_at, pendingCount+pending_count, returnedBacklogCount+returned_backlog_count, sentinelFindingCount+sentinel_finding_count",
-      "fingerprint": "e3a284bef9d467d0",
-      "function": "_management_hiq_backlog_response",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
       "evidence": "artifactId+artifact_id, capitalPoolId+capital_pool_id, deploymentPlanId+deployment_plan_id, evidenceSummary+evidence_summary, incidentId+incident_id, lineageRef+lineage_ref, occurredAt+occurred_at, personaCapitalBindingId+persona_capital_binding_id, runtimeId+runtime_id, severityBucket+severity_bucket, sourceRefs+source_refs, telemetryEventIds+telemetry_event_ids, ... (14 pairs)",
       "fingerprint": "15389ea7b40f474e",
       "function": "_management_incident_timeline_item",
@@ -522,16 +422,6 @@
       "evidence": "activeIncidentCount+active_incident_count, byStatus+by_status, firstIncidentAt+first_incident_at, highSeverityCount+high_severity_count, incidentCount+incident_count, latestIncidentAt+latest_incident_at, lowSeverityCount+low_severity_count, mediumSeverityCount+medium_severity_count, resolvedIncidentCount+resolved_incident_count, returnedIncidentCount+returned_incident_count, severityBuckets+severity_buckets, sortOrder+sort_order",
       "fingerprint": "f27e2bdf23c08d85",
       "function": "_management_incident_timeline_response",
-      "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
-      "route": "",
-      "severity": "P1",
-      "title": "DTO returns camelCase and snake_case copies of fields"
-    },
-    {
-      "category": "camel-snake-duplicate",
-      "evidence": "byEventSource+by_event_source, byKind+by_kind, byPersona+by_persona, byStatus+by_status, eventCount+event_count, interventionCount+intervention_count, latestAt+latest_at, personaCount+persona_count, returnedEventCount+returned_event_count, windowEndAt+window_end_at, windowHours+window_hours, windowStartAt+window_start_at",
-      "fingerprint": "f25c40ed0cf12cc8",
-      "function": "_management_intervention_stream_response",
       "recommendation": "Use one wire casing for Management BFF DTOs. If the frontend needs another casing, convert in its adapter.",
       "route": "",
       "severity": "P1",
