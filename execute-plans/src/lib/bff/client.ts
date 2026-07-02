@@ -432,31 +432,18 @@ function emptyHumanInboxAggregate(): HumanInboxAggregate {
 
 function emptyManagementTradingPulseAggregate(): ManagementTradingPulseResponse {
   const summary = {
-    runtimeCount: 0,
     runtime_count: 0,
-    telemetryCoverageCount: 0,
     telemetry_coverage_count: 0,
-    byStatus: {},
     by_status: {},
-    byStage: {},
     by_stage: {},
-    totalPnl: null,
     total_pnl: null,
-    worstDrawdown: null,
     worst_drawdown: null,
-    averageFillRate: null,
     average_fill_rate: null,
-    worstSlippageBps: null,
     worst_slippage_bps: null,
-    totalTrades: 0,
     total_trades: 0,
-    baselineComparisonCount: 0,
     baseline_comparison_count: 0,
-    baselineBreachedCount: 0,
     baseline_breached_count: 0,
-    baselineWatchCount: 0,
     baseline_watch_count: 0,
-    byBaselineStatus: {},
     by_baseline_status: {},
   };
   const data = {
@@ -464,21 +451,11 @@ function emptyManagementTradingPulseAggregate(): ManagementTradingPulseResponse 
     summary,
     cards: [],
     rankings: [],
-    runtimeRows: [],
     runtime_rows: [],
-    baselineComparisons: [],
     baseline_comparisons: [],
   };
   return {
     data,
-    items: [],
-    cards: [],
-    rankings: [],
-    runtimeRows: [],
-    runtime_rows: [],
-    baselineComparisons: [],
-    baseline_comparisons: [],
-    summary,
     page_info: {
       next_page_token: null,
       total: 0,
@@ -505,22 +482,17 @@ function emptyManagementTradingPulseRankingsAggregate(
   limit = 20,
 ): ManagementTradingPulseRankingsResponse {
   return {
-    data: [],
-    items: [],
-    rankings: [],
-    rankingBlocks: [],
-    ranking_blocks: [],
-    summary: {
-      runtimeCount: 0,
-      runtime_count: 0,
-      rankingBlockCount: 0,
-      ranking_block_count: 0,
-      rankedItemCount: 0,
-      ranked_item_count: 0,
-      criteria: [],
-      limit,
-      topRuntimeId: null,
-      top_runtime_id: null,
+    data: {
+      id: "management-trading-pulse-rankings",
+      items: [],
+      summary: {
+        runtime_count: 0,
+        ranking_block_count: 0,
+        ranked_item_count: 0,
+        criteria: [],
+        limit,
+        top_runtime_id: null,
+      },
     },
     page_info: {
       next_page_token: null,
@@ -546,29 +518,18 @@ function emptyManagementEvidenceAggregate(): ManagementEvidenceResponse {
       id: "management-evidence",
       items: [],
       summary: {
-        totalEvidence: 0,
         total_evidence: 0,
-        returnedEvidence: 0,
         returned_evidence: 0,
-        visibleEvidence: 0,
         visible_evidence: 0,
-        redactedEvidence: 0,
         redacted_evidence: 0,
-        verifiedEvidence: 0,
         verified_evidence: 0,
-        bySourceType: {},
         by_source_type: {},
-        byLinkType: {},
         by_link_type: {},
-        byCredibilityTier: {},
         by_credibility_tier: {},
       },
       facets: {
-        sourceTypes: {},
         source_types: {},
-        linkTypes: {},
         link_types: {},
-        credibilityTiers: {},
         credibility_tiers: {},
       },
     },
@@ -864,33 +825,44 @@ function adaptManagementTradingPulseAggregate(body: unknown): ManagementTradingP
         : Array.isArray(dataEnvelope.baseline_comparisons)
           ? dataEnvelope.baseline_comparisons
           : [];
-  const cards = rawCards.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["cards"];
-  const rankings = rawRankings.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["rankings"];
-  const runtimeRows = rawRuntimeRows.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["runtimeRows"];
-  const baselineComparisons = rawBaselineComparisons.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["baselineComparisons"];
-  const summary = asObject(envelope.summary ?? dataEnvelope.summary) as ManagementTradingPulseResponse["summary"];
+  const cards = rawCards.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["data"]["cards"];
+  const rankings = rawRankings.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["data"]["rankings"];
+  const runtimeRows = rawRuntimeRows.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["data"]["runtime_rows"];
+  const baselineComparisons = rawBaselineComparisons.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["data"]["baseline_comparisons"];
+  const rawSummary = asObject(envelope.summary ?? dataEnvelope.summary);
   const pageInfo = asObject(envelope.page_info);
   const meta = asObject(envelope.meta) as ManagementTradingPulseResponse["meta"];
+  const summary: ManagementTradingPulseResponse["data"]["summary"] = {
+    runtime_count: Number(rawSummary.runtime_count ?? rawSummary.runtimeCount ?? 0),
+    telemetry_coverage_count: Number(rawSummary.telemetry_coverage_count ?? rawSummary.telemetryCoverageCount ?? 0),
+    by_status: asObject(rawSummary.by_status ?? rawSummary.byStatus) as Record<string, number>,
+    by_stage: asObject(rawSummary.by_stage ?? rawSummary.byStage) as Record<string, number>,
+    total_pnl: Number(rawSummary.total_pnl ?? rawSummary.totalPnl ?? 0),
+    worst_drawdown: rawSummary.worst_drawdown === null || rawSummary.worstDrawdown === null
+      ? null
+      : Number(rawSummary.worst_drawdown ?? rawSummary.worstDrawdown ?? 0),
+    average_fill_rate: rawSummary.average_fill_rate === null || rawSummary.averageFillRate === null
+      ? null
+      : Number(rawSummary.average_fill_rate ?? rawSummary.averageFillRate ?? 0),
+    worst_slippage_bps: rawSummary.worst_slippage_bps === null || rawSummary.worstSlippageBps === null
+      ? null
+      : Number(rawSummary.worst_slippage_bps ?? rawSummary.worstSlippageBps ?? 0),
+    total_trades: Number(rawSummary.total_trades ?? rawSummary.totalTrades ?? 0),
+    baseline_comparison_count: Number(rawSummary.baseline_comparison_count ?? rawSummary.baselineComparisonCount ?? 0),
+    baseline_breached_count: Number(rawSummary.baseline_breached_count ?? rawSummary.baselineBreachedCount ?? 0),
+    baseline_watch_count: Number(rawSummary.baseline_watch_count ?? rawSummary.baselineWatchCount ?? 0),
+    by_baseline_status: asObject(rawSummary.by_baseline_status ?? rawSummary.byBaselineStatus) as Record<string, number>,
+  };
   const data = {
     id: typeof dataEnvelope.id === "string" ? dataEnvelope.id : "management-trading-pulse",
     summary,
     cards,
     rankings,
-    runtimeRows,
     runtime_rows: runtimeRows,
-    baselineComparisons,
     baseline_comparisons: baselineComparisons,
   };
   return {
     data,
-    items: cards,
-    cards,
-    rankings,
-    runtimeRows,
-    runtime_rows: runtimeRows,
-    baselineComparisons,
-    baseline_comparisons: baselineComparisons,
-    summary,
     page_info: {
       next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
       total: Number(pageInfo.total ?? cards.length),
@@ -904,41 +876,46 @@ function adaptManagementTradingPulseRankingsAggregate(
   body: unknown,
 ): ManagementTradingPulseRankingsResponse {
   const envelope = asObject(body);
-  const rawBlocks = Array.isArray(envelope.rankingBlocks)
-    ? envelope.rankingBlocks
-    : Array.isArray(envelope.ranking_blocks)
-      ? envelope.ranking_blocks
-      : Array.isArray(envelope.rankings)
-        ? envelope.rankings
-        : Array.isArray(envelope.items)
-          ? envelope.items
-          : Array.isArray(envelope.data)
-            ? envelope.data
-            : [];
-  const rankingBlocks = rawBlocks.filter((item) => item && typeof item === "object") as ManagementTradingPulseRankingsResponse["rankingBlocks"];
-  const summary = asObject(envelope.summary);
+  const rawData = envelope.data;
+  const dataEnvelope = asObject(envelope.data);
+  const rawBlocks = Array.isArray(dataEnvelope.items)
+    ? dataEnvelope.items
+    : Array.isArray(envelope.rankingBlocks)
+      ? envelope.rankingBlocks
+      : Array.isArray(envelope.ranking_blocks)
+        ? envelope.ranking_blocks
+        : Array.isArray(envelope.rankings)
+          ? envelope.rankings
+          : Array.isArray(envelope.items)
+            ? envelope.items
+            : Array.isArray(rawData)
+              ? rawData
+              : [];
+  const rankingBlocks = rawBlocks.filter((item) => item && typeof item === "object") as ManagementTradingPulseRankingsResponse["data"]["items"];
+  const summary = Object.keys(asObject(dataEnvelope.summary)).length > 0
+    ? asObject(dataEnvelope.summary)
+    : asObject(envelope.summary);
   const pageInfo = asObject(envelope.page_info);
   const meta = asObject(envelope.meta) as ManagementTradingPulseRankingsResponse["meta"];
   const criteria = Array.isArray(summary.criteria)
     ? summary.criteria.map((item) => String(item))
     : rankingBlocks.map((block) => String(block.metric || "")).filter(Boolean);
   return {
-    data: rankingBlocks,
-    items: rankingBlocks,
-    rankings: rankingBlocks,
-    rankingBlocks,
-    ranking_blocks: rankingBlocks,
-    summary: {
-      runtimeCount: Number(summary.runtimeCount ?? summary.runtime_count ?? 0),
-      runtime_count: Number(summary.runtime_count ?? summary.runtimeCount ?? 0),
-      rankingBlockCount: Number(summary.rankingBlockCount ?? summary.ranking_block_count ?? rankingBlocks.length),
-      ranking_block_count: Number(summary.ranking_block_count ?? summary.rankingBlockCount ?? rankingBlocks.length),
-      rankedItemCount: Number(summary.rankedItemCount ?? summary.ranked_item_count ?? 0),
-      ranked_item_count: Number(summary.ranked_item_count ?? summary.rankedItemCount ?? 0),
-      criteria,
-      limit: Number(summary.limit ?? 20),
-      topRuntimeId: typeof summary.topRuntimeId === "string" ? summary.topRuntimeId : null,
-      top_runtime_id: typeof summary.top_runtime_id === "string" ? summary.top_runtime_id : null,
+    data: {
+      id: String(dataEnvelope.id ?? "management-trading-pulse-rankings"),
+      items: rankingBlocks,
+      summary: {
+        runtime_count: Number(summary.runtime_count ?? summary.runtimeCount ?? 0),
+        ranking_block_count: Number(summary.ranking_block_count ?? summary.rankingBlockCount ?? rankingBlocks.length),
+        ranked_item_count: Number(summary.ranked_item_count ?? summary.rankedItemCount ?? 0),
+        criteria,
+        limit: Number(summary.limit ?? 20),
+        top_runtime_id: typeof summary.top_runtime_id === "string"
+          ? summary.top_runtime_id
+          : typeof summary.topRuntimeId === "string"
+            ? summary.topRuntimeId
+            : null,
+      },
     },
     page_info: {
       next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
@@ -973,21 +950,13 @@ function adaptManagementEvidenceAggregate(body: unknown): ManagementEvidenceResp
       id: String(dataEnvelope.id ?? "management-evidence"),
       items,
       summary: {
-        totalEvidence: Number(summary.totalEvidence ?? summary.total_evidence ?? items.length),
         total_evidence: Number(summary.total_evidence ?? summary.totalEvidence ?? items.length),
-        returnedEvidence: Number(summary.returnedEvidence ?? summary.returned_evidence ?? items.length),
         returned_evidence: Number(summary.returned_evidence ?? summary.returnedEvidence ?? items.length),
-        visibleEvidence: Number(summary.visibleEvidence ?? summary.visible_evidence ?? items.length),
         visible_evidence: Number(summary.visible_evidence ?? summary.visibleEvidence ?? items.length),
-        redactedEvidence: Number(summary.redactedEvidence ?? summary.redacted_evidence ?? 0),
         redacted_evidence: Number(summary.redacted_evidence ?? summary.redactedEvidence ?? 0),
-        verifiedEvidence: Number(summary.verifiedEvidence ?? summary.verified_evidence ?? 0),
         verified_evidence: Number(summary.verified_evidence ?? summary.verifiedEvidence ?? 0),
-        bySourceType: asObject(summary.bySourceType ?? summary.by_source_type) as Record<string, number>,
         by_source_type: asObject(summary.by_source_type ?? summary.bySourceType) as Record<string, number>,
-        byLinkType: asObject(summary.byLinkType ?? summary.by_link_type) as Record<string, number>,
         by_link_type: asObject(summary.by_link_type ?? summary.byLinkType) as Record<string, number>,
-        byCredibilityTier: asObject(summary.byCredibilityTier ?? summary.by_credibility_tier) as Record<string, number>,
         by_credibility_tier: asObject(summary.by_credibility_tier ?? summary.byCredibilityTier) as Record<string, number>,
       },
       facets: facets as ManagementEvidenceResponse["data"]["facets"],

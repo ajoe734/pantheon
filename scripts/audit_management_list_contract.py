@@ -203,6 +203,7 @@ def is_management_function(function: ast.AsyncFunctionDef | ast.FunctionDef, rou
     return function.name.startswith(
         (
             "_management_",
+            "_build_management_",
             "_pm12_",
             "_persona_fleet_",
             "_project_persona_league",
