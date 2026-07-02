@@ -1,0 +1,1043 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/schemas/persona_paper_live.v1.json",
+  "title": "PersonaPaperLiveContract",
+  "description": "Canonical paper-first persona launch, evaluation, unified competition, human review, quarterly rebalance, and automatic risk-guardrail projection contract. The contract is a projection over Persona, PersonaCapitalBinding, ApprovalDecision, DeploymentPlan, RuntimeBinding, telemetry, and incident records; it is not a replacement for those atomic records.",
+  "type": "object",
+  "required": [
+    "schema_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "persona_paper_live.v1"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "NullableString": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "EvidenceRefs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/NonEmptyString"
+      },
+      "default": []
+    },
+    "PersonaProductLifecycleState": {
+      "type": "string",
+      "enum": [
+        "paper_provisioning",
+        "paper_running",
+        "paper_warming_up",
+        "paper_ineligible",
+        "paper_eligible",
+        "promotion_review_pending",
+        "promotion_rejected",
+        "canary_running",
+        "live_review_pending",
+        "live_running",
+        "quarterly_review_pending",
+        "watchlist",
+        "auto_reduced",
+        "risk_off",
+        "frozen",
+        "retired",
+        "setup_failed",
+        "repair_required"
+      ],
+      "description": "User-facing lifecycle projection for the management console. It is derived from atomic Persona, binding, deployment, runtime, approval, telemetry, and incident records."
+    },
+    "CompetitionTrack": {
+      "type": "string",
+      "enum": [
+        "paper_challenger",
+        "canary_challenger",
+        "live_incumbent",
+        "watchlist_incumbent",
+        "risk_off_excluded"
+      ],
+      "description": "Track inside one cohort competition table. This distinguishes challenger/incumbent role without splitting paper, canary, and live personas into separate hidden datasets."
+    },
+    "CapitalScope": {
+      "type": "string",
+      "enum": [
+        "none",
+        "paper",
+        "canary",
+        "live",
+        "risk_off"
+      ]
+    },
+    "LaunchStep": {
+      "type": "string",
+      "enum": [
+        "persona_identity_created",
+        "policy_snapshots_created",
+        "paper_capital_pool_ready",
+        "paper_binding_active",
+        "paper_deployment_plan_created",
+        "paper_approval_recorded",
+        "paper_runtime_binding_created",
+        "paper_runtime_started",
+        "telemetry_heartbeat_verified"
+      ]
+    },
+    "LaunchStatus": {
+      "type": "string",
+      "enum": [
+        "paper_provisioning",
+        "paper_running",
+        "paper_warming_up",
+        "setup_failed",
+        "repair_required"
+      ],
+      "description": "A user-facing create flow may not complete as identity-only. It either reaches paper runtime, remains visibly provisioning/warming, or exposes repairable failure."
+    },
+    "PaperCapitalPoolSelection": {
+      "type": "object",
+      "required": [
+        "mode",
+        "capital_scope"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "select_existing",
+            "create_from_template"
+          ]
+        },
+        "capital_scope": {
+          "const": "paper",
+          "description": "The primary create path binds paper capital only. Canary/live scopes are promotion decisions and require human review."
+        },
+        "capital_pool_id": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "template_id": {
+          "$ref": "#/$defs/NullableString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PaperPersonaLaunch": {
+      "type": "object",
+      "required": [
+        "launch_id",
+        "name",
+        "mandate",
+        "strategy_family",
+        "market_scope",
+        "source_scope",
+        "risk_profile_id",
+        "paper_capital_pool",
+        "paper_budget",
+        "artifact_id",
+        "status",
+        "persona_id",
+        "completed_steps",
+        "retryable",
+        "trace_id",
+        "created_at"
+      ],
+      "properties": {
+        "launch_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "name": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "mandate": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "strategy_family": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        },
+        "market_scope": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        },
+        "source_scope": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        },
+        "risk_profile_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "paper_capital_pool": {
+          "$ref": "#/$defs/PaperCapitalPoolSelection"
+        },
+        "paper_budget": {
+          "type": "number",
+          "minimum": 0
+        },
+        "artifact_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "operator_note": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "status": {
+          "$ref": "#/$defs/LaunchStatus"
+        },
+        "persona_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "capital_pool_id": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "binding_id": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "deployment_plan_id": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "approval_decision_id": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "runtime_binding_id": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "runtime_id": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "completed_steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LaunchStep"
+          }
+        },
+        "failed_step": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/LaunchStep"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "repair_url": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "trace_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PersonaReadinessProjection": {
+      "type": "object",
+      "required": [
+        "persona_id",
+        "product_lifecycle_state",
+        "setup_status",
+        "paper_runtime",
+        "competition_track",
+        "capital_scope",
+        "required_human_review",
+        "repair",
+        "trace_id",
+        "snapshot_at"
+      ],
+      "properties": {
+        "persona_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "product_lifecycle_state": {
+          "$ref": "#/$defs/PersonaProductLifecycleState"
+        },
+        "setup_status": {
+          "type": "string",
+          "enum": [
+            "provisioning",
+            "paper_runtime_active",
+            "paper_runtime_warming_up",
+            "setup_failed",
+            "repair_required"
+          ]
+        },
+        "paper_runtime": {
+          "type": "object",
+          "required": [
+            "runtime_binding_id",
+            "runtime_id",
+            "status",
+            "heartbeat_status"
+          ],
+          "properties": {
+            "runtime_binding_id": {
+              "$ref": "#/$defs/NullableString"
+            },
+            "runtime_id": {
+              "$ref": "#/$defs/NullableString"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "missing",
+                "starting",
+                "active",
+                "warming_up",
+                "paused",
+                "failed",
+                "risk_off",
+                "frozen"
+              ]
+            },
+            "heartbeat_status": {
+              "type": "string",
+              "enum": [
+                "unknown",
+                "fresh",
+                "stale",
+                "missing"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "competition_track": {
+          "$ref": "#/$defs/CompetitionTrack"
+        },
+        "capital_scope": {
+          "$ref": "#/$defs/CapitalScope"
+        },
+        "required_human_review": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "promotion_to_canary",
+            "canary_to_live",
+            "quarterly_rebalance",
+            "resume_after_incident",
+            "retire",
+            null
+          ]
+        },
+        "repair": {
+          "type": "object",
+          "required": [
+            "retryable",
+            "failed_step",
+            "repair_url"
+          ],
+          "properties": {
+            "retryable": {
+              "type": "boolean"
+            },
+            "failed_step": {
+              "$ref": "#/$defs/NullableString"
+            },
+            "repair_url": {
+              "$ref": "#/$defs/NullableString"
+            }
+          },
+          "additionalProperties": false
+        },
+        "trace_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "snapshot_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "EvaluationWindow": {
+      "type": "object",
+      "required": [
+        "started_at",
+        "ended_at",
+        "valid_market_days",
+        "decision_count",
+        "fill_count"
+      ],
+      "properties": {
+        "started_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "valid_market_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decision_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fill_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "HardGateResult": {
+      "type": "object",
+      "required": [
+        "gate",
+        "status",
+        "observed_value",
+        "threshold",
+        "evidence_refs"
+      ],
+      "properties": {
+        "gate": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "warming_up",
+            "waived_by_human"
+          ]
+        },
+        "observed_value": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ]
+        },
+        "threshold": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ]
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/EvidenceRefs"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PaperEvaluationSnapshot": {
+      "type": "object",
+      "required": [
+        "evaluation_id",
+        "persona_id",
+        "runtime_binding_id",
+        "evaluation_profile_id",
+        "status",
+        "window",
+        "hard_gates",
+        "score_snapshot_id",
+        "evidence_refs",
+        "created_at"
+      ],
+      "properties": {
+        "evaluation_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "persona_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "runtime_binding_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "evaluation_profile_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "warming_up",
+            "ineligible",
+            "eligible",
+            "blocked",
+            "risk_off"
+          ]
+        },
+        "window": {
+          "$ref": "#/$defs/EvaluationWindow"
+        },
+        "hard_gates": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/HardGateResult"
+          }
+        },
+        "score_snapshot_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/EvidenceRefs"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PromotionScoreComponent": {
+      "type": "object",
+      "required": [
+        "component",
+        "weight",
+        "score",
+        "evidence_refs"
+      ],
+      "properties": {
+        "component": {
+          "type": "string",
+          "enum": [
+            "performance",
+            "risk_control",
+            "consistency",
+            "execution_realism",
+            "operational_reliability",
+            "governance_fit",
+            "penalty"
+          ]
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/EvidenceRefs"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PromotionScoreSnapshot": {
+      "type": "object",
+      "required": [
+        "score_snapshot_id",
+        "persona_id",
+        "cohort_id",
+        "formula_version",
+        "total_score",
+        "components",
+        "hard_gate_status",
+        "recommendation",
+        "scored_at"
+      ],
+      "properties": {
+        "score_snapshot_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "persona_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "cohort_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "formula_version": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "total_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/PromotionScoreComponent"
+          }
+        },
+        "hard_gate_status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "warming_up"
+          ]
+        },
+        "recommendation": {
+          "type": "string",
+          "enum": [
+            "stay_paper",
+            "needs_repair",
+            "recommend_canary_review",
+            "priority_canary_review",
+            "replacement_candidate",
+            "risk_off"
+          ]
+        },
+        "scored_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CohortKey": {
+      "type": "object",
+      "required": [
+        "market_scope",
+        "strategy_family",
+        "frequency_profile",
+        "risk_budget_profile",
+        "capital_pool_type"
+      ],
+      "properties": {
+        "market_scope": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        },
+        "strategy_family": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        },
+        "frequency_profile": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "risk_budget_profile": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "capital_pool_type": {
+          "type": "string",
+          "enum": [
+            "paper",
+            "canary",
+            "live",
+            "mixed"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "CompetitionStandingSnapshot": {
+      "type": "object",
+      "required": [
+        "standing_id",
+        "persona_id",
+        "cohort_id",
+        "competition_track",
+        "cohort_rank",
+        "score_snapshot_id",
+        "promotion_score",
+        "product_lifecycle_state",
+        "capital_scope",
+        "human_review_state",
+        "snapshot_at"
+      ],
+      "properties": {
+        "standing_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "persona_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "cohort_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "competition_track": {
+          "$ref": "#/$defs/CompetitionTrack"
+        },
+        "cohort_rank": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "score_snapshot_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "promotion_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "product_lifecycle_state": {
+          "$ref": "#/$defs/PersonaProductLifecycleState"
+        },
+        "capital_scope": {
+          "$ref": "#/$defs/CapitalScope"
+        },
+        "human_review_state": {
+          "type": "string",
+          "enum": [
+            "none",
+            "promotion_pending",
+            "live_pending",
+            "quarterly_pending",
+            "incident_resume_pending",
+            "rejected"
+          ]
+        },
+        "incumbent_persona_id": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "challenger_delta_score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "replacement_risk": {
+          "type": "string",
+          "enum": [
+            "none",
+            "watch",
+            "candidate_ahead",
+            "pending_human_review"
+          ]
+        },
+        "snapshot_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CohortRankingSnapshot": {
+      "type": "object",
+      "required": [
+        "ranking_id",
+        "cohort_id",
+        "cohort_key",
+        "formula_version",
+        "window",
+        "standings",
+        "human_review_required_for_actions",
+        "generated_at"
+      ],
+      "properties": {
+        "ranking_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "cohort_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "cohort_key": {
+          "$ref": "#/$defs/CohortKey"
+        },
+        "formula_version": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "window": {
+          "$ref": "#/$defs/EvaluationWindow"
+        },
+        "standings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CompetitionStandingSnapshot"
+          }
+        },
+        "human_review_required_for_actions": {
+          "const": true,
+          "description": "Ranking may recommend promotion/replacement/rebalance, but it cannot approve or execute it."
+        },
+        "generated_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "HumanReviewRequest": {
+      "type": "object",
+      "required": [
+        "review_id",
+        "review_type",
+        "persona_id",
+        "cohort_id",
+        "recommendation",
+        "recommended_allocation",
+        "evidence_refs",
+        "risk_notes",
+        "blocking_findings",
+        "score_snapshot_id",
+        "decision_required",
+        "system_authority",
+        "created_at",
+        "expires_at"
+      ],
+      "properties": {
+        "review_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "review_type": {
+          "type": "string",
+          "enum": [
+            "promotion_to_canary",
+            "canary_allocation_increase",
+            "canary_to_live",
+            "live_allocation_increase",
+            "quarterly_rebalance",
+            "resume_after_incident",
+            "retire"
+          ]
+        },
+        "persona_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "cohort_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "recommendation": {
+          "type": "string",
+          "enum": [
+            "approve",
+            "approve_with_conditions",
+            "reject",
+            "reduce",
+            "retire"
+          ]
+        },
+        "recommended_allocation": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/EvidenceRefs"
+        },
+        "risk_notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        },
+        "blocking_findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        },
+        "score_snapshot_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "decision_required": {
+          "const": true
+        },
+        "system_authority": {
+          "const": "advisory_only"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "QuarterlyRebalanceAction": {
+      "type": "object",
+      "required": [
+        "action",
+        "persona_id",
+        "allocation_delta",
+        "reason",
+        "requires_human_decision"
+      ],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "keep_allocation",
+            "increase_allocation",
+            "reduce_allocation",
+            "watchlist",
+            "replace_incumbent",
+            "return_to_paper",
+            "retire",
+            "keep_risk_off"
+          ]
+        },
+        "persona_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "replacement_persona_id": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "allocation_delta": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "requires_human_decision": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "QuarterlyRebalanceProposal": {
+      "type": "object",
+      "required": [
+        "proposal_id",
+        "quarter",
+        "cohort_ranking_id",
+        "status",
+        "recommended_actions",
+        "human_review_request_id",
+        "human_review_required",
+        "generated_at"
+      ],
+      "properties": {
+        "proposal_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "quarter": {
+          "type": "string",
+          "pattern": "^\\d{4}-Q[1-4]$"
+        },
+        "cohort_ranking_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "proposed",
+            "under_review",
+            "approved",
+            "rejected",
+            "superseded",
+            "expired"
+          ]
+        },
+        "recommended_actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/QuarterlyRebalanceAction"
+          }
+        },
+        "human_review_request_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "human_review_required": {
+          "const": true
+        },
+        "generated_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RiskGuardrailEvent": {
+      "type": "object",
+      "required": [
+        "event_id",
+        "persona_id",
+        "runtime_binding_id",
+        "capital_pool_id",
+        "trigger_name",
+        "observed_value",
+        "threshold",
+        "automatic_action",
+        "effective_at",
+        "incident_id",
+        "review_required",
+        "may_promote",
+        "may_increase_allocation",
+        "trace_id"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "persona_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "runtime_binding_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "capital_pool_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "trigger_name": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "observed_value": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "threshold": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "automatic_action": {
+          "type": "string",
+          "enum": [
+            "pause_new_orders",
+            "reduce_exposure",
+            "risk_off",
+            "frozen"
+          ]
+        },
+        "effective_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "incident_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "review_required": {
+          "const": true
+        },
+        "may_promote": {
+          "const": false
+        },
+        "may_increase_allocation": {
+          "const": false
+        },
+        "trace_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
