@@ -683,6 +683,20 @@ Acceptance:
 - Warm list aggregate does not spend multiple seconds before first byte when
   the underlying knowledge evidence list returns in about 100 ms.
 
+Implementation progress on 2026-07-02:
+
+- `/bff/management/evidence` list items now include BFF-derived
+  `actionability`, `allowedActions`, `disabledActionReasons`, `operation`, and
+  `linkedObjectLink`.
+- Verified-but-untraceable producer-style rows are marked
+  `unresolved_source` with specific reasons instead of appearing healthy.
+- Artifact-linked rows receive a BFF-owned management artifact href through
+  `linkedObjectLink`.
+- The list aggregate now returns `meta.performance.timings_ms` with per-stage
+  timings, row count, filtered total, and page size.
+- Mutation actions remain disabled until the command/task/reviewer phases are
+  implemented.
+
 ### Phase 1 - Read Model Enrichment
 
 Goal: make rows traceable before adding mutations.

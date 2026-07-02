@@ -8895,6 +8895,13 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     display_label = item.get("display_label") or ref_id
     if item.get("redacted"):
         required_capability = item.get("required_capability")
+        actionability = _management_evidence_actionability(item, linked_object_link=None)
+        allowed_actions = _management_evidence_allowed_actions(actionability, linked_object_link=None)
+        disabled_reasons = _management_evidence_disabled_action_reasons(
+            actionability,
+            linked_object_link=None,
+            mutation_reason="Evidence operation commands are not implemented yet.",
+        )
         return {
             "id": ref_id,
             "refId": ref_id,
@@ -8906,6 +8913,20 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
             "required_capability": required_capability,
             "reason": item.get("reason"),
             "redacted": True,
+            "actionability": actionability,
+            "operation": _management_evidence_default_operation(),
+            "linkedObjectLink": _management_evidence_unavailable_link(
+                "Linked object unavailable",
+                "redacted",
+            ),
+            "linked_object_link": _management_evidence_unavailable_link(
+                "Linked object unavailable",
+                "redacted",
+            ),
+            "allowedActions": allowed_actions,
+            "allowed_actions": allowed_actions,
+            "disabledActionReasons": disabled_reasons,
+            "disabled_action_reasons": disabled_reasons,
         }
 
     source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
@@ -8922,6 +8943,17 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     link_type = item.get("link_type")
     route_href = item.get("route_href") or (f"/knowledge/evidence/{ref_id}" if ref_id else None)
     title = source_document.get("title") or display_label
+    linked_object_link = _management_evidence_linked_object_link(linked_summary)
+    actionability = _management_evidence_actionability(item, linked_object_link=linked_object_link)
+    allowed_actions = _management_evidence_allowed_actions(
+        actionability,
+        linked_object_link=linked_object_link,
+    )
+    disabled_reasons = _management_evidence_disabled_action_reasons(
+        actionability,
+        linked_object_link=linked_object_link,
+        mutation_reason="Evidence operation commands are not implemented yet.",
+    )
     return {
         "id": ref_id,
         "refId": ref_id,
@@ -8946,8 +8978,193 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "route_href": route_href,
         "managementHref": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
         "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
+        "actionability": actionability,
+        "operation": _management_evidence_default_operation(),
+        "linkedObjectLink": json.loads(json.dumps(linked_object_link)),
+        "linked_object_link": json.loads(json.dumps(linked_object_link)),
+        "allowedActions": allowed_actions,
+        "allowed_actions": allowed_actions,
+        "disabledActionReasons": disabled_reasons,
+        "disabled_action_reasons": disabled_reasons,
         "redacted": False,
     }
+
+
+def _management_evidence_unavailable_link(
+    display_label: str,
+    reason: str,
+) -> Dict[str, Any]:
+    return {
+        "availability": "unavailable",
+        "route_href": None,
+        "display_label": display_label,
+        "reason": reason,
+    }
+
+
+def _management_evidence_linked_object_link(linked_summary: Dict[str, Any]) -> Dict[str, Any]:
+    entity_type = str(linked_summary.get("entity_type") or "").strip()
+    entity_ref = str(linked_summary.get("entity_ref") or "").strip()
+    display_label = linked_summary.get("display_label") or entity_ref or "Linked object unavailable"
+    if not entity_type:
+        return _management_evidence_unavailable_link(display_label, "missing_linked_object_type")
+    if not entity_ref:
+        return _management_evidence_unavailable_link(display_label, "missing_linked_object_ref")
+
+    route_map = {
+        "artifact": "/management/artifacts",
+        "experiment": "/research/experiments",
+        "insight_card": "/knowledge/insights",
+        "memory_entry": "/knowledge/memory",
+        "research_note": "/knowledge/notes",
+        "strategy_spec": "/knowledge/strategy-specs",
+    }
+    route_base = route_map.get(entity_type)
+    if not route_base:
+        return _management_evidence_unavailable_link(display_label, "unsupported_linked_object_type")
+
+    return {
+        "availability": "available",
+        "route_href": f"{route_base}/{quote(entity_ref, safe='')}",
+        "display_label": display_label,
+        "entity_type": entity_type,
+        "entity_ref": entity_ref,
+    }
+
+
+def _management_evidence_default_operation() -> Dict[str, Any]:
+    return {
+        "status": "none",
+        "owner": None,
+        "reviewer": None,
+        "task_refs": [],
+        "last_action_at": None,
+    }
+
+
+def _management_evidence_actionability(
+    item: Dict[str, Any],
+    *,
+    linked_object_link: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if item.get("redacted"):
+        return {
+            "state": "redacted",
+            "severity": "info",
+            "reasons": ["redacted"],
+            "can_trace": False,
+            "can_open_source": False,
+            "can_open_linked_object": False,
+        }
+
+    source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
+    resolved_link = item.get("resolved_link") if isinstance(item.get("resolved_link"), dict) else {}
+    linked_summary = (
+        item.get("linked_object_summary")
+        if isinstance(item.get("linked_object_summary"), dict)
+        else {}
+    )
+    reasons: List[str] = []
+    if not str(source_document.get("source_type") or "").strip():
+        reasons.append("missing_source_type")
+    if not str(source_document.get("source_ref") or "").strip():
+        reasons.append("missing_source_ref")
+    if not str(item.get("link_type") or "").strip():
+        reasons.append("missing_link_type")
+    if not str(linked_summary.get("entity_type") or "").strip():
+        reasons.append("missing_linked_object_type")
+    if not str(linked_summary.get("entity_ref") or "").strip():
+        reasons.append("missing_linked_object_ref")
+
+    source_availability = str(resolved_link.get("availability") or "").strip().lower()
+    source_route = str(resolved_link.get("route_href") or "").strip()
+    can_open_source = source_availability in {"available", "external"} and bool(source_route)
+    if not can_open_source:
+        reasons.append("resolved_link_unavailable")
+
+    linked_object_available = (
+        isinstance(linked_object_link, dict)
+        and linked_object_link.get("availability") == "available"
+        and bool(linked_object_link.get("route_href"))
+    )
+    if not linked_object_available:
+        reason = (
+            str((linked_object_link or {}).get("reason") or "linked_object_unavailable")
+            if isinstance(linked_object_link, dict)
+            else "linked_object_unavailable"
+        )
+        reasons.append(reason)
+
+    deduped_reasons = list(dict.fromkeys(reasons))
+    if "resolved_link_unavailable" in deduped_reasons:
+        state = "unresolved_source"
+        severity = "warning"
+    elif deduped_reasons:
+        state = "incomplete"
+        severity = "warning"
+    else:
+        state = "traceable"
+        severity = "ok"
+
+    return {
+        "state": state,
+        "severity": severity,
+        "reasons": deduped_reasons,
+        "can_trace": state == "traceable",
+        "can_open_source": can_open_source,
+        "can_open_linked_object": bool(linked_object_available),
+    }
+
+
+def _management_evidence_allowed_actions(
+    actionability: Dict[str, Any],
+    *,
+    linked_object_link: Optional[Dict[str, Any]],
+) -> Dict[str, bool]:
+    is_redacted = actionability.get("state") == "redacted"
+    linked_object_available = (
+        isinstance(linked_object_link, dict)
+        and linked_object_link.get("availability") == "available"
+        and bool(linked_object_link.get("route_href"))
+    )
+    return {
+        "canOpenSource": bool(actionability.get("can_open_source")) and not is_redacted,
+        "canOpenLinkedObject": bool(linked_object_available) and not is_redacted,
+        "canInspectChain": not is_redacted,
+        "canMarkStale": False,
+        "canRequestEvidence": False,
+        "canCreateDispositionTask": False,
+        "canAssignReviewer": False,
+    }
+
+
+def _management_evidence_disabled_action_reasons(
+    actionability: Dict[str, Any],
+    *,
+    linked_object_link: Optional[Dict[str, Any]],
+    mutation_reason: str,
+) -> Dict[str, str]:
+    reasons: Dict[str, str] = {}
+    if not actionability.get("can_open_source"):
+        reasons["canOpenSource"] = "Source link is unavailable or incomplete."
+    linked_object_available = (
+        isinstance(linked_object_link, dict)
+        and linked_object_link.get("availability") == "available"
+        and bool(linked_object_link.get("route_href"))
+    )
+    if not linked_object_available:
+        reasons["canOpenLinkedObject"] = (
+            str((linked_object_link or {}).get("reason") or "Linked object route is unavailable.")
+            if isinstance(linked_object_link, dict)
+            else "Linked object route is unavailable."
+        )
+    if actionability.get("state") == "redacted":
+        reasons["canInspectChain"] = "Evidence is redacted for this operator."
+    reasons["canMarkStale"] = mutation_reason
+    reasons["canRequestEvidence"] = mutation_reason
+    reasons["canCreateDispositionTask"] = mutation_reason
+    reasons["canAssignReviewer"] = mutation_reason
+    return reasons
 
 
 def _management_count_by_nested(
@@ -9001,6 +9218,39 @@ def _management_evidence_summary(
     }
 
 
+def _management_evidence_actionability_summary(public_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    visible_items = [item for item in public_items if not item.get("redacted")]
+    by_state = _management_count_by_nested(public_items, "actionability", "state")
+    by_severity = _management_count_by_nested(public_items, "actionability", "severity")
+    traceable_count = by_state.get("traceable", 0)
+    unresolved_count = by_state.get("unresolved_source", 0)
+    incomplete_count = by_state.get("incomplete", 0)
+    redacted_count = by_state.get("redacted", 0)
+    needs_attention_count = len(public_items) - traceable_count
+    return {
+        "traceableEvidence": traceable_count,
+        "traceable_evidence": traceable_count,
+        "unresolvedSourceEvidence": unresolved_count,
+        "unresolved_source_evidence": unresolved_count,
+        "incompleteEvidence": incomplete_count,
+        "incomplete_evidence": incomplete_count,
+        "redactedActionabilityEvidence": redacted_count,
+        "redacted_actionability_evidence": redacted_count,
+        "needsAttentionEvidence": needs_attention_count,
+        "needs_attention_evidence": needs_attention_count,
+        "visibleActionabilityEvidence": len(visible_items),
+        "visible_actionability_evidence": len(visible_items),
+        "byActionabilityState": by_state,
+        "by_actionability_state": by_state,
+        "byActionabilitySeverity": by_severity,
+        "by_actionability_severity": by_severity,
+    }
+
+
+def _management_timing_ms(started_at: float) -> float:
+    return round(max(0.0, (time.monotonic() - started_at) * 1000.0), 3)
+
+
 def _build_management_evidence_payload(
     *,
     identity: OperatorIdentity,
@@ -9013,6 +9263,16 @@ def _build_management_evidence_payload(
     page_token: Optional[str],
     page_size: int,
 ) -> Dict[str, Any]:
+    total_started_at = time.monotonic()
+    stage_started_at = total_started_at
+    timings_ms: Dict[str, float] = {}
+
+    def record_stage(stage: str) -> None:
+        nonlocal stage_started_at
+        now = time.monotonic()
+        timings_ms[stage] = round(max(0.0, (now - stage_started_at) * 1000.0), 3)
+        stage_started_at = now
+
     validated_linked_entity_type = None
     if linked_entity_type is not None:
         validated_linked_entity_type = _kw03_validate_linked_entity_type(linked_entity_type)
@@ -9029,10 +9289,12 @@ def _build_management_evidence_payload(
         if credibility_tier is not None
         else None
     )
+    record_stage("validate_filters")
 
     snapshot_at = utc_now()
     evidence_refs = read_store.list_evidence_refs()
     evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+    record_stage("read_store_load")
 
     clean_ref_id = str(ref_id or "").strip()
     if clean_ref_id:
@@ -9072,6 +9334,7 @@ def _build_management_evidence_payload(
             for item in evidence_refs
             if bool((item.get("credibility") or {}).get("verified")) is verified
         ]
+    record_stage("filtering")
 
     evidence_surface = _dataset_surface_status(
         "evidence_refs",
@@ -9086,6 +9349,7 @@ def _build_management_evidence_payload(
         unavailable_message="Management evidence aggregate unavailable.",
         degraded_message="Management evidence aggregate is available, but the evidence read surface is degraded.",
     )
+    record_stage("surface_status")
 
     total = len(evidence_refs)
     if evidence_surface.get("status") == "unavailable":
@@ -9093,26 +9357,31 @@ def _build_management_evidence_payload(
         next_page_token = None
     else:
         page_items, next_page_token = _page_slice(evidence_refs, page_token, page_size)
+    record_stage("pagination")
 
     try:
         capabilities = _capabilities_for_identity(identity)
     except Exception:
         capabilities = None
+    record_stage("capabilities")
     processed_items, redacted_count = redact_evidence_refs(
         identity,
         list(page_items),
         capabilities=capabilities,
     )
+    record_stage("redaction")
     public_items = [
         _management_evidence_public_item(item)
         for item in processed_items
         if isinstance(item, dict)
     ]
+    record_stage("public_item_mapping")
     summary = _management_evidence_summary(
         filtered_total=total,
         page_items=processed_items,
         redacted_count=redacted_count,
     )
+    summary.update(_management_evidence_actionability_summary(public_items))
     facets = {
         "sourceTypes": summary["bySourceType"],
         "source_types": summary["by_source_type"],
@@ -9120,7 +9389,12 @@ def _build_management_evidence_payload(
         "link_types": summary["by_link_type"],
         "credibilityTiers": summary["byCredibilityTier"],
         "credibility_tiers": summary["by_credibility_tier"],
+        "actionabilityStates": summary["byActionabilityState"],
+        "actionability_states": summary["by_actionability_state"],
+        "actionabilitySeverity": summary["byActionabilitySeverity"],
+        "actionability_severity": summary["by_actionability_severity"],
     }
+    record_stage("summary_facets")
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {
         "management_evidence": management_surface,
@@ -9128,6 +9402,13 @@ def _build_management_evidence_payload(
         "knowledge_evidence": evidence_surface,
     }
     meta["redacted_evidence_count"] = redacted_count
+    timings_ms["total"] = _management_timing_ms(total_started_at)
+    meta["performance"] = {
+        "timings_ms": timings_ms,
+        "row_count": len(public_items),
+        "filtered_total": total,
+        "page_size": page_size,
+    }
 
     return {
         "data": public_items,
