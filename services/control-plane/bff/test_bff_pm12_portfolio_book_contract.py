@@ -200,6 +200,7 @@ def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch)
     response = client.get("/bff/management/portfolio-book", headers=HEADERS)
 
     assert response.status_code == 200, response.text
+    assert len(response.content) < 250_000
     payload = response.json()
     summary = payload["data"]["summary"]
     assert summary["capital_pool_count"] == 2
@@ -901,15 +902,42 @@ def test_management_board_pack_composes_pm12_sections(monkeypatch) -> None:
     payload = response.json()
     data = payload["data"]
     assert data["id"] == "management-board-pack"
-    assert payload["items"] == payload["sections"] == data["sections"]
-    assert payload["summary"] == data["summary"]
+    assert set(payload) == {"data", "page_info", "meta"}
+    assert "items" not in payload
+    assert "sections" not in payload
+    assert "summary" not in payload
+    assert set(data) == {
+        "id",
+        "snapshot_at",
+        "period",
+        "section_limit",
+        "items",
+        "summary",
+        "policy",
+    }
     assert payload["page_info"] == {"next_page_token": None, "total": 8, "page_size": 8}
-    assert payload["summary"]["section_count"] == 8
-    assert payload["summary"]["period"] == "30d"
-    assert payload["summary"]["section_limit"] == 2
-    assert payload["summary"]["policy"] == "read_only_management_board_pack"
+    assert data["summary"]["section_count"] == 8
+    assert data["summary"]["period"] == "30d"
+    assert data["summary"]["section_limit"] == 2
+    assert data["summary"]["policy"] == "read_only_management_board_pack"
+    for legacy_key in (
+        "portfolioBook",
+        "portfolio_book",
+        "portfolioBookExposure",
+        "portfolio_book_exposure",
+        "portfolioBookPositions",
+        "portfolio_book_positions",
+        "strategyAllocation",
+        "strategy_allocation",
+        "personaLeague",
+        "persona_league",
+        "performanceAttribution",
+        "performance_attribution",
+    ):
+        assert legacy_key not in data
 
-    section_ids = {section["id"] for section in payload["sections"]}
+    sections = data["items"]
+    section_ids = {section["id"] for section in sections}
     assert {
         "portfolio_book",
         "portfolio_book_exposure",
@@ -921,15 +949,21 @@ def test_management_board_pack_composes_pm12_sections(monkeypatch) -> None:
         "performance_attribution_by_pool",
     }.issubset(section_ids)
 
-    assert data["portfolioBook"]["data"]["summary"]["capital_pool_count"] == 2
-    assert data["portfolio_book_exposure"]["data"]["id"] == "pm12-portfolio-book-exposure"
-    assert data["portfolioBookPositions"]["data"]["summary"]["position_count"] == 3
-    assert data["strategyAllocation"]["data"]["id"] == "management-strategy-allocation"
-    assert data["performanceAttribution"]["byPersona"]["summary"]["dimensions"] == ["persona"]
-    assert data["performance_attribution"]["by_pool"]["summary"]["dimensions"] == ["pool"]
-    assert data["personaLeague"]["movers"]["data"]["id"] == "management-persona-league-movers"
+    by_id = {section["id"]: section for section in sections}
+    assert by_id["portfolio_book"]["href"] == "/bff/management/portfolio-book"
+    assert by_id["portfolio_book"]["item_count"] >= by_id["portfolio_book"]["returned_item_count"]
+    assert by_id["portfolio_book"]["summary"]["capital_pool_count"] == 2
+    assert by_id["portfolio_book_exposure"]["summary"]["exposure_count"] >= 1
+    assert by_id["portfolio_book_positions"]["summary"]["position_count"] == 3
+    assert by_id["strategy_allocation"]["summary"]["allocation_count"] >= 1
+    assert by_id["performance_attribution_by_persona"]["summary"]["dimensions"] == ["persona"]
+    assert by_id["performance_attribution_by_pool"]["summary"]["dimensions"] == ["pool"]
+    assert by_id["persona_league_movers"]["summary"]["mover_count"] >= 0
+    assert all("itemCount" not in section and "returnedItemCount" not in section for section in sections)
     assert payload["meta"]["surfaces"]["management_board_pack"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["board_pack"] == payload["meta"]["surfaces"]["management_board_pack"]
+    assert payload["meta"]["related"]["portfolio_book"]["href"] == "/bff/management/portfolio-book"
+    assert payload["meta"]["related"]["persona_league"]["href"] == "/bff/management/persona-league"
     assert "GET /bff/management/strategy-allocation" in payload["meta"]["composition_sources"]
 
 

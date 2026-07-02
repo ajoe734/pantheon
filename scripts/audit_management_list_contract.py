@@ -482,7 +482,16 @@ def audit_function(
             evidence_key=f"{function.name}:{helper_name}",
         ))
 
-    if function.name == "_management_board_pack_response":
+    if function.name == "_management_board_pack_response" and any(
+        token in function_source
+        for token in (
+            '"portfolioBook":',
+            '"portfolioBookExposure":',
+            '"portfolioBookPositions":',
+            '"personaLeague":',
+            '"performanceAttribution":',
+        )
+    ):
         found.append(issue(
             severity="P0",
             category="board-pack-full-child-payloads",

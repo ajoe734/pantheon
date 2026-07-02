@@ -5,7 +5,7 @@
 | Scope | Static audit of `services/control-plane/bff/main.py` Management list/table/board contracts |
 | Tool | `scripts/audit_management_list_contract.py` |
 | Baseline | `docs/architecture/management-list-contract-baseline.json` |
-| Result | 229 existing contract smells after the first remediation slice: 76 P0, 153 P1 |
+| Result | 220 existing contract smells after the first two remediation slices: 71 P0, 149 P1 |
 
 ## Trigger
 
@@ -28,16 +28,16 @@ That is not a frontend button problem. It is a list-contract problem.
 
 The guardrail found these categories in the current source after
 `MGMT-LIST-CONTRACT-002` retired the four `/bff/management/persona-fleet`
-findings from the initial baseline:
+findings and `MGMT-LIST-CONTRACT-003` retired nine board-pack findings:
 
 | Category | Count | Severity | Meaning |
 |---|---:|---|---|
-| `duplicate-envelope` | 31 | P0 | Response returns `data` plus top-level list aliases such as `items`, `rows`, `rankings`, `pools` |
-| `duplicate-list-alias` | 29 | P0 | Same list value is returned under multiple semantic names |
+| `duplicate-envelope` | 30 | P0 | Response returns `data` plus top-level list aliases such as `items`, `rows`, `rankings`, `pools` |
+| `duplicate-list-alias` | 28 | P0 | Same list value is returned under multiple semantic names |
 | `source-record-in-list-dto` | 10 | P0 | Raw source record/document fields appear in list DTO helpers |
-| `embedded-aggregate-payload` | 5 | P0 | List/board payload embeds related aggregate collections |
-| `board-pack-full-child-payloads` | 1 | P0 | Board pack nests complete child endpoint responses |
-| `camel-snake-duplicate` | 145 | P1 | DTOs return both casing variants for the same fields |
+| `embedded-aggregate-payload` | 3 | P0 | List/board payload embeds related aggregate collections |
+| `board-pack-full-child-payloads` | 0 | P0 | Board pack nests complete child endpoint responses |
+| `camel-snake-duplicate` | 141 | P1 | DTOs return both casing variants for the same fields |
 | `project-before-page` | 5 | P1 | Endpoint/helper projects broad aggregates before page slicing |
 | `heavy-row-helper` | 3 | P1 | Row helper includes detail-grade nested policy/session/memory/source data |
 
@@ -49,7 +49,7 @@ The complete machine-readable list is in
 | Area | Evidence | Required fix |
 |---|---|---|
 | Persona Fleet | Remediated in `MGMT-LIST-CONTRACT-002`: `/bff/management/persona-fleet` now returns `data.items`, `data.summary`, top-level `page_info`, and `meta.related` links only | Keep source/research health detail on detail/health endpoints and require server-side filters such as `deployment_stage` |
-| Board Pack | `_management_board_pack_response` calls child list endpoints, then embeds full payloads under `portfolioBook`, `personaLeague`, `performanceAttribution`, etc. | Return section summaries, counts, status, and hrefs only |
+| Board Pack | Remediated in `MGMT-LIST-CONTRACT-003`: `_management_board_pack_response` now returns section summaries, counts, status, and hrefs without child endpoint payloads | Keep board-pack summary-only; fetch full child sections from their dedicated routes |
 | Portfolio Book Family | Summary, pools, exposure, holdings, and positions repeat lists under `data`, top-level aliases, and domain aliases | Normalize one envelope, one list field, server filters, and slim rows |
 | Persona League Family | League, rankings, movers, tiers, heatmap, quarterly ranking, and recommendations repeat aliases and carry casing duplicates | Split list rows from ranking/detail payloads and keep one casing |
 | Performance And Cost Attribution | Rows are built from runtime telemetry before slicing and returned as `items`, `rows`, and sometimes `attributions` | Filter and page before row expansion; remove aliases |
@@ -62,7 +62,9 @@ The complete machine-readable list is in
 1. Done in `MGMT-LIST-CONTRACT-002`: `/bff/management/persona-fleet` now uses
    slim list rows, removed duplicate row copies, added server filters, and moved
    connector/source health out of the list contract.
-2. Fix board-pack next because it multiplies child payload mistakes.
+2. Done in `MGMT-LIST-CONTRACT-003`: board-pack now returns summary-only
+   sections and href-only related links instead of complete child endpoint
+   payloads.
 3. Normalize Portfolio Book, Persona League, Quarterly Ranking, Performance
    Attribution, and Cost Attribution families.
 4. Move raw `sourceRecord` and detail-grade helper data out of Human Inbox,
