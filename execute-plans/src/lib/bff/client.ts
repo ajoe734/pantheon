@@ -200,7 +200,6 @@ const truthy = (v: unknown): boolean =>
  *  - `hybrid`: configured mode is live with default `auto` fallback. */
 export function detectManagementMode(): ManagementMode {
   const env = readBffEnv();
-  if (env.MODE === "test" || env.NODE_ENV === "test") return "mock";
   if (env.VITE_BFF_MODE !== "live") return "mock";
   return env.VITE_BFF_FALLBACK === "strict" ? "real" : "hybrid";
 }
