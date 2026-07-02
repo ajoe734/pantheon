@@ -1,14 +1,5 @@
 {
   "fingerprints": [
-    "8641fcbac9dfcabc",
-    "299be8af36052c2a",
-    "ed4926d7fe6233ef",
-    "46a4fd5b91a041e1",
-    "4100e85b653007c0",
-    "2423d67cfbf0a0da",
-    "e877198091a3cc1e",
-    "3b97bfb43c240b7b",
-    "9607c4511e1fab58",
     "e0fb8f200f7367fe",
     "a3176c40f270f521",
     "5b90963f760f854b",
@@ -160,98 +151,8 @@
     "48f50593677c72cb",
     "508c45878e0837e7"
   ],
-  "issue_count": 159,
+  "issue_count": 150,
   "issues": [
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items']",
-      "fingerprint": "8641fcbac9dfcabc",
-      "function": "_human_inbox_payload",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items']",
-      "fingerprint": "299be8af36052c2a",
-      "function": "_management_evidence_degraded_payload",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items']",
-      "fingerprint": "ed4926d7fe6233ef",
-      "function": "_management_governance_ledger_response",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items', 'rows']",
-      "fingerprint": "46a4fd5b91a041e1",
-      "function": "_management_hiq_backlog_response",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-envelope",
-      "evidence": "keys=['data', 'items', 'rows']",
-      "fingerprint": "4100e85b653007c0",
-      "function": "_management_intervention_stream_response",
-      "recommendation": "Return one canonical envelope: data.items plus page_info/meta. Do not repeat the same list at top level.",
-      "route": "",
-      "severity": "P0",
-      "title": "List response exposes both data and top-level list aliases"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['data', 'items']",
-      "fingerprint": "2423d67cfbf0a0da",
-      "function": "_human_inbox_payload",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['data', 'items']",
-      "fingerprint": "e877198091a3cc1e",
-      "function": "_management_evidence_degraded_payload",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['items', 'rows']",
-      "fingerprint": "3b97bfb43c240b7b",
-      "function": "_management_hiq_backlog_response",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
-    {
-      "category": "duplicate-list-alias",
-      "evidence": "aliases=['items', 'rows']",
-      "fingerprint": "9607c4511e1fab58",
-      "function": "_management_intervention_stream_response",
-      "recommendation": "Pick the semantic list field once. Backward-compatible aliases must be versioned or moved behind a temporary adapter, not returned forever.",
-      "route": "",
-      "severity": "P0",
-      "title": "Same list value is returned under multiple names"
-    },
     {
       "category": "embedded-aggregate-payload",
       "evidence": "keys=['humanInbox', 'human_inbox']",

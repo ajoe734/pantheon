@@ -58,9 +58,10 @@ def test_human_inbox_composes_approvals_and_interventions() -> None:
 
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["data"] == body["items"]
-            assert body["summary"]["approval_count"] >= 1
-            assert body["summary"]["intervention_count"] >= 1
+            assert "items" not in body
+            assert "summary" not in body
+            assert body["data"]["summary"]["approval_count"] >= 1
+            assert body["data"]["summary"]["intervention_count"] >= 1
             assert body["meta"]["surfaces"]["human_inbox"]["source"] == "bff_composed"
             assert "approval_queue" in body["meta"]["surfaces"]
             assert body["meta"]["surfaces"]["v5_interventions"]["source"] in {
@@ -68,12 +69,12 @@ def test_human_inbox_composes_approvals_and_interventions() -> None:
                 "local_snapshot",
             }
 
-            approval = next(item for item in body["items"] if item["source_type"] == "approval")
+            approval = next(item for item in body["data"]["items"] if item["source_type"] == "approval")
             assert approval["id"].startswith("approval:")
             assert approval["decision_context"]["risk_summary"]
             assert "canApprove" in approval["allowedActions"]
 
-            intervention = next(item for item in body["items"] if item["source_type"] == "intervention")
+            intervention = next(item for item in body["data"]["items"] if item["source_type"] == "intervention")
             assert intervention["id"] == "intervention:intv-human-001"
             assert intervention["priority"] == "critical"
             assert intervention["allowedActions"]["canRemediate"] is True
@@ -127,8 +128,8 @@ def test_human_inbox_includes_persona_readiness_blockers(monkeypatch) -> None:
 
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["summary"]["readiness_blocker_count"] == 1
-            item = body["items"][0]
+            assert body["data"]["summary"]["readiness_blocker_count"] == 1
+            item = body["data"]["items"][0]
             assert item["id"] == "readiness_blocker:persona:persona-tw-equity"
             assert item["source_type"] == "readiness_blocker"
             assert item["route"] == "/management/persona-fleet?persona=persona-tw-equity"
@@ -164,7 +165,8 @@ def test_human_inbox_supports_filters_pagination_and_detail() -> None:
             list_body = list_resp.json()
             assert list_body["page_info"]["page_size"] == 1
             assert list_body["page_info"]["total"] >= 1
-            assert len(list_body["items"]) == 1
+            assert "items" not in list_body
+            assert len(list_body["data"]["items"]) == 1
 
             detail_resp = client.get(
                 "/bff/management/human-inbox/intervention:intv-human-001",

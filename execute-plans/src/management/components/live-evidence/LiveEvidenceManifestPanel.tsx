@@ -197,7 +197,7 @@ function normalizeManifestView(item: ManagementEvidenceItem, index: number): Liv
 export function collectLiveEvidenceManifests(
   response: ManagementEvidenceResponse,
 ): LiveEvidenceManifestView[] {
-  return response.items
+  return response.data.items
     .map((item, index) => normalizeManifestView(item, index))
     .filter((item): item is LiveEvidenceManifestView => item !== null);
 }

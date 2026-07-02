@@ -9063,10 +9063,11 @@ def _management_evidence_degraded_payload(*, page_size: int) -> Dict[str, Any]:
     }
     meta["redacted_evidence_count"] = 0
     return {
-        "data": [],
-        "items": [],
-        "summary": summary,
-        "facets": facets,
+        "data": {
+            "items": [],
+            "summary": summary,
+            "facets": facets,
+        },
         "page_info": {"next_page_token": None, "total": 0, "page_size": page_size},
         "pagination": {"next_page_token": None, "has_more": False, "page_size": page_size},
         "meta": meta,
@@ -9212,10 +9213,11 @@ def _build_management_evidence_payload(
     meta["redacted_evidence_count"] = redacted_count
 
     return {
-        "data": public_items,
-        "items": public_items,
-        "summary": summary,
-        "facets": facets,
+        "data": {
+            "items": public_items,
+            "summary": summary,
+            "facets": facets,
+        },
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -30347,9 +30349,10 @@ def _human_inbox_payload(
         persona_rows=sources["persona_rows"],
     )
     return {
-        "data": page_items,
-        "items": page_items,
-        "summary": _human_inbox_summary(filtered, len(page_items)),
+        "data": {
+            "items": page_items,
+            "summary": _human_inbox_summary(filtered, len(page_items)),
+        },
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -30784,17 +30787,11 @@ def _management_hiq_backlog_response(
     data = {
         "id": "management-hiq-backlog",
         "items": page_items,
-        "rows": page_items,
-        "backlog": page_items,
         "summary": summary,
         "policy": "read_only_hiq_backlog",
     }
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "backlog": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -31249,19 +31246,11 @@ def _management_intervention_stream_response(
     data = {
         "id": "management-intervention-stream",
         "items": page_items,
-        "rows": page_items,
-        "events": page_items,
-        "stream": page_items,
         "summary": summary,
         "policy": "read_only_intervention_stream",
     }
     return {
         "data": data,
-        "items": page_items,
-        "rows": page_items,
-        "events": page_items,
-        "stream": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -41851,17 +41840,11 @@ def _management_governance_ledger_response(
     data = {
         "id": "management-governance-ledger",
         "items": page_items,
-        "entries": page_items,
-        "ledger": page_items,
         "summary": summary,
         "policy": "read_only_governance_ledger",
     }
     return {
         "data": data,
-        "items": page_items,
-        "entries": page_items,
-        "ledger": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,

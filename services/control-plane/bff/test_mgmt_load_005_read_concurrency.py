@@ -137,8 +137,8 @@ def test_evidence_timeout_returns_degraded_envelope_without_hanging(monkeypatch)
     assert response.status_code == 200, response.text
     assert elapsed < 0.25, f"evidence route took {elapsed:.3f}s; it should degrade near the timeout budget"
     payload = response.json()
-    assert payload["data"] == []
-    assert payload["items"] == []
+    assert payload["data"]["items"] == []
+    assert "items" not in payload
     surface = payload["meta"]["surfaces"]["management_evidence"]
     assert surface["status"] == "degraded"
     assert surface["reason"] == "read_timeout"

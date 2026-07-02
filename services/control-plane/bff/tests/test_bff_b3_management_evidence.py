@@ -162,16 +162,19 @@ def test_management_evidence_composes_explorer_envelope_with_filters() -> None:
 
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert payload["data"] == payload["items"]
+        data = payload["data"]
+        assert "items" not in payload
+        assert "summary" not in payload
+        assert "facets" not in payload
         assert payload["page_info"]["total"] == 1
-        assert payload["summary"]["totalEvidence"] == 1
-        assert payload["summary"]["returnedEvidence"] == 1
-        assert payload["summary"]["bySourceType"] == {"metric": 1}
-        assert payload["facets"]["credibilityTiers"] == {"primary": 1}
+        assert data["summary"]["totalEvidence"] == 1
+        assert data["summary"]["returnedEvidence"] == 1
+        assert data["summary"]["bySourceType"] == {"metric": 1}
+        assert data["facets"]["credibilityTiers"] == {"primary": 1}
         assert payload["meta"]["surfaces"]["management_evidence"]["source"] == "bff_composed"
         assert payload["meta"]["surfaces"]["evidence_refs"]["status"] in {"ok", "degraded"}
 
-        item = payload["items"][0]
+        item = data["items"][0]
         assert item["id"] == "evref-b3-metric-001"
         assert item["refId"] == "evref-b3-metric-001"
         assert item["sourceType"] == "metric"
@@ -191,7 +194,7 @@ def test_management_evidence_preserves_artifact_manifest_from_store() -> None:
         payload = response.json()
         assert payload["page_info"]["total"] == 1
 
-        item = payload["items"][0]
+        item = payload["data"]["items"][0]
         assert item["overall"] == "pass"
         assert item["artifactManifest"] == item["artifact_manifest"]
         manifest = item["artifactManifest"]
@@ -319,12 +322,12 @@ def test_management_evidence_projects_current_run_verifier_when_store_missing(tm
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["page_info"]["total"] == 1
-    assert payload["summary"]["bySourceType"] == {"workflow_artifact": 1}
-    assert payload["facets"]["linkTypes"] == {"provenance": 1}
+    assert payload["data"]["summary"]["bySourceType"] == {"workflow_artifact": 1}
+    assert payload["data"]["facets"]["linkTypes"] == {"provenance": 1}
     assert payload["meta"]["surfaces"]["evidence_refs"]["source"] == "bff_current_run_artifact"
     assert payload["meta"]["surfaces"]["management_evidence"]["source"] == "bff_composed"
 
-    item = payload["items"][0]
+    item = payload["data"]["items"][0]
     assert item["id"] == "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY"
     assert item["sourceType"] == "workflow_artifact"
     assert item["linkType"] == "provenance"
@@ -347,7 +350,7 @@ def test_management_evidence_ignores_malformed_current_run_verifier(tmp_path: Pa
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["items"] == []
+    assert payload["data"]["items"] == []
     assert payload["page_info"]["total"] == 0
     assert payload["meta"]["surfaces"]["evidence_refs"]["status"] == "unavailable"
 
@@ -361,10 +364,10 @@ def test_management_evidence_preserves_capability_redaction() -> None:
 
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert payload["summary"]["redactedEvidence"] == 1
+        assert payload["data"]["summary"]["redactedEvidence"] == 1
         assert payload["meta"]["redacted_evidence_count"] == 1
 
-        item = payload["items"][0]
+        item = payload["data"]["items"][0]
         assert item["id"] == "evref-b3-metric-001"
         assert item["redacted"] is True
         assert item["requiredCapability"] == "metric.read"

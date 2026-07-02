@@ -216,6 +216,38 @@ source=services/control-plane/bff/main.py baseline=docs/architecture/management-
 `/bff/management/persona-league` decorator so the management route has exactly
 one registered handler.
 
+## Post-010 Remediation Note
+
+Later remediation slices continued from this re-audit:
+
+- `MGMT-LIST-CONTRACT-008` removed Cost Attribution top-level list aliases.
+- `MGMT-LIST-CONTRACT-009` normalized NL/AI Management, Evolution Journal, and
+  Persona Intent list envelopes.
+- `MGMT-LIST-CONTRACT-010` normalized Human Inbox, Governance Ledger, HIQ
+  Backlog, Intervention Stream, and Management Evidence normal/degraded
+  envelopes.
+
+The current list-contract guardrail result after `MGMT-LIST-CONTRACT-010` is:
+
+```text
+source=services/control-plane/bff/main.py baseline=docs/architecture/management-list-contract-baseline.json issues=150 new=0 retired=0
+```
+
+Current remaining categories:
+
+| Category | Count |
+|---|---:|
+| `source-record-in-list-dto` | 10 |
+| `embedded-aggregate-payload` | 3 |
+| `camel-snake-duplicate` | 129 |
+| `project-before-page` | 5 |
+| `heavy-row-helper` | 3 |
+
+`duplicate-envelope` and `duplicate-list-alias` are now zero in the Management
+list-contract audit. The Governance Ledger test note below was also corrected
+by checking source-family coverage with filtered source requests instead of
+depending on one unfiltered page's ordering.
+
 ## Validation
 
 Frontend validation attempted in the clean worktree:
@@ -259,13 +291,13 @@ Interpretation:
 
 | Area | Adjustment |
 |---|---|
-| BFF list contract | Continue the `MGMT-LIST-CONTRACT-*` burn-down until all Management list routes use only `data.items`, `data.summary`, `page_info`, and `meta`. |
+| BFF list contract | Duplicate envelopes/list aliases are now retired; continue the `MGMT-LIST-CONTRACT-*` burn-down for raw source records, embedded child payloads, casing duplication, and project-before-page issues. |
 | Frontend shell | Decide whether the current three-panel management entry is the intended shell. If not, build a real route shell intentionally instead of letting API inventory masquerade as UI pages. |
 | Adapter layer | Keep compatibility adapters temporarily, but new UI should consume one canonical envelope and one wire casing. |
 | IA | Group endpoints into operator workflows: Evidence/Truth, Decision Inbox, Performance Review, Readiness Gates, Persona Ranking, AI Ops. Do not expose one first-level page per endpoint. |
-| Human Inbox | Slim list DTOs, remove raw source/detail payloads from list rows, and move expansion to detail routes. |
-| Governance Ledger | Normalize envelope, remove source-record leakage, and make source coverage/page ordering deterministic. |
-| AI Audit | Add real paging/limit behavior and canonical list envelope. |
+| Human Inbox | Envelope normalized in `MGMT-LIST-CONTRACT-010`; next slim list DTOs, remove raw source/detail payloads from list rows, and move expansion to detail routes. |
+| Governance Ledger | Envelope normalized in `MGMT-LIST-CONTRACT-010`; next remove source-record leakage and keep source coverage tests filter-based. |
+| AI Audit | Envelope normalized in `MGMT-LIST-CONTRACT-009`; next add real paging/limit behavior. |
 | Readiness routes | Keep as release-gate surfaces, but normalize envelope and avoid treating checks/items/evidence refs as multiple list roots. |
 | Persona League/Quarterly Ranking | Keep as domain views, but split list rows, ranking detail, formula, and recommendation detail contracts. |
 | Performance/Cost Attribution | The top-level aliases are now removed by `MGMT-LIST-CONTRACT-006`; continue with filter/page-before-projection and casing cleanup. |
@@ -274,10 +306,10 @@ Interpretation:
 
 | Surface | Recommendation |
 |---|---|
-| Duplicate `/bff/management/persona-league` list declaration | Delete or rename the legacy duplicate route. Keep one canonical list route and one detail route. |
+| Duplicate `/bff/management/persona-league` list declaration | Done in `MGMT-LIST-CONTRACT-007B`; keep one canonical list route and one detail route. |
 | `apps/management` isolated screens | Delete/archive if no active import owner exists; otherwise migrate deliberately into `execute-plans` with route tests. |
 | One-page-per-fetcher UI expansion | Do not build every `fetchManagement*` function into a page. Collapse into fewer workflows. |
-| Top-level compatibility aliases | Remove after frontend consumers migrate. Do not preserve aliases forever in payloads. |
+| Top-level compatibility aliases | Management duplicate envelope/list aliases are now removed in the guardrail; keep frontend consumers on canonical envelopes. |
 | Seed/mock capability details | Do not surface seed ids for Tools/MCP/Skills or similar capability pages as production details. |
 | Unproven write-like controls | Hide or disable until they return command id, receipt, audit ref, dry-run evidence, or explicit non-production state. |
 
@@ -297,14 +329,18 @@ Interpretation:
 
 1. Done in `MGMT-LIST-CONTRACT-007`: normalize Persona League and Quarterly
    Ranking list envelopes.
-2. Slim Human Inbox, HiQ Backlog, Intervention Stream, and Governance Ledger.
-3. Add paging and envelope cleanup for Management AI audit/conversation
-   surfaces.
-4. Continue casing cleanup and filter/page-before-projection work for the PM12
+2. Done in `MGMT-LIST-CONTRACT-008`: normalize Cost Attribution list aliases.
+3. Done in `MGMT-LIST-CONTRACT-009`: normalize NL/AI Management, Evolution
+   Journal, and Persona Intent list envelopes.
+4. Done in `MGMT-LIST-CONTRACT-010`: normalize Human Inbox, HiQ Backlog,
+   Intervention Stream, Governance Ledger, and Management Evidence envelopes.
+5. Move raw source/debug payloads out of Human Inbox, Sentinel/Governance, and
+   other list DTOs.
+6. Continue casing cleanup and filter/page-before-projection work for the PM12
    analytics helpers after `MGMT-LIST-CONTRACT-006`.
-5. Decide the frontend product shape: keep the current three-panel shell, or
+7. Decide the frontend product shape: keep the current three-panel shell, or
    deliberately build a smaller workflow-based Management router.
-6. Add payload-size and route-smoke acceptance evidence before exposing more
+8. Add payload-size and route-smoke acceptance evidence before exposing more
    first-level management pages.
 
 ## Bottom Line

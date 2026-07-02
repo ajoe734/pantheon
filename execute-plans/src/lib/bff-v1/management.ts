@@ -254,16 +254,10 @@ export interface ManagementGovernanceLedgerResponse {
   data: {
     id: "management-governance-ledger" | string;
     items: ManagementGovernanceLedgerItem[];
-    entries: ManagementGovernanceLedgerItem[];
-    ledger: ManagementGovernanceLedgerItem[];
     summary: ManagementGovernanceLedgerSummary;
     policy?: string;
     [key: string]: unknown;
   };
-  items: ManagementGovernanceLedgerItem[];
-  entries: ManagementGovernanceLedgerItem[];
-  ledger: ManagementGovernanceLedgerItem[];
-  summary: ManagementGovernanceLedgerSummary;
   page_info: {
     next_page_token: string | null;
     total: number;
@@ -368,16 +362,10 @@ export interface ManagementHiqBacklogResponse {
   data: {
     id: "management-hiq-backlog" | string;
     items: ManagementHiqBacklogItem[];
-    rows: ManagementHiqBacklogItem[];
-    backlog: ManagementHiqBacklogItem[];
     summary: ManagementHiqBacklogSummary;
     policy?: string;
     [key: string]: unknown;
   };
-  items: ManagementHiqBacklogItem[];
-  rows: ManagementHiqBacklogItem[];
-  backlog: ManagementHiqBacklogItem[];
-  summary: ManagementHiqBacklogSummary;
   page_info: {
     next_page_token: string | null;
     total: number;
@@ -485,18 +473,10 @@ export interface ManagementInterventionStreamResponse {
   data: {
     id: "management-intervention-stream" | string;
     items: ManagementInterventionStreamItem[];
-    rows: ManagementInterventionStreamItem[];
-    events: ManagementInterventionStreamItem[];
-    stream: ManagementInterventionStreamItem[];
     summary: ManagementInterventionStreamSummary;
     policy?: string;
     [key: string]: unknown;
   };
-  items: ManagementInterventionStreamItem[];
-  rows: ManagementInterventionStreamItem[];
-  events: ManagementInterventionStreamItem[];
-  stream: ManagementInterventionStreamItem[];
-  summary: ManagementInterventionStreamSummary;
   page_info: {
     next_page_token: string | null;
     total: number;
@@ -2161,16 +2141,18 @@ export interface ManagementEvidenceSummary {
 }
 
 export interface ManagementEvidenceResponse {
-  data: ManagementEvidenceItem[];
-  items: ManagementEvidenceItem[];
-  summary: ManagementEvidenceSummary;
-  facets: {
-    sourceTypes?: Record<string, number>;
-    source_types?: Record<string, number>;
-    linkTypes?: Record<string, number>;
-    link_types?: Record<string, number>;
-    credibilityTiers?: Record<string, number>;
-    credibility_tiers?: Record<string, number>;
+  data: {
+    items: ManagementEvidenceItem[];
+    summary: ManagementEvidenceSummary;
+    facets: {
+      sourceTypes?: Record<string, number>;
+      source_types?: Record<string, number>;
+      linkTypes?: Record<string, number>;
+      link_types?: Record<string, number>;
+      credibilityTiers?: Record<string, number>;
+      credibility_tiers?: Record<string, number>;
+      [key: string]: unknown;
+    };
     [key: string]: unknown;
   };
   page_info: {
