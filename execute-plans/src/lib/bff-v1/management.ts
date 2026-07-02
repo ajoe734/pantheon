@@ -1337,12 +1337,9 @@ export interface ManagementQuarterlyRankingQuery {
 export interface ManagementQuarterlyRankingWindow {
   quarter: string;
   year: number;
-  quarterNumber: number;
   quarter_number: number;
   label: string;
-  startAt: string;
   start_at: string;
-  endExclusiveAt: string;
   end_exclusive_at: string;
   timezone: "UTC" | string;
   [key: string]: unknown;
@@ -1351,24 +1348,17 @@ export interface ManagementQuarterlyRankingWindow {
 export interface ManagementQuarterlyRankingFormulaVersion {
   id: string;
   version: string;
-  formulaVersion: string;
   formula_version: string;
-  effectiveAt: string;
   effective_at: string;
-  changeType: string;
   change_type: string;
-  governanceEvidenceRefs: string[];
   governance_evidence_refs: string[];
   description?: string;
   [key: string]: unknown;
 }
 
 export interface ManagementQuarterlyRankingFormulaChangeControl {
-  versionPolicy: string;
   version_policy: string;
-  requiresGovernanceEvidence: boolean;
   requires_governance_evidence: boolean;
-  governanceEvidenceRefs: string[];
   governance_evidence_refs: string[];
   authority: string;
   [key: string]: unknown;
@@ -1376,36 +1366,25 @@ export interface ManagementQuarterlyRankingFormulaChangeControl {
 
 export interface ManagementQuarterlyRankingFormula {
   id: string;
-  formulaId: string;
   formula_id: string;
   version: string;
-  formulaVersion: string;
   formula_version: string;
   weights: Record<string, number>;
-  scoreField: string;
   score_field: string;
   components: Array<Record<string, unknown>>;
   basis: string;
   policy: string;
-  governanceEvidenceRefs: string[];
   governance_evidence_refs: string[];
-  versionHistory: ManagementQuarterlyRankingFormulaVersion[];
   version_history: ManagementQuarterlyRankingFormulaVersion[];
-  changeControl: ManagementQuarterlyRankingFormulaChangeControl;
   change_control: ManagementQuarterlyRankingFormulaChangeControl;
   [key: string]: unknown;
 }
 
 export interface ManagementQuarterlyRankingFormulaSummary {
-  formulaId: string;
   formula_id: string;
-  formulaVersion: string;
   formula_version: string;
-  componentCount: number;
   component_count: number;
-  weightTotal: number;
   weight_total: number;
-  evidenceRefCount: number;
   evidence_ref_count: number;
   basis: string;
   policy: string;
@@ -1415,9 +1394,7 @@ export interface ManagementQuarterlyRankingFormulaSummary {
 export interface ManagementQuarterlyRankingFormulaResponse {
   data: ManagementQuarterlyRankingFormula;
   formula: ManagementQuarterlyRankingFormula;
-  versionHistory: ManagementQuarterlyRankingFormulaVersion[];
   version_history: ManagementQuarterlyRankingFormulaVersion[];
-  evidenceRefs: ManagementEvidenceItem[];
   evidence_refs: ManagementEvidenceItem[];
   summary: ManagementQuarterlyRankingFormulaSummary;
   meta: {
@@ -1441,19 +1418,12 @@ export interface ManagementQuarterlyRankingItem extends ManagementPersonaLeagueR
 
 export interface ManagementQuarterlyRankingSummary {
   quarter: string;
-  formulaVersion: string;
   formula_version: string;
-  personaCount: number;
   persona_count: number;
-  rankedCount: number;
   ranked_count: number;
-  returnedCount: number;
   returned_count: number;
-  topPersonaId?: string | null;
   top_persona_id?: string | null;
-  evidenceRefCount: number;
   evidence_ref_count: number;
-  redactedEvidenceCount: number;
   redacted_evidence_count: number;
   basis: string;
   [key: string]: unknown;
@@ -1462,11 +1432,9 @@ export interface ManagementQuarterlyRankingSummary {
 export interface ManagementQuarterlyRankingData {
   id: string;
   quarter: string;
-  quarterWindow: ManagementQuarterlyRankingWindow;
   quarter_window: ManagementQuarterlyRankingWindow;
   formula: ManagementQuarterlyRankingFormula;
   items: ManagementQuarterlyRankingItem[];
-  evidenceRefs: ManagementEvidenceItem[];
   evidence_refs: ManagementEvidenceItem[];
   summary: ManagementQuarterlyRankingSummary;
   [key: string]: unknown;
@@ -1682,29 +1650,17 @@ export interface ManagementQuarterlyRankingRecommendationItem {
 
 export interface ManagementQuarterlyRankingRecommendationsSummary {
   quarter: string;
-  formulaVersion: string;
   formula_version: string;
-  personaCount: number;
   persona_count: number;
-  rankedCount: number;
   ranked_count: number;
-  recommendationCount: number;
   recommendation_count: number;
-  returnedCount: number;
   returned_count: number;
-  topPersonaId?: string | null;
   top_persona_id?: string | null;
-  humanGateDecisionCount: number;
   human_gate_decision_count: number;
-  liveCapitalMutationCount: number;
   live_capital_mutation_count: number;
-  evidenceRefCount: number;
   evidence_ref_count: number;
-  redactedEvidenceCount: number;
   redacted_evidence_count: number;
-  byAction: Record<string, number>;
   by_action: Record<string, number>;
-  allowedActions: ManagementQuarterlyRankingRecommendationAction[];
   allowed_actions: ManagementQuarterlyRankingRecommendationAction[];
   basis: string;
   policy: string;
@@ -1714,17 +1670,13 @@ export interface ManagementQuarterlyRankingRecommendationsSummary {
 export interface ManagementQuarterlyRankingRecommendationsData {
   id: string;
   quarter: string;
-  quarterWindow: ManagementQuarterlyRankingWindow;
   quarter_window: ManagementQuarterlyRankingWindow;
   formula: ManagementQuarterlyRankingFormula;
   items: ManagementQuarterlyRankingRecommendationItem[];
-  evidenceRefs: ManagementEvidenceItem[];
   evidence_refs: ManagementEvidenceItem[];
   summary: ManagementQuarterlyRankingRecommendationsSummary;
   policy: string;
-  governanceDestinations: string[];
   governance_destinations: string[];
-  allowedActions: ManagementQuarterlyRankingRecommendationAction[];
   allowed_actions: ManagementQuarterlyRankingRecommendationAction[];
   [key: string]: unknown;
 }

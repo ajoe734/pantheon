@@ -221,17 +221,21 @@ def test_pm12_quarterly_ranking_returns_formula_window_and_evidence() -> None:
             assert "rankings" not in body
             assert "rankings" not in data
             assert summary["quarter"] == "2026-Q1"
-            assert summary["formulaVersion"] == "pm12-default-v1"
-            assert data["quarterWindow"]["startAt"] == "2026-01-01T00:00:00Z"
-            assert data["quarterWindow"]["endExclusiveAt"] == "2026-04-01T00:00:00Z"
+            assert summary["formula_version"] == "pm12-default-v1"
+            assert data["quarter_window"]["start_at"] == "2026-01-01T00:00:00Z"
+            assert data["quarter_window"]["end_exclusive_at"] == "2026-04-01T00:00:00Z"
             assert data["formula"]["weights"]["pnl"] == 0.35
             assert body["page_info"]["page_size"] == 1
             assert body["page_info"]["total"] >= 1
             assert items[0]["rank"] == 1
             assert items[0]["quarter"] == "2026-Q1"
             assert items[0]["scoreField"] == "overallScore"
-            assert data["evidenceRefs"]
-            assert summary["evidenceRefCount"] == len(data["evidenceRefs"])
+            assert data["evidence_refs"]
+            assert summary["evidence_ref_count"] == len(data["evidence_refs"])
+            assert "quarterWindow" not in data
+            assert "formulaVersion" not in summary
+            assert "evidenceRefs" not in data
+            assert "evidenceRefCount" not in summary
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["surfaces"]["quarterly_ranking"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/persona-league" in body["meta"]["composition_sources"]
@@ -253,18 +257,23 @@ def test_pm12_quarterly_ranking_formula_returns_weights_and_governance_trace() -
             assert response.status_code == 200, response.text
             body = response.json()
             assert body["data"] == body["formula"]
-            assert body["formula"]["formulaVersion"] == "pm12-default-v1"
+            assert body["formula"]["formula_version"] == "pm12-default-v1"
             assert body["formula"]["weights"] == {
                 "pnl": 0.35,
                 "risk": 0.25,
                 "execution": 0.25,
                 "activity": 0.15,
             }
-            assert body["summary"]["weightTotal"] == 1.0
-            assert body["summary"]["evidenceRefCount"] == len(body["evidenceRefs"])
-            assert body["versionHistory"][0]["formulaVersion"] == "pm12-default-v1"
-            assert body["versionHistory"][0]["governanceEvidenceRefs"]
-            assert body["formula"]["changeControl"]["requiresGovernanceEvidence"] is True
+            assert body["summary"]["weight_total"] == 1.0
+            assert body["summary"]["evidence_ref_count"] == len(body["evidence_refs"])
+            assert body["version_history"][0]["formula_version"] == "pm12-default-v1"
+            assert body["version_history"][0]["governance_evidence_refs"]
+            assert body["formula"]["change_control"]["requires_governance_evidence"] is True
+            assert "formulaVersion" not in body["formula"]
+            assert "weightTotal" not in body["summary"]
+            assert "evidenceRefs" not in body
+            assert "versionHistory" not in body
+            assert "changeControl" not in body["formula"]
             assert body["meta"]["version_policy"] == "formula_version_changes_require_governance_evidence"
             assert body["meta"]["surfaces"]["quarterly_ranking_formula"]["status"] == "ok"
         finally:
@@ -291,18 +300,18 @@ def test_pm12_quarterly_ranking_recommendations_are_governance_only() -> None:
             assert "recommendations" not in body
             assert "recommendations" not in data
             assert summary["quarter"] == "2026-Q1"
-            assert data["quarterWindow"]["startAt"] == "2026-01-01T00:00:00Z"
+            assert data["quarter_window"]["start_at"] == "2026-01-01T00:00:00Z"
             assert body["page_info"]["page_size"] == 3
             assert body["page_info"]["total"] >= len(items) >= 1
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["live_capital_mutation"] is False
-            assert summary["liveCapitalMutationCount"] == 0
-            assert summary["humanGateDecisionCount"] == body["page_info"]["total"]
+            assert summary["live_capital_mutation_count"] == 0
+            assert summary["human_gate_decision_count"] == body["page_info"]["total"]
             assert "human_gate_decision" in body["meta"]["governance_destinations"]
             assert "GET /bff/management/human-inbox" in body["meta"]["composition_sources"]
             assert body["meta"]["surfaces"]["quarterly_ranking_recommendations"]["status"] in {"ok", "degraded"}
 
-            allowed = set(summary["allowedActions"])
+            allowed = set(summary["allowed_actions"])
             assert allowed == {
                 "promote_to_canary_candidate",
                 "increase_research_budget",
@@ -313,6 +322,10 @@ def test_pm12_quarterly_ranking_recommendations_are_governance_only() -> None:
                 "suspend_persona",
                 "retire_persona",
             }
+            assert "quarterWindow" not in data
+            assert "allowedActions" not in summary
+            assert "humanGateDecisionCount" not in summary
+            assert "liveCapitalMutationCount" not in summary
             for recommendation in items:
                 assert recommendation["actionId"] in allowed
                 assert recommendation["recommendationType"] == "governance_advisory"

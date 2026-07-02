@@ -39204,12 +39204,9 @@ def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, 
     return {
         "quarter": quarter_id,
         "year": year,
-        "quarterNumber": quarter_number,
         "quarter_number": quarter_number,
         "label": f"{year} Q{quarter_number}",
-        "startAt": _pm12_iso_z(start_at),
         "start_at": _pm12_iso_z(start_at),
-        "endExclusiveAt": _pm12_iso_z(end_exclusive_at),
         "end_exclusive_at": _pm12_iso_z(end_exclusive_at),
         "timezone": "UTC",
     }
@@ -39219,18 +39216,12 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
     return [
         {
             "id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
-            "refId": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
             "ref_id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
             "title": "PM-12 quarterly ranking formula governance baseline",
-            "displayLabel": "PM-12 quarterly ranking formula governance baseline",
             "display_label": "PM-12 quarterly ranking formula governance baseline",
-            "sourceType": "governance_record",
             "source_type": "governance_record",
-            "sourceRef": _PM12_QUARTERLY_FORMULA_DOC_REF,
             "source_ref": _PM12_QUARTERLY_FORMULA_DOC_REF,
-            "capturedAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
             "captured_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
-            "linkType": "formula_version_governance",
             "link_type": "formula_version_governance",
             "credibility": {
                 "tier": "primary",
@@ -39238,21 +39229,10 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
                 "last_verified_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
                 "verification_method": "task_review",
             },
-            "linkedObjectSummary": {
-                "entity_type": "ranking_formula",
-                "entity_ref": "pm12-quarterly-ranking-formula",
-                "display_label": "PM-12 quarterly ranking formula",
-            },
             "linked_object_summary": {
                 "entity_type": "ranking_formula",
                 "entity_ref": "pm12-quarterly-ranking-formula",
                 "display_label": "PM-12 quarterly ranking formula",
-            },
-            "resolvedLink": {
-                "availability": "available",
-                "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
-                "display_label": "Open PM-12 integration spec",
-                "open_in_new_tab": False,
             },
             "resolved_link": {
                 "availability": "available",
@@ -39260,7 +39240,6 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
                 "display_label": "Open PM-12 integration spec",
                 "open_in_new_tab": False,
             },
-            "routeHref": _PM12_QUARTERLY_FORMULA_DOC_REF,
             "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
         }
     ]
@@ -39274,13 +39253,9 @@ def _pm12_quarter_formula_version_history() -> List[Dict[str, Any]]:
         {
             "id": f"pm12-quarterly-ranking-formula-{_PM12_LEAGUE_FORMULA_VERSION}",
             "version": _PM12_LEAGUE_FORMULA_VERSION,
-            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-            "effectiveAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
             "effective_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
-            "changeType": "baseline",
             "change_type": "baseline",
-            "governanceEvidenceRefs": evidence_ref_ids,
             "governance_evidence_refs": evidence_ref_ids,
             "description": "Baseline formula accepted for PM-12 quarterly ranking reads.",
         }
@@ -39293,23 +39268,17 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
     ]
     version_history = _pm12_quarter_formula_version_history()
     change_control = {
-        "versionPolicy": "formula_version_changes_require_governance_evidence",
         "version_policy": "formula_version_changes_require_governance_evidence",
-        "requiresGovernanceEvidence": True,
         "requires_governance_evidence": True,
-        "governanceEvidenceRefs": evidence_ref_ids,
         "governance_evidence_refs": evidence_ref_ids,
         "authority": "read_only_governance_advisory",
     }
     return {
         "id": "pm12-quarterly-ranking-formula",
-        "formulaId": "pm12-quarterly-ranking-formula",
         "formula_id": "pm12-quarterly-ranking-formula",
         "version": _PM12_LEAGUE_FORMULA_VERSION,
-        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
-        "scoreField": "overallScore",
         "score_field": "overallScore",
         "components": [
             {"key": "pnl", "label": "PnL", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]},
@@ -39319,11 +39288,8 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
         ],
         "basis": "latest_available_persona_league_metrics_with_quarter_window",
         "policy": "read_only_governance_advisory",
-        "governanceEvidenceRefs": evidence_ref_ids,
         "governance_evidence_refs": evidence_ref_ids,
-        "versionHistory": version_history,
         "version_history": version_history,
-        "changeControl": change_control,
         "change_control": change_control,
     }
 
@@ -39337,8 +39303,8 @@ def _pm12_quarter_evidence_refs(
     evidence_refs: List[Dict[str, Any]],
     quarter_window: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    start_at = _audit_datetime(quarter_window.get("startAt"))
-    end_exclusive_at = _audit_datetime(quarter_window.get("endExclusiveAt"))
+    start_at = _audit_datetime(quarter_window.get("start_at"))
+    end_exclusive_at = _audit_datetime(quarter_window.get("end_exclusive_at"))
     if start_at is None or end_exclusive_at is None:
         return []
     return [
@@ -39532,7 +39498,7 @@ def _pm12_quarterly_drilldown_payload(
         "score": score,
         "overallScore": item.get("overallScore"),
         "overall_score": item.get("overall_score") or item.get("overallScore"),
-        "formulaVersion": item.get("formulaVersion") or formula["formulaVersion"],
+        "formulaVersion": item.get("formulaVersion") or formula["formula_version"],
         "formula_version": item.get("formula_version") or formula["formula_version"],
         "componentCount": len(contributions),
         "component_count": len(contributions),
@@ -40602,7 +40568,7 @@ async def bff_management_quarterly_ranking_formula(
     snapshot_at = utc_now()
     formula = _pm12_quarter_formula_payload()
     evidence_refs = _pm12_quarter_formula_governance_evidence_refs()
-    version_history = list(formula.get("versionHistory") or [])
+    version_history = list(formula.get("version_history") or [])
     formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
     evidence_surface = _composed_surface_status(
         snapshot_at=snapshot_at,
@@ -40611,15 +40577,10 @@ async def bff_management_quarterly_ranking_formula(
     )
     weights = formula.get("weights") if isinstance(formula.get("weights"), dict) else {}
     summary = {
-        "formulaId": formula["formulaId"],
         "formula_id": formula["formula_id"],
-        "formulaVersion": formula["formulaVersion"],
         "formula_version": formula["formula_version"],
-        "componentCount": len(formula.get("components") or []),
         "component_count": len(formula.get("components") or []),
-        "weightTotal": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
         "weight_total": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
-        "evidenceRefCount": len(evidence_refs),
         "evidence_ref_count": len(evidence_refs),
         "basis": formula["basis"],
         "policy": formula["policy"],
@@ -40627,9 +40588,7 @@ async def bff_management_quarterly_ranking_formula(
     return {
         "data": formula,
         "formula": formula,
-        "versionHistory": version_history,
         "version_history": version_history,
-        "evidenceRefs": evidence_refs,
         "evidence_refs": evidence_refs,
         "summary": summary,
         "meta": {
@@ -40694,30 +40653,21 @@ async def bff_management_quarterly_ranking(
     top_item = ranked_items[0] if ranked_items else None
     summary = {
         "quarter": quarter_window["quarter"],
-        "formulaVersion": formula["formulaVersion"],
         "formula_version": formula["formula_version"],
-        "personaCount": len(rows),
         "persona_count": len(rows),
-        "rankedCount": total,
         "ranked_count": total,
-        "returnedCount": len(page_items),
         "returned_count": len(page_items),
-        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
         "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
-        "evidenceRefCount": len(public_evidence_refs),
         "evidence_ref_count": len(public_evidence_refs),
-        "redactedEvidenceCount": redacted_count,
         "redacted_evidence_count": redacted_count,
         "basis": formula["basis"],
     }
     data = {
         "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
         "quarter": quarter_window["quarter"],
-        "quarterWindow": quarter_window,
         "quarter_window": quarter_window,
         "formula": formula,
         "items": page_items,
-        "evidenceRefs": public_evidence_refs,
         "evidence_refs": public_evidence_refs,
         "summary": summary,
     }
@@ -40829,7 +40779,6 @@ async def bff_management_quarterly_ranking_drilldown(
         degraded_message="Quarterly ranking drilldown is degraded because one or more source surfaces are degraded.",
     )
     summary = dict(drilldown["summary"])
-    summary["redactedEvidenceCount"] = redacted_count
     summary["redacted_evidence_count"] = redacted_count
 
     return {
@@ -40910,29 +40859,17 @@ async def bff_management_quarterly_ranking_recommendations(
     top_item = ranked_items[0] if ranked_items else None
     summary = {
         "quarter": quarter_window["quarter"],
-        "formulaVersion": formula["formulaVersion"],
         "formula_version": formula["formula_version"],
-        "personaCount": len(rows),
         "persona_count": len(rows),
-        "rankedCount": len(ranked_items),
         "ranked_count": len(ranked_items),
-        "recommendationCount": total,
         "recommendation_count": total,
-        "returnedCount": len(page_items),
         "returned_count": len(page_items),
-        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
         "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
-        "humanGateDecisionCount": total,
         "human_gate_decision_count": total,
-        "liveCapitalMutationCount": 0,
         "live_capital_mutation_count": 0,
-        "evidenceRefCount": len(public_evidence_refs),
         "evidence_ref_count": len(public_evidence_refs),
-        "redactedEvidenceCount": redacted_count,
         "redacted_evidence_count": redacted_count,
-        "byAction": action_counts,
         "by_action": action_counts,
-        "allowedActions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
         "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
         "basis": formula["basis"],
         "policy": "read_only_governance_advisory",
@@ -40981,17 +40918,13 @@ async def bff_management_quarterly_ranking_recommendations(
     data = {
         "id": f"pm12-quarterly-ranking-recommendations-{quarter_window['quarter'].lower()}",
         "quarter": quarter_window["quarter"],
-        "quarterWindow": quarter_window,
         "quarter_window": quarter_window,
         "formula": formula,
         "items": page_items,
-        "evidenceRefs": public_evidence_refs,
         "evidence_refs": public_evidence_refs,
         "summary": summary,
         "policy": "read_only_governance_advisory",
-        "governanceDestinations": governance_destinations,
         "governance_destinations": governance_destinations,
-        "allowedActions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
         "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
     }
     return {
