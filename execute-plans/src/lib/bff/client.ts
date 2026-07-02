@@ -78,29 +78,217 @@ import type {
 } from "@/lib/bff/types";
 
 export type PersonaFleetHealthStatus = "healthy" | "degraded" | "critical";
+export type PersonaFleetCompetitionTrack =
+  | "paper_challenger"
+  | "canary_challenger"
+  | "live_incumbent"
+  | "watchlist_incumbent"
+  | "risk_off_excluded"
+  | (string & {});
+export type PersonaFleetCapitalScope =
+  | "none"
+  | "paper"
+  | "canary"
+  | "live"
+  | "risk_off"
+  | (string & {});
+export type PersonaFleetReviewStatus =
+  | "none"
+  | "promotion_pending"
+  | "live_pending"
+  | "quarterly_pending"
+  | "incident_resume_pending"
+  | "rejected"
+  | (string & {});
+export type PersonaFleetProductLifecycleState =
+  | "paper_provisioning"
+  | "paper_running"
+  | "paper_warming_up"
+  | "paper_ineligible"
+  | "paper_eligible"
+  | "promotion_review_pending"
+  | "promotion_rejected"
+  | "canary_running"
+  | "live_review_pending"
+  | "live_running"
+  | "quarterly_review_pending"
+  | "watchlist"
+  | "auto_reduced"
+  | "risk_off"
+  | "frozen"
+  | "retired"
+  | "setup_failed"
+  | "repair_required"
+  | (string & {});
+export type PersonaFleetHumanReviewRequirement =
+  | "promotion_to_canary"
+  | "canary_to_live"
+  | "quarterly_rebalance"
+  | "resume_after_incident"
+  | "retire"
+  | (string & {});
+export type PersonaFleetRowActionId =
+  | "view_persona"
+  | "monitor_paper_runtime"
+  | "monitor_canary_runtime"
+  | "monitor_live_runtime"
+  | "submit_live_review"
+  | "open_human_review"
+  | "open_incident_review"
+  | "repair_paper_setup"
+  | (string & {});
+
+export interface PersonaFleetHealth {
+  status: PersonaFleetHealthStatus | string;
+  severity: string;
+  score: number;
+  reasons: string[];
+  latest_telemetry_at?: string | null;
+  active_incident_count: number;
+  [key: string]: unknown;
+}
+
+export interface PersonaFleetPaperRuntimeProjection {
+  runtime_binding_id?: string | null;
+  runtimeBindingId?: string | null;
+  runtime_id?: string | null;
+  runtimeId?: string | null;
+  status?: string | null;
+  heartbeat_status?: string | null;
+  heartbeatStatus?: string | null;
+  [key: string]: unknown;
+}
+
+export interface PersonaFleetRepairProjection {
+  retryable?: boolean;
+  failed_step?: string | null;
+  failedStep?: string | null;
+  repair_url?: string | null;
+  repairUrl?: string | null;
+  [key: string]: unknown;
+}
+
+export interface PersonaFleetReadinessProjection {
+  persona_id?: string;
+  personaId?: string;
+  product_lifecycle_state?: PersonaFleetProductLifecycleState;
+  productLifecycleState?: PersonaFleetProductLifecycleState;
+  setup_status?: string;
+  setupStatus?: string;
+  paper_runtime?: PersonaFleetPaperRuntimeProjection;
+  paperRuntime?: PersonaFleetPaperRuntimeProjection;
+  competition_track?: PersonaFleetCompetitionTrack;
+  competitionTrack?: PersonaFleetCompetitionTrack;
+  capital_scope?: PersonaFleetCapitalScope;
+  capitalScope?: PersonaFleetCapitalScope;
+  required_human_review?: PersonaFleetHumanReviewRequirement | null;
+  requiredHumanReview?: PersonaFleetHumanReviewRequirement | null;
+  repair?: PersonaFleetRepairProjection;
+  trace_id?: string;
+  traceId?: string;
+  snapshot_at?: string;
+  snapshotAt?: string;
+  [key: string]: unknown;
+}
+
+export interface PersonaFleetCompetitionStanding {
+  standing_id?: string;
+  standingId?: string;
+  persona_id?: string;
+  personaId?: string;
+  cohort_id?: string;
+  cohortId?: string;
+  competition_track?: PersonaFleetCompetitionTrack;
+  competitionTrack?: PersonaFleetCompetitionTrack;
+  cohort_rank?: number;
+  cohortRank?: number;
+  score_snapshot_id?: string;
+  scoreSnapshotId?: string;
+  promotion_score?: number;
+  promotionScore?: number;
+  product_lifecycle_state?: PersonaFleetProductLifecycleState;
+  productLifecycleState?: PersonaFleetProductLifecycleState;
+  capital_scope?: PersonaFleetCapitalScope;
+  capitalScope?: PersonaFleetCapitalScope;
+  human_review_state?: PersonaFleetReviewStatus;
+  humanReviewState?: PersonaFleetReviewStatus;
+  incumbent_persona_id?: string | null;
+  incumbentPersonaId?: string | null;
+  challenger_delta_score?: number | null;
+  challengerDeltaScore?: number | null;
+  replacement_risk?: string;
+  replacementRisk?: string;
+  snapshot_at?: string;
+  snapshotAt?: string;
+  [key: string]: unknown;
+}
+
+export interface PersonaFleetRowAction {
+  action_id: PersonaFleetRowActionId;
+  actionId: PersonaFleetRowActionId;
+  label: string;
+  href: string;
+  requires_human_review: boolean;
+  requiresHumanReview: boolean;
+  startup_wizard_visible: false;
+  startupWizardVisible: false;
+  legacy_startup_wizard_hidden: true;
+  legacyStartupWizardHidden: true;
+  [key: string]: unknown;
+}
 
 export interface PersonaFleetItem {
   id: string;
   persona_id: string;
-  persona: Record<string, unknown>;
-  health: {
-    status: PersonaFleetHealthStatus;
-    severity: string;
-    score: number;
-    reasons: string[];
-    latest_telemetry_at?: string | null;
-    active_incident_count: number;
-  };
-  bindings: Array<Record<string, unknown>>;
-  capitalPools: Array<Record<string, unknown>>;
-  capital_pools: Array<Record<string, unknown>>;
-  runtimeBindings: Array<Record<string, unknown>>;
-  runtime_bindings: Array<Record<string, unknown>>;
-  telemetrySummary: Record<string, unknown>;
-  telemetry_summary: Record<string, unknown>;
-  training: Record<string, unknown>;
-  evolution: Record<string, unknown>;
-  allowedActions: Record<string, unknown>;
+  personaId?: string;
+  persona?: Record<string, unknown>;
+  name?: string;
+  persona_name?: string;
+  personaName?: string;
+  mode?: string;
+  state?: string;
+  status?: PersonaFleetHealthStatus | string;
+  health: PersonaFleetHealth | PersonaFleetHealthStatus | string;
+  score?: number;
+  bindings?: Array<Record<string, unknown>>;
+  capitalPools?: Array<Record<string, unknown>>;
+  capital_pools?: Array<Record<string, unknown>>;
+  runtimeBindings?: Array<Record<string, unknown>>;
+  runtime_bindings?: Array<Record<string, unknown>>;
+  telemetrySummary?: Record<string, unknown>;
+  telemetry_summary?: Record<string, unknown>;
+  training?: Record<string, unknown>;
+  evolution?: Record<string, unknown>;
+  allowedActions?: Record<string, unknown>;
+  deployment_stage?: string;
+  deploymentStage?: string;
+  product_lifecycle_state?: PersonaFleetProductLifecycleState;
+  productLifecycleState?: PersonaFleetProductLifecycleState;
+  competition_track?: PersonaFleetCompetitionTrack;
+  competitionTrack?: PersonaFleetCompetitionTrack;
+  capital_scope?: PersonaFleetCapitalScope;
+  capitalScope?: PersonaFleetCapitalScope;
+  paper_runtime_status?: string;
+  paperRuntimeStatus?: string;
+  evaluation_status?: string;
+  evaluationStatus?: string;
+  review_status?: PersonaFleetReviewStatus;
+  reviewStatus?: PersonaFleetReviewStatus;
+  required_human_review?: PersonaFleetHumanReviewRequirement | null;
+  requiredHumanReview?: PersonaFleetHumanReviewRequirement | null;
+  live_status?: string;
+  liveStatus?: string;
+  setup_failed_step?: string | null;
+  setupFailedStep?: string | null;
+  repair_action?: PersonaFleetRowAction | null;
+  repairAction?: PersonaFleetRowAction | null;
+  readiness_projection?: PersonaFleetReadinessProjection;
+  readinessProjection?: PersonaFleetReadinessProjection;
+  competition_standing?: PersonaFleetCompetitionStanding;
+  competitionStanding?: PersonaFleetCompetitionStanding;
+  row_action?: PersonaFleetRowAction;
+  rowAction?: PersonaFleetRowAction;
+  [key: string]: unknown;
 }
 
 export interface PersonaFleetAggregate {
@@ -114,6 +302,10 @@ export interface PersonaFleetAggregate {
     healthy_personas: number;
     bound_personas: number;
     runtime_bound_personas: number;
+    competition_tracks?: Record<string, number>;
+    capital_scopes?: Record<string, number>;
+    review_states?: Record<string, number>;
+    competition_default?: string;
   };
   page_info: {
     next_page_token: string | null;
@@ -296,6 +488,40 @@ function emptyPersonaFleetAggregate(): PersonaFleetAggregate {
       decisions: [],
     },
     allowedActions: {},
+    product_lifecycle_state: "watchlist",
+    productLifecycleState: "watchlist",
+    competition_track: "watchlist_incumbent",
+    competitionTrack: "watchlist_incumbent",
+    capital_scope: "none",
+    capitalScope: "none",
+    review_status: "none",
+    reviewStatus: "none",
+    required_human_review: null,
+    requiredHumanReview: null,
+    row_action: {
+      action_id: "view_persona",
+      actionId: "view_persona",
+      label: "查看 persona",
+      href: `/personas/${persona.id}`,
+      requires_human_review: false,
+      requiresHumanReview: false,
+      startup_wizard_visible: false,
+      startupWizardVisible: false,
+      legacy_startup_wizard_hidden: true,
+      legacyStartupWizardHidden: true,
+    },
+    rowAction: {
+      action_id: "view_persona",
+      actionId: "view_persona",
+      label: "查看 persona",
+      href: `/personas/${persona.id}`,
+      requires_human_review: false,
+      requiresHumanReview: false,
+      startup_wizard_visible: false,
+      startupWizardVisible: false,
+      legacy_startup_wizard_hidden: true,
+      legacyStartupWizardHidden: true,
+    },
   })) as PersonaFleetItem[];
   return {
     data: items,
@@ -308,6 +534,29 @@ function emptyPersonaFleetAggregate(): PersonaFleetAggregate {
       healthy_personas: 0,
       bound_personas: 0,
       runtime_bound_personas: 0,
+      competition_tracks: {
+        paper_challenger: 0,
+        canary_challenger: 0,
+        live_incumbent: 0,
+        watchlist_incumbent: items.length,
+        risk_off_excluded: 0,
+      },
+      capital_scopes: {
+        none: items.length,
+        paper: 0,
+        canary: 0,
+        live: 0,
+        risk_off: 0,
+      },
+      review_states: {
+        none: items.length,
+        promotion_pending: 0,
+        live_pending: 0,
+        quarterly_pending: 0,
+        incident_resume_pending: 0,
+        rejected: 0,
+      },
+      competition_default: "unified_paper_canary_live_cohort",
     },
     page_info: {
       next_page_token: null,
@@ -1077,6 +1326,9 @@ export type OodaPacketListQuery = {
 export type PersonaFleetQuery = {
   state?: string;
   health?: string;
+  competition_track?: PersonaFleetCompetitionTrack | string;
+  capital_scope?: PersonaFleetCapitalScope | string;
+  review_status?: PersonaFleetReviewStatus | string;
   page_token?: string;
   page_size?: number;
 };
