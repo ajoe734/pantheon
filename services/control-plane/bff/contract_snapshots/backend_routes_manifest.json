@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-06-28",
+    "snapshot_date": "2026-07-02",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 576,
+    "total_routes": 577,
     "status_values": [
       "implemented",
       "alias",
@@ -3027,6 +3027,12 @@
     {
       "method": "GET",
       "path": "/bff/management/evidence",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/evidence/{param}",
       "family": "unknown",
       "status": "implemented"
     },

@@ -25,6 +25,27 @@ contract, BFF-owned link resolution, command plane, task/reviewer bridge,
 readiness evidence panels, artifact detail pages, and lineage APIs. It should
 not create a parallel evidence, task, reviewer, or URL-resolution system.
 
+## First-Tier Placement Judgment
+
+Evidence belongs near the top of the management information architecture only
+because it is the trust substrate for readiness, artifacts, decisions,
+assertions, and incident follow-up. That architectural importance does not by
+itself justify first-tier navigation placement.
+
+The current page was effectively promoted on strategic importance, not on
+shipped operator capability. As implemented, it is still closer to a read-only
+registry than an operations surface: it can show that evidence records exist,
+but it cannot yet let an operator trace, assign, remediate, or close evidence
+work. That is an IA mismatch.
+
+Production rule:
+
+- keep it in first-tier navigation only after Evidence Operations can answer
+  "where is the proof, who/what relies on it, what is wrong, who owns it, and
+  what action can I take now?";
+- otherwise move it to Advanced Registry or System Diagnostics until those
+  operation capabilities ship.
+
 ## Current Live Symptom
 
 The hosted dev BFF currently returns two management evidence rows:
@@ -717,6 +738,21 @@ Acceptance:
   exists.
 - Detail view shows chain empty state instead of pretending there is no chain
   concern.
+
+Implementation progress on 2026-07-02:
+
+- `/bff/management/evidence/{ref_id}` now composes a management detail
+  aggregate from the existing KW-03 evidence detail read model.
+- Detail responses include source, linked object link, actionability,
+  relationships, chain, operation placeholder, task/audit placeholders,
+  allowed actions, and disabled action reasons.
+- Relationship buckets are BFF-shaped for artifacts, readiness, decisions,
+  assertions, notes, memory, insights, strategy specs, and experiments.
+- Chain nodes/edges are BFF-composed from source -> evidence -> related
+  downstream entities, with degraded reasons when source traceability is weak.
+- Assertion/readiness/operation/task/audit surfaces are explicit in
+  `meta.surfaces`; missing canonical projections are shown as unavailable or
+  degraded rather than fabricated.
 
 ### Phase 2 - Operation State And Commands
 

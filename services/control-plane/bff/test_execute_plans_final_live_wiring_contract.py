@@ -61,6 +61,7 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/management/cockpit"),
     ("GET", "/bff/management/cost-attribution"),
     ("GET", "/bff/management/evidence"),
+    ("GET", "/bff/management/evidence/{ref_id}"),
     ("GET", "/bff/management/evolution-journal"),
     ("GET", "/bff/management/governance-ledger"),
     ("GET", "/bff/management/hiq-backlog"),
