@@ -171,11 +171,14 @@ def test_management_fleet_composes_personas_ooda_capital_runtime_and_human_gate(
     assert meta_surfaces["persona_league"]["source"] != "missing"
     assert meta_surfaces["ooda_control_room_status"]["status"] == "ok"
     assert meta_surfaces["ooda_control_room_status"]["source"] != "missing"
-    assert data["execution_boundary"] == {
-        "approved_artifacts_only": True,
-        "live_capital_side_effects": False,
-        "human_gate_required_for_capital_changes": True,
-    }
+    boundary = data["execution_boundary"]
+    assert boundary["approved_artifacts_only"] is True
+    assert boundary["live_capital_side_effects"] is False
+    assert boundary["human_gate_required_for_capital_changes"] is True
+    assert boundary["competition_default"] == "unified_paper_canary_live_cohort"
+    assert boundary["separate_paper_live_datasets"] is False
+    assert boundary["mode_selector"]["semantics"] == "command_safety_context_only"
+    assert boundary["mode_selector"]["does_not_filter_competition_tracks"] is True
 
 
 def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
@@ -201,6 +204,15 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     assert tw["lastMutation"] == "2026-06-07"
     assert tw["perfDelta"] == 0.095
     assert tw["currentWork"] == "TW corporate-action and session-boundary evidence review"
+    assert tw["competitionTrack"] == "paper_challenger"
+    assert tw["capitalScope"] == "paper"
+    assert tw["readinessProjection"]["setup_status"] == "paper_runtime_active"
+    assert tw["readinessProjection"]["competition_track"] == "paper_challenger"
+    assert tw["readinessProjection"]["required_human_review"] == "promotion_to_canary"
+    assert tw["rowAction"]["actionId"] == "submit_live_review"
+    assert tw["rowAction"]["label"] == "送交實盤審核"
+    assert tw["rowAction"]["startupWizardVisible"] is False
+    assert "啟動精靈" not in tw["rowAction"]["label"]
     assert tw["dataSourceStatus"]["state"] == "partial_readback"
     assert tw["dataSourceStatus"]["order_side_effects_allowed"] is False
     assert tw["dataSourceStatus"]["capital_side_effects_allowed"] is False
