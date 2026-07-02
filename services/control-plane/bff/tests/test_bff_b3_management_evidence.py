@@ -84,6 +84,32 @@ def _evidence_client() -> Iterator[TestClient]:
                         "route_href": "/knowledge/evidence/evref-b3-alert-001",
                         "created_at": "2026-05-23T09:05:00Z",
                     },
+                    "evref-b3-producer-001": {
+                        "ref_id": "evref-b3-producer-001",
+                        "evidence_type": "artifact",
+                        "link_type": None,
+                        "source_document": {
+                            "title": "TW momentum candidate",
+                            "captured_at": "2026-06-15T13:06:00Z",
+                        },
+                        "credibility": {
+                            "tier": "producer_record",
+                            "verified": True,
+                            "last_verified_at": "2026-06-15T13:06:00Z",
+                            "verification_method": "research_orchestrator_projection",
+                        },
+                        "linked_object_summary": {
+                            "entity_type": "artifact",
+                            "entity_ref": "rart-20260615-002",
+                            "display_label": "TW momentum candidate artifact",
+                        },
+                        "resolved_link": {
+                            "availability": "unavailable",
+                            "route_href": None,
+                        },
+                        "route_href": "/knowledge/evidence/evref-b3-producer-001",
+                        "created_at": "2026-06-15T13:06:00Z",
+                    },
                 },
                 indent=2,
             ),
@@ -135,7 +161,86 @@ def test_management_evidence_composes_explorer_envelope_with_filters() -> None:
         assert item["sourceType"] == "metric"
         assert item["linkedObjectSummary"]["entity_ref"] == "exp-b3-alpha"
         assert item["routeHref"] == "/knowledge/evidence/evref-b3-metric-001"
+        assert item["actionability"] == {
+            "state": "traceable",
+            "severity": "ok",
+            "reasons": [],
+            "can_trace": True,
+            "can_open_source": True,
+            "can_open_linked_object": True,
+        }
+        assert item["allowedActions"]["canOpenSource"] is True
+        assert item["allowedActions"]["canOpenLinkedObject"] is True
+        assert item["allowedActions"]["canInspectChain"] is True
+        assert item["allowedActions"]["canMarkStale"] is False
+        assert item["operation"]["status"] == "none"
         assert item["redacted"] is False
+        assert payload["summary"]["traceableEvidence"] == 1
+        assert payload["summary"]["needsAttentionEvidence"] == 0
+        assert payload["facets"]["actionabilityStates"] == {"traceable": 1}
+        assert payload["meta"]["performance"]["row_count"] == 1
+        assert payload["meta"]["performance"]["filtered_total"] == 1
+        assert payload["meta"]["performance"]["timings_ms"]["total"] >= 0
+
+
+def test_management_evidence_marks_verified_but_untraceable_rows_as_unresolved() -> None:
+    with _evidence_client() as client:
+        response = client.get(
+            "/bff/management/evidence?ref_id=evref-b3-producer-001",
+            headers=ADMIN_HEADERS,
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["summary"]["totalEvidence"] == 1
+        assert payload["summary"]["verifiedEvidence"] == 1
+        assert payload["summary"]["traceableEvidence"] == 0
+        assert payload["summary"]["unresolvedSourceEvidence"] == 1
+        assert payload["summary"]["needsAttentionEvidence"] == 1
+        assert payload["facets"]["actionabilityStates"] == {"unresolved_source": 1}
+
+        item = payload["items"][0]
+        assert item["id"] == "evref-b3-producer-001"
+        assert item["credibility"]["verified"] is True
+        assert item["actionability"]["state"] == "unresolved_source"
+        assert item["actionability"]["severity"] == "warning"
+        assert item["actionability"]["can_trace"] is False
+        assert item["actionability"]["can_open_source"] is False
+        assert item["actionability"]["can_open_linked_object"] is True
+        assert item["actionability"]["reasons"] == [
+            "missing_source_type",
+            "missing_source_ref",
+            "missing_link_type",
+            "resolved_link_unavailable",
+        ]
+        assert item["linkedObjectLink"] == {
+            "availability": "available",
+            "route_href": "/management/artifacts/rart-20260615-002",
+            "display_label": "TW momentum candidate artifact",
+            "entity_type": "artifact",
+            "entity_ref": "rart-20260615-002",
+        }
+        assert item["allowedActions"] == {
+            "canOpenSource": False,
+            "canOpenLinkedObject": True,
+            "canInspectChain": True,
+            "canMarkStale": False,
+            "canRequestEvidence": False,
+            "canCreateDispositionTask": False,
+            "canAssignReviewer": False,
+        }
+        assert item["disabledActionReasons"]["canOpenSource"] == (
+            "Source link is unavailable or incomplete."
+        )
+        assert "not implemented yet" in item["disabledActionReasons"]["canMarkStale"]
+        assert item["operation"] == {
+            "status": "none",
+            "owner": None,
+            "reviewer": None,
+            "task_refs": [],
+            "last_action_at": None,
+        }
+        assert payload["meta"]["performance"]["timings_ms"]["read_store_load"] >= 0
 
 
 def test_management_evidence_preserves_capability_redaction() -> None:
