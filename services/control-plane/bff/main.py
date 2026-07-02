@@ -25671,48 +25671,33 @@ def _management_portfolio_book_exposure_item(entry: Dict[str, Any]) -> Dict[str,
         if str(value).strip()
     ]
     risk_state = _management_exposure_risk_state(utilization)
+    available_budget = (
+        round(risk_budget - current_exposure, 6)
+        if risk_budget is not None and current_exposure is not None
+        else None
+    )
     return {
         "id": f"portfolio-book-exposure-{pool_id or 'unassigned'}",
         "pool_id": pool_id,
-        "capitalPoolId": pool_id,
         "capital_pool_id": pool_id,
         "name": entry.get("name") or pool_id,
         "status": entry.get("status") or "unknown",
         "risk_policy_ref": entry.get("risk_policy_ref"),
-        "riskPolicyRef": entry.get("risk_policy_ref"),
         "currency": entry.get("currency"),
         "risk_budget": risk_budget,
-        "riskBudget": risk_budget,
         "current_exposure": current_exposure,
-        "currentExposure": current_exposure,
         "exposure_amount": current_exposure,
-        "exposureAmount": current_exposure,
         "risk_budget_utilization": utilization,
-        "riskBudgetUtilization": utilization,
         "risk_state": risk_state,
-        "riskState": risk_state,
         "exposure_source": exposure.get("source"),
-        "exposureSource": exposure.get("source"),
-        "available_budget": (
-            round(risk_budget - current_exposure, 6)
-            if risk_budget is not None and current_exposure is not None
-            else None
-        ),
-        "availableBudget": (
-            round(risk_budget - current_exposure, 6)
-            if risk_budget is not None and current_exposure is not None
-            else None
-        ),
+        "available_budget": available_budget,
         "risk": entry.get("risk"),
         "exposure": {
             **exposure,
             "amount": current_exposure,
             "risk_budget": risk_budget,
-            "riskBudget": risk_budget,
             "risk_budget_utilization": utilization,
-            "riskBudgetUtilization": utilization,
             "risk_state": risk_state,
-            "riskState": risk_state,
         },
         "pnl": entry.get("pnl"),
         "total_pnl": entry.get("total_pnl"),
@@ -25727,16 +25712,6 @@ def _management_portfolio_book_exposure_item(entry: Dict[str, Any]) -> Dict[str,
         "paper_runtime_count": entry.get("paper_runtime_count", 0),
         "live_runtime_count": entry.get("live_runtime_count", 0),
         "deployment_stages": entry.get("deployment_stages") or [],
-        "sourceRefs": {
-            "runtimeIds": runtime_ids,
-            "runtime_ids": runtime_ids,
-            "bindingIds": binding_ids,
-            "binding_ids": binding_ids,
-            "deploymentIds": deployment_ids,
-            "deployment_ids": deployment_ids,
-            "capitalPoolIds": [pool_id] if pool_id else [],
-            "capital_pool_ids": [pool_id] if pool_id else [],
-        },
         "source_refs": {
             "runtime_ids": runtime_ids,
             "binding_ids": binding_ids,
@@ -25744,7 +25719,6 @@ def _management_portfolio_book_exposure_item(entry: Dict[str, Any]) -> Dict[str,
             "capital_pool_ids": [pool_id] if pool_id else [],
         },
         "links": {
-            "capitalPool": _management_link("/bff/capital-pools", pool_id),
             "capital_pool": _management_link("/bff/capital-pools", pool_id),
         },
     }
@@ -25959,7 +25933,6 @@ def _management_portfolio_holding_entry(
         "runtime_binding_id": runtime_binding_id,
         "deployment_plan_id": plan_id,
         "capital_pool_id": capital_pool_id,
-        "capitalPoolId": capital_pool_id,
         "capital_pool": {
             "id": capital_pool_id,
             "name": capital_pool.get("name") or capital_pool_id,
@@ -25967,14 +25940,11 @@ def _management_portfolio_holding_entry(
             "risk_policy_ref": capital_pool.get("risk_policy_ref"),
         },
         "persona_id": persona_id,
-        "personaId": persona_id,
         "persona_capital_binding_id": persona_binding_id,
         "strategy_id": strategy_id,
-        "strategyId": strategy_id,
         "artifact_id": artifact_id,
         "artifact_version": artifact_version,
         "deployment_stage": deployment_stage,
-        "deploymentStage": deployment_stage,
         "status": status,
         "instrument": {
             "symbol": symbol,
@@ -25990,11 +25960,8 @@ def _management_portfolio_holding_entry(
         "side": side,
         "quantity": quantity,
         "average_price": average_price,
-        "avgPrice": average_price,
         "mark_price": mark_price,
-        "markPrice": mark_price,
         "market_value": market_value,
-        "marketValue": market_value,
         "notional": notional,
         "exposure": exposure,
         "weight": weight,
@@ -26028,7 +25995,6 @@ def _management_portfolio_holding_entry(
         },
         "links": {
             "runtime": _management_link("/bff/runtimes", runtime_id),
-            "capitalPool": _management_link("/bff/capital-pools", capital_pool_id),
             "capital_pool": _management_link("/bff/capital-pools", capital_pool_id),
             "persona": _management_link("/bff/personas", persona_id),
             "strategy": _management_link("/bff/strategies", strategy_id),
@@ -29016,7 +28982,7 @@ async def bff_management_portfolio_book_exposure(
         runtime_id
         for item in exposure_items
         for runtime_id in (
-            (item.get("sourceRefs") or {}).get("runtimeIds") or []
+            (item.get("source_refs") or {}).get("runtime_ids") or []
         )
         if str(runtime_id).strip()
     }
@@ -29071,53 +29037,32 @@ async def bff_management_portfolio_book_exposure(
 
     summary = {
         "exposure_count": total,
-        "exposureCount": total,
         "returned_exposure_count": len(page_items),
-        "returnedExposureCount": len(page_items),
         "total_pools": total,
-        "totalPools": total,
         "active_pool_count": active_pool_count,
-        "activePoolCount": active_pool_count,
         "risk_budget_total": risk_budget_total,
-        "riskBudgetTotal": risk_budget_total,
         "current_exposure_total": current_exposure_total,
-        "currentExposureTotal": current_exposure_total,
         "available_budget_total": available_budget_total,
-        "availableBudgetTotal": available_budget_total,
         "risk_budget_utilization": utilization,
-        "riskBudgetUtilization": utilization,
         "over_budget_count": over_budget_count,
-        "overBudgetCount": over_budget_count,
         "near_limit_count": near_limit_count,
-        "nearLimitCount": near_limit_count,
         "unknown_exposure_count": unknown_exposure_count,
-        "unknownExposureCount": unknown_exposure_count,
         "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
-        "telemetryRuntimeCount": portfolio_telemetry["runtime_count"],
         "total_pnl": portfolio_telemetry["total_pnl"],
-        "totalPnl": portfolio_telemetry["total_pnl"],
         "max_drawdown": portfolio_telemetry["max_drawdown"],
-        "maxDrawdown": portfolio_telemetry["max_drawdown"],
         "average_fill_rate": portfolio_telemetry["average_fill_rate"],
-        "averageFillRate": portfolio_telemetry["average_fill_rate"],
         "total_trades": portfolio_telemetry["total_trades"],
-        "totalTrades": portfolio_telemetry["total_trades"],
         "latest_telemetry_at": portfolio_telemetry["latest_collected_at"],
-        "latestTelemetryAt": portfolio_telemetry["latest_collected_at"],
         "basis": "capital_pool_exposure_with_runtime_telemetry",
     }
     data = {
         "id": "pm12-portfolio-book-exposure",
         "summary": summary,
         "items": page_items,
-        "exposures": page_items,
     }
 
     return {
         "data": data,
-        "items": page_items,
-        "exposures": page_items,
-        "summary": summary,
         "page_info": {
             "next_page_token": next_page_token,
             "total": total,
@@ -29351,10 +29296,7 @@ async def bff_management_portfolio_book_holdings(
         "data": {
             "summary": summary,
             "items": page_items,
-            "holdings": page_items,
         },
-        "items": page_items,
-        "summary": summary,
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
     }
@@ -29386,7 +29328,7 @@ async def bff_management_portfolio_book_positions(
     )
 
     positions: List[Dict[str, Any]] = []
-    for item in holdings_payload.get("items", []):
+    for item in _management_payload_items(holdings_payload):
         if not isinstance(item, dict):
             continue
         position = dict(item)
@@ -29400,10 +29342,9 @@ async def bff_management_portfolio_book_positions(
         )
         position["id"] = position_id
         position["position_id"] = position_id
-        position["positionId"] = position_id
         positions.append(position)
 
-    holding_summary = dict(holdings_payload.get("summary") or {})
+    holding_summary = dict(_management_payload_summary(holdings_payload) or {})
     summary = {
         "position_count": holding_summary.get("holding_count", len(positions)),
         "returned_position_count": holding_summary.get("returned_holding_count", len(positions)),
@@ -29445,11 +29386,7 @@ async def bff_management_portfolio_book_positions(
         "data": {
             "summary": summary,
             "items": positions,
-            "positions": positions,
         },
-        "items": positions,
-        "positions": positions,
-        "summary": summary,
         "page_info": page_info,
         "meta": meta,
     }
