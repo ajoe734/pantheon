@@ -1367,12 +1367,11 @@ def create_trading_room_router(
             suggestion="GET the intent or event first and supply the returned ETag in If-Match",
         )
 
-    def _idempotency_scope(identity: Dict[str, Any], endpoint: str) -> str:
-        tenant_id = identity.get("tenant_id", "unknown")
-        user_id = identity.get("user_id", "unknown")
-        return f"{tenant_id}:{user_id}:{endpoint}"
+    def _idempotency_scope(identity: Any, endpoint: str) -> str:
+        scope = _workspace_scope(identity)
+        return f"{scope['tenant_id']}:{scope['user_id'] or 'unknown'}:{endpoint}"
 
-    def _check_idempotency(identity: Dict[str, Any], endpoint: str, key: str) -> None:
+    def _check_idempotency(identity: Any, endpoint: str, key: str) -> None:
         if store.check_and_record_idempotency_key(_idempotency_scope(identity, endpoint), key):
             ErrorCode = _error_code_enum()
 
@@ -1619,7 +1618,7 @@ def create_trading_room_router(
         event: Dict[str, Any],
         decision_record: Dict[str, Any],
         body: TraderDecisionRequest,
-        identity: Dict[str, Any],
+        identity: Any,
         intent_id: str,
         x_request_id: str,
     ) -> Dict[str, Any]:
@@ -1637,10 +1636,16 @@ def create_trading_room_router(
         if size_hint not in {"small", "medium", "large", "full_position"}:
             size_hint = None
 
+        scope = _workspace_scope(identity)
+        claims = getattr(identity, "claims", None)
+        if not isinstance(claims, dict):
+            claims = identity.get("claims", {}) if isinstance(identity, dict) else {}
+        session_id = (claims or {}).get("session_id") if isinstance(claims, dict) else None
+
         intent = TradingIntent(
             intent_id=intent_id,
-            operator_id=str(identity.get("user_id", "unknown")),
-            session_id=identity.get("session_id"),
+            operator_id=str(scope["user_id"] or "unknown"),
+            session_id=session_id,
             intent_type=_intent_type_for_action(action),  # type: ignore[arg-type]
             direction=_direction_for_action(action, modifications),  # type: ignore[arg-type]
             subject=TradingIntentSubject(**subject),
@@ -1682,9 +1687,10 @@ def create_trading_room_router(
             if kind in queue_counts:
                 queue_counts[kind] += 1
 
+        scope = _workspace_scope(identity)
         aggregate = TradingRoomAggregate(
             spec_version="1.0",
-            user_scope_ref=f"operator:{identity.get('user_id', 'unknown')}",
+            user_scope_ref=f"operator:{scope['user_id'] or 'unknown'}",
             strategies=[],
             queue_summary=QueueSummary(**queue_counts),
             top_decision_events=[TradingDecisionEvent(**e) for e in top_events],
@@ -2768,7 +2774,7 @@ def create_trading_room_router(
             "decision": body.decision,
             "rationale": body.rationale,
             "modifications": body.modifications,
-            "decided_by": identity.get("user_id", "unknown"),
+            "decided_by": _workspace_scope(identity)["user_id"] or "unknown",
             "decided_at": utc_now(),
         }
         store.record_trader_decision(decision_event_id, decision_record)
