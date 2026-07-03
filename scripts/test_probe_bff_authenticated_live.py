@@ -93,8 +93,10 @@ def test_request_json_accepts_expected_bff_error_envelope(monkeypatch) -> None:
                     {
                         "error": {
                             "code": "FORBIDDEN",
+                            "message": "Forbidden",
                             "details": {"precondition_failed": "role_check"},
-                        }
+                        },
+                        "meta": {"correlationId": "cid-error"},
                     }
                 ).encode("utf-8")
             ),
@@ -121,6 +123,29 @@ def test_request_json_accepts_expected_bff_error_envelope(monkeypatch) -> None:
     assert result["ok"] is True
     assert result["error_envelope"] is True
     assert result["error_code"] == "FORBIDDEN"
+    assert result["error_envelope_shape"] == {
+        "ok": True,
+        "location": "error",
+        "code_present": True,
+        "message_present": True,
+        "meta_correlation_id_present": True,
+        "outer_detail_wrapper": False,
+    }
+
+
+def test_error_envelope_shape_rejects_outer_detail_wrapper() -> None:
+    probe = _load_probe_module()
+
+    shape = probe.error_envelope_shape(
+        {
+            "detail": {"error": {"code": "FORBIDDEN", "message": "Forbidden"}},
+            "meta": {"correlationId": "cid-error"},
+        }
+    )
+
+    assert shape["ok"] is False
+    assert shape["location"] == "detail.error"
+    assert shape["outer_detail_wrapper"] is True
 
 
 def test_main_follows_management_ai_conversation_href_for_readback(tmp_path, monkeypatch) -> None:

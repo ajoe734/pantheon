@@ -135,6 +135,17 @@ function sha256_12(value) {
   return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 12);
 }
 
+function hasCanonicalBffErrorEnvelope(item) {
+  const shape = item?.error_envelope_shape && typeof item.error_envelope_shape === "object" ? item.error_envelope_shape : {};
+  return item?.error_envelope === true
+    && shape?.ok === true
+    && shape?.location === "error"
+    && shape?.code_present === true
+    && shape?.message_present === true
+    && shape?.meta_correlation_id_present === true
+    && shape?.outer_detail_wrapper === false;
+}
+
 function listFiles(dir) {
   if (!exists(dir)) return [];
   const out = [];
@@ -802,7 +813,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && rbacWriteMarkerLinkedProofs.includes(item)
   );
   const allDryRunOk = dryRun.length > 0 && dryRun.every((item) => item?.ok === true);
-  const invalidDryRunsEnvelope = invalidDryRuns.length >= 2 && invalidDryRuns.every((item) => item?.error_envelope === true);
+  const invalidDryRunsEnvelope = invalidDryRuns.length >= 2 && invalidDryRuns.every((item) => hasCanonicalBffErrorEnvelope(item));
   const invalidDryRunsNoPersistence = invalidDryRuns.length >= 2 && invalidDryRuns.every((item) =>
     item?.side_effect_check?.ok === true
     && item?.side_effect_check?.kind === "validation_rejected_before_persistence"
@@ -826,7 +837,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     const target = successDryRunByFamily.get(expectedTargetFamily);
     const targetId = target?.extracted?.["data.id"];
     const targetHash = typeof targetId === "string" && targetId.length > 0 ? sha256_12(targetId) : "";
-    return item?.error_envelope === true
+    return hasCanonicalBffErrorEnvelope(item)
       && item?.side_effect_check?.ok === true
       && item?.side_effect_check?.kind === "readback_not_persisted"
       && item?.side_effect_check?.target_family === expectedTargetFamily

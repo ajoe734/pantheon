@@ -352,6 +352,36 @@ def is_error_envelope(data: Any) -> bool:
     return bool(error_code_from(data))
 
 
+def error_envelope_shape(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {
+            "ok": False,
+            "location": "missing",
+            "code_present": False,
+            "message_present": False,
+            "meta_correlation_id_present": False,
+            "outer_detail_wrapper": False,
+        }
+    detail = data.get("detail")
+    detail_error = detail.get("error") if isinstance(detail, dict) else None
+    top_error = data.get("error") if isinstance(data.get("error"), dict) else None
+    error = top_error if isinstance(top_error, dict) else detail_error if isinstance(detail_error, dict) else {}
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    code_present = bool(str(error.get("code") or "").strip()) if isinstance(error, dict) else False
+    message_present = bool(str(error.get("message") or "").strip()) if isinstance(error, dict) else False
+    correlation_present = bool(str(meta.get("correlationId") or "").strip())
+    outer_detail_wrapper = isinstance(detail_error, dict)
+    location = "error" if isinstance(top_error, dict) else "detail.error" if outer_detail_wrapper else "missing"
+    return {
+        "ok": location == "error" and code_present and message_present and correlation_present and not outer_detail_wrapper,
+        "location": location,
+        "code_present": code_present,
+        "message_present": message_present,
+        "meta_correlation_id_present": correlation_present,
+        "outer_detail_wrapper": outer_detail_wrapper,
+    }
+
+
 def body_summary(data: Any) -> dict[str, Any]:
     if isinstance(data, dict):
         summary: dict[str, Any] = {"type": "object", "keys": sorted(data.keys())[:20]}
@@ -767,6 +797,7 @@ def request_json(
         if not isinstance(turns, list) or len(turns) < probe.min_turn_count:
             missing_paths.append(f"data.turns>={probe.min_turn_count}")
     error_code = error_code_from(parsed)
+    envelope_shape = error_envelope_shape(parsed)
     if probe.expect_error_envelope and not error_code:
         missing_paths.append("error.code")
     if probe.allowed_error_codes and error_code not in set(probe.allowed_error_codes):
@@ -796,6 +827,8 @@ def request_json(
         "error_code": error_code or None,
         "error_envelope": is_error_envelope(parsed),
     }
+    if error_code or probe.expect_error_envelope:
+        result["error_envelope_shape"] = envelope_shape
     if idempotency_key:
         result["request_idempotency_key_sha256_12"] = sha256_12(idempotency_key)
     if extracted:
