@@ -243,11 +243,20 @@ def test_persona_fleet_default_unifies_paper_canary_and_live_tracks() -> None:
 
             assert response.status_code == 200, response.text
             rows = {item["persona_id"]: item for item in response.json()["items"]}
+            assert rows["persona-paper-test"]["state"] == "paper_running"
+            assert rows["persona-canary-test"]["state"] == "canary_running"
+            assert rows["persona-live-test"]["state"] == "live_running"
             assert rows["persona-paper-test"]["competitionTrack"] == "paper_challenger"
             assert rows["persona-canary-test"]["competitionTrack"] == "canary_challenger"
             assert rows["persona-live-test"]["competitionTrack"] == "live_incumbent"
-            assert rows["persona-paper-test"]["rowAction"]["actionId"] == "submit_live_review"
-            assert rows["persona-paper-test"]["rowAction"]["label"] == "送交實盤審核"
+            assert rows["persona-paper-test"]["requiredHumanReview"] == "promotion_to_canary"
+            assert rows["persona-paper-test"]["reviewStatus"] == "promotion_pending"
+            assert rows["persona-paper-test"]["rowAction"]["actionId"] == "open_promotion_review"
+            assert rows["persona-paper-test"]["rowAction"]["label"] == "開啟 Canary 審核"
+            assert (
+                rows["persona-paper-test"]["rowAction"]["href"]
+                == "/management/human-inbox/readiness_blocker%3Apersona%3Apersona-paper-test"
+            )
             assert rows["persona-paper-test"]["rowAction"]["startupWizardVisible"] is False
             assert rows["persona-live-test"]["rowAction"]["actionId"] == "monitor_live_runtime"
             assert response.json()["data"]["execution_boundary"]["separate_paper_live_datasets"] is False
@@ -257,6 +266,81 @@ def test_persona_fleet_default_unifies_paper_canary_and_live_tracks() -> None:
             assert "persona-live-test" in live_rows
             assert "persona-paper-test" not in live_rows
             assert "persona-canary-test" not in live_rows
+        finally:
+            bff_main.read_store = original
+
+
+def test_persona_fleet_projects_legacy_deployed_paper_runtime_as_paper_running() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=True,
+            )
+            store._data["personas"] = {
+                "persona-legacy-deployed-paper": {
+                    "id": "persona-legacy-deployed-paper",
+                    "persona_id": "persona-legacy-deployed-paper",
+                    "name": "Legacy Paper Persona",
+                    "lifecycle_state": "deployed",
+                    "status": "deployed",
+                    "created_at": "2026-06-07T00:00:00Z",
+                    "updated_at": "2026-06-07T00:00:00Z",
+                    "canonicalWriteAuthority": "persona_registry_service",
+                    "persistenceMode": "bff_local_dev_store",
+                    "metadata": {
+                        "owner": "test",
+                        "capital_pool_id": "pool-legacy-paper",
+                    },
+                },
+            }
+            store._data["persona_bindings"] = {
+                "binding-legacy-paper": {
+                    "binding_id": "binding-legacy-paper",
+                    "persona_id": "persona-legacy-deployed-paper",
+                    "capital_pool_id": "pool-legacy-paper",
+                    "status": "active",
+                    "validity": "active",
+                    "allowed_deployment_scope": "paper",
+                },
+            }
+            store._data["capital_pools"] = {
+                "pool-legacy-paper": {
+                    "id": "pool-legacy-paper",
+                    "pool_id": "pool-legacy-paper",
+                    "capital_pool_id": "pool-legacy-paper",
+                    "capital_scope": "paper",
+                    "live_capital_enabled": False,
+                },
+            }
+            store._data["runtime_bindings"] = {
+                "runtime-legacy-paper": {
+                    "runtime_binding_id": "rb-legacy-paper",
+                    "runtime_id": "runtime-legacy-paper",
+                    "capital_pool_id": "pool-legacy-paper",
+                    "deployment_stage": "paper",
+                    "status": "active",
+                },
+            }
+            store._local_overlay_write_datasets.add("persona_bindings")
+            store._local_overlay_write_datasets.add("capital_pools")
+            store._local_overlay_write_datasets.add("runtime_bindings")
+            bff_main.read_store = store
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+            response = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+
+            assert response.status_code == 200, response.text
+            rows = {item["persona_id"]: item for item in response.json()["items"]}
+            row = rows["persona-legacy-deployed-paper"]
+            assert row["personaStatus"] == "deployed"
+            assert row["state"] == "paper_running"
+            assert row["deploymentStage"] == "paper"
+            assert row["competitionTrack"] == "paper_challenger"
+            assert row["capitalScope"] == "paper"
+            assert row["readinessProjection"]["product_lifecycle_state"] == "paper_running"
+            assert row["rowAction"]["actionId"] == "monitor_paper_runtime"
         finally:
             bff_main.read_store = original
 

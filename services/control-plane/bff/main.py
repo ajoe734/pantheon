@@ -30515,9 +30515,166 @@ def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str,
     }
 
 
-def _human_inbox_all_items() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _human_inbox_evidence_refs(*values: Any) -> List[str]:
+    refs: List[str] = []
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            refs.append(value.strip())
+            continue
+        if isinstance(value, dict):
+            ref = _pplg_first_present(
+                value.get("ref"),
+                value.get("ref_id"),
+                value.get("id"),
+                value.get("href"),
+                value.get("path"),
+            )
+            if ref:
+                refs.append(str(ref).strip())
+            continue
+        if isinstance(value, list):
+            refs.extend(_human_inbox_evidence_refs(*value))
+    seen: set[str] = set()
+    unique: List[str] = []
+    for ref in refs:
+        if ref and ref not in seen:
+            seen.add(ref)
+            unique.append(ref)
+    return unique
+
+
+def _human_inbox_persona_review_item(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    persona_id = str(row.get("persona_id") or row.get("personaId") or row.get("id") or "").strip()
+    if not persona_id:
+        return None
+    required_review = str(
+        row.get("requiredHumanReview")
+        or row.get("required_human_review")
+        or (row.get("readinessProjection") or {}).get("required_human_review")
+        or ""
+    ).strip()
+    if required_review not in {
+        "promotion_to_canary",
+        "canary_to_live",
+        "quarterly_rebalance",
+        "resume_after_incident",
+        "retire",
+    }:
+        return None
+
+    gate_id = _pplg_human_gate_id(persona_id)
+    review_status = str(row.get("reviewStatus") or row.get("review_status") or "pending").strip() or "pending"
+    priority = "high" if required_review in {"promotion_to_canary", "canary_to_live"} else "medium"
+    persona_name = str(row.get("personaName") or row.get("persona_name") or row.get("name") or persona_id)
+    title = {
+        "promotion_to_canary": f"Persona needs Canary promotion review: {persona_name}",
+        "canary_to_live": f"Persona needs Live promotion review: {persona_name}",
+        "quarterly_rebalance": f"Persona needs quarterly ranking review: {persona_name}",
+        "resume_after_incident": f"Persona needs incident resume review: {persona_name}",
+        "retire": f"Persona needs retirement review: {persona_name}",
+    }[required_review]
+    research_context = {
+        "state": row.get("state"),
+        "product_lifecycle_state": row.get("productLifecycleState") or row.get("product_lifecycle_state"),
+        "required_human_review": required_review,
+        "review_status": review_status,
+        "competition_track": row.get("competitionTrack") or row.get("competition_track"),
+        "capital_scope": row.get("capitalScope") or row.get("capital_scope"),
+        "recommendation": row.get("recommendation"),
+        "current_research_projects": json.loads(json.dumps(row.get("currentResearchProjects") or row.get("current_research_projects") or [])),
+        "research_status": json.loads(json.dumps(row.get("researchStatus") or row.get("research_status") or {})),
+        "data_source_status": json.loads(json.dumps(row.get("dataSourceStatus") or row.get("data_source_status") or {})),
+    }
+    evidence_refs = _human_inbox_evidence_refs(
+        row.get("evidenceRefs"),
+        row.get("evidence_refs"),
+        row.get("researchRefs"),
+        row.get("research_refs"),
+        (row.get("dataSourceStatus") or row.get("data_source_status") or {}).get("readbackRefs")
+        if isinstance(row.get("dataSourceStatus") or row.get("data_source_status"), dict)
+        else None,
+        (row.get("dataSourceStatus") or row.get("data_source_status") or {}).get("unavailableRefs")
+        if isinstance(row.get("dataSourceStatus") or row.get("data_source_status"), dict)
+        else None,
+    )
+    manage_href = f"/management/persona-fleet?persona={quote(persona_id, safe='')}"
+    detail_href = f"/management/human-inbox/{quote(gate_id, safe='')}"
+    summary = (
+        str(row.get("currentWork") or row.get("current_work") or "").strip()
+        or f"{required_review} requires human review before any stage change."
+    )
+    blocking_reasons = [
+        f"required human review: {required_review}",
+        f"current runtime state: {row.get('state') or 'unknown'}",
+    ]
+    if row.get("recommendation"):
+        blocking_reasons.append(f"governance recommendation: {row.get('recommendation')}")
+    return {
+        "id": gate_id,
+        "inbox_id": gate_id,
+        "kind": "readiness_blocker",
+        "inboxType": "readiness_blocker",
+        "source_type": "readiness_blocker",
+        "source_id": gate_id,
+        "review_type": required_review,
+        "persona_id": persona_id,
+        "title": title,
+        "summary": summary,
+        "priority": priority,
+        "risk_level": priority,
+        "status": review_status,
+        "action_state": "pending",
+        "requiredRole": "risk-owner",
+        "required_role": "risk-owner",
+        "created_at": row.get("updated_at") or row.get("lastMutation"),
+        "updated_at": row.get("updated_at") or row.get("lastMutation"),
+        "target": {"type": "Persona", "id": persona_id},
+        "route": manage_href,
+        "bff_detail_path": f"/bff/management/human-inbox/{quote(gate_id, safe='')}",
+        "canDecide": False,
+        "canProceed": False,
+        "blockingReasons": blocking_reasons,
+        "blocking_reasons": blocking_reasons,
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "research_context": research_context,
+        "links": {
+            "manageHref": manage_href,
+            "primaryObjectHref": manage_href,
+            "recommendedActionHref": detail_href,
+        },
+        "allowedActions": {
+            "canApprove": False,
+            "canReject": False,
+            "canRequestRevision": True,
+            "canRequestEvidence": True,
+        },
+    }
+
+
+def _human_inbox_persona_review_items(snapshot_at: str) -> List[Dict[str, Any]]:
+    rows = _build_persona_health_items(
+        snapshot_at,
+        include_market_persona_defaults=True,
+    )
+    items = [
+        item
+        for row in rows
+        for item in [_human_inbox_persona_review_item(row)]
+        if item is not None
+    ]
+    return items
+
+
+def _human_inbox_all_items() -> tuple[
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+]:
     approval_records = read_store.list_approval_queue_items() or []
     intervention_records = _v5_intervention_records()
+    persona_review_records = _human_inbox_persona_review_items(utc_now())
     items: List[Dict[str, Any]] = []
     for approval in approval_records:
         projected = _human_inbox_approval_item(approval)
@@ -30527,6 +30684,7 @@ def _human_inbox_all_items() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]
         projected = _human_inbox_intervention_item(intervention)
         if projected is not None:
             items.append(projected)
+    items.extend(persona_review_records)
     items.sort(
         key=lambda item: (
             _HUMAN_INBOX_PRIORITY_RANK.get(str(item.get("priority") or "unknown"), 0),
@@ -30535,7 +30693,7 @@ def _human_inbox_all_items() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]
         ),
         reverse=True,
     )
-    return items, approval_records, intervention_records
+    return items, approval_records, intervention_records, persona_review_records
 
 
 def _human_inbox_filter_items(
@@ -30577,6 +30735,9 @@ def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Di
         "pending_items": len(pending_items),
         "approval_count": len([item for item in items if item.get("source_type") == "approval"]),
         "intervention_count": len([item for item in items if item.get("source_type") == "intervention"]),
+        "readiness_blocker_count": len([
+            item for item in items if item.get("source_type") == "readiness_blocker"
+        ]),
         "critical_count": len([item for item in items if item.get("priority") == "critical"]),
         "high_count": len([item for item in items if item.get("priority") == "high"]),
     }
@@ -30587,7 +30748,9 @@ def _human_inbox_surfaces(
     snapshot_at: str,
     approval_records: List[Dict[str, Any]],
     intervention_records: List[Dict[str, Any]],
+    persona_review_records: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
+    persona_review_records = persona_review_records or []
     approval_surface = _dataset_surface_status(
         "approval_queue_items",
         snapshot_at=snapshot_at,
@@ -30608,15 +30771,22 @@ def _human_inbox_surfaces(
         or intervention_surface.get("status") != "unavailable"
         or bool(approval_records)
         or bool(intervention_records)
+        or bool(persona_review_records)
     )
     return {
         "human_inbox": _composed_surface_status(
             snapshot_at=snapshot_at,
             available=source_available,
-            missing_message="Human inbox has no readable approval or intervention source records.",
+            missing_message="Human inbox has no readable approval, intervention, or persona review source records.",
         ),
         "approval_queue": approval_surface,
         "v5_interventions": intervention_surface,
+        "persona_review_requests": _composed_dataset_surface_status(
+            "persona_review_requests",
+            persona_review_records,
+            snapshot_at=snapshot_at,
+            source="bff_composed",
+        ),
     }
 
 
@@ -30931,7 +31101,12 @@ def _management_hiq_backlog_response(
     priorities = _hiq_backlog_filter_values(priority)
     kinds = _hiq_backlog_filter_values(kind, default=_HIQ_BACKLOG_DEFAULT_KINDS)
 
-    human_inbox_items, approval_records, inbox_intervention_records = _human_inbox_all_items()
+    (
+        human_inbox_items,
+        approval_records,
+        inbox_intervention_records,
+        persona_review_records,
+    ) = _human_inbox_all_items()
     inbox_by_source_id = {
         str(item.get("source_id") or ""): item
         for item in human_inbox_items
@@ -31023,6 +31198,7 @@ def _management_hiq_backlog_response(
         snapshot_at=snapshot_at,
         approval_records=approval_records,
         intervention_records=inbox_intervention_records,
+        persona_review_records=persona_review_records,
     )
     hiq_surface = _aggregate_group_surface(
         "hiq_backlog",
@@ -32487,7 +32663,7 @@ async def bff_management_human_inbox(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    items, approval_records, intervention_records = _human_inbox_all_items()
+    items, approval_records, intervention_records, persona_review_records = _human_inbox_all_items()
     filtered = _human_inbox_filter_items(
         items,
         source_type=source_type,
@@ -32501,6 +32677,7 @@ async def bff_management_human_inbox(
         snapshot_at=snapshot_at,
         approval_records=approval_records,
         intervention_records=intervention_records,
+        persona_review_records=persona_review_records,
     )
     return {
         "data": page_items,
@@ -32525,7 +32702,7 @@ async def bff_management_human_inbox_detail(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    items, approval_records, intervention_records = _human_inbox_all_items()
+    items, approval_records, intervention_records, persona_review_records = _human_inbox_all_items()
     for item in items:
         if _human_inbox_detail_match(item, item_id):
             detail = json.loads(json.dumps(item))
@@ -32534,6 +32711,7 @@ async def bff_management_human_inbox_detail(
                 snapshot_at=snapshot_at,
                 approval_records=approval_records,
                 intervention_records=intervention_records,
+                persona_review_records=persona_review_records,
             )
             return {"data": detail, "meta": meta}
     raise _bff_error(
@@ -51671,6 +51849,74 @@ def _pplg_first_present(*values: Any) -> Any:
     return None
 
 
+def _pplg_stage_token(value: Any, *, allow_status_value: bool = False) -> Optional[str]:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+    normalized = raw.replace("-", "_").replace(" ", "_")
+    if normalized in {"paper", "paper_only", "paper_trading", "paper_runtime"}:
+        return "paper"
+    if normalized in {"canary", "canary_only", "canary_trading", "canary_runtime"}:
+        return "canary"
+    if normalized in {"live", "live_only", "live_trading", "live_runtime"}:
+        return "live"
+    if allow_status_value:
+        if normalized in {"paper_running", "paper_warming_up", "paper_eligible", "paper_ineligible"}:
+            return "paper"
+        if normalized in {"promotion_review_pending", "promotion_rejected"}:
+            return "paper"
+        if normalized in {"canary_running", "live_review_pending"}:
+            return "canary"
+        if normalized == "live_running":
+            return "live"
+    return None
+
+
+def _pplg_deployment_stage(
+    *,
+    league_entry: Dict[str, Any],
+    runtime: Dict[str, Any],
+    metadata: Dict[str, Any],
+    binding: Dict[str, Any],
+    capital_pool: Dict[str, Any],
+    persona: Dict[str, Any],
+) -> str:
+    status_values = (
+        metadata.get("persona_status"),
+        league_entry.get("status"),
+        persona.get("status"),
+        persona.get("lifecycle_state"),
+    )
+    stage_values = (
+        league_entry.get("deployment_stage"),
+        league_entry.get("deployment_mode"),
+        league_entry.get("stage"),
+        runtime.get("deployment_stage"),
+        runtime.get("deployment_mode"),
+        metadata.get("deployment_stage"),
+        metadata.get("deployment_mode"),
+        binding.get("deployment_stage"),
+        binding.get("deployment_mode"),
+        binding.get("allowed_deployment_scope"),
+        binding.get("capital_scope"),
+        capital_pool.get("capital_scope"),
+        capital_pool.get("scope"),
+    )
+    for value in stage_values:
+        stage = _pplg_stage_token(value)
+        if stage:
+            return stage
+    for value in status_values:
+        stage = _pplg_stage_token(value, allow_status_value=True)
+        if stage:
+            return stage
+    if capital_pool.get("live_capital_enabled") is True:
+        return "live"
+    if binding or capital_pool:
+        return "paper"
+    return "none"
+
+
 def _pplg_normalized_runtime_status(runtime: Dict[str, Any]) -> str:
     if not runtime:
         return "missing"
@@ -51856,6 +52102,55 @@ def _pplg_live_status(product_lifecycle_state: str, deployment_stage: str) -> st
     return "no_live_authority"
 
 
+def _pplg_fleet_state(
+    *,
+    deployment_stage: str,
+    runtime_status: str,
+    setup_status: str,
+    product_lifecycle_state: str,
+) -> str:
+    if product_lifecycle_state in {
+        "risk_off",
+        "frozen",
+        "auto_reduced",
+        "retired",
+        "setup_failed",
+        "repair_required",
+        "paper_provisioning",
+        "paper_warming_up",
+        "paper_ineligible",
+        "paper_eligible",
+        "promotion_rejected",
+    }:
+        return product_lifecycle_state
+    if setup_status == "paper_runtime_warming_up":
+        return "paper_warming_up"
+    if setup_status in {"setup_failed", "repair_required"}:
+        return setup_status
+    if setup_status == "provisioning":
+        return "paper_provisioning"
+
+    stage = str(deployment_stage or "").strip().lower()
+    if runtime_status in {"active", "starting", "warming_up", "paused"}:
+        if stage == "live":
+            return "live_running"
+        if stage == "canary":
+            return "canary_running"
+        if stage == "paper":
+            return "paper_running"
+    if product_lifecycle_state in {"promotion_review_pending", "quarterly_review_pending"} and stage == "paper":
+        return "paper_running"
+    if product_lifecycle_state == "live_review_pending" and stage == "canary":
+        return "canary_running"
+    if product_lifecycle_state in _PPLG_LIFECYCLE_STATES:
+        return product_lifecycle_state
+    return "watchlist"
+
+
+def _pplg_human_gate_id(persona_id: str) -> str:
+    return f"readiness_blocker:persona:{persona_id}"
+
+
 def _pplg_row_action(
     *,
     setup_status: str,
@@ -51876,13 +52171,13 @@ def _pplg_row_action(
         label = "修復 paper setup"
         href = f"/management/personas/{persona_id}/paper-launch/repair"
     elif required_human_review in {"promotion_to_canary", "canary_to_live"}:
-        action_id = "submit_live_review"
-        label = "送交實盤審核"
-        href = f"/management/personas/{persona_id}/reviews/new"
+        action_id = "open_promotion_review"
+        label = "開啟 Canary 審核" if required_human_review == "promotion_to_canary" else "開啟 Live 審核"
+        href = f"/management/human-inbox/{quote(_pplg_human_gate_id(persona_id), safe='')}"
     elif review_state in {"quarterly_pending", "incident_resume_pending"}:
         action_id = "open_human_review"
         label = "開啟人審"
-        href = f"/management/personas/{persona_id}/reviews"
+        href = f"/management/human-inbox/{quote(_pplg_human_gate_id(persona_id), safe='')}"
     elif str(deployment_stage or "").lower() == "live":
         action_id = "monitor_live_runtime"
         label = "監控實盤"
@@ -51969,14 +52264,15 @@ def _build_persona_health_items(
             or runtime.get("id")
             or metadata.get("runtime_binding_id")
         )
-        deployment_stage = (
-            league_entry.get("deployment_stage")
-            or runtime.get("deployment_stage")
-            or runtime.get("deployment_mode")
-            or metadata.get("deployment_stage")
-            or "none"
-        )
         capital_pool = read_store.get_capital_pool(str(pool_id or "")) or {}
+        deployment_stage = _pplg_deployment_stage(
+            league_entry=league_entry,
+            runtime=runtime,
+            metadata=metadata,
+            binding=binding,
+            capital_pool=capital_pool,
+            persona=persona,
+        )
         market_scope = list(
             league_entry.get("market_scope")
             or metadata.get("market_scope")
@@ -52074,6 +52370,12 @@ def _build_persona_health_items(
             product_lifecycle_state=product_lifecycle_state,
         )
         review_state = _pplg_human_review_state(required_human_review, persona_status)
+        fleet_state = _pplg_fleet_state(
+            deployment_stage=str(deployment_stage),
+            runtime_status=runtime_status,
+            setup_status=setup_status,
+            product_lifecycle_state=product_lifecycle_state,
+        )
         competition_track = _pplg_competition_track(product_lifecycle_state, str(deployment_stage))
         capital_scope = _pplg_capital_scope(
             deployment_stage=str(deployment_stage),
@@ -52195,7 +52497,9 @@ def _build_persona_health_items(
             "humanNeeded": human_needed,
             "last_mutation": str(updated_at)[:10],
             "lastMutation": str(updated_at)[:10],
-            "state": persona_status,
+            "state": fleet_state,
+            "persona_status": persona_status,
+            "personaStatus": persona_status,
             "current_work": metadata.get("current_work"),
             "currentWork": metadata.get("current_work"),
             "routed_strategies": routed,

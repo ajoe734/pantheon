@@ -200,7 +200,8 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     assert tw["ooda"] == "Decide"
     assert tw["autonomy"] == "supervised"
     assert tw["humanNeeded"] is True
-    assert tw["state"] == "needs_human_approval"
+    assert tw["state"] == "paper_running"
+    assert tw["personaStatus"] == "needs_human_approval"
     assert tw["lastMutation"] == "2026-06-07"
     assert tw["perfDelta"] == 0.095
     assert tw["currentWork"] == "TW corporate-action and session-boundary evidence review"
@@ -209,8 +210,9 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     assert tw["readinessProjection"]["setup_status"] == "paper_runtime_active"
     assert tw["readinessProjection"]["competition_track"] == "paper_challenger"
     assert tw["readinessProjection"]["required_human_review"] == "promotion_to_canary"
-    assert tw["rowAction"]["actionId"] == "submit_live_review"
-    assert tw["rowAction"]["label"] == "送交實盤審核"
+    assert tw["rowAction"]["actionId"] == "open_promotion_review"
+    assert tw["rowAction"]["label"] == "開啟 Canary 審核"
+    assert tw["rowAction"]["href"] == "/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity"
     assert tw["rowAction"]["startupWizardVisible"] is False
     assert "啟動精靈" not in tw["rowAction"]["label"]
     assert tw["dataSourceStatus"]["state"] == "partial_readback"
