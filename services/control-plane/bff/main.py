@@ -52122,6 +52122,57 @@ def _project_persona_fleet_list_row(
     )
     routed = _routed_strategies_for_persona(persona_id)
     drill_target = runtime_id or persona_id
+    data_source_status = (
+        context_metadata.get("data_source_status")
+        if isinstance(context_metadata.get("data_source_status"), dict)
+        else {}
+    )
+    data_sources = (
+        context_metadata.get("data_sources")
+        if isinstance(context_metadata.get("data_sources"), list)
+        else []
+    )
+    required_data_sources = (
+        persona.get("required_data_sources")
+        if isinstance(persona.get("required_data_sources"), list)
+        else []
+    )
+    if not required_data_sources and isinstance(context_persona.get("required_data_sources"), list):
+        required_data_sources = context_persona.get("required_data_sources") or []
+    data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
+        data_source_status,
+        data_sources,
+        required_data_sources=required_data_sources,
+    )
+    data_source_refs = (
+        context_metadata.get("data_source_refs")
+        if isinstance(context_metadata.get("data_source_refs"), list)
+        else []
+    )
+    research_status = (
+        context_metadata.get("research_status")
+        if isinstance(context_metadata.get("research_status"), dict)
+        else {}
+    )
+    research_refs = (
+        context_metadata.get("research_refs")
+        if isinstance(context_metadata.get("research_refs"), list)
+        else []
+    )
+    current_research_projects = (
+        context_metadata.get("current_research_projects")
+        if isinstance(context_metadata.get("current_research_projects"), list)
+        else []
+    )
+    row_context_metadata = {
+        **context_metadata,
+        "data_source_status": data_source_status,
+        "data_sources": data_sources,
+        "data_source_refs": data_source_refs,
+        "research_status": research_status,
+        "research_refs": research_refs,
+        "current_research_projects": current_research_projects,
+    }
 
     return {
         "id": persona_id,
@@ -52154,11 +52205,27 @@ def _project_persona_fleet_list_row(
         "recommendation": recommendation,
         "governance_required": governance_required,
         "data_source_summary": _persona_fleet_list_data_source_summary(
-            metadata=context_metadata,
+            metadata=row_context_metadata,
             persona=persona,
             context_persona=context_persona,
         ),
-        "research_summary": _persona_fleet_list_research_summary(context_metadata),
+        "data_source_status": _management_json_clone(data_source_status),
+        "dataSourceStatus": _management_json_clone(data_source_status),
+        "data_sources": _management_json_clone(data_sources),
+        "dataSources": _management_json_clone(data_sources),
+        "data_source_refs": _management_json_clone(data_source_refs),
+        "dataSourceRefs": _management_json_clone(data_source_refs),
+        "required_data_sources": _management_json_clone(required_data_sources),
+        "requiredDataSources": _management_json_clone(required_data_sources),
+        "source_health_bindings": _management_json_clone(source_health_bindings),
+        "sourceHealthBindings": _management_json_clone(source_health_bindings),
+        "research_summary": _persona_fleet_list_research_summary(row_context_metadata),
+        "research_status": _management_json_clone(research_status),
+        "researchStatus": _management_json_clone(research_status),
+        "research_refs": _management_json_clone(research_refs),
+        "researchRefs": _management_json_clone(research_refs),
+        "current_research_projects": _management_json_clone(current_research_projects),
+        "currentResearchProjects": _management_json_clone(current_research_projects),
         "performance_summary": {
             "pnl": _as_float(metrics.get("pnl")),
             "sharpe": _as_float(metrics.get("sharpe")),
