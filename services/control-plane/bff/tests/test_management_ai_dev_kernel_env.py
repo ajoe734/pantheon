@@ -143,3 +143,18 @@ def test_nonprod_dev_deploy_forces_self_hosted_fe_cors_origin() -> None:
     assert canonical_origin in workflow
     assert 'dev_origins="${DEV_BFF_CANONICAL_CORS_ORIGIN}"' in workflow
     assert 'Checking dev BFF CORS origin: ${origin}' in workflow
+
+
+def test_nonprod_dev_deploy_runs_openclaw_assistant_sentinel_smoke() -> None:
+    workflow = NONPROD_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    smoke = (REPO_ROOT / "scripts" / "openclaw-assistant-openclaw-live-smoke.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Dev OpenClaw assistant live smoke" in workflow
+    assert "env.TARGET_ENV == 'dev'" in workflow
+    assert "env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root'" in workflow
+    assert "gcloud compute ssh" in workflow
+    assert "bash scripts/openclaw-assistant-openclaw-live-smoke.sh" in workflow
+    assert "OPENCLAW_LIVE" in smoke
+    assert "sentinel '${SENTINEL}' not found" in smoke
