@@ -1,53 +1,7 @@
 {
-  "fingerprints": [
-    "898840154db4b7e6",
-    "c5cbcbddc3f326b4",
-    "48f50593677c72cb",
-    "508c45878e0837e7"
-  ],
-  "issue_count": 4,
-  "issues": [
-    {
-      "category": "project-before-page",
-      "evidence": "Collects every inbox source and persona readiness row before filters and page slicing.",
-      "fingerprint": "898840154db4b7e6",
-      "function": "_human_inbox_payload",
-      "recommendation": "Apply query filters before expensive fanout/projection and page before detail-grade hydration. Use a detail endpoint for row expansion.",
-      "route": "",
-      "severity": "P1",
-      "title": "Endpoint/helper projects broad aggregates before page slicing"
-    },
-    {
-      "category": "project-before-page",
-      "evidence": "Builds all cost-attribution rows from runtime telemetry before page slicing.",
-      "fingerprint": "c5cbcbddc3f326b4",
-      "function": "_management_cost_attribution_response",
-      "recommendation": "Apply query filters before expensive fanout/projection and page before detail-grade hydration. Use a detail endpoint for row expansion.",
-      "route": "",
-      "severity": "P1",
-      "title": "Endpoint/helper projects broad aggregates before page slicing"
-    },
-    {
-      "category": "project-before-page",
-      "evidence": "Builds all exposure rows before page slicing.",
-      "fingerprint": "48f50593677c72cb",
-      "function": "bff_management_portfolio_book_exposure",
-      "recommendation": "Apply query filters before expensive fanout/projection and page before detail-grade hydration. Use a detail endpoint for row expansion.",
-      "route": "/bff/management/portfolio-book/exposure",
-      "severity": "P1",
-      "title": "Endpoint/helper projects broad aggregates before page slicing"
-    },
-    {
-      "category": "project-before-page",
-      "evidence": "Builds all holdings from every runtime and telemetry record before page slicing.",
-      "fingerprint": "508c45878e0837e7",
-      "function": "bff_management_portfolio_book_holdings",
-      "recommendation": "Apply query filters before expensive fanout/projection and page before detail-grade hydration. Use a detail endpoint for row expansion.",
-      "route": "/bff/management/portfolio-book/holdings",
-      "severity": "P1",
-      "title": "Endpoint/helper projects broad aggregates before page slicing"
-    }
-  ],
+  "fingerprints": [],
+  "issue_count": 0,
+  "issues": [],
   "schema": "pantheon.management-list-contract-baseline.v1",
   "source": "services/control-plane/bff/main.py"
 }

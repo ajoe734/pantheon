@@ -26245,6 +26245,158 @@ def _management_portfolio_holding_entry(
     }
 
 
+def _management_portfolio_holding_metadata(
+    runtime: Dict[str, Any],
+    position: Dict[str, Any],
+    *,
+    position_index: int,
+    plan: Dict[str, Any],
+    persona_binding: Dict[str, Any],
+    telemetry: Dict[str, Any],
+) -> Dict[str, Any]:
+    summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
+    instrument = _management_nested_dict(position, "instrument", "asset", "contract")
+    mark = _management_nested_dict(position, "mark", "mark_price", "market_price")
+    runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+    capital_pool_id = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "capital_pool_id", "pool_id"),
+            _management_dict_value(runtime, "capital_pool_id", "pool_id"),
+            _management_dict_value(plan, "capital_pool_id", "target_pool_id", "pool_id"),
+            _management_dict_value(persona_binding, "capital_pool_id", "pool_id"),
+        )
+        or ""
+    )
+    persona_id = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "persona_id"),
+            _management_dict_value(runtime, "persona_id"),
+            _management_dict_value(plan, "persona_id"),
+            _management_dict_value(persona_binding, "persona_id"),
+        )
+        or ""
+    )
+    strategy_id = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "strategy_id", "strategy_ref"),
+            _management_dict_value(runtime, "strategy_id", "strategy_ref"),
+            _management_dict_value(plan, "strategy_id", "strategy_ref"),
+            _management_dict_value(persona_binding, "strategy_id"),
+        )
+        or ""
+    )
+    artifact_id = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "artifact_id"),
+            _management_dict_value(runtime, "artifact_id"),
+            _management_dict_value(plan, "artifact_id"),
+        )
+        or ""
+    )
+    symbol = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "symbol", "instrument_id", "asset_id", "contract_id"),
+            _management_dict_value(instrument, "symbol", "instrument_id", "asset_id", "contract_id"),
+            _management_dict_value(telemetry, "symbol", "instrument_id", "asset_id", "contract_id"),
+        )
+        or ""
+    )
+    quantity = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "quantity", "qty", "net_quantity", "position_quantity"),
+            _management_dict_value(telemetry, "quantity", "position_quantity"),
+            _management_dict_value(summary, "quantity", "position_quantity"),
+        )
+    )
+    mark_price = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "mark_price", "market_price", "last_price"),
+            _management_dict_value(mark, "price", "mark_price", "market_price", "last_price"),
+            _management_dict_value(telemetry, "mark_price", "market_price", "last_price"),
+            _management_dict_value(summary, "mark_price", "market_price", "last_price"),
+        )
+    )
+    market_value = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "market_value", "value"),
+            _management_dict_value(telemetry, "market_value"),
+            _management_dict_value(summary, "market_value"),
+        )
+    )
+    if market_value is None and quantity is not None and mark_price is not None:
+        market_value = round(quantity * mark_price, 6)
+    notional = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "notional", "gross_notional"),
+            _management_dict_value(telemetry, "notional", "gross_notional"),
+            _management_dict_value(summary, "notional", "gross_notional"),
+        )
+    )
+    if notional is None and market_value is not None:
+        notional = abs(market_value)
+    runtime_pnl = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(telemetry, "pnl"),
+            _management_dict_value(summary, "total_pnl"),
+        )
+    )
+    total_pnl = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "total_pnl", "pnl"),
+            runtime_pnl,
+        )
+    )
+    unrealized_pnl = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "unrealized_pnl", "unrealized"),
+            _management_dict_value(telemetry, "unrealized_pnl"),
+            _management_dict_value(summary, "unrealized_pnl"),
+        )
+    )
+    realized_pnl = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "realized_pnl", "realized"),
+            _management_dict_value(telemetry, "realized_pnl"),
+            _management_dict_value(summary, "realized_pnl"),
+        )
+    )
+    holding_key = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "holding_id", "position_id", "id"),
+            symbol,
+            artifact_id,
+            position_index,
+        )
+    )
+    last_mark_at = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "marked_at", "mark_time", "updated_at", "collected_at"),
+            _management_dict_value(mark, "marked_at", "mark_time", "updated_at", "collected_at"),
+            _management_dict_value(telemetry, "collected_at", "updated_at"),
+            _management_dict_value(summary, "collected_at", "updated_at"),
+        )
+        or ""
+    )
+    return {
+        "holding_id": f"{runtime_id}:{holding_key}" if runtime_id else holding_key,
+        "runtime_id": runtime_id,
+        "capital_pool_id": capital_pool_id,
+        "persona_id": persona_id,
+        "strategy_id": strategy_id,
+        "artifact_id": artifact_id,
+        "symbol": symbol,
+        "deployment_stage": str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or plan.get("target_stage") or ""),
+        "status": str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown") or "unknown"),
+        "notional": notional,
+        "market_value": market_value,
+        "unrealized_pnl": unrealized_pnl,
+        "realized_pnl": realized_pnl,
+        "total_pnl": total_pnl,
+        "last_mark_at": last_mark_at or None,
+        "telemetry_available": bool(telemetry),
+    }
+
+
 _PM12_ATTRIBUTION_DIMENSIONS = ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime")
 _PM12_ATTRIBUTION_DIMENSION_ALIASES = {
     "persona": "persona",
@@ -28918,31 +29070,29 @@ async def bff_management_portfolio_book_exposure(
             if str(entry.get("pool_id") or entry.get("id") or "") in requested
         ]
 
-    exposure_items = [
+    total = len(entries)
+    page_entries, next_page_token = _page_slice(entries, page_token, page_size)
+    page_items = [
         _management_portfolio_book_exposure_item(entry)
-        for entry in entries
+        for entry in page_entries
     ]
-    total = len(exposure_items)
-    page_items, next_page_token = _page_slice(exposure_items, page_token, page_size)
 
     risk_budgets = [
         value
-        for item in exposure_items
-        for value in [_management_as_float(item.get("risk_budget"))]
+        for entry in entries
+        for value in [_management_as_float(entry.get("risk_budget"))]
         if value is not None
     ]
     exposures = [
         value
-        for item in exposure_items
-        for value in [_management_as_float(item.get("current_exposure"))]
+        for entry in entries
+        for value in [_management_as_float(entry.get("current_exposure"))]
         if value is not None
     ]
     exposure_runtime_ids = {
         runtime_id
-        for item in exposure_items
-        for runtime_id in (
-            (item.get("source_refs") or {}).get("runtime_ids") or []
-        )
+        for entry in entries
+        for runtime_id in (entry.get("runtime_ids") or [])
         if str(runtime_id).strip()
     }
     portfolio_telemetry = _management_telemetry_rollup([
@@ -28961,17 +29111,33 @@ async def bff_management_portfolio_book_exposure(
         else None
     )
     active_pool_count = len([
-        item for item in exposure_items
-        if str(item.get("status") or "").strip().lower() in {"active", "ready"}
+        entry for entry in entries
+        if str(entry.get("status") or "").strip().lower() in {"active", "ready"}
     ])
+    risk_states = [
+        _management_exposure_risk_state(
+            _management_as_float(entry.get("risk_budget_utilization"))
+            if _management_as_float(entry.get("risk_budget_utilization")) is not None
+            else (
+                round(
+                    _management_as_float(entry.get("current_exposure")) / _management_as_float(entry.get("risk_budget")),
+                    6,
+                )
+                if _management_as_float(entry.get("current_exposure")) is not None
+                and _management_as_float(entry.get("risk_budget")) not in (None, 0)
+                else None
+            )
+        )
+        for entry in entries
+    ]
     over_budget_count = len([
-        item for item in exposure_items if item.get("risk_state") == "over_budget"
+        state for state in risk_states if state == "over_budget"
     ])
     near_limit_count = len([
-        item for item in exposure_items if item.get("risk_state") == "near_limit"
+        state for state in risk_states if state == "near_limit"
     ])
     unknown_exposure_count = len([
-        item for item in exposure_items if item.get("risk_state") == "unknown"
+        state for state in risk_states if state == "unknown"
     ])
 
     source_surfaces = {
@@ -29093,7 +29259,7 @@ async def bff_management_portfolio_book_holdings(
         if telemetry is not None:
             telemetry_by_runtime_id[rid] = telemetry
 
-    holdings: List[Dict[str, Any]] = []
+    holding_contexts: List[Dict[str, Any]] = []
     for runtime in runtime_bindings:
         rid = _management_record_id(runtime, "runtime_id", "id", "binding_id")
         telemetry = telemetry_by_runtime_id.get(rid, {})
@@ -29120,92 +29286,131 @@ async def bff_management_portfolio_book_holdings(
         capital_pool = pools_by_id.get(pool_id, {})
         positions = _management_position_records(telemetry) or [{}]
         for index, position in enumerate(positions):
-            holdings.append(
-                _management_portfolio_holding_entry(
-                    runtime,
-                    position,
-                    position_index=index,
-                    plan=plan,
-                    persona_binding=persona_binding,
-                    capital_pool=capital_pool,
-                    telemetry=telemetry,
-                )
+            metadata = _management_portfolio_holding_metadata(
+                runtime,
+                position,
+                position_index=index,
+                plan=plan,
+                persona_binding=persona_binding,
+                telemetry=telemetry,
             )
+            holding_contexts.append({
+                "runtime": runtime,
+                "position": position,
+                "position_index": index,
+                "plan": plan,
+                "persona_binding": persona_binding,
+                "capital_pool": capital_pool,
+                "telemetry": telemetry,
+                "metadata": metadata,
+            })
 
     if capital_pool_id:
         requested = {item.strip() for item in capital_pool_id.split(",") if item.strip()}
-        holdings = [item for item in holdings if str(item.get("capital_pool_id") or "") in requested]
+        holding_contexts = [
+            context for context in holding_contexts
+            if str((context.get("metadata") or {}).get("capital_pool_id") or "") in requested
+        ]
     if persona_id:
         requested = {item.strip() for item in persona_id.split(",") if item.strip()}
-        holdings = [item for item in holdings if str(item.get("persona_id") or "") in requested]
+        holding_contexts = [
+            context for context in holding_contexts
+            if str((context.get("metadata") or {}).get("persona_id") or "") in requested
+        ]
     if runtime_id:
         requested = {item.strip() for item in runtime_id.split(",") if item.strip()}
-        holdings = [item for item in holdings if str(item.get("runtime_id") or "") in requested]
+        holding_contexts = [
+            context for context in holding_contexts
+            if str((context.get("metadata") or {}).get("runtime_id") or "") in requested
+        ]
     if deployment_stage:
         requested = {item.strip().lower() for item in deployment_stage.split(",") if item.strip()}
-        holdings = [item for item in holdings if str(item.get("deployment_stage") or "").lower() in requested]
+        holding_contexts = [
+            context for context in holding_contexts
+            if str((context.get("metadata") or {}).get("deployment_stage") or "").lower() in requested
+        ]
     if status:
         requested = {item.strip().lower() for item in status.split(",") if item.strip()}
-        holdings = [item for item in holdings if str(item.get("status") or "").lower() in requested]
+        holding_contexts = [
+            context for context in holding_contexts
+            if str((context.get("metadata") or {}).get("status") or "").lower() in requested
+        ]
     if q:
         needle = q.strip().lower()
-        holdings = [
-            item
-            for item in holdings
+        holding_contexts = [
+            context
+            for context in holding_contexts
             if needle in " ".join(
                 str(value or "").lower()
                 for value in (
-                    item.get("holding_id"),
-                    item.get("symbol"),
-                    item.get("runtime_id"),
-                    item.get("capital_pool_id"),
-                    item.get("persona_id"),
-                    item.get("strategy_id"),
-                    item.get("artifact_id"),
+                    (context.get("metadata") or {}).get("holding_id"),
+                    (context.get("metadata") or {}).get("symbol"),
+                    (context.get("metadata") or {}).get("runtime_id"),
+                    (context.get("metadata") or {}).get("capital_pool_id"),
+                    (context.get("metadata") or {}).get("persona_id"),
+                    (context.get("metadata") or {}).get("strategy_id"),
+                    (context.get("metadata") or {}).get("artifact_id"),
                 )
             )
         ]
 
-    holdings = sorted(
-        holdings,
-        key=lambda item: (
-            str(item.get("capital_pool_id") or ""),
-            str(item.get("runtime_id") or ""),
-            str(item.get("symbol") or ""),
-            str(item.get("holding_id") or ""),
+    holding_contexts = sorted(
+        holding_contexts,
+        key=lambda context: (
+            str((context.get("metadata") or {}).get("capital_pool_id") or ""),
+            str((context.get("metadata") or {}).get("runtime_id") or ""),
+            str((context.get("metadata") or {}).get("symbol") or ""),
+            str((context.get("metadata") or {}).get("holding_id") or ""),
         ),
     )
-    total = len(holdings)
-    page_items, next_page_token = _page_slice(holdings, page_token, page_size)
+    total = len(holding_contexts)
+    page_contexts, next_page_token = _page_slice(holding_contexts, page_token, page_size)
+    page_items = [
+        _management_portfolio_holding_entry(
+            context["runtime"],
+            context["position"],
+            position_index=context["position_index"],
+            plan=context["plan"],
+            persona_binding=context["persona_binding"],
+            capital_pool=context["capital_pool"],
+            telemetry=context["telemetry"],
+        )
+        for context in page_contexts
+    ]
+    holding_metadata = [
+        context["metadata"]
+        for context in holding_contexts
+        if isinstance(context.get("metadata"), dict)
+    ]
     active_statuses = {"active", "running", "healthy", "bound"}
     summary = {
         "holding_count": total,
         "returned_holding_count": len(page_items),
         "active_holding_count": len([
-            item for item in holdings if str(item.get("status") or "").lower() in active_statuses
+            item for item in holding_metadata if str(item.get("status") or "").lower() in active_statuses
         ]),
         "paper_holding_count": len([
-            item for item in holdings if str(item.get("deployment_stage") or "").lower() == "paper"
+            item for item in holding_metadata if str(item.get("deployment_stage") or "").lower() == "paper"
         ]),
         "live_holding_count": len([
-            item for item in holdings if str(item.get("deployment_stage") or "").lower() == "live"
+            item for item in holding_metadata if str(item.get("deployment_stage") or "").lower() == "live"
         ]),
         "runtime_count": len({
             str(item.get("runtime_id") or "")
-            for item in holdings
+            for item in holding_metadata
             if str(item.get("runtime_id") or "")
         }),
         "telemetry_runtime_count": len({
             str(item.get("runtime_id") or "")
-            for item in holdings
-            if str(item.get("runtime_id") or "") in telemetry_by_runtime_id
+            for item in holding_metadata
+            if item.get("telemetry_available")
         }),
-        "total_notional": _management_sum_numeric(holdings, "notional"),
-        "total_market_value": _management_sum_numeric(holdings, "market_value"),
-        "total_unrealized_pnl": _management_sum_numeric(holdings, "unrealized_pnl"),
-        "total_realized_pnl": _management_sum_numeric(holdings, "realized_pnl"),
-        "total_pnl": _management_sum_numeric(holdings, "total_pnl"),
-        "latest_mark_at": _management_latest_timestamp(holdings, "last_mark_at"),
+        "total_notional": _management_sum_numeric(holding_metadata, "notional"),
+        "total_market_value": _management_sum_numeric(holding_metadata, "market_value"),
+        "total_unrealized_pnl": _management_sum_numeric(holding_metadata, "unrealized_pnl"),
+        "total_realized_pnl": _management_sum_numeric(holding_metadata, "realized_pnl"),
+        "total_pnl": _management_sum_numeric(holding_metadata, "total_pnl"),
+        "latest_mark_at": _management_latest_timestamp(holding_metadata, "last_mark_at"),
     }
 
     surfaces = {
@@ -30122,15 +30327,37 @@ def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str
 
 def _human_inbox_all_items(
     snapshot_at: Optional[str] = None,
+    *,
+    source_types: Optional[set[str]] = None,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     snapshot_at = snapshot_at or utc_now()
-    review_records = read_store.list_governance_review_queue_items() or []
-    approval_records = read_store.list_approval_queue_items() or []
-    intervention_records = _v5_intervention_records()
-    sentinel_available, sentinel_records = read_store.list_sentinel_findings()
-    persona_rows = _build_persona_health_items(
-        snapshot_at,
-        include_market_persona_defaults=True,
+    include_all = not source_types
+    review_records = (
+        read_store.list_governance_review_queue_items() or []
+        if include_all or "governance_review" in source_types
+        else []
+    )
+    approval_records = (
+        read_store.list_approval_queue_items() or []
+        if include_all or "approval" in source_types
+        else []
+    )
+    intervention_records = (
+        _v5_intervention_records()
+        if include_all or "intervention" in source_types
+        else []
+    )
+    if include_all or "sentinel_finding" in source_types:
+        sentinel_available, sentinel_records = read_store.list_sentinel_findings()
+    else:
+        sentinel_available, sentinel_records = False, []
+    persona_rows = (
+        _build_persona_health_items(
+            snapshot_at,
+            include_market_persona_defaults=True,
+        )
+        if include_all or "readiness_blocker" in source_types
+        else []
     )
     items: List[Dict[str, Any]] = []
     for review in review_records:
@@ -30306,7 +30533,8 @@ def _human_inbox_payload(
     page_token: Optional[str] = None,
     page_size: Optional[int] = 20,
 ) -> Dict[str, Any]:
-    items, sources = _human_inbox_all_items(snapshot_at)
+    source_types = _human_inbox_csv_filter(source_type)
+    items, sources = _human_inbox_all_items(snapshot_at, source_types=source_types)
     filtered = _human_inbox_filter_items(
         items,
         source_type=source_type,
@@ -41353,6 +41581,76 @@ async def bff_management_governance_ledger(
 _MANAGEMENT_COST_ATTRIBUTION_COMMISSION_RATE = 0.0003  # 3 bps per trade as a placeholder rate
 
 
+def _management_cost_attribution_grouped_facts(
+    facts: List[Dict[str, Any]],
+) -> Dict[tuple[str, str, str], List[Dict[str, Any]]]:
+    grouped: Dict[tuple[str, str, str], List[Dict[str, Any]]] = {}
+    for fact in facts:
+        pool_key = _pm12_dimension_key(fact.get("capital_pool_id"))
+        persona_key = _pm12_dimension_key(fact.get("persona_id"))
+        strategy_key = _pm12_dimension_key(fact.get("strategy_id"))
+        grouped.setdefault((pool_key, persona_key, strategy_key), []).append(fact)
+    return grouped
+
+
+def _management_cost_attribution_group_summary(
+    key: tuple[str, str, str],
+    group_facts: List[Dict[str, Any]],
+    sources: Dict[str, Any],
+) -> Dict[str, Any]:
+    pool_key, persona_key, strategy_key = key
+    metrics = _pm12_attribution_metrics(group_facts)
+    total_trades = _management_as_float(metrics.get("total_trades")) or 0.0
+    total_notional = _management_as_float(metrics.get("total_notional"))
+    avg_slippage_bps = _management_as_float(metrics.get("average_slippage_bps"))
+    commission_cost: Optional[float] = round(
+        total_trades * _MANAGEMENT_COST_ATTRIBUTION_COMMISSION_RATE, 6
+    ) if total_trades else None
+    slippage_cost: Optional[float] = None
+    if avg_slippage_bps is not None and total_notional not in (None, 0):
+        slippage_cost = round(abs(avg_slippage_bps) * total_notional / 10000.0, 6)
+    pool = sources["pools_by_id"].get(pool_key, {})
+    allocated_capital = _management_as_float(
+        _management_first_non_empty(
+            metrics.get("total_exposure"),
+            metrics.get("total_notional"),
+            metrics.get("total_market_value"),
+        )
+    )
+    risk_budget = _management_first_float(
+        pool,
+        "risk_budget",
+        "risk_budget_amount",
+        "budget",
+        "capital_allocation",
+        "allocation_limit",
+        "max_target_size",
+        "params.risk_budget",
+        "risk.budget",
+    )
+    infrastructure_cost: Optional[float] = None
+    if allocated_capital is not None:
+        infrastructure_cost = round(allocated_capital * 0.0001, 6)
+    cost_parts = [
+        value
+        for value in (commission_cost, slippage_cost, infrastructure_cost)
+        if value is not None
+    ]
+    total_cost = round(sum(cost_parts), 6) if cost_parts else None
+    return {
+        "key": key,
+        "facts": group_facts,
+        "capital_pool_id": pool_key,
+        "persona_id": persona_key,
+        "strategy_id": strategy_key,
+        "total_cost": total_cost,
+        "commission_cost": commission_cost,
+        "slippage_cost": slippage_cost,
+        "infrastructure_cost": infrastructure_cost,
+        "sort_id": f"cost-attribution-{pool_key}-{persona_key}-{strategy_key}",
+    }
+
+
 def _management_cost_attribution_rows(
     facts: List[Dict[str, Any]],
     sources: Dict[str, Any],
@@ -41510,28 +41808,45 @@ def _management_cost_attribution_response(
     if strategy_filter:
         facts = [fact for fact in facts if str(fact.get("strategy_id") or "") in strategy_filter]
 
-    rows = _management_cost_attribution_rows(facts, sources)
-    total = len(rows)
-    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    group_summaries = [
+        _management_cost_attribution_group_summary(key, group_facts, sources)
+        for key, group_facts in _management_cost_attribution_grouped_facts(facts).items()
+    ]
+    group_summaries.sort(
+        key=lambda item: (
+            item.get("total_cost") is None,
+            -(item.get("total_cost") or 0.0),
+            str(item.get("sort_id") or ""),
+        )
+    )
+    total = len(group_summaries)
+    page_groups, next_page_token = _page_slice(group_summaries, page_token, page_size)
+    page_facts = [
+        fact
+        for group in page_groups
+        for fact in (group.get("facts") or [])
+        if isinstance(fact, dict)
+    ]
+    page_items = _management_cost_attribution_rows(page_facts, sources)
 
     total_cost_values = [
         value
-        for value in (_management_as_float(row.get("total_cost")) for row in rows)
+        for value in (_management_as_float(row.get("total_cost")) for row in group_summaries)
         if value is not None
     ]
     commission_values = [
         value
-        for value in (_management_as_float(row.get("commission_cost")) for row in rows)
+        for value in (_management_as_float(row.get("commission_cost")) for row in group_summaries)
         if value is not None
     ]
     slippage_values = [
         value
-        for value in (_management_as_float(row.get("slippage_cost")) for row in rows)
+        for value in (_management_as_float(row.get("slippage_cost")) for row in group_summaries)
         if value is not None
     ]
     infrastructure_values = [
         value
-        for value in (_management_as_float(row.get("infrastructure_cost")) for row in rows)
+        for value in (_management_as_float(row.get("infrastructure_cost")) for row in group_summaries)
         if value is not None
     ]
 
@@ -41558,9 +41873,11 @@ def _management_cost_attribution_response(
     summary = {
         "row_count": total,
         "returned_row_count": len(page_items),
-        "capital_pool_count": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
-        "persona_count": len({row.get("persona_id") for row in rows if row.get("persona_id")}),
-        "strategy_count": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "capital_pool_count": len({
+            row.get("capital_pool_id") for row in group_summaries if row.get("capital_pool_id")
+        }),
+        "persona_count": len({row.get("persona_id") for row in group_summaries if row.get("persona_id")}),
+        "strategy_count": len({row.get("strategy_id") for row in group_summaries if row.get("strategy_id")}),
         "total_cost": round(sum(total_cost_values), 6) if total_cost_values else None,
         "total_commission_cost": round(sum(commission_values), 6) if commission_values else None,
         "total_slippage_cost": round(sum(slippage_values), 6) if slippage_values else None,

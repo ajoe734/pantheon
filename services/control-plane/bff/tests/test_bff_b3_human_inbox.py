@@ -158,7 +158,7 @@ def test_human_inbox_includes_persona_readiness_blockers(monkeypatch) -> None:
             bff_main.read_store = original_store
 
 
-def test_human_inbox_supports_filters_pagination_and_detail() -> None:
+def test_human_inbox_supports_filters_pagination_and_detail(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
         original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
@@ -166,6 +166,15 @@ def test_human_inbox_supports_filters_pagination_and_detail() -> None:
             client = _fresh_client(td)
             bff_main._V5_INTERVENTIONS_STORE.clear()
             _seed_intervention()
+            persona_fanout_calls = 0
+            original_persona_fanout = bff_main._build_persona_health_items
+
+            def tracking_persona_fanout(*args, **kwargs):
+                nonlocal persona_fanout_calls
+                persona_fanout_calls += 1
+                return original_persona_fanout(*args, **kwargs)
+
+            monkeypatch.setattr(bff_main, "_build_persona_health_items", tracking_persona_fanout)
 
             list_resp = client.get(
                 "/bff/management/human-inbox?source_type=intervention&status=pending&page_size=1",
@@ -177,6 +186,7 @@ def test_human_inbox_supports_filters_pagination_and_detail() -> None:
             assert list_body["page_info"]["total"] >= 1
             assert "items" not in list_body
             assert len(list_body["data"]["items"]) == 1
+            assert persona_fanout_calls == 0
 
             detail_resp = client.get(
                 "/bff/management/human-inbox/intervention:intv-human-001",
