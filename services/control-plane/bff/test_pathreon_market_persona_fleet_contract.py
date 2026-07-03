@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import json
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -18,6 +19,25 @@ from read_store import ReadSurfaceStore
 HEADERS = {"Authorization": "Bearer op-pathreon-fleet:operator,reviewer,admin:mfa"}
 PERSONA_FLEET_DEFAULT_TARGET_BYTES = 250_000
 PERSONA_FLEET_DEFAULT_HARD_LIMIT_BYTES = 1_000_000
+PERSONA_FLEET_ROW_HARD_LIMIT_BYTES = 8_000
+PERSONA_FLEET_FORBIDDEN_LIST_KEYS = {
+    "currentResearchProjects",
+    "current_research_projects",
+    "dataSourceRefs",
+    "data_source_refs",
+    "dataSourceStatus",
+    "data_source_status",
+    "dataSources",
+    "data_sources",
+    "requiredDataSources",
+    "required_data_sources",
+    "researchRefs",
+    "research_refs",
+    "researchStatus",
+    "research_status",
+    "sourceHealthBindings",
+    "source_health_bindings",
+}
 MARKET_PERSONAS = {
     "US": "persona-us-equity",
     "TW": "persona-tw-equity",
@@ -254,6 +274,9 @@ def test_management_persona_fleet_returns_slim_ui_safe_rows() -> None:
 
     rows = {item["persona_id"]: item for item in data["items"]}
     assert set(MARKET_PERSONAS.values()).issubset(rows)
+    for row in rows.values():
+        assert not PERSONA_FLEET_FORBIDDEN_LIST_KEYS.intersection(row)
+        assert len(json.dumps(row).encode("utf-8")) < PERSONA_FLEET_ROW_HARD_LIMIT_BYTES
 
     tw = rows["persona-tw-equity"]
     assert tw["owner"] == "pathreon-management"
@@ -280,10 +303,21 @@ def test_management_persona_fleet_returns_slim_ui_safe_rows() -> None:
         "personaName",
         "humanNeeded",
         "dataSourceStatus",
+        "data_source_status",
         "dataSources",
+        "data_sources",
+        "dataSourceRefs",
+        "data_source_refs",
+        "requiredDataSources",
+        "required_data_sources",
+        "sourceHealthBindings",
+        "source_health_bindings",
         "researchStatus",
+        "research_status",
         "currentResearchProjects",
+        "current_research_projects",
         "researchRefs",
+        "research_refs",
     ):
         assert duplicate_key not in tw
 

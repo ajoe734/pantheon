@@ -20,6 +20,25 @@ import main as bff_main
 from read_store import ReadSurfaceStore
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3:operator"}
+PERSONA_FLEET_ROW_HARD_LIMIT_BYTES = 8_000
+PERSONA_FLEET_FORBIDDEN_LIST_KEYS = {
+    "currentResearchProjects",
+    "current_research_projects",
+    "dataSourceRefs",
+    "data_source_refs",
+    "dataSourceStatus",
+    "data_source_status",
+    "dataSources",
+    "data_sources",
+    "requiredDataSources",
+    "required_data_sources",
+    "researchRefs",
+    "research_refs",
+    "researchStatus",
+    "research_status",
+    "sourceHealthBindings",
+    "source_health_bindings",
+}
 
 
 def _fresh_client(td: str) -> TestClient:
@@ -79,32 +98,16 @@ def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolutio
             assert "data_source_summary" in alpha
             assert "research_summary" in alpha
             assert "performance_summary" in alpha
-            assert "dataSourceStatus" in alpha
-            assert "data_source_status" in alpha
-            assert "dataSources" in alpha
-            assert "data_sources" in alpha
-            assert "currentResearchProjects" in alpha
-            assert "current_research_projects" in alpha
+            assert not PERSONA_FLEET_FORBIDDEN_LIST_KEYS.intersection(alpha)
+            assert len(json.dumps(alpha).encode("utf-8")) < PERSONA_FLEET_ROW_HARD_LIMIT_BYTES
 
             tw = next(item for item in body["data"]["items"] if item["id"] == "persona-tw-equity")
             assert tw["data_source_summary"]["provider_count"] == 5
-            assert tw["data_source_status"]["provider_statuses"]["shioaji"] == "read_ok"
-            assert tw["dataSourceStatus"] == tw["data_source_status"]
-            assert [source["provider_key"] for source in tw["data_sources"]] == [
-                "shioaji",
-                "twse",
-                "tpex",
-                "mops",
-                "finmind",
-            ]
-            assert tw["dataSources"] == tw["data_sources"]
-            assert tw["required_data_sources"]
-            assert tw["source_health_bindings"]
+            assert tw["data_source_summary"]["provider_status_counts"]["read_ok"] >= 1
+            assert not PERSONA_FLEET_FORBIDDEN_LIST_KEYS.intersection(tw)
             assert tw["research_summary"]["current_project_count"] == 1
-            assert tw["research_status"]["stage"] == "management_review_linked"
-            assert tw["researchStatus"] == tw["research_status"]
-            assert tw["current_research_projects"][0]["project_id"] == "MGMT-QLIB-006"
-            assert tw["currentResearchProjects"] == tw["current_research_projects"]
+            assert tw["research_summary"]["stage"] == "management_review_linked"
+            assert len(json.dumps(tw).encode("utf-8")) < PERSONA_FLEET_ROW_HARD_LIMIT_BYTES
             assert body["data"]["summary"]["execution_boundary"] == {
                 "approved_artifacts_only": True,
                 "live_capital_side_effects": False,

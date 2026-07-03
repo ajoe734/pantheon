@@ -1,0 +1,1 @@
+export { ManagementDenseTable } from "./ManagementDenseTable";

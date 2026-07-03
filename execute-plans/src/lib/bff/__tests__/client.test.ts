@@ -221,6 +221,7 @@ describe("managementClient — Persona Fleet aggregate live adapter", () => {
   const realFetch = globalThis.fetch;
 
   beforeEach(() => {
+    vi.stubEnv("VITE_BFF_MODE", "live");
     vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
     liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
   });
@@ -234,44 +235,39 @@ describe("managementClient — Persona Fleet aggregate live adapter", () => {
   it("reads /bff/management/persona-fleet without falling back to list seeds", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
-        items: [
-          {
-            id: "persona-alpha",
-            persona_id: "persona-alpha",
-            persona: { id: "persona-alpha", name: "Alpha Persona", state: "active" },
-            health: {
+        data: {
+          items: [
+            {
+              id: "persona-alpha",
+              persona_id: "persona-alpha",
+              name: "Alpha Persona",
+              owner: "pantheon-dev-browser",
               status: "critical",
-              severity: "high",
+              health: "critical",
               score: 65,
-              reasons: ["drawdown_threshold"],
-              latest_telemetry_at: "2026-04-10T15:00:00Z",
-              active_incident_count: 1,
+              deployment_stage: "paper",
+              data_source_summary: { state: "read_ok", provider_count: 2 },
+              research_summary: { stage: "management_review_linked", current_project_count: 1 },
+              performance_summary: { violation_count: 0 },
+              links: {
+                source_health: "/bff/v5/execution/persona-health?persona_id=persona-alpha",
+              },
             },
-            bindings: [{ id: "binding-042", capital_pool_id: "pool-main" }],
-            capitalPools: [{ id: "pool-main" }],
-            capital_pools: [{ id: "pool-main" }],
-            runtimeBindings: [{ runtime_id: "runtime-042" }],
-            runtime_bindings: [{ runtime_id: "runtime-042" }],
-            telemetrySummary: { latest: { runtime_id: "runtime-042" } },
-            telemetry_summary: { latest: { runtime_id: "runtime-042" } },
-            training: { session_count: 2 },
-            evolution: { decision_count: 1 },
-            allowedActions: { canRetire: true },
+          ],
+          summary: {
+            total_personas: 1,
+            returned_personas: 1,
+            critical_personas: 1,
+            degraded_personas: 0,
+            healthy_personas: 0,
+            bound_personas: 1,
+            runtime_bound_personas: 1,
           },
-        ],
-        summary: {
-          total_personas: 1,
-          returned_personas: 1,
-          critical_personas: 1,
-          degraded_personas: 0,
-          healthy_personas: 0,
-          bound_personas: 1,
-          runtime_bound_personas: 1,
         },
         page_info: { total: 1, page_size: 1, next_page_token: null },
         meta: {
           surfaces: {
-            persona_fleet: { status: "ok", source: "bff_composed" },
+            persona_fleet: { status: "ok", source: "bff_composed_slim_list" },
           },
         },
       }), { status: 200, headers: { "Content-Type": "application/json" } }),
@@ -281,10 +277,14 @@ describe("managementClient — Persona Fleet aggregate live adapter", () => {
     const aggregate = await managementClient.personaFleet.list({ health: "critical", page_size: 1 });
 
     expect(fetchMock.mock.calls[0][0]).toBe("https://example.test/bff/management/persona-fleet?health=critical&page_size=1");
-    expect(aggregate.items[0].id).toBe("persona-alpha");
-    expect(aggregate.items[0].telemetrySummary).toHaveProperty("latest");
-    expect(aggregate.summary.critical_personas).toBe(1);
-    expect(aggregate.meta.surfaces?.persona_fleet).toEqual({ status: "ok", source: "bff_composed" });
+    expect("items" in aggregate).toBe(false);
+    expect("summary" in aggregate).toBe(false);
+    expect(aggregate.data.items[0].id).toBe("persona-alpha");
+    expect("telemetrySummary" in aggregate.data.items[0]).toBe(false);
+    expect("dataSourceStatus" in aggregate.data.items[0]).toBe(false);
+    expect(aggregate.data.items[0].data_source_summary?.provider_count).toBe(2);
+    expect(aggregate.data.summary.critical_personas).toBe(1);
+    expect(aggregate.meta.surfaces?.persona_fleet).toEqual({ status: "ok", source: "bff_composed_slim_list" });
   });
 });
 
