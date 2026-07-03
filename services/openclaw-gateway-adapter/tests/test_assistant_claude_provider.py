@@ -100,7 +100,14 @@ def test_readiness_degraded_mount_missing():
 def test_readiness_degraded_auth_failed():
     mounts = _mock_mounts_ready()
     provider = AssistantClaudeProvider(mounts=mounts)
-    mock_result = ClaudeProviderResult(status="degraded", text="", degraded_reason="auth_failure")
+    mock_result = ClaudeProviderResult(
+        status="degraded",
+        text="",
+        degraded_reason="auth_failure",
+        exit_code=1,
+        config_dir="/home/pantheon-assistant/.claude",
+        diagnostic_reason="stderr_auth_failure",
+    )
 
     with (
         patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
@@ -113,6 +120,13 @@ def test_readiness_degraded_auth_failed():
     assert result["status"] == "degraded"
     assert result["auth_status"] == "failed"
     assert result["degraded_reason"] == "claude_auth_failure"
+    assert result["auth_probe"] == {
+        "status": "degraded",
+        "degraded_reason": "auth_failure",
+        "config_dir": "claude_config",
+        "exit_code": 1,
+        "diagnostic_reason": "stderr_auth_failure",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -447,7 +461,41 @@ def test_invoke_claude_non_zero_exit_no_text():
     ):
         result = invoke_claude("hello", mounts=_mock_mounts_ready())
     assert result.status == "degraded"
-    assert result.degraded_reason in {"non_zero_exit", "auth_failure"}
+    assert result.degraded_reason == "non_zero_exit"
+    assert result.diagnostic_reason == "stderr_unclassified"
+    assert result.exit_code == 1
+
+
+def test_invoke_claude_non_zero_exit_empty_stderr_has_safe_diagnostic():
+    completed = MagicMock()
+    completed.stdout = b""
+    completed.stderr = b""
+    completed.returncode = 1
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/claude"),
+        patch("subprocess.run", return_value=completed),
+    ):
+        result = invoke_claude("hello", mounts=_mock_mounts_ready())
+    assert result.status == "degraded"
+    assert result.degraded_reason == "non_zero_exit_no_stderr"
+    assert result.diagnostic_reason == "stderr_empty"
+
+
+def test_invoke_claude_permission_denied_stderr_has_safe_diagnostic():
+    completed = MagicMock()
+    completed.stdout = b""
+    completed.stderr = b"EACCES: permission denied, open '/home/pantheon-assistant/.claude.json'"
+    completed.returncode = 1
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/claude"),
+        patch("subprocess.run", return_value=completed),
+    ):
+        result = invoke_claude("hello", mounts=_mock_mounts_ready())
+    assert result.status == "degraded"
+    assert result.degraded_reason == "config_permission_denied"
+    assert result.diagnostic_reason == "stderr_permission_denied"
 
 
 def test_invoke_claude_auth_failure_in_stderr():
@@ -463,6 +511,7 @@ def test_invoke_claude_auth_failure_in_stderr():
         result = invoke_claude("hello", mounts=_mock_mounts_ready())
     assert result.status == "degraded"
     assert result.degraded_reason == "auth_failure"
+    assert result.diagnostic_reason == "stderr_auth_failure"
 
 
 # ---------------------------------------------------------------------------
