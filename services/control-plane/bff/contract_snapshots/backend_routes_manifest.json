@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-07-02",
+    "snapshot_date": "2026-07-03",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 580,
+    "total_routes": 584,
     "status_values": [
       "implemented",
       "alias",
@@ -2188,6 +2188,18 @@
       "status": "implemented"
     },
     {
+      "method": "GET",
+      "path": "/bff/management/promotion-reviews",
+      "family": "management-console",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/promotion-reviews/{param}",
+      "family": "management-console",
+      "status": "implemented"
+    },
+    {
       "method": "POST",
       "path": "/bff/management/personas/paper-launch",
       "family": "management-console",
@@ -2195,7 +2207,19 @@
     },
     {
       "method": "POST",
+      "path": "/bff/management/personas/{param}/promotion-reviews",
+      "family": "management-console",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/management/personas/{param}/setup/retry",
+      "family": "management-console",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/promotion-reviews/{param}/decisions",
       "family": "management-console",
       "status": "implemented"
     },
