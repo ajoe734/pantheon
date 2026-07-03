@@ -16,8 +16,8 @@ Generated in the worker workspace because the supervisor root did not have a tas
   showed `/agora/trading-room` nav 200, Trading Room aggregate and
   decision-events 200, no console errors, no `Failed to load Trading Room`,
   and screenshot `/tmp/agora-live-after-auth002.png` shows the dark Agora
-  layout. Owner should run task-closeout-finalization and move `done` after
-  this closeout evidence PR merges.
+  layout. Closeout evidence PR (#2836) is merged into dev; owner is now
+  running task-closeout-finalization and moving this task to `done`.
 
 ## Summary
 修 execute-plans Agora Trading Room frontend client: 所有 tradingRoom.ts read/write fetch 必須使用 shared BFF auth headers, 保留動態 BFF data flow, 補 Authorization 測試, PR merge 後等待 dev FE deploy 並用 live browser probe 證明 /bff/agora/trading-room 與 decision-events 都回 200。不得重做靜態 UI; 設計/合約不明時先開 blocker。
