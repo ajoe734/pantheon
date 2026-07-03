@@ -67,6 +67,7 @@ const gateTitles = {
 };
 
 const REQUIRED_RBAC_LABELS = ["anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"];
+const REQUIRED_RBAC_READ_ALLOWED_LABELS = ["viewer", "operator", "reviewer", "approver", "admin"];
 const REQUIRED_RBAC_READ_FAMILIES = ["bff-strategies", "bff-ranking-formulas", "bff-agora-signals"];
 const REQUIRED_RBAC_WRITE_FAMILIES = ["strategy", "ranking-formula", "agora-note", "intervention-claim"];
 const REQUIRED_RBAC_WRITE_READBACK_FAMILIES = ["strategy", "ranking-formula", "agora-note"];
@@ -767,7 +768,20 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const duplicateRbacDetailLinkedFamilies = REQUIRED_RBAC_MATRIX_FAMILIES.filter((family) => (rbacDetailLinkedFamilyCounts.get(family) || 0) > 1);
   const rbacMatrixDetailLinkedFamilyCount = REQUIRED_RBAC_MATRIX_FAMILIES.length - missingRbacDetailLinkedFamilies.length;
   const rbacMatrixDetailLinksOk = missingRbacDetailLinkedFamilies.length === 0 && duplicateRbacDetailLinkedFamilies.length === 0;
+  const rbacRead = rbacMatrix.filter((item) => String(item?.family || "").startsWith("rbac-read-"));
   const rbacWrite = rbacMatrix.filter((item) => String(item?.family || "").startsWith("rbac-write-"));
+  const rbacDeniedErrorCodes = new Set(["AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"]);
+  const expectedRbacReadDeniedCount = (REQUIRED_RBAC_LABELS.length - REQUIRED_RBAC_READ_ALLOWED_LABELS.length) * REQUIRED_RBAC_READ_FAMILIES.length;
+  const expectedRbacWriteDeniedCount = (REQUIRED_RBAC_LABELS.length - REQUIRED_RBAC_WRITE_ALLOWED_LABELS.length) * REQUIRED_RBAC_WRITE_FAMILIES.length;
+  const rbacReadDeniedRequired = rbacRead.filter((item) => !REQUIRED_RBAC_READ_ALLOWED_LABELS.includes(String(item?.rbac_label || "")));
+  const rbacReadDeniedEnvelopeProofs = rbacReadDeniedRequired.filter((item) => {
+    const label = String(item?.rbac_label || "");
+    const status = Number(item?.status ?? 0);
+    const deniedStatusOk = label === "anonymous" ? [401, 403].includes(status) : status === 403;
+    return hasCanonicalBffErrorEnvelope(item)
+      && deniedStatusOk
+      && rbacDeniedErrorCodes.has(String(item?.error_code || ""));
+  });
   const rbacWriteSideEffectProofs = rbacWrite.filter((item) => item?.side_effect_check?.ok === true);
   const rbacWriteMarkerLinkedProofs = rbacWrite.filter((item) =>
     typeof item?.request_marker_sha256_12 === "string"
@@ -800,16 +814,16 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     return readback?.ok === true
       && readback?.kind === "readback_not_persisted"
       && Number(readback?.status ?? 0) === 404
-      && readback?.error_envelope === true
+      && hasCanonicalBffErrorEnvelope(readback)
       && notFoundErrorCodes.has(String(readback?.error_code || ""))
       && typeof readback?.target_id_sha256_12 === "string"
       && readback.target_id_sha256_12.length > 0;
   });
   const rbacWriteDeniedNoPersistence = rbacWrite.filter((item) =>
-    item?.error_envelope === true
+    hasCanonicalBffErrorEnvelope(item)
     && item?.side_effect_check?.ok === true
     && item?.side_effect_check?.kind === "authorization_rejected_before_persistence"
-    && ["AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"].includes(String(item?.side_effect_check?.error_code || ""))
+    && rbacDeniedErrorCodes.has(String(item?.side_effect_check?.error_code || ""))
     && rbacWriteMarkerLinkedProofs.includes(item)
   );
   const allDryRunOk = dryRun.length > 0 && dryRun.every((item) => item?.ok === true);
@@ -855,10 +869,12 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && rbacWriteSummarySideEffectProofCount === rbacWrite.length
     && rbacWriteSideEffectProofCount === rbacWrite.length
     && rbacWriteMarkerLinkedProofs.length === rbacWrite.length
+    && rbacReadDeniedEnvelopeProofs.length === rbacReadDeniedRequired.length
+    && rbacReadDeniedRequired.length === expectedRbacReadDeniedCount
     && rbacWriteDryRunMetaProofs.length >= 16
     && rbacWriteReadbackProofs.length === rbacWriteReadbackRequired.length
     && rbacWriteReadbackRequired.length === REQUIRED_RBAC_WRITE_ALLOWED_LABELS.length * REQUIRED_RBAC_WRITE_READBACK_FAMILIES.length
-    && rbacWriteDeniedNoPersistence.length >= 16;
+    && rbacWriteDeniedNoPersistence.length === expectedRbacWriteDeniedCount;
   const fullRbacMatrix = rbacProbeCount >= REQUIRED_RBAC_MATRIX_FAMILIES.length
     && rbacMatrix.length >= REQUIRED_RBAC_MATRIX_FAMILIES.length
     && rbacMatrixCoverageOk
@@ -935,7 +951,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && twoManTokenPair
       && twoManTokenPairDistinct,
     note: {
-      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} detailLinks:${rbacMatrixDetailLinkedFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeReadbackProofs:${rbacWriteReadbackProofs.length}/${rbacWriteReadbackRequired.length} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
+      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} detailLinks:${rbacMatrixDetailLinkedFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} readDeniedEnvelopeProofs:${rbacReadDeniedEnvelopeProofs.length}/${expectedRbacReadDeniedCount} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeReadbackProofs:${rbacWriteReadbackProofs.length}/${rbacWriteReadbackRequired.length} writeDeniedEnvelopeProofs:${rbacWriteDeniedNoPersistence.length}/${expectedRbacWriteDeniedCount} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 targetLinks:${approvalDetailProof.targetLinkedCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
       twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 targetLinks:${twoManDetailProof.targetLinkedCount}/2 signatureLinks:${twoManDetailProof.signatureLinkedCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,

@@ -38,6 +38,17 @@ class _FakeResponse:
         return self._body
 
 
+def canonical_error_shape() -> dict[str, object]:
+    return {
+        "ok": True,
+        "location": "error",
+        "code_present": True,
+        "message_present": True,
+        "meta_correlation_id_present": True,
+        "outer_detail_wrapper": False,
+    }
+
+
 def test_request_json_validates_required_values_and_extracts_body_paths(monkeypatch) -> None:
     probe = _load_probe_module()
 
@@ -240,9 +251,19 @@ def test_build_dry_run_results_attaches_per_probe_side_effect_proofs(monkeypatch
                 "meta.liveCapitalSideEffects": False,
             }
         elif probe.family.endswith("-readback-not-persisted"):
-            result.update({"status": 404, "error_envelope": True, "error_code": "RESOURCE_NOT_FOUND"})
+            result.update({
+                "status": 404,
+                "error_envelope": True,
+                "error_envelope_shape": canonical_error_shape(),
+                "error_code": "RESOURCE_NOT_FOUND",
+            })
         elif probe.family.startswith("dry-run-invalid-"):
-            result.update({"status": 422, "error_envelope": True, "error_code": "VALIDATION_FAILED"})
+            result.update({
+                "status": 422,
+                "error_envelope": True,
+                "error_envelope_shape": canonical_error_shape(),
+                "error_code": "VALIDATION_FAILED",
+            })
         return result
 
     monkeypatch.setattr(probe, "request_json", fake_request_json)
@@ -294,6 +315,8 @@ def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch
             "ok": True,
             "error_envelope": probe.expect_error_envelope,
         }
+        if probe.expect_error_envelope:
+            result["error_envelope_shape"] = canonical_error_shape()
         if probe.family.endswith("readback-not-persisted") and probe.path == "/bff/agora/notes":
             result.update(
                 {
@@ -306,7 +329,12 @@ def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch
                 }
             )
         elif probe.family.endswith("readback-not-persisted"):
-            result.update({"status": 404, "error_envelope": True, "error_code": "RESOURCE_NOT_FOUND"})
+            result.update({
+                "status": 404,
+                "error_envelope": True,
+                "error_envelope_shape": canonical_error_shape(),
+                "error_code": "RESOURCE_NOT_FOUND",
+            })
         elif probe.method == "POST" and probe.expect_error_envelope:
             result["error_code"] = "FORBIDDEN"
         elif probe.method == "POST":
