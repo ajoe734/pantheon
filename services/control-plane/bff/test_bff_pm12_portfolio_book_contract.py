@@ -761,23 +761,31 @@ def test_strategy_allocation_returns_active_strategy_allocations_with_drift(monk
 
     row = payload["data"]["items"][0]
     assert row["strategy_id"] == "strategy-alpha"
-    assert row["strategyLabel"] == "Alpha Carry"
+    assert row["strategy_label"] == "Alpha Carry"
     assert row["capital_pool_id"] == "pool-alpha"
-    assert row["capitalPoolName"] == "Alpha Book"
-    assert row["allocationAmount"] == 30600.0
+    assert row["capital_pool_name"] == "Alpha Book"
+    assert row["allocation_amount"] == 30600.0
     assert row["allocation"]["source"] == "position_snapshots"
-    assert row["runtimeIds"] == ["runtime-alpha"]
-    assert row["deploymentPlanIds"] == ["plan-alpha"]
-    assert row["personaIds"] == ["persona-alpha"]
+    assert row["runtime_ids"] == ["runtime-alpha"]
+    assert row["deployment_plan_ids"] == ["plan-alpha"]
+    assert row["persona_ids"] == ["persona-alpha"]
     assert row["drift"]["status"] == "breached"
-    assert row["drift"]["availableRuntimeCount"] == 1
-    assert row["drift"]["breachedMetricCount"] == 1
+    assert row["drift"]["available_runtime_count"] == 1
+    assert row["drift"]["breached_metric_count"] == 1
     assert row["links"]["strategy"] == "/bff/strategies/strategy-alpha"
-    assert row["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
-    assert payload["data"]["summary"]["allocationCount"] == 1
-    assert payload["data"]["summary"]["activeRuntimeCount"] == 1
-    assert payload["data"]["summary"]["totalAllocatedCapital"] == 30600.0
-    assert payload["data"]["summary"]["byDriftStatus"] == {"breached": 1}
+    assert row["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
+    assert "strategyLabel" not in row
+    assert "capitalPoolName" not in row
+    assert "allocationAmount" not in row
+    assert "runtimeIds" not in row
+    assert "sourceRefs" not in row
+    assert "paperLiveDrift" not in row
+    assert "availableRuntimeCount" not in row["drift"]
+    assert payload["data"]["summary"]["allocation_count"] == 1
+    assert payload["data"]["summary"]["active_runtime_count"] == 1
+    assert payload["data"]["summary"]["total_allocated_capital"] == 30600.0
+    assert payload["data"]["summary"]["by_drift_status"] == {"breached": 1}
+    assert "allocationCount" not in payload["data"]["summary"]
     assert payload["data"]["summary"]["basis"] == "active_runtime_strategy_pool_allocation"
     assert payload["meta"]["surfaces"]["strategy_allocation"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["paper_live_drift"]["source"] == "service_store"
@@ -815,27 +823,32 @@ def test_capital_flow_returns_read_only_capital_flow_projection(monkeypatch) -> 
 
     row = payload["data"]["items"][0]
     assert row["capital_pool_id"] == "pool-alpha"
-    assert row["capitalPoolName"] == "Alpha Book"
+    assert row["capital_pool_name"] == "Alpha Book"
     assert row["persona_id"] == "persona-alpha"
     assert row["strategy_id"] == "strategy-alpha"
-    assert row["strategyLabel"] == "Alpha Carry"
+    assert row["strategy_label"] == "Alpha Carry"
     assert row["deployment_stage"] == "paper"
     assert row["direction"] == "inflow"
-    assert row["netCapitalFlow"] == 10.0
-    assert row["inflowAmount"] == 10.0
-    assert row["outflowAmount"] == 0.0
-    assert row["allocatedCapital"] == 30600.0
-    assert row["runtimeIds"] == ["runtime-alpha"]
-    assert row["deploymentPlanIds"] == ["plan-alpha"]
-    assert row["personaCapitalBindingIds"] == ["binding-alpha"]
-    assert row["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
+    assert row["net_capital_flow"] == 10.0
+    assert row["inflow_amount"] == 10.0
+    assert row["outflow_amount"] == 0.0
+    assert row["allocated_capital"] == 30600.0
+    assert row["runtime_ids"] == ["runtime-alpha"]
+    assert row["deployment_plan_ids"] == ["plan-alpha"]
+    assert row["persona_capital_binding_ids"] == ["binding-alpha"]
+    assert row["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
     assert row["links"]["persona"] == "/bff/personas/persona-alpha"
     assert row["links"]["strategy"] == "/bff/strategies/strategy-alpha"
-    assert payload["data"]["summary"]["flowCount"] == 1
-    assert payload["data"]["summary"]["netCapitalFlow"] == 10.0
-    assert payload["data"]["summary"]["totalInflow"] == 10.0
-    assert payload["data"]["summary"]["totalOutflow"] == 0
-    assert payload["data"]["summary"]["byDirection"] == {"inflow": 1}
+    assert "capitalPoolName" not in row
+    assert "netCapitalFlow" not in row
+    assert "runtimeIds" not in row
+    assert "sourceRefs" not in row
+    assert payload["data"]["summary"]["flow_count"] == 1
+    assert payload["data"]["summary"]["net_capital_flow"] == 10.0
+    assert payload["data"]["summary"]["total_inflow"] == 10.0
+    assert payload["data"]["summary"]["total_outflow"] == 0
+    assert payload["data"]["summary"]["by_direction"] == {"inflow": 1}
+    assert "flowCount" not in payload["data"]["summary"]
     assert payload["data"]["summary"]["basis"] == "runtime_capital_flow_projection_from_allocations_and_pnl"
     assert payload["meta"]["surfaces"]["capital_flow"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["telemetry_summaries"]["source"] == "canonical"
@@ -853,12 +866,14 @@ def test_capital_flow_filters_outflows(monkeypatch) -> None:
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["data"]["summary"]["flowCount"] == 1
+    assert payload["data"]["summary"]["flow_count"] == 1
     row = payload["data"]["items"][0]
     assert row["direction"] == "outflow"
-    assert row["runtimeIds"] == ["runtime-alpha-live"]
-    assert row["netCapitalFlow"] == -2.0
-    assert row["outflowAmount"] == 2.0
+    assert row["runtime_ids"] == ["runtime-alpha-live"]
+    assert row["net_capital_flow"] == -2.0
+    assert row["outflow_amount"] == 2.0
+    assert "runtimeIds" not in row
+    assert "netCapitalFlow" not in row
 
 
 def test_risk_radar_composes_persona_strategy_exposure_drawdown_and_var(monkeypatch) -> None:
@@ -891,6 +906,10 @@ def test_risk_radar_composes_persona_strategy_exposure_drawdown_and_var(monkeypa
     assert row["metrics"]["value_at_risk"] == 3.5
     assert row["metrics"]["value_at_risk_source"] == "telemetry_value_at_risk"
     assert row["source_refs"]["runtime_ids"] == ["runtime-alpha"]
+    assert "riskState" not in row
+    assert "capitalPoolId" not in row
+    assert "sourceRefs" not in row
+    assert "valueAtRisk" not in row["metrics"]
 
     indicator_statuses = {indicator["id"]: indicator["status"] for indicator in row["indicators"]}
     assert indicator_statuses["drawdown"] == "ok"

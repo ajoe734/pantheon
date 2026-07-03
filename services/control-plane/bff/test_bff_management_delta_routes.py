@@ -323,8 +323,12 @@ def test_incident_timeline_returns_chronological_bucketed_incidents(monkeypatch)
     assert [item["sequence"] for item in data["items"]] == [1, 2, 3]
     assert data["items"][2]["severity_bucket"] == "high"
     assert data["items"][2]["lineage_ref"] == "artifact-alpha@v1"
-    assert data["items"][2]["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
+    assert data["items"][2]["source_refs"]["runtime_ids"] == ["runtime-alpha"]
     assert data["items"][2]["links"]["incident"] == "/bff/incidents/inc-delta-high"
+    assert "sourceRefs" not in data["items"][2]
+    assert "incidentId" not in data["items"][2]
+    assert "severityBucket" not in data["items"][2]
+    assert "capitalPool" not in data["items"][2]["links"]
 
     assert data["severity_buckets"] == {"high": 1, "medium": 1, "low": 1}
     assert data["summary"]["severity_buckets"] == data["severity_buckets"]
@@ -333,6 +337,8 @@ def test_incident_timeline_returns_chronological_bucketed_incidents(monkeypatch)
     assert data["summary"]["resolved_incident_count"] == 1
     assert data["summary"]["first_incident_at"] == "2026-05-24T07:00:00Z"
     assert data["summary"]["latest_incident_at"] == "2026-05-24T09:15:00Z"
+    assert "incidentCount" not in data["summary"]
+    assert "severityBuckets" not in data["summary"]
     assert body["page_info"] == {"next_page_token": None, "total": 3, "page_size": 10}
     assert body["meta"]["surfaces"]["incident_timeline"]["source"] == "bff_composed"
     assert body["meta"]["surfaces"]["incidents"]["source"] == "service_store"
@@ -457,6 +463,12 @@ def test_loop_throughput_reports_queue_depth_lag_and_rate(monkeypatch) -> None:
     assert data["items"][0]["queue_lag_seconds"] == 120.0
     assert data["items"][0]["duration_seconds"] == 240.0
     assert data["items"][0]["links"]["loop_run"] == "/bff/v5/loop-runs/loop-completed"
+    assert "loopRunId" not in data["items"][0]
+    assert "queueLagSeconds" not in data["items"][0]
+    assert "sourceRefs" not in data["items"][0]
+    assert "loopRun" not in data["items"][0]["links"]
+    assert "loopCount" not in data["summary"]
+    assert "byStatus" not in data["summary"]
     assert body["meta"]["surfaces"]["loop_throughput"]["source"] == "bff_composed"
     assert body["meta"]["surfaces"]["loop_runs"]["source"] == "service_store"
     assert body["meta"]["policy"] == "read_only_loop_throughput"
@@ -1076,6 +1088,18 @@ def test_cost_attribution_success() -> None:
             assert "GET /bff/capital-pools" in body["meta"]["composition_sources"]
             assert "row_count" in data["summary"]
             assert "total_cost" in data["summary"]
+            assert "rowCount" not in data["summary"]
+            assert "totalCost" not in data["summary"]
+            if data["items"]:
+                row = data["items"][0]
+                assert "cost_id" in row
+                assert "capital_pool_id" in row
+                assert "source_refs" in row
+                assert "costId" not in row
+                assert "capitalPoolId" not in row
+                assert "sourceRefs" not in row
+                assert "capitalPool" not in row["links"]
+                assert "performanceAttribution" not in row["links"]
         finally:
             bff_main.read_store = original
 

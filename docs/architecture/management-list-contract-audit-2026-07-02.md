@@ -5,7 +5,7 @@
 | Scope | Static audit of `services/control-plane/bff/main.py` Management list/table/board contracts |
 | Tool | `scripts/audit_management_list_contract.py` |
 | Baseline | `docs/architecture/management-list-contract-baseline.json` |
-| Result | 33 existing contract smells after `MGMT-LIST-CONTRACT-019`: 0 P0, 33 P1 |
+| Result | 4 existing contract smells after `MGMT-LIST-CONTRACT-020`: 0 P0, 4 P1 |
 
 ## Trigger
 
@@ -53,13 +53,15 @@ summary casing mirrors, `MGMT-LIST-CONTRACT-016` hardened frontend live
 transport so live-mode tests must prove they call the configured BFF URL
 instead of silently returning mock data, and `MGMT-LIST-CONTRACT-017` removed PM12 quarterly
 ranking row, drilldown, recommendation row, and HumanGate command fixture
-casing mirrors while slimming drilldown source breakdowns, and
-    `MGMT-LIST-CONTRACT-018` removed PM12 performance attribution casing mirrors,
-    moved row DTO projection behind page slicing, and aligned the adjacent PM12
-    persona-league DTOs and tests to the same snake_case-only wire contract, and
-    `MGMT-LIST-CONTRACT-019` removed Management AI/NL REST, SSE, provider-context,
-    usage-summary, conversation, attachment, audit-ref, and async-finalizer casing
-    mirrors:
+casing mirrors while slimming drilldown source breakdowns,
+`MGMT-LIST-CONTRACT-018` removed PM12 performance attribution casing mirrors,
+moved row DTO projection behind page slicing, and aligned the adjacent PM12
+persona-league DTOs and tests to the same snake_case-only wire contract,
+`MGMT-LIST-CONTRACT-019` removed Management AI/NL REST, SSE, provider-context,
+usage-summary, conversation, attachment, audit-ref, and async-finalizer casing
+mirrors, and `MGMT-LIST-CONTRACT-020` removed the remaining Management
+Strategy Allocation, Capital Flow, Risk Radar, Incident Timeline, Loop
+Throughput, and Cost Attribution casing mirrors:
 
 | Category | Count | Severity | Meaning |
 |---|---:|---|---|
@@ -68,7 +70,7 @@ casing mirrors while slimming drilldown source breakdowns, and
 | `source-record-in-list-dto` | 0 | P0 | Raw source record/document fields appear in list DTO helpers |
 | `embedded-aggregate-payload` | 0 | P0 | List/board payload embeds related aggregate collections |
 | `board-pack-full-child-payloads` | 0 | P0 | Board pack nests complete child endpoint responses |
-| `camel-snake-duplicate` | 29 | P1 | DTOs return both casing variants for the same fields |
+| `camel-snake-duplicate` | 0 | P1 | DTOs return both casing variants for the same fields |
 | `project-before-page` | 4 | P1 | Endpoint/helper projects broad aggregates before page slicing |
 | `heavy-row-helper` | 0 | P1 | Row helper includes detail-grade nested policy/session/memory/source data |
 
@@ -82,15 +84,15 @@ The complete machine-readable list is in
 | Persona Fleet | Remediated in `MGMT-LIST-CONTRACT-002`: `/bff/management/persona-fleet` now returns `data.items`, `data.summary`, top-level `page_info`, and `meta.related` links only | Keep source/research health detail on detail/health endpoints and require server-side filters such as `deployment_stage` |
 | Board Pack | Remediated in `MGMT-LIST-CONTRACT-003`: `_management_board_pack_response` now returns section summaries, counts, status, and hrefs without child endpoint payloads | Keep board-pack summary-only; fetch full child sections from their dedicated routes |
 | Portfolio Book Family | Remediated across `MGMT-LIST-CONTRACT-004` and `MGMT-LIST-CONTRACT-005`: core, pools, exposure, holdings, and positions now use one envelope and snake_case rows | Keep the family on `data.items`/`data.summary` and move future row expansion to detail routes |
-| PM12 Analytics Tables | Remediated in `MGMT-LIST-CONTRACT-006`: performance attribution, strategy allocation, capital flow, risk radar, incident timeline, and loop throughput now use one list envelope. `MGMT-LIST-CONTRACT-018` removed performance-attribution row/summary/metrics/source-ref casing mirrors and pages before row DTO projection | Continue row-level casing cleanup in Strategy Allocation, Capital Flow, Risk Radar, Incident Timeline, Loop Throughput, and Cost Attribution |
+| PM12 Analytics Tables | Remediated across `MGMT-LIST-CONTRACT-006`, `MGMT-LIST-CONTRACT-018`, and `MGMT-LIST-CONTRACT-020`: performance attribution, strategy allocation, capital flow, risk radar, incident timeline, and loop throughput now use one list envelope and snake_case-only row/summary/source-ref DTOs; performance attribution also pages before row DTO projection | Continue project-before-page cleanup where the guardrail still reports broad projection before pagination |
 | Persona League Family | Remediated in `MGMT-LIST-CONTRACT-007`: league, rankings, movers, tiers, heatmap, quarterly ranking, recommendations, typed client contracts, and the legacy `/bff/persona-league` helper now use one `data.items`/`data.summary` envelope. `MGMT-LIST-CONTRACT-007B` removed the shadowed legacy `/bff/management/persona-league` decorator. `MGMT-LIST-CONTRACT-018` aligned the PM12 persona-league row, ranking, mover, tier, heatmap, quarterly score-field, typed-contract, and focused-test DTOs to snake_case-only output while keeping detail-grade policy/session/memory data out of list rows. | Keep PM12 on one canonical wire contract; avoid rebuilding duplicate first-level UI pages for every PM12 endpoint |
-| Performance And Cost Attribution | Cost Attribution duplicate list aliases were remediated in `MGMT-LIST-CONTRACT-008`; Performance Attribution casing and page-before-projection were remediated in `MGMT-LIST-CONTRACT-018` | Continue Cost Attribution casing and page-before-projection cleanup |
+| Performance And Cost Attribution | Cost Attribution duplicate list aliases were remediated in `MGMT-LIST-CONTRACT-008`; Performance Attribution casing and page-before-projection were remediated in `MGMT-LIST-CONTRACT-018`; Cost Attribution casing mirrors were remediated in `MGMT-LIST-CONTRACT-020` | Continue Cost Attribution page-before-projection cleanup |
 | Human Inbox And Governance Ledger | Remediated in `MGMT-LIST-CONTRACT-010`: Human Inbox and Governance Ledger list contracts now return canonical `data.items`/`data.summary` envelopes and omit raw source records | Keep raw source/debug payloads on detail endpoints only |
-| Human/Ops Wire Casing | Remediated across `MGMT-LIST-CONTRACT-012` and `MGMT-LIST-CONTRACT-013`: HIQ Backlog, Intervention Stream, Governance Ledger, and Human Inbox readiness/summary casing mirrors were removed | Continue the same casing cleanup for other Management families |
+| Human/Ops Wire Casing | Remediated across `MGMT-LIST-CONTRACT-012`, `MGMT-LIST-CONTRACT-013`, and `MGMT-LIST-CONTRACT-020`: HIQ Backlog, Intervention Stream, Governance Ledger, Human Inbox readiness/summary, Incident Timeline, and Loop Throughput casing mirrors were removed | Keep new Management list/stream DTOs snake_case-only |
 | NL/AI Management Surfaces | Remediated across `MGMT-LIST-CONTRACT-009` and `MGMT-LIST-CONTRACT-019`: AI audit, conversation list/detail, Evolution Journal, Persona Intent, Python tests, typed client adapters, NL ask REST/SSE responses, provider context, usage summaries, attachment payloads, audit refs, and async finalizer payloads no longer expose duplicate envelopes or camel/snake wire mirrors | Keep request-side camelCase fallback reads at adapter boundaries only; new Management AI/NL wire DTOs must be snake_case-only |
 | Remaining P0 Cluster | Remediated in `MGMT-LIST-CONTRACT-010`: Evidence Explorer, HIQ Backlog, Intervention Stream, Sentinel Pulse, Human Inbox, and Governance Ledger no longer expose duplicate list envelopes, embedded child aggregates, or raw source records in list DTOs | Keep source/debug payloads on detail endpoints and enforce canonical `data.items` list envelopes |
 | Evidence Explorer Wire Casing | Remediated in `MGMT-LIST-CONTRACT-014`: Evidence Explorer rows, summaries, facets, degraded envelopes, typed contracts, and focused frontend fixtures now use snake_case wire keys without camelCase mirrors | Keep temporary frontend fallback reads only at adapter boundaries while formal Management DTOs remain single-casing |
-| PM12 Quarterly Ranking Casing | Remediated across `MGMT-LIST-CONTRACT-015` and `MGMT-LIST-CONTRACT-017`: formula/window/governance evidence helpers, ranking rows, drilldown summaries/data, recommendation rows, and focused command fixtures now use snake_case wire keys; drilldown source breakdowns expose counts/summaries instead of detail-grade helper blobs | Continue with remaining PM12 analytics table casing and page-before-projection issues |
+| PM12 Quarterly Ranking Casing | Remediated across `MGMT-LIST-CONTRACT-015` and `MGMT-LIST-CONTRACT-017`: formula/window/governance evidence helpers, ranking rows, drilldown summaries/data, recommendation rows, and focused command fixtures now use snake_case wire keys; drilldown source breakdowns expose counts/summaries instead of detail-grade helper blobs | Keep PM12 analytics table casing at 0 duplicate findings |
 | Builder Blind Spot | Remediated in `MGMT-LIST-CONTRACT-011`: `_build_management_*` helpers are now audited, and newly visible Trading Pulse, Sentinel Pulse, Cockpit, Anomalies, EP5 readiness, and Evidence Explorer builder smells were fixed instead of added to the baseline | Keep helper builders under the same list contract as route handlers; no hidden builder aliases |
 | Frontend Live Transport | Hardened in `MGMT-LIST-CONTRACT-016`: frontend live reads now honor `VITE_BFF_MODE`, `VITE_BFF_BASE_URL`, and strict fallback settings instead of silently returning mock data | Live-mode tests must prove they actually call the configured BFF URL |
 | Frontend Consumption Pattern | Remediated contracts now reject top-level aliases in focused tests; Human Inbox, Evidence, Trading Pulse, and Live Evidence adapters consume canonical `data.items`/`data.summary` shapes | Frontend must request server filters/page and adapt one canonical envelope only |
@@ -162,7 +164,8 @@ The complete machine-readable list is in
     conversation list/detail, attachment DTOs, provider history context,
     provider-status notices, NL ask REST responses, SSE completion/meta frames,
     audit refs, and async finalizer payloads now use snake_case-only wire keys.
-18. Remove camel/snake duplicates from the remaining migrated endpoints:
+18. Done in `MGMT-LIST-CONTRACT-020`: Removed camel/snake duplicates from
+    the remaining migrated endpoints:
     Strategy Allocation, Capital Flow, Risk Radar, Incident Timeline, Loop
     Throughput, and Cost Attribution.
 19. Fix remaining project-before-page findings so Human Inbox, Cost
