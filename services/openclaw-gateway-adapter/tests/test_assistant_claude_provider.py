@@ -609,6 +609,7 @@ def test_invoke_claude_uses_plan_permission_mode():
         "hello",
         "--output-format",
         "stream-json",
+        "--verbose",
         "--permission-mode",
         "plan",
     ]
