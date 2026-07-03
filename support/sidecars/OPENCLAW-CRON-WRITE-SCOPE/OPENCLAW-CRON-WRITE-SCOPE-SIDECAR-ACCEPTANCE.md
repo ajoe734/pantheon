@@ -234,3 +234,27 @@ full BFF persona-create path registers 4 cron jobs, scope survives a
 `openclaw-data` volume/container recreate) is the governing acceptance
 list. If the router-layer gap should become its own tracked task, it
 needs a new task id distinct from `OPENCLAW-CRON-WRITE-SCOPE`.
+
+---
+
+## 10. Sidecar Closeout (2026-07-03)
+
+This sidecar's own `review_approved` -> `done` closeout is now complete:
+
+- PR [#2839](https://github.com/ajoe734/pantheon/pull/2839) merged both the
+  original acceptance packet commit and the §9 scope-drift addendum into
+  `dev`; `git merge-base --is-ancestor` confirms this branch's `HEAD` is an
+  ancestor of `origin/dev`.
+- Parent `OPENCLAW-CRON-WRITE-SCOPE` (root `PANTHEON_STATUS_ROOT`
+  `ai-status.json`) remains `status: blocked`, `waiting_for: Human/Ops`,
+  owner `Claude`, reviewer `Codex` — the §9 addendum's read of the parent's
+  real scope (adapter device `operator.write` -> `operator.admin` cron-write
+  scope gap, not a router permission change) is still accurate as of this
+  closeout.
+- No canonical, runtime, registry, router, or cron implementation file was
+  touched by this sidecar at any point in its lifecycle. Only this support
+  document was added and updated.
+
+This sidecar is now closed as support material. The parent task's own
+acceptance list and owner (`Claude`) govern whether/how any of this
+packet's findings get folded into `OPENCLAW-CRON-WRITE-SCOPE` itself.
