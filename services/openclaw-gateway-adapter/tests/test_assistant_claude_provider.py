@@ -107,6 +107,7 @@ def test_readiness_degraded_auth_failed():
         exit_code=1,
         config_dir="/home/pantheon-assistant/.claude",
         diagnostic_reason="stderr_auth_failure",
+        diagnostic_message="Error: not authenticated",
     )
 
     with (
@@ -126,6 +127,7 @@ def test_readiness_degraded_auth_failed():
         "config_dir": "claude_config",
         "exit_code": 1,
         "diagnostic_reason": "stderr_auth_failure",
+        "diagnostic_message": "Error: not authenticated",
     }
 
 
@@ -463,6 +465,7 @@ def test_invoke_claude_non_zero_exit_no_text():
     assert result.status == "degraded"
     assert result.degraded_reason == "non_zero_exit"
     assert result.diagnostic_reason == "stderr_unclassified"
+    assert result.diagnostic_message == "some error"
     assert result.exit_code == 1
 
 
@@ -480,6 +483,7 @@ def test_invoke_claude_non_zero_exit_empty_stderr_has_safe_diagnostic():
     assert result.status == "degraded"
     assert result.degraded_reason == "non_zero_exit_no_stderr"
     assert result.diagnostic_reason == "stderr_empty"
+    assert result.diagnostic_message is None
 
 
 def test_invoke_claude_permission_denied_stderr_has_safe_diagnostic():
@@ -496,6 +500,7 @@ def test_invoke_claude_permission_denied_stderr_has_safe_diagnostic():
     assert result.status == "degraded"
     assert result.degraded_reason == "config_permission_denied"
     assert result.diagnostic_reason == "stderr_permission_denied"
+    assert result.diagnostic_message == "EACCES: permission denied, open 'claude_config'"
 
 
 def test_invoke_claude_auth_failure_in_stderr():
@@ -512,6 +517,37 @@ def test_invoke_claude_auth_failure_in_stderr():
     assert result.status == "degraded"
     assert result.degraded_reason == "auth_failure"
     assert result.diagnostic_reason == "stderr_auth_failure"
+    assert result.diagnostic_message == "Error: not authenticated, please login first"
+
+
+def test_invoke_claude_redacts_sensitive_stderr_diagnostic_message():
+    completed = MagicMock()
+    completed.stdout = b""
+    completed.stderr = (
+        b"Error for user@example.com: token=sk-ant-1234567890abcdefghijklmnopqrstuvwxyz "
+        b"open https://console.anthropic.com/auth?code=SECRET-CODE "
+        b"at /home/pantheon-assistant/.claude.json "
+        b"raw abcdefghijklmnopqrstuvwxyz1234567890"
+    )
+    completed.returncode = 1
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/claude"),
+        patch("subprocess.run", return_value=completed),
+    ):
+        result = invoke_claude("hello", mounts=_mock_mounts_ready())
+    assert result.status == "degraded"
+    assert result.diagnostic_message
+    assert "user@example.com" not in result.diagnostic_message
+    assert "sk-ant" not in result.diagnostic_message
+    assert "SECRET-CODE" not in result.diagnostic_message
+    assert "https://console.anthropic.com" not in result.diagnostic_message
+    assert "/home/pantheon-assistant/.claude" not in result.diagnostic_message
+    assert "abcdefghijklmnopqrstuvwxyz1234567890" not in result.diagnostic_message
+    assert "[email]" in result.diagnostic_message
+    assert "token=[redacted]" in result.diagnostic_message
+    assert "[url]" in result.diagnostic_message
+    assert "claude_config" in result.diagnostic_message
 
 
 # ---------------------------------------------------------------------------
