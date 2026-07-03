@@ -82,6 +82,7 @@ class ClaudeProviderResult:
     exit_code: Optional[int] = None
     config_dir: str = ""
     diagnostic_reason: Optional[str] = None
+    diagnostic_message: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         config_target = "claude_config" if self.config_dir else ""
@@ -97,6 +98,8 @@ class ClaudeProviderResult:
             result["exit_code"] = self.exit_code
         if self.diagnostic_reason is not None:
             result["diagnostic_reason"] = self.diagnostic_reason
+        if self.diagnostic_message is not None:
+            result["diagnostic_message"] = self.diagnostic_message
         if self.raw_events:
             result["raw_events"] = self.raw_events
         return result
@@ -682,6 +685,8 @@ def _auth_probe_metadata(result: ClaudeProviderResult) -> dict[str, Any]:
         metadata["exit_code"] = result.exit_code
     if result.diagnostic_reason is not None:
         metadata["diagnostic_reason"] = result.diagnostic_reason
+    if result.diagnostic_message is not None:
+        metadata["diagnostic_message"] = result.diagnostic_message
     return {key: value for key, value in metadata.items() if value is not None}
 
 
@@ -717,6 +722,25 @@ def _claude_cli_failure_reason(stderr_raw: str) -> tuple[str, str]:
     if any(marker in text for marker in ("billing", "subscription", "upgrade")):
         return "billing_or_subscription", "stderr_billing_or_subscription"
     return "non_zero_exit", "stderr_unclassified"
+
+
+def _claude_cli_diagnostic_excerpt(stderr_raw: str, *, max_length: int = 240) -> Optional[str]:
+    text = " ".join((stderr_raw or "").strip().split())
+    if not text:
+        return None
+    text = re.sub(r"https?://[^\s)>\]\"']+", "[url]", text)
+    text = re.sub(r"(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", "[email]", text)
+    text = re.sub(
+        r"(?i)\b(authorization|bearer|token|secret|password|passwd|api[_-]?key|private[_-]?key)\b\s*[:=]\s*[^\s,;]+",
+        lambda match: f"{match.group(1)}=[redacted]",
+        text,
+    )
+    text = re.sub(r"/home/pantheon-assistant/\.claude[^\s)>\]\"']*", "claude_config", text)
+    text = re.sub(r"/srv/pantheon-assistant/\.claude[^\s)>\]\"']*", "claude_config", text)
+    text = re.sub(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{24,}(?![A-Za-z0-9_-])", "[redacted]", text)
+    if len(text) > max_length:
+        return f"{text[: max_length - 3]}..."
+    return text
 
 
 def _resolve_binary(environ: Mapping[str, str] | None = None) -> Optional[str]:
@@ -1041,6 +1065,7 @@ def invoke_claude(
 
     if proc.returncode != 0 and not text:
         degraded_reason, diagnostic_reason = _claude_cli_failure_reason(stderr_raw)
+        diagnostic_message = _claude_cli_diagnostic_excerpt(stderr_raw)
         return ClaudeProviderResult(
             status="degraded",
             text=text,
@@ -1049,6 +1074,7 @@ def invoke_claude(
             exit_code=proc.returncode,
             config_dir=config_dir,
             diagnostic_reason=diagnostic_reason,
+            diagnostic_message=diagnostic_message,
         )
 
     return ClaudeProviderResult(
