@@ -160,7 +160,8 @@ jobs:
             --zone "${DEV_ZONE}" \
             --project "${GCP_DEPLOY_PROJECT_ID}" \
             --ssh-flag=-T \
-            --command "cd '${DEV_REMOTE_DIR}' && bash scripts/openclaw-assistant-openclaw-live-smoke.sh"
+            --command "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s" \
+            < scripts/openclaw-assistant-openclaw-live-smoke.sh
 
       - name: Public BFF smoke
         env:
