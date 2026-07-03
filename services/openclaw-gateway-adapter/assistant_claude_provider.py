@@ -525,15 +525,17 @@ class AssistantClaudeProvider:
                 with self._reauth_lock:
                     session = dict(self._reauth_sessions.get(session_id) or {})
                 if returncode == 0 and session.get("code_submitted_at"):
-                    completed_at = self._clock().isoformat().replace("+00:00", "Z")
                     self._update_reauth_session(
                         session_id,
-                        status="completed",
-                        updated_at=completed_at,
-                        completed_at=completed_at,
+                        status="failed",
+                        updated_at=self._clock().isoformat().replace("+00:00", "Z"),
                         readiness=readiness,
-                        warning_code="CLAUDE_REAUTH_READY_PROBE_DEGRADED",
-                        message="Claude auth login accepted the authorization code; readiness probe is still degraded.",
+                        error_code="CLAUDE_REAUTH_READY_PROBE_DEGRADED",
+                        warning_code=None,
+                        message=(
+                            "Claude auth login accepted the authorization code, "
+                            "but readiness probe is still degraded."
+                        ),
                         returncode=returncode,
                     )
                     return
@@ -618,7 +620,7 @@ class AssistantClaudeProvider:
             )
 
     def _build_env(self) -> dict[str, str]:
-        return {**os.environ, **self._environ, "CLAUDE_CONFIG_DIR": _resolve_config_dir(self._mounts)}
+        return _claude_cli_env(_resolve_config_dir(self._mounts), self._environ)
 
 
 def _mount_metadata(validation: Any) -> dict[str, Any]:
@@ -640,6 +642,16 @@ def _resolve_config_dir(mounts: AssistantCredentialMounts) -> str:
         if contract.provider == "claude":
             return contract.container_path
     return DEFAULT_CLAUDE_CONTAINER_CONFIG_DIR
+
+
+def _claude_cli_env(config_dir: str, environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Build an environment where Claude auth and probes share one credential home."""
+    env = {**os.environ, **dict(environ or {})}
+    env["CLAUDE_CONFIG_DIR"] = config_dir
+    claude_home = os.path.dirname(config_dir.rstrip(os.sep)) or env.get("HOME", "")
+    if claude_home:
+        env["HOME"] = claude_home
+    return env
 
 
 def _utc_now() -> datetime:
@@ -934,7 +946,7 @@ def invoke_claude(
 
     config_dir = _resolve_config_dir(mounts)
 
-    env = {**os.environ, "CLAUDE_CONFIG_DIR": config_dir}
+    env = _claude_cli_env(config_dir)
 
     cmd = [
         binary,

@@ -272,6 +272,7 @@ def test_start_device_reauth_runs_claude_auth_login_and_captures_url():
     assert popen_calls[0][0][0] == ["/usr/bin/claude", "auth", "login"]
     assert popen_calls[0][1]["stdin"] == subprocess.PIPE
     assert popen_calls[0][1]["env"]["CLAUDE_CONFIG_DIR"] == "/home/pantheon-assistant/.claude"
+    assert popen_calls[0][1]["env"]["HOME"] == "/home/pantheon-assistant"
 
 
 def test_claude_auth_url_code_true_is_not_treated_as_user_code():
@@ -317,7 +318,7 @@ def test_submit_reauth_code_writes_to_live_claude_auth_process():
     assert result.get("user_code") is None
 
 
-def test_submitted_reauth_code_exit_zero_completes_even_when_probe_degraded():
+def test_submitted_reauth_code_exit_zero_fails_when_probe_degraded():
     fake_process = _FakeLoginProcess()
     fake_process.stdout = io.StringIO(
         "Open https://console.anthropic.com/oauth/authorize?client_id=abc&code=true\n"
@@ -352,11 +353,18 @@ def test_submitted_reauth_code_exit_zero_completes_even_when_probe_degraded():
         provider._monitor_reauth_session(started["reauth_session_id"], fake_process, 30, 30)  # noqa: SLF001
 
     result = provider.reauth_status(started["reauth_session_id"])
-    assert result["status"] == "completed"
+    assert result["status"] == "failed"
     assert result["code_submitted_at"]
-    assert result["completed_at"]
+    assert "completed_at" not in result
+    assert "completedAt" not in result
     assert result["returncode"] == 0
-    assert result["warning_code"] == "CLAUDE_REAUTH_READY_PROBE_DEGRADED"
+    assert result["error_code"] == "CLAUDE_REAUTH_READY_PROBE_DEGRADED"
+    assert "warning_code" not in result
+    assert "warningCode" not in result
+    assert (
+        result["message"]
+        == "Claude auth login accepted the authorization code, but readiness probe is still degraded."
+    )
     assert result["readiness"]["ready"] is False
     assert "claude-auth-code-123" not in repr(result)
 
@@ -509,6 +517,7 @@ def test_invoke_claude_uses_plan_permission_mode():
 
     assert result.status == "ok"
     argv = run_mock.call_args.args[0]
+    env = run_mock.call_args.kwargs["env"]
     assert argv == [
         "/usr/bin/claude",
         "-p",
@@ -518,6 +527,8 @@ def test_invoke_claude_uses_plan_permission_mode():
         "--permission-mode",
         "plan",
     ]
+    assert env["CLAUDE_CONFIG_DIR"] == "/home/pantheon-assistant/.claude"
+    assert env["HOME"] == "/home/pantheon-assistant"
 
 
 def test_invoke_claude_uses_configured_binary_path(monkeypatch):
