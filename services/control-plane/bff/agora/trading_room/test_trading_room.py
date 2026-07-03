@@ -174,18 +174,20 @@ def _write_headers(idempotency_key: str = "idem-001") -> dict:
 
 
 def _client(store: TradingRoomStore, *, user_id: str = "user-001", tenant_id: str = "tenant-001") -> TestClient:
-    def _extract_identity(_auth: str | None) -> dict:
-        return {"user_id": user_id, "tenant_id": tenant_id, "session_id": "session-001"}
-
-    def _require_read_role(_identity: dict) -> None:
-        pass
-
     def _bff_error(status_code: int, code: object, message: str, reason: str, **kw) -> HTTPException:
         code_value = getattr(code, "value", code)
         return HTTPException(
             status_code=status_code,
             detail={"code": code_value, "message": message, "reason": reason, **kw},
         )
+
+    def _extract_identity(_auth: str | None, session_cookie: str | None = None) -> dict:
+        if not _auth and not session_cookie:
+            raise _bff_error(401, "AUTH_REQUIRED", "Missing credentials", "no_credentials")
+        return {"user_id": user_id, "tenant_id": tenant_id, "session_id": "session-001"}
+
+    def _require_read_role(_identity: dict) -> None:
+        pass
 
     def _utc_now() -> str:
         return "2026-06-22T10:00:00Z"
@@ -1142,7 +1144,7 @@ def test_router_creation_smoke():
     """Router must be creatable without errors."""
     import uuid as _uuid
 
-    def _extract_identity(_auth: str | None) -> dict:
+    def _extract_identity(_auth: str | None, session_cookie: str | None = None) -> dict:
         return {"user_id": "test-user", "tenant_id": "test-tenant"}
 
     def _require_read_role(_identity: dict) -> None:
@@ -1186,6 +1188,45 @@ def test_router_creation_smoke():
     assert "/bff/agora/trading-room/workspaces/{workspace_id}/versions/{version_id}/rollback" in routes
     print(f"✅ router: created with {len(routes)} routes")
     print(f"   Routes: {sorted(routes)}")
+
+
+# ---------------------------------------------------------------------------
+# Cookie session auth (AG-DYNUI-LIVE-AUTH-002 regression)
+#
+# Trading Room routes must accept the same cookie-based browser session that
+# /bff/me and /bff/management/shell-summary already accept, not only a
+# Bearer Authorization header. Live browsers send `credentials: "include"`
+# and rely on the `pantheon_session` cookie when no bearer token is issued
+# (e.g. dev-login disabled). Before this fix these routes only forwarded the
+# Authorization header to extract_identity(), so a valid cookie session
+# still got AUTH_REQUIRED.
+# ---------------------------------------------------------------------------
+
+def test_get_trading_room_accepts_cookie_session_without_authorization_header():
+    store = make_trading_room_store()
+    client = _client(store)
+    client.cookies.set("pantheon_session", "session-token-abc")
+    resp = client.get("/bff/agora/trading-room")
+    assert resp.status_code == 200, resp.text
+    print("✅ router: GET /bff/agora/trading-room accepts cookie session without Authorization header")
+
+
+def test_list_decision_events_accepts_cookie_session_without_authorization_header():
+    store = make_trading_room_store()
+    store.upsert_decision_event(_make_event(event_id="evt-cookie-001"))
+    client = _client(store)
+    client.cookies.set("pantheon_session", "session-token-abc")
+    resp = client.get("/bff/agora/trading-room/decision-events")
+    assert resp.status_code == 200, resp.text
+    print("✅ router: GET decision-events accepts cookie session without Authorization header")
+
+
+def test_get_trading_room_rejects_request_with_no_credentials():
+    store = make_trading_room_store()
+    client = _client(store)
+    resp = client.get("/bff/agora/trading-room")
+    assert resp.status_code == 401, resp.text
+    print("✅ router: GET /bff/agora/trading-room rejects request with no Authorization header and no cookie")
 
 
 # ---------------------------------------------------------------------------
