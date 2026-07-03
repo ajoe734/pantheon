@@ -81,6 +81,17 @@ def write_summary(artifact_dir: Path, *, status: str = "pass", run_id: str = "12
     )
 
 
+def canonical_error_shape() -> dict[str, object]:
+    return {
+        "ok": True,
+        "location": "error",
+        "code_present": True,
+        "message_present": True,
+        "meta_correlation_id_present": True,
+        "outer_detail_wrapper": False,
+    }
+
+
 def dry_run_side_effect_entries() -> list[dict[str, object]]:
     def meta(kind: str, digest: str = "") -> dict[str, object]:
         item: dict[str, object] = {
@@ -107,6 +118,7 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
             "status": 404,
             "ok": True,
             "error_envelope": True,
+            "error_envelope_shape": canonical_error_shape(),
             "error_code": "RESOURCE_NOT_FOUND",
             "side_effect_check": {
                 "kind": "readback_not_persisted",
@@ -126,6 +138,7 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
             "status": 422,
             "ok": True,
             "error_envelope": True,
+            "error_envelope_shape": canonical_error_shape(),
             "error_code": "VALIDATION_FAILED",
             "side_effect_check": {
                 "kind": "validation_rejected_before_persistence",
@@ -1031,6 +1044,57 @@ def test_verifier_rejects_dry_run_validation_without_error_envelope(tmp_path: Pa
     item = payload["criteria"]["dry_run_no_side_effects"]
     assert item["status"] == "fail"
     assert "validation-error-envelope" in item["note"]
+
+
+def test_verifier_rejects_dry_run_validation_with_noncanonical_error_shape(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    invalid = next(
+        item
+        for item in auth["dry_run"]
+        if item["side_effect_check"]["kind"] == "validation_rejected_before_persistence"
+    )
+    invalid["error_envelope"] = True
+    invalid["error_code"] = "VALIDATION_FAILED"
+    invalid["error_envelope_shape"] = {
+        "ok": False,
+        "location": "detail.error",
+        "code_present": True,
+        "message_present": True,
+        "meta_correlation_id_present": True,
+        "outer_detail_wrapper": True,
+    }
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["dry_run_no_side_effects"]
+    assert item["status"] == "fail"
+    assert "validation-error-shape" in item["note"]
+
+
+def test_verifier_rejects_dry_run_readback_without_error_shape(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    readback = next(
+        item
+        for item in auth["dry_run"]
+        if item["family"] == "dry-run-strategy-create-readback-not-persisted"
+    )
+    readback.pop("error_envelope_shape")
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["dry_run_no_side_effects"]
+    assert item["status"] == "fail"
+    assert "readback-error-shape" in item["note"]
 
 
 def test_verifier_rejects_dry_run_readback_target_mismatch(tmp_path: Path) -> None:

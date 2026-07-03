@@ -793,6 +793,22 @@ def secret_leak_item(root: Path) -> dict[str, str]:
     return status_item("pass", "Current-run artifact does not contain raw secret material")
 
 
+def canonical_error_envelope_shape_ok(item: Any) -> bool:
+    if not isinstance(item, dict) or item.get("error_envelope") is not True:
+        return False
+    shape = item.get("error_envelope_shape")
+    if not isinstance(shape, dict):
+        return False
+    return (
+        shape.get("ok") is True
+        and shape.get("location") == "error"
+        and shape.get("code_present") is True
+        and shape.get("message_present") is True
+        and shape.get("meta_correlation_id_present") is True
+        and shape.get("outer_detail_wrapper") is False
+    )
+
+
 def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
     expected_kind_counts = {
         "dry_run_preview_meta": 2,
@@ -863,6 +879,8 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
             error_code = str(check.get("error_code") or item.get("error_code") or "")
             if item.get("error_envelope") is not True:
                 failures.append(f"{index}:readback-error-envelope")
+            if not canonical_error_envelope_shape_ok(item):
+                failures.append(f"{index}:readback-error-shape")
             if error_code not in not_found_codes:
                 failures.append(f"{index}:readback-error-code")
             if "target_id" in check:
@@ -880,6 +898,8 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
             error_code = str(check.get("error_code") or item.get("error_code") or "")
             if item.get("error_envelope") is not True:
                 failures.append(f"{index}:validation-error-envelope")
+            if not canonical_error_envelope_shape_ok(item):
+                failures.append(f"{index}:validation-error-shape")
             if error_code != "VALIDATION_FAILED":
                 failures.append(f"{index}:validation-error-code")
 
