@@ -1230,6 +1230,88 @@ def test_get_trading_room_rejects_request_with_no_credentials():
 
 
 # ---------------------------------------------------------------------------
+# AG-DYNUI-LIVE-AUTH-003-BFF-500-TRADING-ROOM regression
+#
+# Production extract_identity() returns bff.models.OperatorIdentity, a
+# pydantic BaseModel with attribute access only (no .get()). The test
+# fixtures above return plain dicts, which masked handlers that called
+# identity.get(...) directly: GET /bff/agora/trading-room and the decision
+# POST path raised AttributeError -> unhandled 500 INTERNAL_ERROR against a
+# real bearer-authenticated identity, even though /bff/me and
+# decision-events (which never call identity.get()) returned 200. Fixed by
+# routing every identity field read through _workspace_scope(), which
+# already handled both dict and attribute-style identities.
+# ---------------------------------------------------------------------------
+
+class _ObjectIdentity:
+    """Minimal stand-in for bff.models.OperatorIdentity: attributes only, no .get()."""
+
+    def __init__(self, *, operator_id: str, tenant_id: str) -> None:
+        self.operator_id = operator_id
+        self.roles = ["operator"]
+        self.mfa_verified = True
+        self.claims = {"tenant_id": tenant_id}
+        self.token_kind = "jwt"
+
+
+def _object_identity_client(store: TradingRoomStore, *, operator_id: str = "op-001", tenant_id: str = "tenant-001") -> TestClient:
+    def _bff_error(status_code: int, code: object, message: str, reason: str, **kw) -> HTTPException:
+        code_value = getattr(code, "value", code)
+        return HTTPException(
+            status_code=status_code,
+            detail={"code": code_value, "message": message, "reason": reason, **kw},
+        )
+
+    def _extract_identity(_auth: str | None, session_cookie: str | None = None) -> _ObjectIdentity:
+        if not _auth and not session_cookie:
+            raise _bff_error(401, "AUTH_REQUIRED", "Missing credentials", "no_credentials")
+        return _ObjectIdentity(operator_id=operator_id, tenant_id=tenant_id)
+
+    def _require_read_role(_identity: _ObjectIdentity) -> None:
+        pass
+
+    def _utc_now() -> str:
+        return "2026-06-22T10:00:00Z"
+
+    app = FastAPI()
+    app.include_router(
+        create_trading_room_router(
+            extract_identity=_extract_identity,
+            require_read_role=_require_read_role,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            trading_room_store=store,
+        )
+    )
+    return TestClient(app)
+
+
+def test_get_trading_room_returns_200_for_object_identity_not_just_dict():
+    store = make_trading_room_store()
+    client = _object_identity_client(store)
+    resp = client.get(
+        "/bff/agora/trading-room",
+        headers={"Authorization": "Bearer op-fe-gate:operator,reviewer,approver:mfa", "X-Tenant-Id": "pantheon-dev"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["user_scope_ref"] == "operator:op-001"
+    print("✅ router: GET /bff/agora/trading-room returns 200 for an attribute-style (non-dict) identity")
+
+
+def test_decide_trading_event_returns_201_for_object_identity_not_just_dict():
+    store = make_trading_room_store()
+    store.upsert_decision_event(_make_event(event_id="evt-object-identity-001"))
+    client = _object_identity_client(store)
+    resp = client.post(
+        "/bff/agora/trading-room/decision-events/evt-object-identity-001/decisions",
+        headers=_write_headers(),
+        json={"decision": "approve", "rationale": "test"},
+    )
+    assert resp.status_code == 201, resp.text
+    print("✅ router: POST decisions returns 201 for an attribute-style (non-dict) identity")
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
@@ -1278,4 +1360,6 @@ if __name__ == "__main__":
     test_store_pagination_no_repeat_on_second_page()
     test_store_pagination_full_coverage_no_overlap()
     test_router_creation_smoke()
+    test_get_trading_room_returns_200_for_object_identity_not_just_dict()
+    test_decide_trading_event_returns_201_for_object_identity_not_just_dict()
     print("\n✅ All trading room tests passed.")
