@@ -1,10 +1,12 @@
 export type ManagementRouteStatus = "shell" | "active-panel" | "planned-workflow";
+export type ManagementPanelKey = "shell" | "evidence" | "loop-truth" | "ooda" | "planned";
 
 export interface ManagementRouteDescriptor {
   path: string;
   label: string;
   workflow: string;
   status: ManagementRouteStatus;
+  panel: ManagementPanelKey;
   summary: string;
 }
 
@@ -26,6 +28,7 @@ const routeRules: RouteRule[] = [
       label: "Management Shell",
       workflow: "Evidence and loop truth",
       status: "shell",
+      panel: "shell",
       summary: "Current shell route. It exposes live-evidence and loop-truth panels while deeper workflows are mounted deliberately.",
     },
   },
@@ -35,6 +38,7 @@ const routeRules: RouteRule[] = [
       label: "Evidence Explorer",
       workflow: "Evidence and loop truth",
       status: "active-panel",
+      panel: "evidence",
       summary: "Served by the active shell through the BFF Live Evidence panel.",
     },
   },
@@ -44,7 +48,18 @@ const routeRules: RouteRule[] = [
       label: "Loop Truth",
       workflow: "Evidence and loop truth",
       status: "active-panel",
+      panel: "loop-truth",
       summary: "Served by the active shell through the Loop Truth panel.",
+    },
+  },
+  {
+    match: (path) => path === "/management/ooda" || path.startsWith("/management/ooda/"),
+    descriptor: {
+      label: "OODA Packets",
+      workflow: "Decision replay evidence",
+      status: "active-panel",
+      panel: "ooda",
+      summary: "Served by the active shell through the OODA packet list and replay drawer.",
     },
   },
   {
@@ -53,6 +68,7 @@ const routeRules: RouteRule[] = [
       label: "Management AI Ops",
       workflow: "AI audit and conversation control",
       status: "planned-workflow",
+      panel: "planned",
       summary: "Backend routes exist, but the dedicated chat, audit, streaming, and attachment workflow is not mounted yet.",
     },
   },
@@ -62,6 +78,7 @@ const routeRules: RouteRule[] = [
       label: "Readiness",
       workflow: "Go-live readiness",
       status: "planned-workflow",
+      panel: "planned",
       summary: "Readiness BFF routes exist; the next UI step is one consolidated readiness suite.",
     },
   },
@@ -81,6 +98,7 @@ const routeRules: RouteRule[] = [
       label: "Decision Workbench",
       workflow: "Operator queue and governance receipts",
       status: "planned-workflow",
+      panel: "planned",
       summary: "Queue and governance APIs exist; the UI should converge into one decision workbench instead of duplicate pages.",
     },
   },
@@ -97,6 +115,7 @@ const routeRules: RouteRule[] = [
       label: "Performance Review",
       workflow: "Portfolio, league, ranking, attribution, and cost review",
       status: "planned-workflow",
+      panel: "planned",
       summary: "Performance BFF routes exist; this should become one review suite with tabs and drilldowns.",
     },
   },
@@ -121,6 +140,7 @@ const routeRules: RouteRule[] = [
       label: "Management Registry",
       workflow: "Registry and cockpit consolidation",
       status: "planned-workflow",
+      panel: "planned",
       summary: "Historical route name recognized. It is intentionally served by the shell until the registry workflow is rebuilt.",
     },
   },
@@ -137,6 +157,7 @@ export function describeManagementRoute(pathname: string): ManagementRouteDescri
     label: "Unmapped Management Route",
     workflow: "Unmapped",
     status: "planned-workflow",
+    panel: "planned",
     summary: "This management URL is recognized by the shell fallback but has no dedicated workflow mapping yet.",
   };
 }
