@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json as _json
 import os
+import re
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -28,6 +29,15 @@ STUB_ADAPTERS = {"stub", "handoff_only", "manual"}
 ACTIVE_STATUSES = {"queued", "running", "dispatching"}
 FAIL_CLOSED_SCOPE = "capability_metadata_read_only"
 OFFLINE_DISPATCH_ENABLED_SCOPE = "offline_worker_dispatch_enabled"
+_SHA256_RE = re.compile(r"^sha256:[0-9a-fA-F]{64}$")
+_RESOLVABLE_STORAGE_SCHEMES = (
+    "$.",
+    "file://",
+    "memory://",
+    "object://",
+    "research-worker-gateway://",
+    "s3://",
+)
 # Adapters with declared gateway entrypoints that can be routed offline.
 OFFLINE_ADAPTERS = {"qlib", "finrl", "rllib", "ray_tune", "trl"}
 CAPABILITY_REGISTRY: Dict[str, Dict[str, Any]] = {
@@ -333,6 +343,182 @@ def _resolve_writeback_artifact(run: Dict[str, Any], artifact_id: Optional[str])
     if not artifact or artifact.get("run_id") != run.get("run_id"):
         raise HTTPException(status_code=404, detail="research artifact not found for run")
     return artifact
+
+
+def _checksum_status(checksum: Any) -> str:
+    text = str(checksum or "").strip()
+    if not text:
+        return "missing"
+    return "valid" if _SHA256_RE.fullmatch(text) else "invalid"
+
+
+def _storage_status(storage_ref: Any) -> str:
+    if isinstance(storage_ref, dict):
+        backend = str(storage_ref.get("backend") or "").strip()
+        path = str(storage_ref.get("path") or "").strip()
+        return "resolvable" if backend and path else "missing"
+    text = str(storage_ref or "").strip()
+    if not text:
+        return "missing"
+    if text.startswith(("http://", "https://")):
+        return "external"
+    if text.startswith(_RESOLVABLE_STORAGE_SCHEMES):
+        return "resolvable"
+    return "unverified"
+
+
+def _producer_mode(run: Dict[str, Any]) -> str:
+    adapter = str(run.get("adapter") or "").strip().lower()
+    requested_mode = str(run.get("requested_mode") or "").strip().lower()
+    dispatch_mode = str(run.get("dispatch_mode") or "").strip().lower()
+    if dispatch_mode == "offline" or requested_mode == "offline":
+        return "offline"
+    if adapter in STUB_ADAPTERS:
+        return adapter
+    if requested_mode in PRODUCTION_MODES or adapter in PRODUCTION_ADAPTERS:
+        return "production"
+    return dispatch_mode or requested_mode or adapter or "unknown"
+
+
+def _artifact_origin(producer_mode: str) -> str:
+    return {
+        "stub": "dev_stub",
+        "handoff_only": "manual_handoff",
+        "manual": "manual_handoff",
+        "offline": "offline_worker_output",
+        "production": "production_adapter",
+    }.get(producer_mode, "research_orchestrator_handoff")
+
+
+def _evidence_source_refs(*values: Any) -> list[str]:
+    refs: list[str] = []
+    for value in values:
+        if value in (None, "", [], {}):
+            continue
+        items = value if isinstance(value, list) else [value]
+        for item in items:
+            if isinstance(item, dict):
+                candidate = _first_text(
+                    item.get("ref_id"),
+                    item.get("evidence_item_id"),
+                    item.get("evidence_bundle_id"),
+                    item.get("source_ref"),
+                    item.get("id"),
+                )
+            else:
+                candidate = _first_text(item)
+            if candidate and candidate not in refs:
+                refs.append(candidate)
+    return refs
+
+
+def _artifact_quality(run: Dict[str, Any], body: ArtifactBody) -> Dict[str, Any]:
+    metadata = _as_mapping(body.metadata)
+    registry_hints = _as_mapping(body.registry_hints)
+    producer_mode = _producer_mode(run)
+    checksum_status = _checksum_status(body.checksum)
+    storage_status = _storage_status(body.storage_ref)
+    source_evidence_refs = _evidence_source_refs(
+        metadata.get("source_evidence_refs"),
+        metadata.get("evidence_refs"),
+        registry_hints.get("source_evidence_refs"),
+        registry_hints.get("evidence_refs"),
+    )
+    reasons: list[str] = []
+    if producer_mode in STUB_ADAPTERS:
+        reasons.append("producer_mode_not_evidence_grade")
+    if checksum_status != "valid":
+        reasons.append(f"checksum_{checksum_status}")
+    if storage_status not in {"resolvable", "external"}:
+        reasons.append(f"storage_{storage_status}")
+    if not source_evidence_refs:
+        reasons.append("missing_source_evidence_refs")
+    return {
+        "producer_mode": producer_mode,
+        "artifact_origin": _artifact_origin(producer_mode),
+        "storage_status": storage_status,
+        "checksum_status": checksum_status,
+        "source_evidence_refs": source_evidence_refs,
+        "evidence_eligible": not reasons,
+        "evidence_ineligibility_reasons": reasons,
+    }
+
+
+def _writeback_target_quality(
+    run: Dict[str, Any],
+    artifact: Dict[str, Any],
+    body: RegistryWritebackBody,
+) -> Dict[str, Any]:
+    hints = _registry_hints(artifact)
+    artifact_metadata = _as_mapping(artifact.get("metadata"))
+    quality = _as_mapping(artifact.get("quality"))
+    source_evidence_refs = _evidence_source_refs(
+        quality.get("source_evidence_refs"),
+        artifact.get("source_evidence_refs"),
+        artifact_metadata.get("source_evidence_refs"),
+        artifact_metadata.get("evidence_refs"),
+        hints.get("source_evidence_refs"),
+        hints.get("evidence_refs"),
+        body.metadata.get("source_evidence_refs"),
+        body.metadata.get("evidence_refs"),
+    )
+    source_strategy_spec_id = _first_text(
+        body.source_strategy_spec_id,
+        hints.get("source_strategy_spec_id"),
+        hints.get("strategy_spec_id"),
+        artifact.get("source_strategy_spec_id"),
+        artifact_metadata.get("source_strategy_spec_id"),
+    )
+    source_dataset_refs = _evidence_source_refs(
+        body.source_dataset_refs,
+        hints.get("source_dataset_refs"),
+        artifact.get("source_dataset_refs"),
+        _input_ref_id(run, "dataset", "dataset_version"),
+    )
+    return {
+        "producer_mode": quality.get("producer_mode") or _producer_mode(run),
+        "storage_status": _storage_status(_first_value(body.storage_ref, hints.get("storage_ref"), artifact.get("storage_ref"))),
+        "checksum_status": _checksum_status(_first_text(body.checksum, hints.get("checksum"), artifact.get("checksum"))),
+        "source_strategy_spec_id": source_strategy_spec_id,
+        "source_dataset_refs": source_dataset_refs,
+        "source_evidence_refs": source_evidence_refs,
+        "artifact_evidence_eligible": bool(artifact.get("evidence_eligible")),
+    }
+
+
+def _assert_registry_writeback_eligible(
+    run: Dict[str, Any],
+    artifact: Dict[str, Any],
+    body: RegistryWritebackBody,
+) -> Dict[str, Any]:
+    quality = _writeback_target_quality(run, artifact, body)
+    requested_state = str(_first_text(body.requested_artifact_state, _registry_hints(artifact).get("artifact_state"), "candidate")).lower()
+    reasons: list[str] = []
+    if quality["checksum_status"] != "valid":
+        reasons.append(f"checksum_{quality['checksum_status']}")
+    if quality["storage_status"] not in {"resolvable", "external"}:
+        reasons.append(f"storage_{quality['storage_status']}")
+    if not quality["source_strategy_spec_id"]:
+        reasons.append("missing_source_strategy_spec_id")
+    if not quality["source_dataset_refs"]:
+        reasons.append("missing_source_dataset_refs")
+    if requested_state == "candidate":
+        if quality["producer_mode"] in STUB_ADAPTERS:
+            reasons.append("producer_mode_not_candidate_grade")
+        if not quality["source_evidence_refs"]:
+            reasons.append("missing_source_evidence_refs")
+        if not quality["artifact_evidence_eligible"]:
+            reasons.append("artifact_not_evidence_eligible")
+    if reasons:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "reason": "registry_writeback_not_eligible",
+                "reasons": reasons,
+                "quality": quality,
+            },
+        )
+    return quality
 
 
 def _experiment_run_for_writeback(
@@ -697,6 +883,7 @@ def handoff_artifact(run_id: str, body: ArtifactBody) -> Dict[str, Any]:
         return existing
     timestamp = body.created_at or utc_now()
     artifact_id = _next_id("rart", timestamp, {str(artifact.get("artifact_id") or "") for artifact in store.list_artifacts()})
+    quality = _artifact_quality(run, body)
     registry_projection = {
         "artifact_type": body.registry_hints.get("artifact_type", body.artifact_type),
         "artifact_state": body.registry_hints.get("artifact_state", "draft"),
@@ -704,6 +891,7 @@ def handoff_artifact(run_id: str, body: ArtifactBody) -> Dict[str, Any]:
         "lineage": [{"type": "research_run", "id": run_id}],
         "storage_ref": body.storage_ref,
         "checksum": body.checksum,
+        "quality": quality,
     }
     artifact = {
         "id": artifact_id,
@@ -717,6 +905,14 @@ def handoff_artifact(run_id: str, body: ArtifactBody) -> Dict[str, Any]:
         "checksum": body.checksum,
         "artifact_state": "draft",
         "deployment_stage": "none",
+        "producer_mode": quality["producer_mode"],
+        "artifact_origin": quality["artifact_origin"],
+        "storage_status": quality["storage_status"],
+        "checksum_status": quality["checksum_status"],
+        "source_evidence_refs": quality["source_evidence_refs"],
+        "evidence_eligible": quality["evidence_eligible"],
+        "evidence_ineligibility_reasons": quality["evidence_ineligibility_reasons"],
+        "quality": quality,
         "governance": {
             "direct_live_influence": False,
             "lean_consumption": "research_only_not_direct_action",
@@ -755,6 +951,7 @@ def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str
 
     timestamp = body.created_at or utc_now()
     artifact = _resolve_writeback_artifact(run, body.artifact_id)
+    writeback_quality = _assert_registry_writeback_eligible(run, artifact, body)
     registry_service = RegistryService(get_registry_store())
     try:
         experiment_run = _experiment_run_for_writeback(run, artifact, body, timestamp)
@@ -775,6 +972,7 @@ def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str
             evaluation_summary=body.evaluation_summary,
             metadata={
                 **body.metadata,
+                "writeback_quality": writeback_quality,
                 "writeback_actor": body.actor_id,
                 "writeback_created_at": timestamp,
             },
@@ -822,6 +1020,7 @@ def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str
         "artifact_state": entry["artifact_state"],
         "deployment_stage": registry_view["deployment_stage"],
         "created_at": timestamp,
+        "quality": writeback_quality,
     }
     store.put_run(run)
     store.put_artifact(artifact)

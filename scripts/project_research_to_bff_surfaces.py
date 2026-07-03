@@ -25,11 +25,15 @@ import os
 import sys
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
 
-StoreMap = dict[str, dict[str, dict[str, Any]]]
+StoreMap = dict[str, Any]
+_KW03_LINK_TYPES = {"supporting_evidence", "counter_evidence", "citation", "provenance", "corroboration"}
+_KW03_CREDIBILITY_TIERS = {"primary", "secondary", "tertiary", "unverified"}
+_KW03_RESOLVED_AVAILABILITY = {"available", "unavailable", "external"}
 
 
 def _get(url: str) -> Any:
@@ -74,6 +78,39 @@ def _record_id(record: dict[str, Any], *keys: str) -> str:
 def _slug_ref(prefix: str, raw: str) -> str:
     clean = "".join(ch if ch.isalnum() or ch in "-_." else "-" for ch in raw.strip())
     return f"{prefix}-{clean}" if clean else ""
+
+
+def _is_kw03_ref_id(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text.startswith("evref-"):
+        return False
+    try:
+        uuid.UUID(text.removeprefix("evref-"))
+    except ValueError:
+        return False
+    return True
+
+
+def _diagnostics() -> dict[str, Any]:
+    return {
+        "evidence_refs": {
+            "projected": 0,
+            "skipped": 0,
+            "skip_reasons": {},
+        }
+    }
+
+
+def _skip_evidence(diagnostics: dict[str, Any], reason: str) -> None:
+    evidence = diagnostics.setdefault("evidence_refs", {"projected": 0, "skipped": 0, "skip_reasons": {}})
+    evidence["skipped"] = int(evidence.get("skipped") or 0) + 1
+    reasons = evidence.setdefault("skip_reasons", {})
+    reasons[reason] = int(reasons.get(reason) or 0) + 1
+
+
+def _count_projected_evidence(diagnostics: dict[str, Any]) -> None:
+    evidence = diagnostics.setdefault("evidence_refs", {"projected": 0, "skipped": 0, "skip_reasons": {}})
+    evidence["projected"] = int(evidence.get("projected") or 0) + 1
 
 
 def _run_timestamp(run: dict[str, Any]) -> str | None:
@@ -314,43 +351,169 @@ def _project_note(run: dict[str, Any], task: dict[str, Any] | None) -> dict[str,
     }
 
 
-def _project_evidence_ref(
+def _evidence_candidates(artifact: dict[str, Any], run: dict[str, Any] | None) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    containers = [artifact, _mapping(artifact.get("metadata")), run or {}, _mapping((run or {}).get("metadata"))]
+    for container in containers:
+        for key in ("kw03_evidence_refs", "evidence_refs", "source_evidence_refs"):
+            value = container.get(key)
+            if isinstance(value, list):
+                candidates.extend(item for item in value if isinstance(item, dict))
+            elif isinstance(value, dict):
+                candidates.append(value)
+    return candidates
+
+
+def _normalize_evidence_ref(
+    candidate: dict[str, Any],
     artifact: dict[str, Any],
     *,
     run: dict[str, Any] | None,
+    diagnostics: dict[str, Any],
 ) -> dict[str, Any] | None:
     artifact_id = _record_id(artifact, "artifact_id", "id")
-    if not artifact_id:
+    ref_id = _first_text(candidate.get("ref_id"), candidate.get("id"))
+    if not _is_kw03_ref_id(ref_id):
+        _skip_evidence(diagnostics, "invalid_ref_id")
         return None
-    run_id = _record_id(run or {}, "run_id", "id")
-    timestamp = _first_text(artifact.get("created_at"), _run_timestamp(run or {}))
-    ref_id = _slug_ref("evref", artifact_id)
-    return {
+
+    source_document = _mapping(candidate.get("source_document"))
+    source_type = _first_text(source_document.get("source_type"), candidate.get("source_type"))
+    source_ref = _first_text(source_document.get("source_ref"), candidate.get("source_ref"))
+    if not source_type:
+        _skip_evidence(diagnostics, "missing_source_type")
+        return None
+    if not source_ref:
+        _skip_evidence(diagnostics, "missing_source_ref")
+        return None
+
+    link_type = _first_text(candidate.get("link_type"))
+    if link_type not in _KW03_LINK_TYPES:
+        _skip_evidence(diagnostics, "invalid_link_type")
+        return None
+
+    credibility = _mapping(candidate.get("credibility"))
+    tier = _first_text(credibility.get("tier"), candidate.get("credibility_tier"))
+    if tier not in _KW03_CREDIBILITY_TIERS:
+        _skip_evidence(diagnostics, "invalid_credibility_tier")
+        return None
+    verified = bool(credibility.get("verified", False))
+    last_verified_at = _first_text(credibility.get("last_verified_at"))
+    verification_method = _first_text(credibility.get("verification_method"))
+    if verified and (not last_verified_at or not verification_method):
+        _skip_evidence(diagnostics, "verified_without_verification_event")
+        return None
+
+    resolved_link = _mapping(candidate.get("resolved_link"))
+    availability = _first_text(resolved_link.get("availability"))
+    if availability not in _KW03_RESOLVED_AVAILABILITY:
+        _skip_evidence(diagnostics, "invalid_resolved_link")
+        return None
+    route_href = _first_text(resolved_link.get("route_href"))
+    if availability == "available" and not (route_href and route_href.startswith("/")):
+        _skip_evidence(diagnostics, "available_link_missing_internal_route")
+        return None
+    if availability == "external" and not (route_href and route_href.startswith(("http://", "https://"))):
+        _skip_evidence(diagnostics, "external_link_missing_url")
+        return None
+    if availability == "unavailable":
+        route_href = None
+
+    linked_object = _mapping(candidate.get("linked_object_summary"))
+    entity_type = _first_text(linked_object.get("entity_type"), "artifact" if artifact_id else None)
+    entity_ref = _first_text(linked_object.get("entity_ref"), artifact_id)
+    if not entity_type or not entity_ref:
+        _skip_evidence(diagnostics, "missing_linked_object")
+        return None
+
+    timestamp = _first_text(source_document.get("captured_at"), candidate.get("captured_at"), artifact.get("created_at"), _run_timestamp(run or {}))
+    display_label = _first_text(linked_object.get("display_label"), artifact.get("title"), entity_ref)
+    normalized = {
         "id": ref_id,
         "ref_id": ref_id,
         "source_document": {
-            "title": _first_text(artifact.get("title"), artifact_id),
-            "uri": artifact.get("storage_ref"),
+            "title": _first_text(source_document.get("title"), candidate.get("title"), source_ref),
+            "source_type": source_type,
+            "source_ref": source_ref,
             "captured_at": timestamp,
-            "document_type": _first_text(artifact.get("artifact_type"), "research_artifact"),
+            "document_type": _first_text(source_document.get("document_type"), source_type),
         },
+        "link_type": link_type,
         "linked_object_summary": {
-            "entity_type": "artifact",
-            "entity_ref": artifact_id,
-            "display_label": _first_text(artifact.get("title"), artifact_id),
-            "route_href": f"/research/artifacts/{artifact_id}",
+            "entity_type": entity_type,
+            "entity_ref": entity_ref,
+            "display_label": display_label,
+            "route_href": _first_text(linked_object.get("route_href"), f"/research/artifacts/{artifact_id}" if artifact_id else None),
         },
         "credibility": {
-            "tier": "producer_record",
-            "verified": True,
-            "last_verified_at": timestamp,
-            "verification_method": "research_orchestrator_projection",
+            "tier": tier,
+            "verified": verified,
+            "last_verified_at": last_verified_at,
+            "verification_method": verification_method,
         },
-        "source_run_id": run_id,
-        "created_at": timestamp,
-        "updated_at": timestamp,
+        "resolved_link": {
+            "availability": availability,
+            "route_href": route_href,
+            "display_label": _first_text(resolved_link.get("display_label"), source_document.get("title"), source_ref),
+            "open_in_new_tab": bool(resolved_link.get("open_in_new_tab", availability == "external")),
+        },
+        "source_run_id": _record_id(run or {}, "run_id", "id"),
+        "created_at": _first_text(candidate.get("created_at"), timestamp),
+        "updated_at": _first_text(candidate.get("updated_at"), timestamp),
         "route_href": f"/knowledge/evidence/{ref_id}",
     }
+    _count_projected_evidence(diagnostics)
+    return normalized
+
+
+def _project_evidence_refs(
+    artifact: dict[str, Any],
+    *,
+    run: dict[str, Any] | None,
+    diagnostics: dict[str, Any],
+) -> list[dict[str, Any]]:
+    candidates = _evidence_candidates(artifact, run)
+    if not candidates:
+        _skip_evidence(diagnostics, "no_canonical_evidence_payload")
+        return []
+    refs: list[dict[str, Any]] = []
+    for candidate in candidates:
+        evidence_ref = _normalize_evidence_ref(candidate, artifact, run=run, diagnostics=diagnostics)
+        if evidence_ref:
+            refs.append(evidence_ref)
+    return refs
+
+
+def _insight_linked_sources(
+    run: dict[str, Any],
+    *,
+    analysis: dict[str, Any],
+    artifacts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    run_id = _record_id(run, "run_id", "id")
+    sources = [
+        {
+            "type": "research_run",
+            "id": run_id,
+            "route_href": f"/research/runs/{run_id}",
+        },
+        {
+            "type": "research_analysis",
+            "id": analysis.get("analysis_id"),
+            "route_href": f"/research/analyze/{analysis.get('analysis_id')}",
+        },
+    ]
+    for artifact in artifacts:
+        artifact_id = _record_id(artifact, "artifact_id", "id")
+        if artifact_id:
+            sources.append(
+                {
+                    "type": "research_artifact",
+                    "id": artifact_id,
+                    "route_href": f"/research/artifacts/{artifact_id}",
+                }
+            )
+    return sources
 
 
 def _project_insight(
@@ -358,6 +521,7 @@ def _project_insight(
     *,
     task: dict[str, Any] | None,
     analysis: dict[str, Any] | None,
+    artifacts: list[dict[str, Any]],
     evidence_refs: list[str],
 ) -> dict[str, Any] | None:
     run_id = _record_id(run, "run_id", "id")
@@ -379,13 +543,7 @@ def _project_insight(
         "tags": ["research-orchestrator"],
         "source_ref": f"research-run:{run_id}",
         "supporting_evidence_refs": evidence_refs,
-        "linked_sources": [
-            {
-                "type": "research_analysis",
-                "id": analysis.get("analysis_id"),
-                "route_href": f"/research/analyze/{analysis.get('analysis_id')}",
-            }
-        ],
+        "linked_sources": _insight_linked_sources(run, analysis=analysis, artifacts=artifacts),
         "aggregation_provenance": {"aggregated_at": timestamp},
         "created_at": timestamp,
         "updated_at": timestamp,
@@ -444,15 +602,25 @@ def _project_artifact(artifact: dict[str, Any], run: dict[str, Any] | None) -> d
         "lineage_id": _first_text(artifact.get("lineage_id"), f"lin-{artifact_id}"),
         "version": 1,
         "status": _first_text(
-            _mapping(artifact.get("registry_hints")).get("artifact_state"),
             artifact.get("artifact_state"),
-            "candidate",
+            _mapping(artifact.get("registry_hints")).get("artifact_state"),
+            "draft",
         ),
         "name": _first_text(artifact.get("title"), artifact_id),
         "artifact_type": _first_text(artifact.get("artifact_type"), "model_artifact"),
         "description": f"Produced by research run {run_id}.",
         "produced_by_experiment_id": _record_id(run or {}, "task_id"),
         "created_at": artifact.get("created_at"),
+        "storage_ref": artifact.get("storage_ref"),
+        "checksum": artifact.get("checksum"),
+        "producer_mode": artifact.get("producer_mode"),
+        "artifact_origin": artifact.get("artifact_origin"),
+        "storage_status": artifact.get("storage_status"),
+        "checksum_status": artifact.get("checksum_status"),
+        "evidence_eligible": bool(artifact.get("evidence_eligible", False)),
+        "evidence_ineligibility_reasons": list(artifact.get("evidence_ineligibility_reasons") or []),
+        "source_evidence_refs": list(artifact.get("source_evidence_refs") or []),
+        "source_run_id": run_id,
         "metrics": _artifact_metrics(artifact),
     }
 
@@ -493,6 +661,7 @@ def project(ro_url: str, memory_url: str | None = None) -> StoreMap:
         "evidence_refs": {},
         "insight_cards": {},
         "institutional_memory_entries": _memory_entries(memory_url),
+        "projection_diagnostics": _diagnostics(),
     }
 
     for task in tasks:
@@ -522,8 +691,11 @@ def project(ro_url: str, memory_url: str | None = None) -> StoreMap:
             projected_artifact = _project_artifact(artifact, run)
             if projected_artifact:
                 stores["research_artifacts"][str(projected_artifact["artifact_id"])] = projected_artifact
-            evidence_ref = _project_evidence_ref(artifact, run=run)
-            if evidence_ref:
+            for evidence_ref in _project_evidence_refs(
+                artifact,
+                run=run,
+                diagnostics=stores["projection_diagnostics"],
+            ):
                 ref_id = str(evidence_ref["ref_id"])
                 stores["evidence_refs"][ref_id] = evidence_ref
                 projected_evidence_refs.append(ref_id)
@@ -535,6 +707,7 @@ def project(ro_url: str, memory_url: str | None = None) -> StoreMap:
                 run,
                 task=task,
                 analysis=analysis,
+                artifacts=run_artifacts,
                 evidence_refs=projected_evidence_refs,
             )
             if insight:
@@ -559,6 +732,7 @@ def write_projection(stores: StoreMap, out_dir: str | os.PathLike[str]) -> None:
         "evidence_refs": "evidence_refs.json",
         "insight_cards": "insight_cards.json",
         "institutional_memory_entries": "institutional_memory_entries.json",
+        "projection_diagnostics": "projection_diagnostics.json",
     }
     for dataset, filename in filenames.items():
         payload = stores.get(dataset, {})

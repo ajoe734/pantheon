@@ -11,6 +11,7 @@ from services.registry.storage import reset_store
 
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
+VALID_SHA256 = "sha256:" + ("a" * 64)
 
 
 def _load_service_module(
@@ -126,6 +127,13 @@ def test_research_orchestrator_lifecycle_handoff_is_idempotent() -> None:
     artifact = artifact_result.json()
     assert artifact["artifact_state"] == "draft"
     assert artifact["deployment_stage"] == "none"
+    assert artifact["producer_mode"] == "stub"
+    assert artifact["artifact_origin"] == "dev_stub"
+    assert artifact["checksum_status"] == "invalid"
+    assert artifact["storage_status"] == "resolvable"
+    assert artifact["evidence_eligible"] is False
+    assert "producer_mode_not_evidence_grade" in artifact["evidence_ineligibility_reasons"]
+    assert "checksum_invalid" in artifact["evidence_ineligibility_reasons"]
     assert artifact["governance"]["direct_live_influence"] is False
     assert artifact["registry_projection"]["lineage"] == [{"type": "research_run", "id": run["run_id"]}]
 
@@ -207,7 +215,7 @@ def test_research_orchestrator_writeback_registers_completed_run_artifact() -> N
             "artifact_family": "experiment_candidate",
             "title": "EXP-005 candidate model",
             "storage_ref": "object://experiments/exp005/model.pkl",
-            "checksum": "sha256:exp005",
+            "checksum": VALID_SHA256,
             "registry_hints": {
                 "artifact_type": "model_artifact",
                 "artifact_state": "candidate",
@@ -225,11 +233,29 @@ def test_research_orchestrator_writeback_registers_completed_run_artifact() -> N
     )
     assert completed.status_code == 200
 
+    candidate_result = client.post(
+        f"/api/research-orchestrator/runs/{run['run_id']}/registry-writeback",
+        json={
+            "artifact_id": artifact["artifact_id"],
+            "registry_id": "reg-exp005-candidate-blocked",
+            "actor_id": "exp005-test",
+            "idempotency_key": "writeback-exp005-candidate",
+            "created_at": "2026-05-16T09:13:30Z",
+        },
+    )
+    assert candidate_result.status_code == 400
+    candidate_detail = candidate_result.json()["detail"]
+    assert candidate_detail["reason"] == "registry_writeback_not_eligible"
+    assert "producer_mode_not_candidate_grade" in candidate_detail["reasons"]
+    assert "missing_source_evidence_refs" in candidate_detail["reasons"]
+    assert "artifact_not_evidence_eligible" in candidate_detail["reasons"]
+
     result = client.post(
         f"/api/research-orchestrator/runs/{run['run_id']}/registry-writeback",
         json={
             "artifact_id": artifact["artifact_id"],
             "registry_id": "reg-exp005-model",
+            "requested_artifact_state": "draft",
             "actor_id": "exp005-test",
             "idempotency_key": "writeback-exp005",
             "created_at": "2026-05-16T09:14:00Z",
@@ -239,7 +265,7 @@ def test_research_orchestrator_writeback_registers_completed_run_artifact() -> N
     assert result.status_code == 201, result.text
     payload = result.json()
     assert payload["registry_id"] == "reg-exp005-model"
-    assert payload["artifact_state"] == "candidate"
+    assert payload["artifact_state"] == "draft"
     assert payload["deployment_stage"] == "none"
     assert payload["producer_run_id"] == run["run_id"]
     assert payload["lineage"]["source_run_ids"] == [run["run_id"]]
@@ -252,6 +278,7 @@ def test_research_orchestrator_writeback_registers_completed_run_artifact() -> N
         json={
             "artifact_id": artifact["artifact_id"],
             "registry_id": "ignored-by-idempotency",
+            "requested_artifact_state": "draft",
             "actor_id": "exp005-test",
             "idempotency_key": "writeback-exp005",
         },
