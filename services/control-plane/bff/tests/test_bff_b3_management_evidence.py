@@ -319,6 +319,46 @@ def test_management_evidence_projects_current_run_verifier_when_store_missing(tm
         ],
     }
     _write_live_evidence_verifier(verifier_path, manifest=manifest)
+    secret_set_command = (
+        "gh secret set PANTHEON_BFF_RBAC_TOKENS_JSON --repo ajoe734/pantheon "
+        "--env dev < /secure/path/PANTHEON_BFF_RBAC_TOKENS_JSON.txt"
+    )
+    verifier_path.parent.joinpath("BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
+                "operator_remediation": {
+                    "github_environment": "dev",
+                    "repository": "ajoe734/pantheon",
+                    "required_secret_names": [
+                        "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
+                        "PANTHEON_BFF_RBAC_TOKENS_JSON",
+                    ],
+                    "missing_secret_names": ["PANTHEON_BFF_RBAC_TOKENS_JSON"],
+                    "missing_workflow_inputs": ["APPROVAL_RACE_ID"],
+                    "invalid_inputs": [
+                        {"name": "SOAK_SECONDS", "reason": "must be at least 75"},
+                    ],
+                    "secret_set_commands": [secret_set_command],
+                    "workflow_dispatch": {
+                        "recommended_workflow": "Pantheon Stage 0 CI",
+                        "mode": "live-evidence",
+                        "environment": "dev",
+                        "run_command_template": (
+                            "gh workflow run \"Pantheon Stage 0 CI\" --repo ajoe734/pantheon "
+                            "--ref dev -f mode=live-evidence -f environment=dev"
+                        ),
+                    },
+                    "notes": [
+                        "Set secrets on the selected GitHub environment, not only at repository scope.",
+                    ],
+                },
+                "secret_values_written": False,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     with _current_run_evidence_client(verifier_path) as client:
         response = client.get(
@@ -345,6 +385,26 @@ def test_management_evidence_projects_current_run_verifier_when_store_missing(tm
     assert item["criteria"]["rbac_matrix"]["status"] == "fail"
     assert item["criteria"]["rbac_matrix"]["note"] == "missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON"
     assert item["criteria"]["current_run_only"]["status"] == "pass"
+    remediation = item["operator_remediation"]
+    assert remediation["github_environment"] == "dev"
+    assert remediation["repository"] == "ajoe734/pantheon"
+    assert remediation["required_secret_names"] == [
+        "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
+        "PANTHEON_BFF_RBAC_TOKENS_JSON",
+    ]
+    assert remediation["missing_secret_names"] == ["PANTHEON_BFF_RBAC_TOKENS_JSON"]
+    assert remediation["missing_workflow_inputs"] == ["APPROVAL_RACE_ID"]
+    assert remediation["invalid_inputs"] == [
+        {"name": "SOAK_SECONDS", "reason": "must be at least 75"},
+    ]
+    assert remediation["secret_set_commands"] == [secret_set_command]
+    assert remediation["workflow_dispatch"]["recommended_workflow"] == "Pantheon Stage 0 CI"
+    assert remediation["workflow_dispatch"]["mode"] == "live-evidence"
+    assert remediation["workflow_dispatch"]["environment"] == "dev"
+    assert remediation["notes"] == [
+        "Set secrets on the selected GitHub environment, not only at repository scope.",
+    ]
+    assert "token-value" not in json.dumps(remediation)
     assert "sourceType" not in item
     assert "linkType" not in item
     assert "linkedObjectSummary" not in item

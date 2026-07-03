@@ -9186,6 +9186,9 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     criteria = item.get("criteria")
     if isinstance(criteria, dict):
         public_item["criteria"] = _management_json_clone(criteria)
+    operator_remediation = item.get("operator_remediation")
+    if isinstance(operator_remediation, dict):
+        public_item["operator_remediation"] = _management_json_clone(operator_remediation)
     if "overall" in item:
         public_item["overall"] = item.get("overall")
     return public_item
@@ -9222,6 +9225,69 @@ def _management_live_evidence_verify_candidates() -> List[Path]:
     return deduped
 
 
+def _management_optional_text(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _management_string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    strings: List[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            strings.append(text)
+    return strings
+
+
+def _management_remediation_invalid_inputs(value: Any) -> List[Dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    invalid_inputs: List[Dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        if name or reason:
+            invalid_inputs.append({"name": name, "reason": reason})
+    return invalid_inputs
+
+
+def _management_live_evidence_preflight_remediation(artifact_dir: Path) -> Optional[Dict[str, Any]]:
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    try:
+        payload = json.loads(preflight_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    remediation = payload.get("operator_remediation")
+    if not isinstance(remediation, dict):
+        return None
+    workflow_dispatch = remediation.get("workflow_dispatch")
+    if not isinstance(workflow_dispatch, dict):
+        workflow_dispatch = {}
+    safe_remediation = {
+        "github_environment": _management_optional_text(remediation.get("github_environment")),
+        "repository": _management_optional_text(remediation.get("repository")),
+        "required_secret_names": _management_string_list(remediation.get("required_secret_names")),
+        "missing_secret_names": _management_string_list(remediation.get("missing_secret_names")),
+        "missing_workflow_inputs": _management_string_list(remediation.get("missing_workflow_inputs")),
+        "invalid_inputs": _management_remediation_invalid_inputs(remediation.get("invalid_inputs")),
+        "secret_set_commands": _management_string_list(remediation.get("secret_set_commands")),
+        "workflow_dispatch": {
+            "recommended_workflow": _management_optional_text(workflow_dispatch.get("recommended_workflow")),
+            "mode": _management_optional_text(workflow_dispatch.get("mode")),
+            "environment": _management_optional_text(workflow_dispatch.get("environment")),
+            "run_command_template": _management_optional_text(workflow_dispatch.get("run_command_template")),
+        },
+        "notes": _management_string_list(remediation.get("notes")),
+    }
+    return safe_remediation
+
+
 def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
     for candidate in _management_live_evidence_verify_candidates():
         try:
@@ -9246,37 +9312,40 @@ def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
         except OSError:
             mtime_captured_at = utc_now()
         captured_at = payload.get("generated_at") or payload.get("created_at") or mtime_captured_at
-        artifact_dir = str(payload.get("artifact_dir") or candidate.parent)
-        return [
-            {
-                "ref_id": _BFF_LIVE_EVIDENCE_REF_ID,
-                "evidence_type": "live_evidence_artifact",
-                "link_type": "provenance",
-                "display_label": "BFF live evidence artifact verifier",
-                "title": "Strict BFF live evidence artifact verifier",
-                "source_type": "workflow_artifact",
-                "source_ref": str(candidate),
-                "captured_at": captured_at,
-                "credibility": {
-                    "tier": "primary",
-                    "verified": payload.get("overall") == "pass",
-                },
-                "linked_object_summary": {
-                    "entity_type": "artifact",
-                    "entity_ref": _BFF_LIVE_EVIDENCE_REF_ID,
-                    "display_label": "Current-run BFF live evidence",
-                },
-                "resolved_link": {
-                    "availability": "available",
-                    "route_href": artifact_dir,
-                },
-                "route_href": str(candidate),
-                "overall": payload.get("overall"),
-                "artifact_manifest": _management_json_clone(manifest),
-                "criteria": _management_json_clone(criteria),
-                "created_at": captured_at,
-            }
-        ]
+        artifact_dir_path = Path(str(payload.get("artifact_dir") or candidate.parent))
+        artifact_dir = str(artifact_dir_path)
+        operator_remediation = _management_live_evidence_preflight_remediation(artifact_dir_path)
+        evidence_ref = {
+            "ref_id": _BFF_LIVE_EVIDENCE_REF_ID,
+            "evidence_type": "live_evidence_artifact",
+            "link_type": "provenance",
+            "display_label": "BFF live evidence artifact verifier",
+            "title": "Strict BFF live evidence artifact verifier",
+            "source_type": "workflow_artifact",
+            "source_ref": str(candidate),
+            "captured_at": captured_at,
+            "credibility": {
+                "tier": "primary",
+                "verified": payload.get("overall") == "pass",
+            },
+            "linked_object_summary": {
+                "entity_type": "artifact",
+                "entity_ref": _BFF_LIVE_EVIDENCE_REF_ID,
+                "display_label": "Current-run BFF live evidence",
+            },
+            "resolved_link": {
+                "availability": "available",
+                "route_href": artifact_dir,
+            },
+            "route_href": str(candidate),
+            "overall": payload.get("overall"),
+            "artifact_manifest": _management_json_clone(manifest),
+            "criteria": _management_json_clone(criteria),
+            "created_at": captured_at,
+        }
+        if operator_remediation is not None:
+            evidence_ref["operator_remediation"] = operator_remediation
+        return [evidence_ref]
     return []
 
 

@@ -605,6 +605,7 @@ const MANAGEMENT_EVIDENCE_ITEM_CAMEL_KEYS = new Set([
   "managementHref",
   "requiredCapability",
   "artifactManifest",
+  "operatorRemediation",
 ]);
 
 function applySnakeFallback(
@@ -641,6 +642,7 @@ function normalizeManagementEvidenceItem(raw: Record<string, unknown>): Manageme
   applySnakeFallback(item, raw, "management_href", "managementHref");
   applySnakeFallback(item, raw, "required_capability", "requiredCapability");
   applySnakeFallback(item, raw, "artifact_manifest", "artifactManifest");
+  applySnakeFallback(item, raw, "operator_remediation", "operatorRemediation");
 
   return item as ManagementEvidenceItem;
 }

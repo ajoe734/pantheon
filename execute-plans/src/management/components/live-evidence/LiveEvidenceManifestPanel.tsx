@@ -33,6 +33,28 @@ export interface LiveEvidenceCriterionView {
   note: string;
 }
 
+export interface LiveEvidenceInvalidInputView {
+  name: string;
+  reason: string;
+}
+
+export interface LiveEvidenceRemediationView {
+  githubEnvironment: string;
+  repository: string;
+  requiredSecretNames: string[];
+  missingSecretNames: string[];
+  missingWorkflowInputs: string[];
+  invalidInputs: LiveEvidenceInvalidInputView[];
+  secretSetCommands: string[];
+  workflow: {
+    recommendedWorkflow: string;
+    mode: string;
+    environment: string;
+    runCommandTemplate: string;
+  };
+  notes: string[];
+}
+
 export interface LiveEvidenceManifestView {
   id: string;
   title: string;
@@ -44,6 +66,7 @@ export interface LiveEvidenceManifestView {
   maxFileBytes: number;
   files: LiveEvidenceManifestFile[];
   criteria: LiveEvidenceCriterionView[];
+  remediation: LiveEvidenceRemediationView | null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -55,6 +78,12 @@ function asRecord(value: unknown): Record<string, unknown> {
 function asNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function stringListFrom(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item ?? "").trim()).filter(Boolean)
+    : [];
 }
 
 function textFrom(value: unknown, fallback = "-"): string {
@@ -207,6 +236,55 @@ function findVerificationCriteria(value: unknown): unknown {
   return null;
 }
 
+function findOperatorRemediation(value: unknown): unknown {
+  const record = asRecord(value);
+  for (const key of ["operator_remediation", "operatorRemediation"]) {
+    const remediation = asRecord(record[key]);
+    if (Object.keys(remediation).length > 0) return remediation;
+  }
+  for (const key of ["payload", "data", "metadata", "meta", "details", "resolvedLink", "resolved_link"]) {
+    const nested = findOperatorRemediation(record[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function normalizeInvalidInputs(value: unknown): LiveEvidenceInvalidInputView[] {
+  return Array.isArray(value)
+    ? value
+        .map((item) => {
+          const record = asRecord(item);
+          return {
+            name: textFrom(record.name, ""),
+            reason: textFrom(record.reason, ""),
+          };
+        })
+        .filter((item) => item.name || item.reason)
+    : [];
+}
+
+function normalizeRemediation(value: unknown): LiveEvidenceRemediationView | null {
+  const record = asRecord(value);
+  if (Object.keys(record).length === 0) return null;
+  const workflow = asRecord(record.workflow_dispatch ?? record.workflowDispatch);
+  return {
+    githubEnvironment: textFrom(record.github_environment ?? record.githubEnvironment, ""),
+    repository: textFrom(record.repository, ""),
+    requiredSecretNames: stringListFrom(record.required_secret_names ?? record.requiredSecretNames),
+    missingSecretNames: stringListFrom(record.missing_secret_names ?? record.missingSecretNames),
+    missingWorkflowInputs: stringListFrom(record.missing_workflow_inputs ?? record.missingWorkflowInputs),
+    invalidInputs: normalizeInvalidInputs(record.invalid_inputs ?? record.invalidInputs),
+    secretSetCommands: stringListFrom(record.secret_set_commands ?? record.secretSetCommands),
+    workflow: {
+      recommendedWorkflow: textFrom(workflow.recommended_workflow ?? workflow.recommendedWorkflow, ""),
+      mode: textFrom(workflow.mode, ""),
+      environment: textFrom(workflow.environment, ""),
+      runCommandTemplate: textFrom(workflow.run_command_template ?? workflow.runCommandTemplate, ""),
+    },
+    notes: stringListFrom(record.notes),
+  };
+}
+
 function normalizeCriterion(key: string, value: unknown): LiveEvidenceCriterionView | null {
   if (typeof value === "string") {
     return {
@@ -252,6 +330,7 @@ function normalizeManifestView(item: ManagementEvidenceItem, index: number): Liv
   const limits = asRecord(manifest.limits);
   const itemPayload = asRecord(item.payload);
   const criteria = normalizeCriteria(findVerificationCriteria(item));
+  const remediation = normalizeRemediation(findOperatorRemediation(item));
   const id = textFrom(item.ref_id ?? item.id, `live-evidence-${index}`);
   return {
     id,
@@ -264,6 +343,7 @@ function normalizeManifestView(item: ManagementEvidenceItem, index: number): Liv
     maxFileBytes: asNumber(limits.max_file_bytes ?? manifest.max_file_bytes ?? manifest.maxFileBytes, 0),
     files,
     criteria,
+    remediation,
   };
 }
 
@@ -284,6 +364,129 @@ function statusTone(status: string): string {
   }
   return "bg-muted text-muted-foreground border-border";
 }
+
+function RemediationSection({ manifest }: { manifest: LiveEvidenceManifestView }) {
+  const remediation = manifest.remediation;
+  if (!remediation) return null;
+  const hasRequiredSecrets = remediation.requiredSecretNames.length > 0;
+  const hasMissingSecrets = remediation.missingSecretNames.length > 0;
+  const hasMissingInputs = remediation.missingWorkflowInputs.length > 0;
+  const hasInvalidInputs = remediation.invalidInputs.length > 0;
+
+  return (
+    <section className="mt-3 border-t border-border pt-3 text-xs" data-testid={`live-evidence-remediation-${manifest.id}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <AlertTriangle className="h-3.5 w-3.5 text-status-warning" />
+        <h4 className="text-sm font-semibold">Operator remediation</h4>
+        {remediation.githubEnvironment ? (
+          <Badge variant="outline" className="font-mono text-[10px]" data-testid={`live-evidence-remediation-env-${manifest.id}`}>
+            env:{remediation.githubEnvironment}
+          </Badge>
+        ) : null}
+        {remediation.repository ? (
+          <Badge variant="outline" className="font-mono text-[10px]" data-testid={`live-evidence-remediation-repo-${manifest.id}`}>
+            repo:{remediation.repository}
+          </Badge>
+        ) : null}
+      </div>
+
+      <div className="mt-2 grid gap-2 lg:grid-cols-3">
+        <div>
+          <div className="text-muted-foreground">Required secrets</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {hasRequiredSecrets ? remediation.requiredSecretNames.map((name) => (
+              <Badge
+                key={name}
+                variant="outline"
+                className="font-mono text-[10px]"
+                data-testid={`live-evidence-remediation-required-secret-${manifest.id}-${testIdPart(name)}`}
+              >
+                {name}
+              </Badge>
+            )) : <span className="text-muted-foreground">-</span>}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Missing secrets</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {hasMissingSecrets ? remediation.missingSecretNames.map((name) => (
+              <Badge
+                key={name}
+                variant="outline"
+                className="font-mono text-[10px] bg-status-warning/15 text-status-warning border-status-warning/30"
+                data-testid={`live-evidence-remediation-missing-secret-${manifest.id}-${testIdPart(name)}`}
+              >
+                {name}
+              </Badge>
+            )) : <span className="text-muted-foreground">-</span>}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Workflow inputs</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {hasMissingInputs ? remediation.missingWorkflowInputs.map((name) => (
+              <Badge
+                key={name}
+                variant="outline"
+                className="font-mono text-[10px] bg-status-warning/15 text-status-warning border-status-warning/30"
+                data-testid={`live-evidence-remediation-missing-input-${manifest.id}-${testIdPart(name)}`}
+              >
+                {name}
+              </Badge>
+            )) : <span className="text-muted-foreground">-</span>}
+          </div>
+        </div>
+      </div>
+
+      {hasInvalidInputs ? (
+        <div className="mt-2">
+          <div className="text-muted-foreground">Invalid inputs</div>
+          <ul className="mt-1 list-disc pl-4">
+            {remediation.invalidInputs.map((item) => (
+              <li key={`${item.name}:${item.reason}`}>{item.name ? `${item.name}: ` : ""}{item.reason}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {remediation.secretSetCommands.length > 0 ? (
+        <div className="mt-2">
+          <div className="text-muted-foreground">Secret commands</div>
+          <div className="mt-1 grid gap-1">
+            {remediation.secretSetCommands.map((command, index) => (
+              <code
+                key={command}
+                className="block break-all rounded bg-muted px-2 py-1 font-mono text-[10px] text-foreground"
+                data-testid={`live-evidence-remediation-secret-command-${manifest.id}-${index}`}
+              >
+                {command}
+              </code>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {remediation.workflow.runCommandTemplate ? (
+        <div className="mt-2">
+          <div className="text-muted-foreground">Workflow dispatch</div>
+          <code
+            className="mt-1 block break-all rounded bg-muted px-2 py-1 font-mono text-[10px] text-foreground"
+            data-testid={`live-evidence-remediation-workflow-command-${manifest.id}`}
+          >
+            {remediation.workflow.runCommandTemplate}
+          </code>
+        </div>
+      ) : null}
+
+      {remediation.notes.length > 0 ? (
+        <ul className="mt-2 list-disc pl-4 text-muted-foreground">
+          {remediation.notes.map((note) => <li key={note}>{note}</li>)}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 
 function ManifestRow({ manifest }: { manifest: LiveEvidenceManifestView }) {
   const allowedCount = manifest.files.filter((file) => file.currentRunAllowed).length;
@@ -393,6 +596,8 @@ function ManifestRow({ manifest }: { manifest: LiveEvidenceManifestView }) {
           </table>
         </ManagementDenseTable>
       ) : null}
+
+      <RemediationSection manifest={manifest} />
 
       {manifest.files.length > 0 ? (
         <ManagementDenseTable className="mt-3" testId={`live-evidence-files-${manifest.id}`}>
