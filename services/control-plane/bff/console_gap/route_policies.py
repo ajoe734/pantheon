@@ -22,6 +22,7 @@ def create_route_policies_router(
     @router.get(
         "/bff/route-policies",
         response_model=ManagementRecordsEnvelope,
+        response_model_exclude={"items"},
     )
     def bff_route_policies(
         page_token: Optional[str] = Query(default=None),

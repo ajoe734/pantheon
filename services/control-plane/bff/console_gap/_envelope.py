@@ -63,8 +63,16 @@ def _gov_list_envelope(
         )
 
     return {
-        "data": page_items,
-        "items": page_items,
+        "data": {
+            "id": surface_key.replace("_", "-"),
+            "items": page_items,
+            "summary": {
+                "total_items": len(items),
+                "returned_items": len(page_items),
+                "status": status,
+                "source": source,
+            },
+        },
         "page_info": {
             "next_page_token": next_page_token,
             "total": len(items),

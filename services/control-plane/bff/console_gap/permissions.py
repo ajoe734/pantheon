@@ -22,6 +22,7 @@ def create_permissions_router(
     @router.get(
         "/bff/management/permissions",
         response_model=ManagementRecordsEnvelope,
+        response_model_exclude={"items"},
     )
     def bff_management_permissions(
         page_token: Optional[str] = Query(default=None),

@@ -130,6 +130,12 @@ def _error(response_json: dict) -> dict:
     return (response_json.get("detail") or response_json).get("error", {})
 
 
+def _seed_list_items(response_json: dict) -> list[dict]:
+    assert set(response_json) == {"data", "page_info", "meta"}
+    assert "items" not in response_json
+    return response_json["data"]["items"]
+
+
 def test_strategy_seed_inbox_filters_and_surfaces_persona_suggestion() -> None:
     with _review_client() as (client, seed_store_path):
         response = client.get(
@@ -145,7 +151,7 @@ def test_strategy_seed_inbox_filters_and_surfaces_persona_suggestion() -> None:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        cards = body["data"]
+        cards = _seed_list_items(body)
         card = next(item for item in cards if item["seed_id"] == SEED_ID)
         assert card["source"]["source_kind"] == "paper"
         assert card["seed_kind"] == "strategy_spec_seed"
@@ -422,7 +428,7 @@ def test_ids006_seed_kind_filter_on_list_endpoint() -> None:
         )
         assert response.status_code == 200, response.text
         body = response.json()
-        ids = [card["seed_id"] for card in body["data"]]
+        ids = [card["seed_id"] for card in _seed_list_items(body)]
         assert RISK_SEED_ID in ids
         assert SEED_ID not in ids
         assert NEGATIVE_SEED_ID not in ids
@@ -434,7 +440,7 @@ def test_ids006_seed_kind_filter_on_list_endpoint() -> None:
             headers=REVIEWER_HEADERS,
         )
         assert response2.status_code == 200, response2.text
-        ids2 = [card["seed_id"] for card in response2.json()["data"]]
+        ids2 = [card["seed_id"] for card in _seed_list_items(response2.json())]
         assert NEGATIVE_SEED_ID in ids2
         assert RISK_SEED_ID not in ids2
 
@@ -446,7 +452,7 @@ def test_ids006_convert_to_risk_action_for_risk_constraint_seed() -> None:
             params={"seed_kind": "risk_constraint"},
             headers=REVIEWER_HEADERS,
         )
-        card = next(c for c in list_resp.json()["data"] if c["seed_id"] == RISK_SEED_ID)
+        card = next(c for c in _seed_list_items(list_resp.json()) if c["seed_id"] == RISK_SEED_ID)
         assert "convert-to-risk" in card["allowedActions"]
         assert "convert-to-spec-seed" not in card["allowedActions"]
 
@@ -479,7 +485,7 @@ def test_ids006_convert_to_negative_action_for_negative_seed() -> None:
             params={"seed_kind": "negative"},
             headers=REVIEWER_HEADERS,
         )
-        card = next(c for c in list_resp.json()["data"] if c["seed_id"] == NEGATIVE_SEED_ID)
+        card = next(c for c in _seed_list_items(list_resp.json()) if c["seed_id"] == NEGATIVE_SEED_ID)
         assert "convert-to-negative" in card["allowedActions"]
         assert "convert-to-spec-seed" not in card["allowedActions"]
 

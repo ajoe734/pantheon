@@ -22,6 +22,7 @@ def create_memory_governance_router(
     @router.get(
         "/bff/management/memory-governance",
         response_model=ManagementRecordsEnvelope,
+        response_model_exclude={"items"},
     )
     def bff_management_memory_governance(
         page_token: Optional[str] = Query(default=None),

@@ -48,6 +48,9 @@ def test_persona_intent_composes_redacted_trace_trainer_and_agora_sources() -> N
             assert summary["trainer_session_count"] >= 1
             assert summary["agora_session_count"] >= 1
             assert summary["redacted_item_count"] == summary["total_items"]
+            assert "bySourceType" not in summary
+            assert "byStatus" not in summary
+            assert "byIntent" not in summary
             assert body["meta"]["surfaces"]["management_persona_intent"]["source"] == "bff_composed"
             for surface in [
                 "persona_traces",
@@ -63,6 +66,9 @@ def test_persona_intent_composes_redacted_trace_trainer_and_agora_sources() -> N
             assert by_type["persona_trace"]["trace"]["capability_summary"]["effective_tool_count"] >= 1
             assert by_type["trainer_session"]["trainer"]["outcome_count"] >= 1
             assert by_type["agora_session"]["agora"]["message_count"] >= 1
+            assert "sourceType" not in by_type["persona_trace"]
+            assert "personaId" not in by_type["persona_trace"]
+            assert "sessionId" not in by_type["agora_session"]["agora"]
 
             encoded = json.dumps(body)
             assert '"tools_enabled":' not in encoded

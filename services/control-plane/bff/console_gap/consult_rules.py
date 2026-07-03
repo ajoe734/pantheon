@@ -22,6 +22,7 @@ def create_consult_rules_router(
     @router.get(
         "/bff/management/consult-rules",
         response_model=ManagementRecordsEnvelope,
+        response_model_exclude={"items"},
     )
     def bff_management_consult_rules(
         page_token: Optional[str] = Query(default=None),

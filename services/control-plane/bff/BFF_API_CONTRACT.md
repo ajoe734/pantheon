@@ -537,10 +537,10 @@ when the backing store is unconfigured or unreachable (§7.2).
 
 | Route | Composes | Response Envelope | Degraded Behavior | Min Role |
 |---|---|---|---|---|
-| `GET /bff/management/data-sources` | source-ingest `/api/source-ingest/registry` | `DataSourcesEnvelope`; `data: { id, items, status, source }`; typed `page_info`; typed `meta.surfaces.data_sources` | When source-ingest URL is unconfigured (`source:missing`) or unreachable (`source:unavailable`): empty `items`, `meta.status:unavailable`, `data.status:unavailable`, and surface `staleness` — never a bare `[]` | `operator` |
-| `GET /bff/management/permissions` | governance permission read surface (`governance_permissions`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.governance_permissions` | When the dataset is missing: empty `data/items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
-| `GET /bff/management/memory-governance` | memory governance read surface (`memory_governance_rules`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.memory_governance_rules` | When the dataset is missing: empty `data/items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
-| `GET /bff/management/consult-rules` | consult rule read surface (`consult_rules`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.consult_rules` | When the dataset is missing: empty `data/items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
+| `GET /bff/management/data-sources` | source-ingest `/api/source-ingest/registry` | `DataSourcesEnvelope`; `data: { id, items, summary, status, source }`; typed `page_info`; typed `meta.surfaces.data_sources`; no top-level `items` | When source-ingest URL is unconfigured (`source:missing`) or unreachable (`source:unavailable`): empty `data.items`, `meta.status:unavailable`, `data.status:unavailable`, and surface `staleness` — never a bare `[]` | `operator` |
+| `GET /bff/management/permissions` | governance permission read surface (`governance_permissions`) | `ManagementRecordsEnvelope`; `data: { id, items, summary }`; typed `page_info`; typed `meta.surfaces.governance_permissions`; no top-level `items` | When the dataset is missing: empty `data.items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
+| `GET /bff/management/memory-governance` | memory governance read surface (`memory_governance_rules`) | `ManagementRecordsEnvelope`; `data: { id, items, summary }`; typed `page_info`; typed `meta.surfaces.memory_governance_rules`; no top-level `items` | When the dataset is missing: empty `data.items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
+| `GET /bff/management/consult-rules` | consult rule read surface (`consult_rules`) | `ManagementRecordsEnvelope`; `data: { id, items, summary }`; typed `page_info`; typed `meta.surfaces.consult_rules`; no top-level `items` | When the dataset is missing: empty `data.items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
 | `GET /bff/lineage` | lineage-edge store (`lineage_edges`) via `ReadSurfaceStore` | `LineageEnvelope`; `data: { id, nodes, edges, status, source }`; typed `page_info`; typed `meta.surfaces.lineage`; query params: `root_id`, `root_type`, `depth` (default 3, max 20), `artifact_id` | When lineage store is missing (`source:missing`): empty `nodes`/`edges`/`items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
 | `GET /bff/workflows` | workflow template registry (`workflow_templates`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.workflow_templates` | When the registry is missing: empty `data/items`, `meta.degradation.reason`, surface `status:unavailable` | `operator` |
 | `GET /bff/hooks` | hook registry (`hook_registry`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.hook_registry` | When the registry is missing: empty `data/items`, `meta.degradation.reason`, surface `status:unavailable` | `operator` |
@@ -550,9 +550,14 @@ when the backing store is unconfigured or unreachable (§7.2).
 
 ```json
 {
-  "data": { "id": "management-data-sources", "items": [], "status": "unavailable", "source": "missing" },
-  "items": [],
-  "page_info": { "next_page_token": null, "total": 0, "page_size": 0, "returned": 0, "has_more": false },
+  "data": {
+    "id": "management-data-sources",
+    "items": [],
+    "summary": { "total_items": 0, "returned_items": 0, "status": "unavailable", "source": "missing" },
+    "status": "unavailable",
+    "source": "missing"
+  },
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50, "returned": 0, "has_more": false },
   "meta": {
     "snapshot_at": "...",
     "status": "unavailable",

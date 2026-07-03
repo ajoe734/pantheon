@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -34,9 +34,17 @@ class ManagementListMeta(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-class ManagementRecordsEnvelope(BaseModel):
-    data: List[Dict[str, Any]]
+class ManagementRecordsData(BaseModel):
+    id: str
     items: List[Dict[str, Any]]
+    summary: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ManagementRecordsEnvelope(BaseModel):
+    data: Union[ManagementRecordsData, List[Dict[str, Any]]]
+    items: Optional[List[Dict[str, Any]]] = None
     page_info: PageInfo
     meta: ManagementListMeta
 
@@ -46,6 +54,7 @@ class ManagementRecordsEnvelope(BaseModel):
 class DataSourcesData(BaseModel):
     id: str
     items: List[Dict[str, Any]]
+    summary: Dict[str, Any] = Field(default_factory=dict)
     status: SurfaceStatus
     source: str
 
@@ -54,7 +63,7 @@ class DataSourcesData(BaseModel):
 
 class DataSourcesEnvelope(BaseModel):
     data: DataSourcesData
-    items: List[Dict[str, Any]]
+    items: Optional[List[Dict[str, Any]]] = None
     page_info: PageInfo
     meta: ManagementListMeta
 

@@ -7887,6 +7887,32 @@ def _management_json_clone(value: Any) -> Any:
     return json.loads(json.dumps(value))
 
 
+_MANAGEMENT_CAMEL_KEY_RE = re.compile(r"[A-Z]")
+
+
+def _management_camel_to_snake_key(value: str) -> str:
+    value = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", value)
+    value = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
+    return value.lower()
+
+
+def _management_prune_camel_aliases(value: Any) -> Any:
+    """Keep snake_case when a dict carries both snake_case and camelCase aliases."""
+    if isinstance(value, list):
+        return [_management_prune_camel_aliases(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    keys = {key for key in value if isinstance(key, str)}
+    pruned: Dict[str, Any] = {}
+    for key, nested in value.items():
+        if isinstance(key, str) and _MANAGEMENT_CAMEL_KEY_RE.search(key):
+            snake_key = _management_camel_to_snake_key(key)
+            if snake_key in keys:
+                continue
+        pruned[key] = _management_prune_camel_aliases(nested)
+    return pruned
+
+
 def _trading_pulse_baseline_status(report: Optional[Dict[str, Any]]) -> str:
     if not report:
         return "unavailable"
@@ -8107,11 +8133,8 @@ def _trading_pulse_metric_coverage(rows: List[Dict[str, Any]]) -> Dict[str, Dict
         missing_runtime_ids = _trading_pulse_missing_metric_runtime_ids(rows, metric)
         available_count = total - len(missing_runtime_ids)
         coverage[metric] = {
-            "availableCount": available_count,
             "available_count": available_count,
-            "missingCount": len(missing_runtime_ids),
             "missing_count": len(missing_runtime_ids),
-            "missingRuntimeIds": missing_runtime_ids,
             "missing_runtime_ids": missing_runtime_ids,
         }
     return coverage
@@ -24534,6 +24557,8 @@ def _strategy_seed_list_response(
     strategy_family: Optional[str],
     seed_kind: Optional[str],
     min_confidence: Optional[float],
+    page_token: Optional[str],
+    page_size: int,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     store = StrategySpecSeedStore()
@@ -24549,15 +24574,31 @@ def _strategy_seed_list_response(
             min_confidence=min_confidence,
         )
     ]
+    cards = [
+        _strategy_seed_card(seed, snapshot_at=snapshot_at)
+        for seed in seeds
+    ]
+    page_items, next_page_token = _page_slice(cards, page_token, page_size)
     return {
-        "data": [
-            _strategy_seed_card(seed, snapshot_at=snapshot_at)
-            for seed in seeds
-        ],
+        "data": {
+            "id": "management_strategy_seeds",
+            "items": page_items,
+            "summary": {
+                "total_items": len(cards),
+                "returned_items": len(page_items),
+                "research_only": True,
+                "execution_route": "none",
+            },
+        },
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": len(cards),
+            "page_size": page_size,
+        },
         "meta": {
             "snapshot_at": snapshot_at,
             "store_path": str(store.path),
-            "count": len(seeds),
+            "count": len(cards),
             "filters": {
                 "status": status,
                 "source_kind": source_kind,
@@ -30560,10 +30601,11 @@ def _human_inbox_payload(
         persona_rows=sources["persona_rows"],
     )
     summary = _human_inbox_summary(filtered, len(page_items))
+    canonical_page_items = _management_prune_camel_aliases(page_items)
     return {
         "data": {
             "id": "management-human-inbox",
-            "items": page_items,
+            "items": canonical_page_items,
             "summary": summary,
         },
         "page_info": {
@@ -32461,11 +32503,12 @@ async def bff_management_evolution_journal(
         "rollbacks",
         "freeze_orders",
     ]
-    summary = _evolution_journal_summary(filtered, len(page_items))
+    summary = _management_prune_camel_aliases(_evolution_journal_summary(filtered, len(page_items)))
+    canonical_page_items = _management_prune_camel_aliases(page_items)
     return {
         "data": {
             "id": "management_evolution_journal",
-            "items": page_items,
+            "items": canonical_page_items,
             "summary": summary,
         },
         "page_info": {
@@ -36850,7 +36893,7 @@ async def bff_management_ai_audit(
     trace_id: Optional[str] = None,
     message_id: Optional[str] = None,
     event_type: Optional[str] = None,
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=50, ge=1, le=500),
     authorization: Optional[str] = Header(default=None),
 ):
     """Read backend Management AI audit events for conversation/provider tracing."""
@@ -36863,22 +36906,23 @@ async def bff_management_ai_audit(
         event_type=event_type,
         limit=limit,
     )
+    canonical_events = _management_prune_camel_aliases(events)
     return {
         "data": {
             "id": "management_ai_audit",
-            "items": events,
+            "items": canonical_events,
             "summary": {
-                "total_events": len(events),
-                "returned_items": len(events),
+                "total_events": len(canonical_events),
+                "returned_items": len(canonical_events),
             },
         },
         "page_info": {
             "next_page_token": None,
-            "total": len(events),
+            "total": len(canonical_events),
             "page_size": limit,
         },
         "meta": {
-            "count": len(events),
+            "count": len(canonical_events),
             "filters": {
                 "session_id": session_id,
                 "trace_id": trace_id,
@@ -37150,7 +37194,8 @@ async def bff_management_persona_intent(
     )
     total = len(filtered)
     page_items, next_page_token = _page_slice(filtered, page_token, page_size)
-    summary = _persona_intent_summary(filtered, len(page_items))
+    summary = _management_prune_camel_aliases(_persona_intent_summary(filtered, len(page_items)))
+    canonical_page_items = _management_prune_camel_aliases(page_items)
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = _persona_intent_surfaces(snapshot_at=snapshot_at)
     meta["composition_sources"] = [
@@ -37162,7 +37207,7 @@ async def bff_management_persona_intent(
     return {
         "data": {
             "id": "management_persona_intent",
-            "items": page_items,
+            "items": canonical_page_items,
             "summary": summary,
         },
         "page_info": {
@@ -38487,6 +38532,8 @@ async def bff_list_strategy_seed_inbox(
     strategy_family: Optional[str] = None,
     seed_kind: Optional[str] = None,
     min_confidence: Optional[float] = Query(default=None, ge=0.0, le=1.0),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: governed StrategySpecSeed review inbox read model."""
@@ -38498,6 +38545,8 @@ async def bff_list_strategy_seed_inbox(
         strategy_family=strategy_family,
         seed_kind=seed_kind,
         min_confidence=min_confidence,
+        page_token=page_token,
+        page_size=page_size,
     )
 
 
