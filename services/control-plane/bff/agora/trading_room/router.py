@@ -36,7 +36,7 @@ import json
 import uuid
 from typing import Any, Callable, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from ..dashboard.router import (
@@ -1665,10 +1665,11 @@ def create_trading_room_router(
     @router.get("/bff/agora/trading-room")
     def get_trading_room(
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
         """Return the user-scoped Trading Room aggregate (TradingRoomAggregate)."""
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
 
         now = utc_now()
@@ -1702,9 +1703,10 @@ def create_trading_room_router(
     def get_trading_room_strategy(
         strategy_id: str,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
     ) -> Dict[str, Any]:
         """Return per-strategy Trading Room detail (DetailEnvelope)."""
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
 
         events = [
@@ -1751,6 +1753,7 @@ def create_trading_room_router(
         body: Dict[str, Any],
         response: Response,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
         """Create a complete V11 TradingRoomWorkspaceProposal preview.
@@ -1759,7 +1762,7 @@ def create_trading_room_router(
         only. Unsupported renderers become generator metadata for fallback or a
         component task request; the route never accepts executable frontend code.
         """
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         request_body = body or {}
         if idempotency_key:
@@ -1843,8 +1846,9 @@ def create_trading_room_router(
         proposal_id: str,
         response: Response,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         proposal, _scope = _load_proposal_for_identity(
             strategy_id=strategy_id,
@@ -1873,9 +1877,10 @@ def create_trading_room_router(
         response: Response,
         body: Optional[Dict[str, Any]] = None,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         if idempotency_key:
             _check_idempotency(
@@ -1950,8 +1955,9 @@ def create_trading_room_router(
         workspace_id: str,
         response: Response,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         workspace, _scope = _load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
         etag = _workspace_etag(workspace)
@@ -1971,10 +1977,11 @@ def create_trading_room_router(
         body: Dict[str, Any],
         response: Response,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         if idempotency_key:
             _check_idempotency(
@@ -2019,10 +2026,11 @@ def create_trading_room_router(
         body: Dict[str, Any],
         response: Response,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         if idempotency_key:
             _check_idempotency(
@@ -2080,10 +2088,11 @@ def create_trading_room_router(
         body: Dict[str, Any],
         response: Response,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         if idempotency_key:
             _check_idempotency(
@@ -2143,10 +2152,11 @@ def create_trading_room_router(
         body: Dict[str, Any],
         response: Response,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         if idempotency_key:
             _check_idempotency(
@@ -2207,10 +2217,11 @@ def create_trading_room_router(
         body: Dict[str, Any],
         response: Response,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         if idempotency_key:
             _check_idempotency(
@@ -2284,9 +2295,10 @@ def create_trading_room_router(
         body: Dict[str, Any],
         response: Response,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         if idempotency_key:
             _check_idempotency(
@@ -2375,10 +2387,11 @@ def create_trading_room_router(
         response: Response,
         body: Optional[Dict[str, Any]] = None,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         if idempotency_key:
             _check_idempotency(
@@ -2539,8 +2552,9 @@ def create_trading_room_router(
     def list_workspace_versions(
         workspace_id: str,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         _workspace, scope = _load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
         versions = store.list_workspace_version_records(
@@ -2568,10 +2582,11 @@ def create_trading_room_router(
         response: Response,
         body: Optional[Dict[str, Any]] = None,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         if idempotency_key:
             _check_idempotency(
@@ -2654,6 +2669,7 @@ def create_trading_room_router(
     @router.get("/bff/agora/trading-room/decision-events")
     def list_trading_decision_events(
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         event_kind: Optional[str] = Query(
             default=None,
             description="Filter by event kind: entry | add | reduce | exit | review",
@@ -2663,7 +2679,7 @@ def create_trading_room_router(
         next_page_token: Optional[str] = Query(default=None),
     ) -> Dict[str, Any]:
         """List decision-event queue, filterable by event_kind and state."""
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
 
         valid_kinds = {"entry", "add", "reduce", "exit", "review"}
@@ -2690,9 +2706,10 @@ def create_trading_room_router(
     def get_trading_decision_event(
         decision_event_id: str,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
     ) -> Dict[str, Any]:
         """Return a single TradingDecisionEvent by ID."""
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
 
         event = store.get_decision_event(decision_event_id)
@@ -2709,6 +2726,7 @@ def create_trading_room_router(
         decision_event_id: str,
         body: TraderDecisionRequest,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
@@ -2720,7 +2738,7 @@ def create_trading_room_router(
         reject/defer are retained as Shadow/Learn evidence subject to consent policy.
         This route NEVER routes live orders.
         """
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         idem_key = _require_idempotency_key(idempotency_key)
         _require_if_match(if_match)
@@ -2790,13 +2808,14 @@ def create_trading_room_router(
     @router.get("/bff/agora/trading-room/stream")
     def stream_trading_room(
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
     ) -> Response:
         """User-scoped Trading Room SSE stream stub.
 
         Returns an empty SSE response.  Full typed-event streaming is
         deferred pending SSE infrastructure task.
         """
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
 
         return Response(
@@ -2812,12 +2831,13 @@ def create_trading_room_router(
     def get_trading_intent(
         intent_id: str,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
     ) -> Dict[str, Any]:
         """Return TradingIntent detail (DetailEnvelope).
 
         Full governed handoff semantics are owned by AG-BE-TR-002.
         """
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
 
         intent = store.get_intent(intent_id)
@@ -2852,6 +2872,7 @@ def create_trading_room_router(
         intent_id: str,
         body: GovernedIntentHandoffRequest,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
@@ -2866,7 +2887,7 @@ def create_trading_room_router(
         Validation enforces v1.3 stage/type semantics and keeps canary/live
         request-only.
         """
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         idem_key = _require_idempotency_key(idempotency_key)
         _require_if_match(if_match)
@@ -2974,6 +2995,7 @@ def create_trading_room_router(
     def withdraw_trading_intent(
         intent_id: str,
         authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
@@ -2983,7 +3005,7 @@ def create_trading_room_router(
         This records withdrawal; it does not cancel any live execution
         (no order routing was ever permitted).
         """
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
         idem_key = _require_idempotency_key(idempotency_key)
         _require_if_match(if_match)
