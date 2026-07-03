@@ -29,7 +29,6 @@ PERSONA_FLEET_FORBIDDEN_LIST_KEYS = {
     "dataSourceStatus",
     "data_source_status",
     "dataSources",
-    "data_sources",
     "requiredDataSources",
     "required_data_sources",
     "researchRefs",
@@ -96,6 +95,7 @@ def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolutio
             assert alpha["health"] in {"healthy", "degraded", "critical"}
             assert alpha["governance_required"] is True
             assert "data_source_summary" in alpha
+            assert "data_sources" in alpha
             assert "research_summary" in alpha
             assert "performance_summary" in alpha
             assert not PERSONA_FLEET_FORBIDDEN_LIST_KEYS.intersection(alpha)
@@ -104,6 +104,25 @@ def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolutio
             tw = next(item for item in body["data"]["items"] if item["id"] == "persona-tw-equity")
             assert tw["data_source_summary"]["provider_count"] == 5
             assert tw["data_source_summary"]["provider_status_counts"]["read_ok"] >= 1
+            assert [source["provider_key"] for source in tw["data_sources"]] == [
+                "shioaji",
+                "twse",
+                "tpex",
+                "mops",
+                "finmind",
+            ]
+            assert tw["data_sources"][0] == {
+                "provider_key": "shioaji",
+                "provider": "Shioaji quote",
+                "market": "TW",
+                "source_class": "broker_execution",
+                "status": "read_ok",
+                "order_capable_provider": True,
+                "read_only": True,
+                "order_side_effects_allowed": False,
+                "capital_side_effects_allowed": False,
+            }
+            assert "evidence_ref" not in tw["data_sources"][0]
             assert not PERSONA_FLEET_FORBIDDEN_LIST_KEYS.intersection(tw)
             assert tw["research_summary"]["current_project_count"] == 1
             assert tw["research_summary"]["stage"] == "management_review_linked"
@@ -151,6 +170,46 @@ def test_persona_fleet_supports_health_filter_and_pagination() -> None:
             stage_items = stage_resp.json()["data"]["items"]
             assert stage_items
             assert {item["deployment_stage"] for item in stage_items} == {existing_stage}
+        finally:
+            bff_main.read_store = original
+
+
+def test_persona_fleet_compact_sources_use_market_defaults_for_custom_crypto_rows() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            _fresh_client(td)
+            persona = {
+                "id": "persona-custom-crypto",
+                "persona_id": "persona-custom-crypto",
+                "name": "Crypto-Alt-Hunter",
+                "lifecycle_state": "paper_owner",
+                "metadata": {},
+            }
+            context_metadata, context_persona = bff_main._persona_fleet_context_overlay(
+                persona,
+                {},
+                bff_main._persona_fleet_context_defaults_by_market(),
+            )
+            row = bff_main._project_persona_fleet_list_row(
+                persona=persona,
+                league_entry={},
+                binding={},
+                runtime={},
+                active_incidents=[],
+                telemetry_summaries=[],
+                context_metadata=context_metadata,
+                context_persona=context_persona,
+                snapshot_at="2026-07-03T00:00:00Z",
+            )
+
+            assert row is not None
+            assert row["data_source_summary"]["provider_count"] == 2
+            assert [source["provider_key"] for source in row["data_sources"]] == ["kraken", "coingecko"]
+            assert [source["status"] for source in row["data_sources"]] == [
+                "datasource_smoke_ok",
+                "read_unavailable",
+            ]
         finally:
             bff_main.read_store = original
 

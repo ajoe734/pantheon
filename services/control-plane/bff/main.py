@@ -52007,6 +52007,38 @@ def _persona_fleet_list_data_source_summary(
     }
 
 
+def _persona_fleet_list_data_sources(data_sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    compact_sources: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for source in data_sources:
+        if not isinstance(source, dict):
+            continue
+        provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip()
+        provider = str(source.get("provider") or provider_key or "").strip()
+        stable_key = provider_key or provider
+        if not stable_key or stable_key in seen:
+            continue
+        seen.add(stable_key)
+        compact_sources.append({
+            "provider_key": provider_key or provider,
+            "provider": provider or provider_key,
+            "market": source.get("market"),
+            "source_class": source.get("source_class") or source.get("sourceClass"),
+            "status": str(source.get("status") or "unknown"),
+            "order_capable_provider": bool(source.get("order_capable_provider") or source.get("orderCapableProvider")),
+            "read_only": bool(source.get("read_only", source.get("readOnly", True))),
+            "order_side_effects_allowed": bool(
+                source.get("order_side_effects_allowed")
+                or source.get("orderSideEffectsAllowed")
+            ),
+            "capital_side_effects_allowed": bool(
+                source.get("capital_side_effects_allowed")
+                or source.get("capitalSideEffectsAllowed")
+            ),
+        })
+    return compact_sources
+
+
 def _persona_fleet_list_research_summary(metadata: Dict[str, Any]) -> Dict[str, Any]:
     status = metadata.get("research_status") if isinstance(metadata.get("research_status"), dict) else {}
     refs = metadata.get("research_refs") if isinstance(metadata.get("research_refs"), list) else []
@@ -52209,6 +52241,7 @@ def _project_persona_fleet_list_row(
             persona=persona,
             context_persona=context_persona,
         ),
+        "data_sources": _persona_fleet_list_data_sources(data_sources),
         "research_summary": _persona_fleet_list_research_summary(row_context_metadata),
         "performance_summary": {
             "pnl": _as_float(metrics.get("pnl")),

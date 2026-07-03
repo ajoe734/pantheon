@@ -66,6 +66,78 @@ function labelFrom(value: unknown, fallback = "unknown"): string {
   return textFrom(value, fallback).replace(/_/g, " ");
 }
 
+interface CoverageToken {
+  key: string;
+  value: string;
+  tone: "success" | "warning" | "neutral";
+}
+
+function isCompleteRatio(value: string): boolean {
+  const match = value.match(/^(\d+)\/(\d+)$/);
+  if (!match) return false;
+  const current = Number(match[1]);
+  const expected = Number(match[2]);
+  return expected > 0 && current === expected;
+}
+
+function isIncompleteRatio(value: string): boolean {
+  const match = value.match(/^(\d+)\/(\d+)$/);
+  if (!match) return false;
+  const current = Number(match[1]);
+  const expected = Number(match[2]);
+  return expected > 0 && current < expected;
+}
+
+function coverageTokenTone(key: string, value: string): CoverageToken["tone"] {
+  const normalizedValue = value.toLowerCase();
+  const normalizedKey = key.toLowerCase();
+  if (["true", "ok", "pass", "ready", "none"].includes(normalizedValue) || isCompleteRatio(value)) {
+    return "success";
+  }
+  if (/^(duplicate|duplicates|duplicatewinners)$/.test(normalizedKey) && normalizedValue === "false") {
+    return "success";
+  }
+  if (["false", "fail", "error", "blocked", "reported"].includes(normalizedValue) || isIncompleteRatio(value)) {
+    return "warning";
+  }
+  if (
+    /^(duplicate|duplicates|missing|missingreplay|replayed)$/.test(normalizedKey)
+    && Number(value) === 0
+  ) {
+    return "success";
+  }
+  if (
+    /^(duplicate|duplicates|missing|missingreplay|replayed)$/.test(normalizedKey)
+    && Number(value) > 0
+  ) {
+    return "warning";
+  }
+  return "neutral";
+}
+
+function coverageTokensFromNote(note: string): CoverageToken[] {
+  return note
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .map((part) => part.match(/^([A-Za-z][A-Za-z0-9_-]*):([^\s]+)$/))
+    .filter((match): match is RegExpMatchArray => match !== null)
+    .map((match) => {
+      const key = match[1];
+      const value = match[2].replace(/[;,]$/, "");
+      return { key, value, tone: coverageTokenTone(key, value) };
+    });
+}
+
+function coverageTokenClass(tone: CoverageToken["tone"]): string {
+  if (tone === "success") return "bg-status-success/15 text-status-success border-status-success/30";
+  if (tone === "warning") return "bg-status-warning/15 text-status-warning border-status-warning/30";
+  return "bg-muted text-muted-foreground border-border";
+}
+
+function testIdPart(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]+/g, "-");
+}
+
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0 B";
   if (value < 1024) return `${value} B`;
@@ -287,17 +359,36 @@ function ManifestRow({ manifest }: { manifest: LiveEvidenceManifestView }) {
               </tr>
             </thead>
             <tbody>
-              {manifest.criteria.map((criterion) => (
-                <tr key={criterion.key} className="border-t border-border">
-                  <td className="py-1.5 pr-3 font-medium">{criterion.label}</td>
-                  <td className="py-1.5 pr-3">
-                    <Badge variant="outline" className={cn("capitalize", statusTone(criterion.status))}>
-                      {labelFrom(criterion.status)}
-                    </Badge>
-                  </td>
-                  <td className="py-1.5 pr-3 text-muted-foreground break-words">{criterion.note || "-"}</td>
-                </tr>
-              ))}
+              {manifest.criteria.map((criterion) => {
+                const tokens = coverageTokensFromNote(criterion.note);
+                return (
+                  <tr key={criterion.key} className="border-t border-border">
+                    <td className="py-1.5 pr-3 font-medium">{criterion.label}</td>
+                    <td className="py-1.5 pr-3">
+                      <Badge variant="outline" className={cn("capitalize", statusTone(criterion.status))}>
+                        {labelFrom(criterion.status)}
+                      </Badge>
+                    </td>
+                    <td className="py-1.5 pr-3 text-muted-foreground break-words">
+                      <div>{criterion.note || "-"}</div>
+                      {tokens.length > 0 ? (
+                        <div className="mt-1.5 flex flex-wrap gap-1" data-testid={`live-evidence-tokens-${manifest.id}-${criterion.key}`}>
+                          {tokens.map((token) => (
+                            <Badge
+                              key={`${token.key}:${token.value}`}
+                              variant="outline"
+                              className={cn("font-mono text-[10px]", coverageTokenClass(token.tone))}
+                              data-testid={`live-evidence-token-${manifest.id}-${criterion.key}-${testIdPart(token.key)}`}
+                            >
+                              {token.key}:{token.value}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </ManagementDenseTable>
