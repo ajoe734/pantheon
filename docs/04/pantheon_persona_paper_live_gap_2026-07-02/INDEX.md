@@ -9,6 +9,7 @@ Owner: Codex
 Source files:
 
 - `GAP_AND_EXECUTION_PLAN.md` - canonical product, governance, state, scoring, review, and gap specification.
+- `PRODUCTION_READINESS_GAP_AUDIT_2026-07-03.md` - current-state audit, route reality, blockers, and production acceptance criteria.
 - `EXECUTION_TASKS.md` - execution task matrix for fleet dispatch.
 
 Dispatch artifacts:
