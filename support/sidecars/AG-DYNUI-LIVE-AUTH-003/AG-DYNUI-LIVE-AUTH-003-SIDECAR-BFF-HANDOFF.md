@@ -217,4 +217,26 @@ For parent review/closeout, verify:
 | `curl -fsS https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/health` | Returned HTTP `502`; live BFF readiness not provable during this sidecar run. |
 | `curl -sS -i https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room` | Returned HTTP `502`; unauthenticated fail-closed behavior not reassessed during this sidecar run. |
 
+---
+
+## 9. Closeout Addendum
+
+Owner closeout on 2026-07-03 confirms this packet remains support-only.
+Reviewer `Claude` approved the packet for support-only accuracy with these
+recorded findings:
+
+- PR #2822 only added this support packet and the generated sidecar task brief.
+- Parent PR #2820 merge facts, changed files, and passing checks match this
+  packet's claims.
+- `headers.ts` `buildHeaders()` and the five current `tradingRoom.ts` callers
+  match the technical handoff summary.
+- The remaining parent live-proof gap is still real: the dev frontend was still
+  serving stale `execute-plans` commit `6556534b937e433b40cf94d87b8ab25a792aed35`
+  during this sidecar run, and the public dev BFF endpoint returned HTTP `502`.
+
+Sidecar PR #2822 merged to `dev` as
+`11dae28cb030e76dcf9fe0f749f8f719a400dc94`. This sidecar does not close or
+broaden parent AUTH-003 acceptance; parent owner/reviewer remain responsible for
+post-deploy live browser proof before making a parent recovery claim.
+
 Prepared by Codex2 for the support-only BFF/frontend handoff sidecar.
