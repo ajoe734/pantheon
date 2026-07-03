@@ -5,7 +5,7 @@
 | Scope | Static audit of `services/control-plane/bff/main.py` Management list/table/board contracts |
 | Tool | `scripts/audit_management_list_contract.py` |
 | Baseline | `docs/architecture/management-list-contract-baseline.json` |
-| Result | 4 existing contract smells after `MGMT-LIST-CONTRACT-020`: 0 P0, 4 P1 |
+| Result | 0 existing contract smells after `MGMT-LIST-CONTRACT-021`: 0 P0, 0 P1 |
 
 ## Trigger
 
@@ -61,7 +61,9 @@ persona-league DTOs and tests to the same snake_case-only wire contract,
 usage-summary, conversation, attachment, audit-ref, and async-finalizer casing
 mirrors, and `MGMT-LIST-CONTRACT-020` removed the remaining Management
 Strategy Allocation, Capital Flow, Risk Radar, Incident Timeline, Loop
-Throughput, and Cost Attribution casing mirrors:
+Throughput, and Cost Attribution casing mirrors, and `MGMT-LIST-CONTRACT-021`
+fixed the remaining page-before-projection findings in Human Inbox, Cost
+Attribution, Portfolio Exposure, and Portfolio Holdings:
 
 | Category | Count | Severity | Meaning |
 |---|---:|---|---|
@@ -71,7 +73,7 @@ Throughput, and Cost Attribution casing mirrors:
 | `embedded-aggregate-payload` | 0 | P0 | List/board payload embeds related aggregate collections |
 | `board-pack-full-child-payloads` | 0 | P0 | Board pack nests complete child endpoint responses |
 | `camel-snake-duplicate` | 0 | P1 | DTOs return both casing variants for the same fields |
-| `project-before-page` | 4 | P1 | Endpoint/helper projects broad aggregates before page slicing |
+| `project-before-page` | 0 | P1 | Endpoint/helper projects broad aggregates before page slicing |
 | `heavy-row-helper` | 0 | P1 | Row helper includes detail-grade nested policy/session/memory/source data |
 
 The complete machine-readable list is in
@@ -84,10 +86,10 @@ The complete machine-readable list is in
 | Persona Fleet | Remediated in `MGMT-LIST-CONTRACT-002`: `/bff/management/persona-fleet` now returns `data.items`, `data.summary`, top-level `page_info`, and `meta.related` links only | Keep source/research health detail on detail/health endpoints and require server-side filters such as `deployment_stage` |
 | Board Pack | Remediated in `MGMT-LIST-CONTRACT-003`: `_management_board_pack_response` now returns section summaries, counts, status, and hrefs without child endpoint payloads | Keep board-pack summary-only; fetch full child sections from their dedicated routes |
 | Portfolio Book Family | Remediated across `MGMT-LIST-CONTRACT-004` and `MGMT-LIST-CONTRACT-005`: core, pools, exposure, holdings, and positions now use one envelope and snake_case rows | Keep the family on `data.items`/`data.summary` and move future row expansion to detail routes |
-| PM12 Analytics Tables | Remediated across `MGMT-LIST-CONTRACT-006`, `MGMT-LIST-CONTRACT-018`, and `MGMT-LIST-CONTRACT-020`: performance attribution, strategy allocation, capital flow, risk radar, incident timeline, and loop throughput now use one list envelope and snake_case-only row/summary/source-ref DTOs; performance attribution also pages before row DTO projection | Continue project-before-page cleanup where the guardrail still reports broad projection before pagination |
+| PM12 Analytics Tables | Remediated across `MGMT-LIST-CONTRACT-006`, `MGMT-LIST-CONTRACT-018`, `MGMT-LIST-CONTRACT-020`, and `MGMT-LIST-CONTRACT-021`: performance attribution, strategy allocation, capital flow, risk radar, incident timeline, and loop throughput now use one list envelope and snake_case-only row/summary/source-ref DTOs; performance attribution, cost attribution, portfolio exposure, and holdings page before row DTO projection | Keep new analytics rows behind server filters and page slicing |
 | Persona League Family | Remediated in `MGMT-LIST-CONTRACT-007`: league, rankings, movers, tiers, heatmap, quarterly ranking, recommendations, typed client contracts, and the legacy `/bff/persona-league` helper now use one `data.items`/`data.summary` envelope. `MGMT-LIST-CONTRACT-007B` removed the shadowed legacy `/bff/management/persona-league` decorator. `MGMT-LIST-CONTRACT-018` aligned the PM12 persona-league row, ranking, mover, tier, heatmap, quarterly score-field, typed-contract, and focused-test DTOs to snake_case-only output while keeping detail-grade policy/session/memory data out of list rows. | Keep PM12 on one canonical wire contract; avoid rebuilding duplicate first-level UI pages for every PM12 endpoint |
-| Performance And Cost Attribution | Cost Attribution duplicate list aliases were remediated in `MGMT-LIST-CONTRACT-008`; Performance Attribution casing and page-before-projection were remediated in `MGMT-LIST-CONTRACT-018`; Cost Attribution casing mirrors were remediated in `MGMT-LIST-CONTRACT-020` | Continue Cost Attribution page-before-projection cleanup |
-| Human Inbox And Governance Ledger | Remediated in `MGMT-LIST-CONTRACT-010`: Human Inbox and Governance Ledger list contracts now return canonical `data.items`/`data.summary` envelopes and omit raw source records | Keep raw source/debug payloads on detail endpoints only |
+| Performance And Cost Attribution | Cost Attribution duplicate list aliases were remediated in `MGMT-LIST-CONTRACT-008`; Performance Attribution casing and page-before-projection were remediated in `MGMT-LIST-CONTRACT-018`; Cost Attribution casing mirrors were remediated in `MGMT-LIST-CONTRACT-020`; Cost Attribution now pages grouped facts before row projection in `MGMT-LIST-CONTRACT-021` | Keep cost rows grouped and paged before detail row hydration |
+| Human Inbox And Governance Ledger | Remediated in `MGMT-LIST-CONTRACT-010`: Human Inbox and Governance Ledger list contracts now return canonical `data.items`/`data.summary` envelopes and omit raw source records. `MGMT-LIST-CONTRACT-021` added source-type prefiltering so filtered Human Inbox lists avoid unrelated persona-readiness fanout | Keep raw source/debug payloads on detail endpoints only |
 | Human/Ops Wire Casing | Remediated across `MGMT-LIST-CONTRACT-012`, `MGMT-LIST-CONTRACT-013`, and `MGMT-LIST-CONTRACT-020`: HIQ Backlog, Intervention Stream, Governance Ledger, Human Inbox readiness/summary, Incident Timeline, and Loop Throughput casing mirrors were removed | Keep new Management list/stream DTOs snake_case-only |
 | NL/AI Management Surfaces | Remediated across `MGMT-LIST-CONTRACT-009` and `MGMT-LIST-CONTRACT-019`: AI audit, conversation list/detail, Evolution Journal, Persona Intent, Python tests, typed client adapters, NL ask REST/SSE responses, provider context, usage summaries, attachment payloads, audit refs, and async finalizer payloads no longer expose duplicate envelopes or camel/snake wire mirrors | Keep request-side camelCase fallback reads at adapter boundaries only; new Management AI/NL wire DTOs must be snake_case-only |
 | Remaining P0 Cluster | Remediated in `MGMT-LIST-CONTRACT-010`: Evidence Explorer, HIQ Backlog, Intervention Stream, Sentinel Pulse, Human Inbox, and Governance Ledger no longer expose duplicate list envelopes, embedded child aggregates, or raw source records in list DTOs | Keep source/debug payloads on detail endpoints and enforce canonical `data.items` list envelopes |
@@ -168,9 +170,9 @@ The complete machine-readable list is in
     the remaining migrated endpoints:
     Strategy Allocation, Capital Flow, Risk Radar, Incident Timeline, Loop
     Throughput, and Cost Attribution.
-19. Fix remaining project-before-page findings so Human Inbox, Cost
-    Attribution, Portfolio Exposure, and Portfolio Holdings filter and page
-    before detail-grade projection.
+19. Done in `MGMT-LIST-CONTRACT-021`: Fixed remaining project-before-page
+    findings so Human Inbox, Cost Attribution, Portfolio Exposure, and
+    Portfolio Holdings filter and page before detail-grade projection.
 
 ## Enforcement
 
@@ -182,6 +184,6 @@ python3 scripts/audit_management_list_contract.py \
   --fail-on-new
 ```
 
-This baseline intentionally allows current debt so the repo can keep moving, but
-it fails any new duplicate envelope, list alias, embedded aggregate, source
-record leak, or casing duplication introduced after this audit.
+The baseline is intentionally empty. Any new duplicate envelope, list alias,
+embedded aggregate, source-record leak, casing duplication, heavy row helper, or
+known project-before-page regression fails the guardrail.

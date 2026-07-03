@@ -91,23 +91,11 @@ HEAVY_HELPER_HINTS = {
 }
 
 PROJECT_BEFORE_PAGE_FUNCTIONS = {
-    "_human_inbox_payload": (
-        "Collects every inbox source and persona readiness row before filters and page slicing."
-    ),
     "_pm12_persona_league_rows": (
         "Projects route policy, capabilities, sessions, evaluations, memory, and health before route pagination."
     ),
     "_pm12_performance_attribution_response": (
         "Builds all attribution rows from runtime telemetry before page slicing."
-    ),
-    "_management_cost_attribution_response": (
-        "Builds all cost-attribution rows from runtime telemetry before page slicing."
-    ),
-    "bff_management_portfolio_book_holdings": (
-        "Builds all holdings from every runtime and telemetry record before page slicing."
-    ),
-    "bff_management_portfolio_book_exposure": (
-        "Builds all exposure rows before page slicing."
     ),
 }
 

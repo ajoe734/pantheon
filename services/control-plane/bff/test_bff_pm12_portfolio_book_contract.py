@@ -254,11 +254,19 @@ def test_portfolio_book_requires_read_auth(monkeypatch) -> None:
 
 def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
+    projected_pool_ids: list[str] = []
+    original_projector = bff_main._management_portfolio_book_exposure_item
+
+    def tracking_projector(entry: dict[str, Any]) -> dict[str, Any]:
+        projected_pool_ids.append(str(entry.get("pool_id") or entry.get("id") or ""))
+        return original_projector(entry)
+
+    monkeypatch.setattr(bff_main, "_management_portfolio_book_exposure_item", tracking_projector)
 
     response = client.get(
         "/bff/management/portfolio-book/exposure",
         headers=HEADERS,
-        params={"page_size": 20},
+        params={"page_size": 1},
     )
 
     assert response.status_code == 200, response.text
@@ -271,7 +279,7 @@ def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> Non
     summary = payload["data"]["summary"]
     assert payload["data"]["id"] == "pm12-portfolio-book-exposure"
     assert summary["exposure_count"] == 2
-    assert summary["returned_exposure_count"] == 2
+    assert summary["returned_exposure_count"] == 1
     assert summary["risk_budget_total"] == 150.0
     assert summary["current_exposure_total"] == 60.0
     assert summary["available_budget_total"] == 90.0
@@ -284,7 +292,8 @@ def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> Non
     assert "currentExposureTotal" not in summary
     assert "riskBudgetUtilization" not in summary
     assert "returnedExposureCount" not in summary
-    assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 20}
+    assert payload["page_info"] == {"next_page_token": "1", "total": 2, "page_size": 1}
+    assert projected_pool_ids == ["pool-alpha"]
 
     alpha = payload["data"]["items"][0]
     assert alpha["pool_id"] == "pool-alpha"
@@ -353,8 +362,24 @@ def test_portfolio_book_exposure_cors_preflight(monkeypatch) -> None:
 
 def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
+    projected_runtime_ids: list[str] = []
+    original_projector = bff_main._management_portfolio_holding_entry
 
-    response = client.get("/bff/management/portfolio-book/holdings", headers=HEADERS)
+    def tracking_projector(
+        runtime: dict[str, Any],
+        position: dict[str, Any],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        projected_runtime_ids.append(str(runtime.get("runtime_id") or runtime.get("id") or ""))
+        return original_projector(runtime, position, **kwargs)
+
+    monkeypatch.setattr(bff_main, "_management_portfolio_holding_entry", tracking_projector)
+
+    response = client.get(
+        "/bff/management/portfolio-book/holdings",
+        headers=HEADERS,
+        params={"page_size": 1},
+    )
 
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -365,7 +390,7 @@ def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> 
     assert "summary" not in payload
     summary = payload["data"]["summary"]
     assert summary["holding_count"] == 3
-    assert summary["returned_holding_count"] == 3
+    assert summary["returned_holding_count"] == 1
     assert summary["active_holding_count"] == 2
     assert summary["paper_holding_count"] == 2
     assert summary["live_holding_count"] == 1
@@ -396,7 +421,8 @@ def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> 
     assert alpha["links"]["runtime"] == "/bff/runtimes/runtime-alpha"
     assert alpha["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
     assert "capitalPool" not in alpha["links"]
-    assert payload["page_info"] == {"next_page_token": None, "total": 3}
+    assert payload["page_info"] == {"next_page_token": "1", "total": 3}
+    assert projected_runtime_ids == ["runtime-alpha"]
     assert payload["meta"]["surfaces"]["portfolio_book_holdings"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["runtime_bindings"]["source"] == "canonical"
     assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]

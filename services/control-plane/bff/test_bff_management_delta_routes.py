@@ -1104,6 +1104,95 @@ def test_cost_attribution_success() -> None:
             bff_main.read_store = original
 
 
+def test_cost_attribution_pages_groups_before_row_projection(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td, fallback=False)
+            sources = {
+                "runtime_bindings": [{"runtime_id": "runtime-a"}],
+                "deployment_plans": [],
+                "bindings": [],
+                "capital_pools": [
+                    {"pool_id": "pool-a", "name": "Pool A", "risk_budget": 100.0},
+                    {"pool_id": "pool-b", "name": "Pool B", "risk_budget": 100.0},
+                    {"pool_id": "pool-c", "name": "Pool C", "risk_budget": 100.0},
+                ],
+                "personas": [],
+                "strategies": [],
+                "plans_by_id": {},
+                "bindings_by_id": {},
+                "pools_by_id": {
+                    "pool-a": {"pool_id": "pool-a", "name": "Pool A", "risk_budget": 100.0},
+                    "pool-b": {"pool_id": "pool-b", "name": "Pool B", "risk_budget": 100.0},
+                    "pool-c": {"pool_id": "pool-c", "name": "Pool C", "risk_budget": 100.0},
+                },
+                "personas_by_id": {},
+                "strategies_by_id": {},
+                "telemetry_by_runtime_id": {"runtime-a": {"runtime_id": "runtime-a"}},
+            }
+            facts = [
+                {
+                    "runtime_id": "runtime-a",
+                    "capital_pool_id": "pool-a",
+                    "persona_id": "persona-a",
+                    "strategy_id": "strategy-a",
+                    "total_trades": 1,
+                    "notional": 1000.0,
+                    "avg_slippage_bps": 1.0,
+                    "exposure": 100.0,
+                    "telemetry_available": True,
+                },
+                {
+                    "runtime_id": "runtime-b",
+                    "capital_pool_id": "pool-b",
+                    "persona_id": "persona-b",
+                    "strategy_id": "strategy-b",
+                    "total_trades": 1,
+                    "notional": 2000.0,
+                    "avg_slippage_bps": 1.0,
+                    "exposure": 200.0,
+                    "telemetry_available": True,
+                },
+                {
+                    "runtime_id": "runtime-c",
+                    "capital_pool_id": "pool-c",
+                    "persona_id": "persona-c",
+                    "strategy_id": "strategy-c",
+                    "total_trades": 1,
+                    "notional": 3000.0,
+                    "avg_slippage_bps": 1.0,
+                    "exposure": 300.0,
+                    "telemetry_available": True,
+                },
+            ]
+            projected_fact_counts: list[int] = []
+            original_rows = bff_main._management_cost_attribution_rows
+
+            def tracking_rows(projected_facts: list[dict[str, Any]], projected_sources: dict[str, Any]):
+                projected_fact_counts.append(len(projected_facts))
+                return original_rows(projected_facts, projected_sources)
+
+            monkeypatch.setattr(bff_main, "_pm12_performance_attribution_sources", lambda: sources)
+            monkeypatch.setattr(bff_main, "_pm12_performance_attribution_facts", lambda _sources, _period: facts)
+            monkeypatch.setattr(bff_main, "_management_cost_attribution_rows", tracking_rows)
+
+            response = client.get(
+                "/bff/management/cost-attribution",
+                headers=HEADERS,
+                params={"page_size": 1},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["data"]["summary"]["row_count"] == 3
+            assert body["data"]["summary"]["returned_row_count"] == 1
+            assert body["page_info"] == {"next_page_token": "1", "total": 3, "page_size": 1}
+            assert projected_fact_counts == [1]
+        finally:
+            bff_main.read_store = original
+
+
 def test_cost_attribution_filter_by_persona() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
