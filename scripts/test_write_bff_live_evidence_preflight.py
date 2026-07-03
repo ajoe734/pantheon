@@ -15,6 +15,13 @@ REQUIRED_SECRET_ENV_VARS = (
 )
 RBAC_REQUIRED_LABELS = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
 
+CROSS_SECRET_REQUIRED_SOURCES = (
+    "smoke",
+    *(f"rbac:{label}" for label in RBAC_REQUIRED_LABELS),
+    "approval_race:a",
+    "approval_race:b",
+)
+
 
 def run_preflight(
     tmp_path: Path,
@@ -97,6 +104,16 @@ def test_preflight_writes_missing_inputs_without_secret_values(tmp_path: Path) -
         "token_b_present": False,
         "distinct_bearers": False,
     }
+    assert payload["cross_secret_bearers"] == {
+        "required_sources": list(CROSS_SECRET_REQUIRED_SOURCES),
+        "present_sources": [],
+        "missing_sources": list(CROSS_SECRET_REQUIRED_SOURCES),
+        "provided_sources": 0,
+        "expected_sources": len(CROSS_SECRET_REQUIRED_SOURCES),
+        "distinct_bearers": False,
+        "distinct_bearer_count": 0,
+        "duplicate_source_groups": [],
+    }
     remediation = payload["operator_remediation"]
     assert payload["github_environment"] == "dev"
     assert remediation["github_environment"] == "dev"
@@ -158,6 +175,16 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
         "token_a_present": True,
         "token_b_present": True,
         "distinct_bearers": True,
+    }
+    assert payload["cross_secret_bearers"] == {
+        "required_sources": list(CROSS_SECRET_REQUIRED_SOURCES),
+        "present_sources": list(CROSS_SECRET_REQUIRED_SOURCES),
+        "missing_sources": [],
+        "provided_sources": len(CROSS_SECRET_REQUIRED_SOURCES),
+        "expected_sources": len(CROSS_SECRET_REQUIRED_SOURCES),
+        "distinct_bearers": True,
+        "distinct_bearer_count": len(CROSS_SECRET_REQUIRED_SOURCES),
+        "duplicate_source_groups": [],
     }
     remediation = payload["operator_remediation"]
     assert payload["github_environment"] == "staging-live"
@@ -326,6 +353,52 @@ def test_preflight_rejects_duplicate_rbac_bearers_before_live_matrix(tmp_path: P
         }
     ]
     assert "viewer-secret" not in text
+
+
+def test_preflight_rejects_cross_secret_bearer_reuse_before_live_probes(tmp_path: Path) -> None:
+    env = clean_env()
+    rbac_tokens = {label: f"{label}-secret" for label in RBAC_REQUIRED_LABELS}
+    rbac_tokens["viewer"] = "shared-live-secret"
+    env.update(
+        {
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN": "Bearer shared-live-secret",
+            "PANTHEON_BFF_RBAC_TOKENS_JSON": json.dumps(rbac_tokens),
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A": "race-secret-a",
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B": "operator-secret",
+        }
+    )
+
+    result = run_preflight(
+        tmp_path,
+        env,
+        approval_race_id="appr-live-123",
+        two_man_race_id="int-live-123",
+    )
+    assert result.returncode == 1
+    assert "PANTHEON_BFF_LIVE_EVIDENCE_BEARERS" in result.stderr
+    assert "smoke/rbac:viewer" in result.stderr
+    assert "rbac:operator/approval_race:b" in result.stderr
+
+    output = tmp_path / ".lovable" / "audits" / "current-run" / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    text = output.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    assert payload["missing"] == []
+    assert payload["cross_secret_bearers"]["provided_sources"] == len(CROSS_SECRET_REQUIRED_SOURCES)
+    assert payload["cross_secret_bearers"]["distinct_bearers"] is False
+    assert payload["cross_secret_bearers"]["distinct_bearer_count"] == len(CROSS_SECRET_REQUIRED_SOURCES) - 2
+    assert payload["cross_secret_bearers"]["duplicate_source_groups"] == [
+        ["smoke", "rbac:viewer"],
+        ["rbac:operator", "approval_race:b"],
+    ]
+    assert payload["invalid"] == [
+        {
+            "name": "PANTHEON_BFF_LIVE_EVIDENCE_BEARERS",
+            "reason": "bearer tokens must be unique across smoke, RBAC, and approval race sources: "
+            "smoke/rbac:viewer; rbac:operator/approval_race:b",
+        }
+    ]
+    for secret_value in ["shared-live-secret", "operator-secret", "race-secret-a"]:
+        assert secret_value not in text
 
 
 def test_preflight_rejects_same_approval_race_bearer_before_live_race(tmp_path: Path) -> None:
