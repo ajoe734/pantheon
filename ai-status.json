@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-01T07:51:31Z",
+  "updated_at": "2026-07-03T12:23:32Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -100,11 +100,12 @@
         "LOOP-AUTO-RT-001",
         "LOOP-AUTO-DEP-001",
         "MGMT-GAP-008",
-        "MGMT-LOAD-003"
+        "MGMT-LOAD-003",
+        "OCLAW-PMEM-001"
       ],
       "branch": "task/LSP-002-V2",
-      "next": "Start detail honesty hardening: fix live-id detail undefined/blank/NaN states, direct-render detail aliases, empty capability registries, and evidence-source degraded copy.",
-      "last_update": "2026-07-01T07:06:48Z"
+      "next": "Define the runtime profile contract before OpenClaw sync or UI work proceeds.",
+      "last_update": "2026-07-03T12:23:32Z"
     },
     {
       "name": "Gemini",
@@ -138,11 +139,13 @@
       "current_task_ids": [
         "LOOP-AUTO-000",
         "MGMT-GAP-007",
-        "MGMT-LOAD-007"
+        "MGMT-LOAD-007",
+        "OCLAW-PMEM-000",
+        "OCLAW-PMEM-005"
       ],
       "branch": "task/ASST-OCGW-001",
-      "next": "MGMT-GAP-004 closed; continue MGMT-GAP-007 closeout tracking after MGMT-GAP-006 receives remaining task evidence.",
-      "last_update": "2026-07-01T07:51:31Z"
+      "next": "Wait for OCLAW-PMEM-002/003/004, then add dev gates and close OCLAW-PMEM-000 with evidence.",
+      "last_update": "2026-07-03T12:23:32Z"
     },
     {
       "name": "Codex2",
@@ -157,11 +160,12 @@
         "LOOP-AUTO-001",
         "LOOP-AUTO-SRC-004",
         "LOOP-AUTO-RT-005",
-        "MGMT-LOAD-004"
+        "MGMT-LOAD-004",
+        "OCLAW-PMEM-002"
       ],
       "branch": "task/ASST-OCGW-004",
-      "next": "Wait for MGMT-LOAD-001 baseline, then start management route code splitting.",
-      "last_update": "2026-07-01T06:01:20Z"
+      "next": "Wait for OCLAW-PMEM-001, then reconcile existing and new OpenClaw persona agents.",
+      "last_update": "2026-07-03T12:23:32Z"
     },
     {
       "name": "Copilot",
@@ -194,11 +198,12 @@
         "LOOP-AUTO-TEL-003",
         "LOOP-AUTO-EVO-001",
         "MGMT-GAP-009",
-        "MGMT-LOAD-002"
+        "MGMT-LOAD-002",
+        "OCLAW-PMEM-004"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Start session/RBAC and provider-auth contract hardening: align /bff/me, tenant, roles, LLM Provider Auth degraded state, and management reads for the documented dev gate token path.",
-      "last_update": "2026-07-01T07:06:48Z"
+      "next": "Wait for OCLAW-PMEM-002 and OCLAW-PMEM-003, then wire BFF and Management UI surfaces.",
+      "last_update": "2026-07-03T12:23:32Z"
     },
     {
       "name": "Gemini2",
@@ -216,11 +221,12 @@
         "MGMT-GAP-006",
         "MGMT-GAP-010",
         "MGMT-LOAD-001",
-        "MGMT-LOAD-006"
+        "MGMT-LOAD-006",
+        "OCLAW-PMEM-003"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Start load-gate work: enforce management bundle budgets, build-warning gates, route-ready markers, shell request-count evidence, and no network-idle-only readiness.",
-      "last_update": "2026-07-01T07:06:48Z",
+      "next": "Wait for OCLAW-PMEM-001, then implement Memory Plane materialization and writeback candidate flow.",
+      "last_update": "2026-07-03T12:23:32Z",
       "last_action_at": "2026-05-20T11:29:47Z",
       "last_action_note": "Manual ai-status sync by Claude: cleared ['LOVABLE-STRICT-PUBLISH', 'OSS-QUANTLIB-V2-001'] after push-auth failure."
     },
@@ -3260,6 +3266,254 @@
       "helper_kind": "load_gap_execution_slice",
       "wave": 4,
       "fleet_lane": "oversight-closeout"
+    },
+    {
+      "id": "OCLAW-PMEM-000",
+      "title": "OpenClaw persona model routing and memory architecture gap",
+      "summary_zh": "釐清並修正 Persona/OpenClaw/provider pool/Memory Plane 的 source-of-truth 邊界；把 runtime profile、OpenClaw agent sync、canonical memory bridge、BFF/UI surfaces 與 dev gates 拆成可驗收 execution tasks。",
+      "phase": "OpenClaw Persona Memory Gap / Umbrella",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "OCLAW-PMEM-005"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03",
+        "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap",
+        "integrations/openclaw",
+        "services/control-plane/bff",
+        "services/control-plane/persona",
+        "services/memory",
+        "services/persona"
+      ],
+      "acceptance": [
+        "OCLAW-PMEM-005 done or reviewer-approved superseded",
+        "final closeout includes PR SHAs, validation, hosted dev evidence, and residual risks",
+        "Management UI explains persona model routing and canonical memory materialization",
+        "dev gates prove provider live smoke, persona OpenClaw response, memory retrieval/materialization, and no private memory leakage"
+      ],
+      "next": "Wait for OCLAW-PMEM-005 closeout; do not mark done from local UI state alone.",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "OCLAW-PMEM-000",
+      "helper_kind": "openclaw_persona_memory_gap_execution_slice",
+      "wave": 99,
+      "fleet_lane": "oversight-closeout",
+      "gap_children": [
+        "OCLAW-PMEM-001",
+        "OCLAW-PMEM-002",
+        "OCLAW-PMEM-003",
+        "OCLAW-PMEM-004",
+        "OCLAW-PMEM-005"
+      ],
+      "last_update": "2026-07-03T12:23:32Z"
+    },
+    {
+      "id": "OCLAW-PMEM-001",
+      "title": "Persona runtime profile and model routing contract",
+      "summary_zh": "定義 PersonaRuntimeProfile 與 model_routing contract，讓 persona 使用 shared provider/model pool，而不是隱性 preferred_model 或一 persona 一 auth。",
+      "phase": "OpenClaw Persona Memory Gap / Wave 0 contract",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "services/control-plane/persona",
+        "services/control-plane/bff",
+        "integrations/openclaw/model-pool-and-persona-routing.md",
+        "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-001-runtime-profile-contract.md"
+      ],
+      "acceptance": [
+        "PersonaRuntimeProfile contract/schema exists with model_routing and memory_policy",
+        "BFF exposes read-only runtime profile surface with source_refs",
+        "invalid provider/model references fail closed with operator-visible reason",
+        "tests prove personas map many-to-few onto the shared provider pool"
+      ],
+      "next": "Define the runtime profile contract before OpenClaw sync or UI work proceeds.",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "OCLAW-PMEM-000",
+      "helper_kind": "openclaw_persona_memory_gap_execution_slice",
+      "wave": 0,
+      "fleet_lane": "persona-runtime-contract",
+      "last_update": "2026-07-03T12:23:32Z"
+    },
+    {
+      "id": "OCLAW-PMEM-002",
+      "title": "OpenClaw persona agent reconciliation",
+      "summary_zh": "把 general persona create/update 接到 shared OpenClaw reconciler；既有 agent 要能同步 identity/workspace/model/SOUL，並消除 deploy script 與 library 的 SOUL drift。",
+      "phase": "OpenClaw Persona Memory Gap / Wave 1 agent reconcile",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "OCLAW-PMEM-001"
+      ],
+      "artifacts": [
+        "integrations/openclaw/persona_agent_sync.py",
+        "scripts/openclaw-sync-persona-agents.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/agora/servant",
+        "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-002-openclaw-agent-reconcile.md"
+      ],
+      "acceptance": [
+        "BFF persona create/update produces a reachable openclaw/{persona_id} agent or a failed reconcile reason",
+        "existing-agent model drift is repaired or blocked with a precise repair action",
+        "SOUL renderer parity tests cover deploy script and library output including Memory section",
+        "dev evidence shows a persona response through model=openclaw/{persona_id}"
+      ],
+      "next": "Wait for OCLAW-PMEM-001, then reconcile existing and new OpenClaw persona agents.",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "OCLAW-PMEM-000",
+      "helper_kind": "openclaw_persona_memory_gap_execution_slice",
+      "wave": 1,
+      "fleet_lane": "openclaw-agent-reconcile",
+      "last_update": "2026-07-03T12:23:32Z"
+    },
+    {
+      "id": "OCLAW-PMEM-003",
+      "title": "Canonical memory bridge to OpenClaw workspace",
+      "summary_zh": "建立 Memory Plane 到 OpenClaw workspace 的 materialization bridge；OpenClaw workspace 只能是 cache，不是第二個 memory source of truth。",
+      "phase": "OpenClaw Persona Memory Gap / Wave 1 memory bridge",
+      "owner": "Gemini2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "OCLAW-PMEM-001"
+      ],
+      "artifacts": [
+        "services/memory",
+        "services/persona",
+        "integrations/openclaw",
+        "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-003-memory-bridge.md"
+      ],
+      "acceptance": [
+        "canonical PersonaMemory/InstitutionalMemory hits materialize into OpenClaw workspace with source IDs",
+        "private PersonaMemory is not materialized for another persona",
+        "OpenClaw memory candidates cannot directly mutate canonical memory without authorized writeback",
+        "dev evidence shows generated workspace memory context from canonical PersonaMemory"
+      ],
+      "next": "Wait for OCLAW-PMEM-001, then implement Memory Plane materialization and writeback candidate flow.",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "OCLAW-PMEM-000",
+      "helper_kind": "openclaw_persona_memory_gap_execution_slice",
+      "wave": 1,
+      "fleet_lane": "canonical-memory-bridge",
+      "last_update": "2026-07-03T12:23:32Z"
+    },
+    {
+      "id": "OCLAW-PMEM-004",
+      "title": "BFF and Management runtime surfaces",
+      "summary_zh": "把 BFF/UI 改成顯示 runtime profile、provider pool health、persona memory source、quota/usage 與 reauth 狀態；不要用 mount ready 假裝 provider 可用。",
+      "phase": "OpenClaw Persona Memory Gap / Wave 2 BFF UI surfaces",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "OCLAW-PMEM-002",
+        "OCLAW-PMEM-003"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/main.py",
+        "services/memory",
+        "frontend-checkout:src",
+        "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-004-bff-ui-runtime-surfaces.md"
+      ],
+      "acceptance": [
+        "BFF persona memory surface reads canonical Memory Plane or reports precise unavailable reason",
+        "LLM Auth panel separates provider auth, live smoke, quota source, persona dependencies, and reauth flow state",
+        "reauth code-entry UX appears when the provider flow requires code entry and rechecks readiness after completion",
+        "tests cover BFF DTOs and UI degraded states for codex/claude/openclaw"
+      ],
+      "next": "Wait for OCLAW-PMEM-002 and OCLAW-PMEM-003, then wire BFF and Management UI surfaces.",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "OCLAW-PMEM-000",
+      "helper_kind": "openclaw_persona_memory_gap_execution_slice",
+      "wave": 2,
+      "fleet_lane": "bff-management-runtime-surfaces",
+      "last_update": "2026-07-03T12:23:32Z"
+    },
+    {
+      "id": "OCLAW-PMEM-005",
+      "title": "Dev gates and gap closeout",
+      "summary_zh": "建立 end-to-end dev gates，證明 provider live smoke、persona OpenClaw response、canonical memory retrieval/materialization 與 private memory isolation，再關閉 parent gap。",
+      "phase": "OpenClaw Persona Memory Gap / Wave 3 gates closeout",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "OCLAW-PMEM-002",
+        "OCLAW-PMEM-003",
+        "OCLAW-PMEM-004"
+      ],
+      "artifacts": [
+        "scripts",
+        "integrations/openclaw",
+        "services/control-plane/bff",
+        "services/memory",
+        "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/archive",
+        "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-005-dev-gates-closeout.md"
+      ],
+      "acceptance": [
+        "final closeout lists child task PRs, merge SHAs, validation commands, dev evidence, and residual risks",
+        "gate fails when provider mount is ready but live provider smoke fails",
+        "gate fails when BFF persona memory does not return canonical memory",
+        "gate fails when workspace memory lacks canonical source IDs or leaks private memory across personas"
+      ],
+      "next": "Wait for OCLAW-PMEM-002/003/004, then add dev gates and close OCLAW-PMEM-000 with evidence.",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_parent": "OCLAW-PMEM-000",
+      "helper_kind": "openclaw_persona_memory_gap_execution_slice",
+      "wave": 3,
+      "fleet_lane": "dev-gates-closeout",
+      "last_update": "2026-07-03T12:23:32Z"
     }
   ],
   "handoffs": [
