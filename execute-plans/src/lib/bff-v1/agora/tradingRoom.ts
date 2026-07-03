@@ -3,12 +3,19 @@
  * All data reads go through these functions; pages must not call fetch() directly.
  * No order routing, no capital binding — read/observe/intent-request only.
  *
+ * Every read and write sends the shared BFF auth headers built by
+ * `buildHeaders()` (see ../headers.ts) in addition to `credentials: "include"`,
+ * so this surface authenticates the same way as the rest of the app whether
+ * the browser session is cookie- or bearer-backed (AG-DYNUI-LIVE-AUTH-003).
+ *
  * Mutating method (decideOnEvent) requires:
  *   If-Match        — ETag from the preceding GET response
  *   Idempotency-Key — client-generated UUID per submission
  *   X-Request-Id    — client-generated UUID per request
  * AG-BE-TR-002 rejects writes that omit these headers.
  */
+
+import { buildHeaders } from "../headers";
 
 // ── Types derived from v4 schemas ──────────────────────────────────────────────
 
@@ -233,7 +240,7 @@ export async function getTradingRoom(baseUrl?: string): Promise<TradingRoomAggre
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ method: "GET" }),
   });
   if (!res.ok) {
     const body = await parseJson(res);
@@ -254,7 +261,7 @@ export async function getTradingRoomStrategy(
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ method: "GET" }),
   });
   if (res.status === 404) return null;
   if (!res.ok) {
@@ -292,7 +299,7 @@ export async function listDecisionEvents(
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ method: "GET" }),
   });
   if (!res.ok) {
     const body = await parseJson(res);
@@ -316,7 +323,7 @@ export async function getDecisionEvent(
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ method: "GET" }),
   });
   if (res.status === 404) return null;
   if (!res.ok) {
@@ -344,17 +351,14 @@ export async function decideOnEvent(
 ): Promise<Record<string, unknown>> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/trading-room/decision-events/${encodeURIComponent(decisionEventId)}/decisions`;
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-  };
-  if (options?.ifMatch) headers["If-Match"] = options.ifMatch;
-  if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
-  if (options?.requestId) headers["X-Request-Id"] = options.requestId;
+  const extra: Record<string, string> = { "Content-Type": "application/json" };
+  if (options?.ifMatch) extra["If-Match"] = options.ifMatch;
+  if (options?.idempotencyKey) extra["Idempotency-Key"] = options.idempotencyKey;
+  if (options?.requestId) extra["X-Request-Id"] = options.requestId;
   const res = await fetch(url, {
     method: "POST",
     credentials: "include",
-    headers,
+    headers: buildHeaders({ method: "POST", extra }),
     body: JSON.stringify(body),
   });
   if (!res.ok) {

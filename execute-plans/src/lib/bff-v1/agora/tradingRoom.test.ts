@@ -1,4 +1,5 @@
 // AG-FE-TR-002 — focused tests for trading room BFF client header contract.
+// AG-DYNUI-LIVE-AUTH-003 — every read/write must send the shared BFF auth headers.
 //
 // Coverage:
 //   * decideOnEvent forwards If-Match, Idempotency-Key, and X-Request-Id when provided
@@ -7,14 +8,17 @@
 //   * listDecisionEvents returns items + etag from response header
 //   * Read-only methods (getTradingRoom, listDecisionEvents, getDecisionEvent) do NOT send mutation headers
 //   * Error handling: non-2xx throws with message from error.message
+//   * Every read and write sends Authorization when a bearer token is available (AG-DYNUI-LIVE-AUTH-003)
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   decideOnEvent,
   listDecisionEvents,
   getTradingRoom,
+  getTradingRoomStrategy,
   getDecisionEvent,
 } from "./tradingRoom";
+import { setAuthProvider } from "../headers";
 
 const BASE = "https://test.example";
 
@@ -27,6 +31,7 @@ function ok(body: unknown, status = 200, extraHeaders?: Record<string, string>):
 
 afterEach(() => {
   vi.restoreAllMocks();
+  setAuthProvider(undefined);
 });
 
 // ── decideOnEvent — header forwarding ────────────────────────────────────────
@@ -216,6 +221,120 @@ describe("getDecisionEvent — returns null on 404", () => {
     const result = await getDecisionEvent("missing-evt", BASE);
 
     expect(result).toBeNull();
+  });
+});
+
+// ── Shared BFF auth headers (AG-DYNUI-LIVE-AUTH-003) ─────────────────────────
+
+describe("shared BFF auth headers", () => {
+  it("getTradingRoom sends Authorization: Bearer <token> when a bearer token is available", async () => {
+    setAuthProvider(() => ({ bearerToken: "test-bearer-token" }));
+    const fetchMock = vi.fn().mockResolvedValue(
+      ok({
+        data: {
+          spec_version: "1.0",
+          user_scope_ref: "scope-1",
+          strategies: [],
+          queue_summary: { entry: 0, add: 0, reduce: 0, exit: 0, review: 0 },
+          risk_summary: { state: "normal" },
+          snapshot_at: "2026-06-22T10:00:00Z",
+          data_cutoff: "2026-06-22T09:55:00Z",
+        },
+      }),
+    );
+    globalThis.fetch = fetchMock;
+
+    await getTradingRoom(BASE);
+
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer test-bearer-token");
+  });
+
+  it("getTradingRoom sends no Authorization header when no bearer token is available", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      ok({
+        data: {
+          spec_version: "1.0",
+          user_scope_ref: "scope-1",
+          strategies: [],
+          queue_summary: { entry: 0, add: 0, reduce: 0, exit: 0, review: 0 },
+          risk_summary: { state: "normal" },
+          snapshot_at: "2026-06-22T10:00:00Z",
+          data_cutoff: "2026-06-22T09:55:00Z",
+        },
+      }),
+    );
+    globalThis.fetch = fetchMock;
+
+    await getTradingRoom(BASE);
+
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+  });
+
+  it("getTradingRoomStrategy sends Authorization: Bearer <token>", async () => {
+    setAuthProvider(() => ({ bearerToken: "test-bearer-token" }));
+    const fetchMock = vi.fn().mockResolvedValue(ok({ data: { strategy_id: "strat-1" } }));
+    globalThis.fetch = fetchMock;
+
+    await getTradingRoomStrategy("strat-1", BASE);
+
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer test-bearer-token");
+  });
+
+  it("listDecisionEvents sends Authorization: Bearer <token>", async () => {
+    setAuthProvider(() => ({ bearerToken: "test-bearer-token" }));
+    const fetchMock = vi.fn().mockResolvedValue(ok({ items: [] }));
+    globalThis.fetch = fetchMock;
+
+    await listDecisionEvents(undefined, BASE);
+
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer test-bearer-token");
+  });
+
+  it("getDecisionEvent sends Authorization: Bearer <token>", async () => {
+    setAuthProvider(() => ({ bearerToken: "test-bearer-token" }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response("", { status: 404 }));
+    globalThis.fetch = fetchMock;
+
+    await getDecisionEvent("evt-missing", BASE);
+
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer test-bearer-token");
+  });
+
+  it("decideOnEvent sends Authorization: Bearer <token> alongside mutation headers", async () => {
+    setAuthProvider(() => ({ bearerToken: "test-bearer-token" }));
+    const fetchMock = vi.fn().mockResolvedValue(ok({ data: {} }));
+    globalThis.fetch = fetchMock;
+
+    await decideOnEvent(
+      "evt-005",
+      { decision: "approve" },
+      { ifMatch: '"etag-1"', idempotencyKey: "idem-5", requestId: "req-5" },
+      BASE,
+    );
+
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer test-bearer-token");
+    expect(headers["If-Match"]).toBe('"etag-1"');
+    expect(headers["Idempotency-Key"]).toBe("idem-5");
+    expect(headers["X-Request-Id"]).toBe("req-5");
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  it("decideOnEvent still sends the request when no bearer token is available (cookie-only session)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok({ data: {} }));
+    globalThis.fetch = fetchMock;
+
+    await decideOnEvent("evt-006", { decision: "approve" }, { requestId: "req-6" }, BASE);
+
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.credentials).toBe("include");
   });
 });
 
