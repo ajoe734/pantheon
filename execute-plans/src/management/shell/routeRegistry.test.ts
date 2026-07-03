@@ -15,10 +15,17 @@ describe("describeManagementRoute", () => {
     expect(describeManagementRoute("/management/evidence")).toMatchObject({
       label: "Evidence Explorer",
       status: "active-panel",
+      panel: "evidence",
     });
     expect(describeManagementRoute("/management/loops/execution")).toMatchObject({
       label: "Loop Truth",
       status: "active-panel",
+      panel: "loop-truth",
+    });
+    expect(describeManagementRoute("/management/ooda?packet=ooda-paper-001")).toMatchObject({
+      label: "OODA Packets",
+      status: "active-panel",
+      panel: "ooda",
     });
   });
 
@@ -26,14 +33,17 @@ describe("describeManagementRoute", () => {
     expect(describeManagementRoute("/management/control-room")).toMatchObject({
       label: "Management Registry",
       status: "planned-workflow",
+      panel: "planned",
     });
     expect(describeManagementRoute("/management/persona-league")).toMatchObject({
       label: "Performance Review",
       status: "planned-workflow",
+      panel: "planned",
     });
     expect(describeManagementRoute("/management/nl/ask")).toMatchObject({
       label: "Management AI Ops",
       status: "planned-workflow",
+      panel: "planned",
     });
   });
 });

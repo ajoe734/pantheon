@@ -1,14 +1,10 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { ComponentProps } from "react";
-import { I18nextProvider } from "react-i18next";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import i18n from "@/i18n";
 import { managementClient } from "@/lib/bff/client";
 import type { OodaLoopPacket, OodaPacketMeta } from "@/lib/ooda/packets";
 import { OodaPacketDrawer } from "./OodaPacketDrawer";
-
-void i18n.changeLanguage("en-US");
 
 const meta: OodaPacketMeta = {
   snapshot_at: "2026-05-15T16:00:00Z",
@@ -64,15 +60,13 @@ const completePacket: OodaLoopPacket = {
 
 function renderDrawer(props: Partial<ComponentProps<typeof OodaPacketDrawer>> = {}) {
   return render(
-    <I18nextProvider i18n={i18n}>
-      <OodaPacketDrawer
-        open
-        packet={completePacket}
-        meta={meta}
-        onOpenChange={() => {}}
-        {...props}
-      />
-    </I18nextProvider>,
+    <OodaPacketDrawer
+      open
+      packet={completePacket}
+      meta={meta}
+      onOpenChange={() => {}}
+      {...props}
+    />,
   );
 }
 
@@ -85,25 +79,23 @@ describe("OodaPacketDrawer", () => {
   it("renders the packet replay header, stages, and evidence refs", () => {
     renderDrawer();
 
-    expect(screen.getByRole("dialog", { name: /OODA Packet/i })).toBeInTheDocument();
-    expect(screen.getByText("ooda-paper-001 - strategy-rs-003")).toBeInTheDocument();
-    expect(screen.getByText("paper strategy")).toBeInTheDocument();
-    expect(screen.getByText("no live capital side effects")).toBeInTheDocument();
-    expect(screen.getByText("service store:ok")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /OODA Packet/i })).toBeTruthy();
+    expect(screen.getByText("ooda-paper-001 - strategy-rs-003")).toBeTruthy();
+    expect(screen.getByText("paper strategy")).toBeTruthy();
+    expect(screen.getByText("no live capital side effects")).toBeTruthy();
+    expect(screen.getByText("service store:ok")).toBeTruthy();
 
     for (const label of ["Observe", "Orient", "Decide", "Act", "Learn"]) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
     expect(screen.getAllByText("complete").length).toBeGreaterThanOrEqual(5);
-    expect(screen.getByText("source://search/rs-003")).toBeInTheDocument();
+    expect(screen.getByText("source://search/rs-003")).toBeTruthy();
     expect(screen.getAllByText("runtime-binding-paper-001").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("audit://ooda-paper-001")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Mutation review/i })).toHaveAttribute(
-      "href",
+    expect(screen.getByText("audit://ooda-paper-001")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Mutation review/i }).getAttribute("href")).toBe(
       "/evolution/mutation-review/evo-dec-paper-001",
     );
-    expect(screen.getByRole("link", { name: /Approval queue/i })).toHaveAttribute(
-      "href",
+    expect(screen.getByRole("link", { name: /Approval queue/i }).getAttribute("href")).toBe(
       "/management/approvals?approval=approval-paper-001",
     );
   }, 10_000);
@@ -137,7 +129,7 @@ describe("OodaPacketDrawer", () => {
       packetId: "ooda-paper-001",
     });
 
-    expect(screen.getByRole("status")).toHaveTextContent("Loading OODA packet");
+    expect(screen.getByRole("status").textContent).toContain("Loading OODA packet");
     await screen.findByText("ooda-paper-001 - strategy-rs-003");
 
     await waitFor(() => {
@@ -155,9 +147,9 @@ describe("OodaPacketDrawer", () => {
       },
     });
 
-    expect(screen.getByText("live capital side effects")).toBeInTheDocument();
-    expect(screen.queryByText("no live capital side effects")).not.toBeInTheDocument();
-    expect(screen.queryByText("live side effects: non-live env")).not.toBeInTheDocument();
+    expect(screen.getByText("live capital side effects")).toBeTruthy();
+    expect(screen.queryByText("no live capital side effects")).toBeNull();
+    expect(screen.queryByText("live side effects: non-live env")).toBeNull();
   });
 
   it("shows unsafe badge for non-live-env packet with live_capital_side_effects=true", () => {
@@ -170,8 +162,8 @@ describe("OodaPacketDrawer", () => {
       },
     });
 
-    expect(screen.getByText("live side effects: non-live env")).toBeInTheDocument();
-    expect(screen.queryByText("no live capital side effects")).not.toBeInTheDocument();
-    expect(screen.queryByText("live capital side effects")).not.toBeInTheDocument();
+    expect(screen.getByText("live side effects: non-live env")).toBeTruthy();
+    expect(screen.queryByText("no live capital side effects")).toBeNull();
+    expect(screen.queryByText("live capital side effects")).toBeNull();
   });
 });
