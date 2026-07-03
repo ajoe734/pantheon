@@ -81,6 +81,7 @@ class ClaudeProviderResult:
     degraded_reason: Optional[str] = None
     exit_code: Optional[int] = None
     config_dir: str = ""
+    diagnostic_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         config_target = "claude_config" if self.config_dir else ""
@@ -94,6 +95,8 @@ class ClaudeProviderResult:
             result["degraded_reason"] = self.degraded_reason
         if self.exit_code is not None:
             result["exit_code"] = self.exit_code
+        if self.diagnostic_reason is not None:
+            result["diagnostic_reason"] = self.diagnostic_reason
         if self.raw_events:
             result["raw_events"] = self.raw_events
         return result
@@ -178,6 +181,7 @@ class AssistantClaudeProvider:
                 base["auth"] = "unavailable"
                 base["auth_status"] = "failed"
                 base["degraded_reason"] = _auth_probe_degraded_reason(result.degraded_reason)
+                base["auth_probe"] = _auth_probe_metadata(result)
         else:
             base["auth"] = "account_session"
             base["auth_status"] = "not_checked"
@@ -668,6 +672,53 @@ def _auth_probe_degraded_reason(reason: Optional[str]) -> str:
     return f"claude_auth_probe_{reason}"
 
 
+def _auth_probe_metadata(result: ClaudeProviderResult) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "status": result.status,
+        "degraded_reason": result.degraded_reason,
+        "config_dir": "claude_config" if result.config_dir else "",
+    }
+    if result.exit_code is not None:
+        metadata["exit_code"] = result.exit_code
+    if result.diagnostic_reason is not None:
+        metadata["diagnostic_reason"] = result.diagnostic_reason
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _claude_cli_failure_reason(stderr_raw: str) -> tuple[str, str]:
+    text = " ".join((stderr_raw or "").strip().split()).lower()
+    if not text:
+        return "non_zero_exit_no_stderr", "stderr_empty"
+    if any(marker in text for marker in ("permission denied", "eacces", "access denied")):
+        return "config_permission_denied", "stderr_permission_denied"
+    if any(marker in text for marker in ("no such file or directory", "enoent")):
+        return "config_missing", "stderr_path_missing"
+    if any(
+        marker in text
+        for marker in (
+            "not authenticated",
+            "authentication",
+            "unauthorized",
+            "invalid api key",
+            "api key invalid",
+            "login",
+            "401",
+        )
+    ):
+        return "auth_failure", "stderr_auth_failure"
+    if any(marker in text for marker in ("rate limit", "429")):
+        return "rate_limited", "stderr_rate_limited"
+    if any(marker in text for marker in ("timeout", "timed out", "etimedout")):
+        return "network_timeout", "stderr_network_timeout"
+    if any(marker in text for marker in ("enotfound", "econnrefused", "network", "getaddrinfo")):
+        return "network_error", "stderr_network_error"
+    if any(marker in text for marker in ("certificate", "tls", "proxy")):
+        return "network_tls_or_proxy_error", "stderr_network_tls_or_proxy"
+    if any(marker in text for marker in ("billing", "subscription", "upgrade")):
+        return "billing_or_subscription", "stderr_billing_or_subscription"
+    return "non_zero_exit", "stderr_unclassified"
+
+
 def _resolve_binary(environ: Mapping[str, str] | None = None) -> Optional[str]:
     """Return the configured container-side Claude binary path, if usable."""
     env = environ if environ is not None else os.environ
@@ -989,9 +1040,7 @@ def invoke_claude(
         )
 
     if proc.returncode != 0 and not text:
-        degraded_reason = "non_zero_exit"
-        if stderr_raw and ("auth" in stderr_raw.lower() or "login" in stderr_raw.lower()):
-            degraded_reason = "auth_failure"
+        degraded_reason, diagnostic_reason = _claude_cli_failure_reason(stderr_raw)
         return ClaudeProviderResult(
             status="degraded",
             text=text,
@@ -999,6 +1048,7 @@ def invoke_claude(
             degraded_reason=degraded_reason,
             exit_code=proc.returncode,
             config_dir=config_dir,
+            diagnostic_reason=diagnostic_reason,
         )
 
     return ClaudeProviderResult(
