@@ -131,6 +131,31 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertIn("--token", cmd)
         self.assertIn("--params", cmd)
 
+    def test_gateway_cron_call_parses_banner_prefixed_pretty_json(self) -> None:
+        """Banner/doctor noise + pretty-printed multi-line JSON must still parse."""
+        noisy = (
+            "[state-migrations] Legacy state migration warnings:\n"
+            "- Left migrated task registry sidecar in place\n"
+            "│  Doctor warnings box  │\n"
+            '{\n  "jobs": [],\n  "total": 0,\n  "hasMore": false\n}\n'
+        )
+
+        def fake_run(cmd, **_kw):
+            class R:
+                returncode = 0
+                stdout = noisy
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        out = provider.gateway_cron_call("cron.list", {"limit": 5})
+        self.assertEqual(out.get("total"), 0)
+        self.assertEqual(out.get("jobs"), [])
+
+    def test_extract_gateway_json_wraps_top_level_array(self) -> None:
+        out = AssistantOpenClawProvider._extract_gateway_json('noise\n[{"id": "main"}]')
+        self.assertEqual(out, {"result": [{"id": "main"}]})
+
     def test_gateway_cron_call_rejects_non_cron_method(self) -> None:
         provider = self._make_provider(run_func=lambda *a, **k: None)
         with self.assertRaises(OpenClawProviderError) as ctx:
