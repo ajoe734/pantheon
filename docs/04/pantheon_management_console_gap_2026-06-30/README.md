@@ -16,7 +16,9 @@
 | Route/control re-audit | `archive/route-control-reaudit-2026-07-01.md` |
 | Route/control raw artifact | `archive/route-control-reaudit-2026-07-01.json` |
 | Post-closeout adjustment plan | `archive/management-adjustment-development-plan-2026-07-02.md` |
+| Fleet finish plan | `archive/management-fleet-finish-plan-2026-07-03.md` |
 | Execution packet | `docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md` |
+| Fleet finish execution packet | `docs/bff/execution-tasks/2026-07-03-management-console-fleet-finish/INDEX.md` |
 | Dispatch tracking | `docs/bff/execution-tasks/2026-06-30-management-console-production-gap/DISPATCH_TRACKING.md` |
 
 ## 1. Purpose
@@ -99,6 +101,15 @@ Vite app serves only `/management.html`, direct `/management/*` routes render
 blank 404 pages, and the active shell exposes only Live Evidence and Loop Truth
 with an unreachable OODA drawer. Use this rerun as the current basis for
 adjust/delete/deep-development decisions.
+
+The 2026-07-03 fleet finish plan is archived in
+`docs/04/pantheon_management_console_gap_2026-06-30/archive/management-fleet-finish-plan-2026-07-03.md`,
+with execution tasks in
+`docs/bff/execution-tasks/2026-07-03-management-console-fleet-finish/INDEX.md`.
+It updates the baseline after PR #2793 added direct `/management/*` shell
+serving and PR #2794 mounted the OODA packet workflow, then turns the remaining
+AI Ops, decision, readiness, performance, orphan-prune, command-depth, and
+closeout work into fleet tasks.
 
 The supplemental 2026-07-01 route/control re-audit is archived in
 `docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md`,
