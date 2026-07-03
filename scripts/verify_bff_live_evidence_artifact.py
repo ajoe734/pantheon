@@ -1050,7 +1050,7 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
                 else:
                     failures.append(f"{index}:read-allowed-status")
             elif (
-                item.get("error_envelope") is True
+                canonical_error_envelope_shape_ok(item)
                 and error_code in RBAC_DENIED_ERROR_CODES
                 and status in ({401, 403} if label == "anonymous" else {403})
             ):
@@ -1103,7 +1103,7 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
                             readback_kind == "readback_not_persisted"
                             and readback.get("ok") is True
                             and int(readback.get("status") or 0) == 404
-                            and readback.get("error_envelope") is True
+                            and canonical_error_envelope_shape_ok(readback)
                             and str(readback.get("error_code") or "") in not_found_codes
                             and bool(readback.get("target_id_sha256_12"))
                         )
@@ -1119,7 +1119,7 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
                 denied_code = str(check.get("error_code") or item.get("error_code") or "")
                 proof_ok = (
                     check.get("kind") == "authorization_rejected_before_persistence"
-                    and item.get("error_envelope") is True
+                    and canonical_error_envelope_shape_ok(item)
                     and denied_code in RBAC_DENIED_ERROR_CODES
                     and status in denied_statuses
                 )

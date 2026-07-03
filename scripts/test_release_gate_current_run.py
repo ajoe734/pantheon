@@ -70,6 +70,17 @@ def canonical_error_shape() -> dict[str, object]:
     }
 
 
+def noncanonical_detail_error_shape() -> dict[str, object]:
+    return {
+        "ok": False,
+        "location": "detail.error",
+        "code_present": True,
+        "message_present": True,
+        "meta_correlation_id_present": True,
+        "outer_detail_wrapper": True,
+    }
+
+
 def _strict_dry_run_items(*, with_side_effect_checks: bool = True, mismatched_readback_target: bool = False):
     strategy_id = "strategy-dry-run-001"
     ranking_formula_id = "ranking-formula-dry-run-001"
@@ -231,20 +242,27 @@ def _strict_rbac_matrix_items(
         "agora-note": "/bff/agora/notes",
         "intervention-claim": "/bff/v5/interventions/int-live-rbac-matrix/claim",
     }
+    read_allowed = {"viewer", "operator", "reviewer", "approver", "admin"}
     write_allowed = {"operator", "reviewer", "approver", "admin"}
     items = []
     for label in labels:
         for name, path in read_paths.items():
+            denied = label not in read_allowed
             item = {
                 "family": f"rbac-read-{label}-{name}",
                 "method": "GET",
                 "path": path,
+                "status": 403 if denied else 200,
                 "ok": True,
+                "error_envelope": denied,
                 "rbac_label": label,
                 "rbac_operation": "read",
                 "rbac_resource": name,
                 "auth_case_kind": "anonymous" if label == "anonymous" else "provided_bearer",
             }
+            if denied:
+                item["error_code"] = "FORBIDDEN"
+                item["error_envelope_shape"] = canonical_error_shape()
             if label != "anonymous":
                 item["request_bearer_sha256_12"] = f"rbac-{label}-hash"
             if mismatched_detail_link and label == "viewer" and name == "bff-strategies":
@@ -291,6 +309,7 @@ def _strict_rbac_matrix_items(
                             "target_id_sha256_12": f"target-{label}-{name}",
                             "status": 404,
                             "error_envelope": True,
+                            "error_envelope_shape": canonical_error_shape(),
                             "error_code": "RESOURCE_NOT_FOUND",
                         }
                     item["side_effect_check"] = {
@@ -304,9 +323,12 @@ def _strict_rbac_matrix_items(
                     if readback is not None:
                         item["side_effect_check"]["readback_not_persisted"] = readback
                 else:
+                    item["error_envelope_shape"] = canonical_error_shape()
                     item["side_effect_check"] = {
                         "kind": "authorization_rejected_before_persistence",
                         "ok": True,
+                        "error_envelope": True,
+                        "error_envelope_shape": canonical_error_shape(),
                         "error_code": "FORBIDDEN",
                         "target_marker_sha256_12": target_marker_hash,
                     }
@@ -1703,7 +1725,7 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     )
 
     assert rbac_check["status"] == "pass"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32"
     assert dry_run_check["status"] == "pass"
     assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true readbackLinked:true sideEffectProofs:7/7 sideEffects:none"
     assert race_check["status"] == "pass"
@@ -2375,7 +2397,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_required_family_coverag
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:55/56 detailLinks:55/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:55/56 detailLinks:55/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_detail(tmp_path: Path) -> None:
@@ -2468,7 +2490,7 @@ def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_detail(tmp_path: 
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:55/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:55/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_path: Path) -> None:
@@ -2566,7 +2588,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:6/7 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:6/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proofs(tmp_path: Path) -> None:
@@ -2659,7 +2681,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proof
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:0/32 writeReadbackProofs:0/12 writeMarkerLinks:0/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:0/32 writeReadbackProofs:0/12 writeDeniedEnvelopeProofs:0/16 writeMarkerLinks:0/32"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_write_marker(tmp_path: Path) -> None:
@@ -2752,7 +2774,133 @@ def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_write_marker(tmp_
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeMarkerLinks:31/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:31/32"
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_note"),
+    [
+        (
+            "read-denial",
+            "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:8/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32",
+        ),
+        (
+            "write-denial",
+            "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:15/16 writeMarkerLinks:32/32",
+        ),
+        (
+            "write-readback",
+            "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:11/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32",
+        ),
+    ],
+)
+def test_release_gate_rejects_strict_rbac_matrix_with_noncanonical_error_shape(
+    tmp_path: Path,
+    mutation: str,
+    expected_note: str,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    rbac_matrix = _strict_rbac_matrix_items()
+    if mutation == "read-denial":
+        target = next(item for item in rbac_matrix if item["family"] == "rbac-read-empty-bff-strategies")
+        target["error_envelope_shape"] = noncanonical_detail_error_shape()
+    elif mutation == "write-denial":
+        target = next(item for item in rbac_matrix if item["family"] == "rbac-write-viewer-strategy")
+        target["error_envelope_shape"] = noncanonical_detail_error_shape()
+    elif mutation == "write-readback":
+        target = next(item for item in rbac_matrix if item["family"] == "rbac-write-operator-strategy")
+        target["side_effect_check"]["readback_not_persisted"]["error_envelope_shape"] = noncanonical_detail_error_shape()
+    else:
+        raise AssertionError(f"unexpected mutation {mutation}")
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": rbac_matrix,
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(),
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    rbac_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    assert rbac_check["status"] == "fail"
+    assert rbac_check["note"] == expected_note
+
 
 def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_path: Path) -> None:
     if shutil.which("node") is None:
