@@ -382,6 +382,22 @@ def error_envelope_shape(data: Any) -> dict[str, Any]:
     }
 
 
+def canonical_error_envelope_shape_ok_from_result(result: dict[str, Any]) -> bool:
+    if result.get("error_envelope") is not True:
+        return False
+    shape = result.get("error_envelope_shape")
+    if not isinstance(shape, dict):
+        return False
+    return (
+        shape.get("ok") is True
+        and shape.get("location") == "error"
+        and shape.get("code_present") is True
+        and shape.get("message_present") is True
+        and shape.get("meta_correlation_id_present") is True
+        and shape.get("outer_detail_wrapper") is False
+    )
+
+
 def body_summary(data: Any) -> dict[str, Any]:
     if isinstance(data, dict):
         summary: dict[str, Any] = {"type": "object", "keys": sorted(data.keys())[:20]}
@@ -440,9 +456,10 @@ def readback_side_effect_check(
     target_id: str,
 ) -> dict[str, Any]:
     error_code = str(result.get("error_code") or "")
+    envelope_shape = result.get("error_envelope_shape") if isinstance(result.get("error_envelope_shape"), dict) else {}
     ok = (
         result.get("ok") is True
-        and result.get("error_envelope") is True
+        and canonical_error_envelope_shape_ok_from_result(result)
         and error_code in NOT_FOUND_ERROR_CODES
     )
     return {
@@ -452,6 +469,7 @@ def readback_side_effect_check(
         "target_id_sha256_12": sha256_12(str(target_id)),
         "status": result.get("status"),
         "error_envelope": result.get("error_envelope") is True,
+        "error_envelope_shape": envelope_shape,
         "error_code": error_code or None,
     }
 
@@ -510,13 +528,16 @@ def rbac_write_side_effect_check(
             check["ok"] = check["ok"] is True and readback_check.get("ok") is True
     else:
         error_code = str(result.get("error_code") or "")
+        envelope_shape = result.get("error_envelope_shape") if isinstance(result.get("error_envelope_shape"), dict) else {}
         check = {
             "kind": "authorization_rejected_before_persistence",
             "ok": (
                 result.get("ok") is True
-                and result.get("error_envelope") is True
+                and canonical_error_envelope_shape_ok_from_result(result)
                 and error_code in DENIED_ERROR_CODES
             ),
+            "error_envelope": result.get("error_envelope") is True,
+            "error_envelope_shape": envelope_shape,
             "error_code": error_code or None,
         }
     check["target_marker_sha256_12"] = sha256_12(marker)

@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 RBAC_LABEL = "Authenticated: strict bearer RBAC matrix evidence passed."
 DRY_RUN_LABEL = "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
@@ -89,6 +91,17 @@ def canonical_error_shape() -> dict[str, object]:
         "message_present": True,
         "meta_correlation_id_present": True,
         "outer_detail_wrapper": False,
+    }
+
+
+def noncanonical_detail_error_shape() -> dict[str, object]:
+    return {
+        "ok": False,
+        "location": "detail.error",
+        "code_present": True,
+        "message_present": True,
+        "meta_correlation_id_present": True,
+        "outer_detail_wrapper": True,
     }
 
 
@@ -229,6 +242,7 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
             }
             if denied:
                 item["error_code"] = "FORBIDDEN"
+                item["error_envelope_shape"] = canonical_error_shape()
             if label != "anonymous":
                 item["request_bearer_sha256_12"] = f"rbac-{label}-hash"
             items.append(item)
@@ -253,9 +267,12 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
                 item["request_bearer_sha256_12"] = f"rbac-{label}-hash"
             if denied:
                 item["error_code"] = "FORBIDDEN"
+                item["error_envelope_shape"] = canonical_error_shape()
                 item["side_effect_check"] = {
                     "kind": "authorization_rejected_before_persistence",
                     "ok": True,
+                    "error_envelope": True,
+                    "error_envelope_shape": canonical_error_shape(),
                     "error_code": "FORBIDDEN",
                     "target_marker_sha256_12": marker_hash,
                 }
@@ -277,6 +294,7 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
                         "target_id_sha256_12": f"target-{label}-{resource}",
                         "status": 404,
                         "error_envelope": True,
+                        "error_envelope_shape": canonical_error_shape(),
                         "error_code": "RESOURCE_NOT_FOUND",
                     }
                 item["side_effect_check"] = {
@@ -882,6 +900,45 @@ def test_verifier_rejects_rbac_denied_write_without_forbidden_status(tmp_path: P
     assert "writeDenials:15/16" in item["note"]
     assert "write-denial-status" in item["note"]
 
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_fragments"),
+    [
+        ("read-denial", ["readDenials:8/9", "read-denial-envelope"]),
+        ("write-denial", ["writeDenials:15/16", "writeSideEffectProofs:31/32"]),
+        ("write-readback", ["writeReadbackProofs:11/12", "writeSideEffectProofs:31/32"]),
+    ],
+)
+def test_verifier_rejects_rbac_matrix_with_noncanonical_error_shape(
+    tmp_path: Path,
+    mutation: str,
+    expected_fragments: list[str],
+) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    if mutation == "read-denial":
+        target = next(item for item in auth["rbac_matrix"] if item["family"] == "rbac-read-empty-bff-strategies")
+        target["error_envelope_shape"] = noncanonical_detail_error_shape()
+    elif mutation == "write-denial":
+        target = next(item for item in auth["rbac_matrix"] if item["family"] == "rbac-write-viewer-strategy")
+        target["error_envelope_shape"] = noncanonical_detail_error_shape()
+    elif mutation == "write-readback":
+        target = next(item for item in auth["rbac_matrix"] if item["family"] == "rbac-write-operator-strategy")
+        target["side_effect_check"]["readback_not_persisted"]["error_envelope_shape"] = noncanonical_detail_error_shape()
+    else:
+        raise AssertionError(f"unexpected mutation {mutation}")
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["rbac_matrix"]
+    assert item["status"] == "fail"
+    for fragment in expected_fragments:
+        assert fragment in item["note"]
 
 
 def test_verifier_rejects_rbac_write_without_side_effect_proof(tmp_path: Path) -> None:
