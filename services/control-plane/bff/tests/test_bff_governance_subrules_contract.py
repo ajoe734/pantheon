@@ -71,8 +71,8 @@ class TestPermissions:
             resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["items"] == []
-            assert body["data"] == []
+            assert "items" not in body
+            assert body["data"]["items"] == []
             assert body["page_info"]["total"] == 0
             surface = body["meta"]["surfaces"]["governance_permissions"]
             assert surface["status"] == "unavailable"
@@ -89,7 +89,8 @@ class TestPermissions:
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert body["page_info"]["total"] == 1
-            assert body["items"][0]["permission_id"] == "perm-001"
+            assert "items" not in body
+            assert body["data"]["items"][0]["permission_id"] == "perm-001"
             surface = body["meta"]["surfaces"]["governance_permissions"]
             assert surface["status"] == "ok"
         finally:
@@ -105,7 +106,8 @@ class TestPermissions:
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert body["page_info"]["total"] == 5
-            assert len(body["items"]) == 2
+            assert "items" not in body
+            assert len(body["data"]["items"]) == 2
             assert body["page_info"]["next_page_token"] == "2"
         finally:
             bff_main.read_store = original
@@ -128,7 +130,8 @@ class TestMemoryGovernance:
             resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["items"] == []
+            assert "items" not in body
+            assert body["data"]["items"] == []
             surface = body["meta"]["surfaces"]["memory_governance_rules"]
             assert surface["status"] == "unavailable"
             assert surface["source"] == "missing"
@@ -144,7 +147,8 @@ class TestMemoryGovernance:
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert body["page_info"]["total"] == 1
-            assert body["items"][0]["rule_id"] == "mem-001"
+            assert "items" not in body
+            assert body["data"]["items"][0]["rule_id"] == "mem-001"
             surface = body["meta"]["surfaces"]["memory_governance_rules"]
             assert surface["status"] == "ok"
         finally:
@@ -168,7 +172,8 @@ class TestConsultRules:
             resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["items"] == []
+            assert "items" not in body
+            assert body["data"]["items"] == []
             surface = body["meta"]["surfaces"]["consult_rules"]
             assert surface["status"] == "unavailable"
             assert surface["source"] == "missing"
@@ -184,7 +189,8 @@ class TestConsultRules:
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert body["page_info"]["total"] == 1
-            assert body["items"][0]["rule_id"] == "cr-001"
+            assert "items" not in body
+            assert body["data"]["items"][0]["rule_id"] == "cr-001"
             surface = body["meta"]["surfaces"]["consult_rules"]
             assert surface["status"] == "ok"
         finally:
@@ -208,7 +214,8 @@ class TestRoutePolicies:
             resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["items"] == []
+            assert "items" not in body
+            assert body["data"]["items"] == []
             surface = body["meta"]["surfaces"]["route_policies"]
             assert surface["status"] == "unavailable"
             assert surface["source"] == "missing"
@@ -224,7 +231,8 @@ class TestRoutePolicies:
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert body["page_info"]["total"] == 1
-            assert body["items"][0]["policy_id"] == "rp-001"
+            assert "items" not in body
+            assert body["data"]["items"][0]["policy_id"] == "rp-001"
             surface = body["meta"]["surfaces"]["route_policies"]
             assert surface["status"] == "ok"
         finally:
@@ -239,7 +247,7 @@ class TestRoutePolicies:
             assert resp.status_code == 200
             body = resp.json()
             assert "data" in body
-            assert "items" in body
+            assert "items" not in body
             assert "page_info" in body
             assert "meta" in body
             pi = body["page_info"]

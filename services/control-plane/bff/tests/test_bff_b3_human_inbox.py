@@ -77,6 +77,11 @@ def test_human_inbox_composes_approvals_and_interventions() -> None:
             assert approval["id"].startswith("approval:")
             assert approval["decision_context"]["risk_summary"]
             assert "canApprove" in approval["allowedActions"]
+            assert "inboxType" not in approval
+            assert "sourceDataset" not in approval
+            assert "riskLevel" not in approval
+            assert "createdAt" not in approval
+            assert "updatedAt" not in approval
             assert "sourceRecord" not in approval
             assert "source_record" not in approval
 

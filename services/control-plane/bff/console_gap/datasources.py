@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Query
 
 from .contracts import DataSourcesEnvelope
 
@@ -25,8 +25,11 @@ def create_datasources_router(
     @router.get(
         "/bff/management/data-sources",
         response_model=DataSourcesEnvelope,
+        response_model_exclude={"items"},
     )
     async def bff_management_data_sources(
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=50, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF BFFGAP-DATASOURCES: Data-source registry with ingestion health.
@@ -76,19 +79,33 @@ def create_datasources_router(
                 "reason": "management data sources are currently unavailable.",
             }
 
+        start = 0
+        if page_token:
+            try:
+                start = int(page_token)
+            except (TypeError, ValueError):
+                start = 0
+        page_items = items[start: start + page_size]
+        next_page_token = str(start + page_size) if start + page_size < len(items) else None
+
         if source in ("missing", "unavailable"):
             return {
                 "data": {
                     "id": "management-data-sources",
                     "items": [],
+                    "summary": {
+                        "total_items": 0,
+                        "returned_items": 0,
+                        "status": "unavailable",
+                        "source": source,
+                    },
                     "status": "unavailable",
                     "source": source,
                 },
-                "items": [],
                 "page_info": {
                     "next_page_token": None,
                     "total": 0,
-                    "page_size": 0,
+                    "page_size": page_size,
                     "returned": 0,
                     "has_more": False,
                 },
@@ -97,7 +114,13 @@ def create_datasources_router(
 
         data: Dict[str, Any] = {
             "id": "management-data-sources",
-            "items": items,
+            "items": page_items,
+            "summary": {
+                "total_items": len(items),
+                "returned_items": len(page_items),
+                "status": surface_state,
+                "source": source,
+            },
             "status": surface_state,
             "source": source,
         }
@@ -113,13 +136,12 @@ def create_datasources_router(
 
         return {
             "data": data,
-            "items": items,
             "page_info": {
-                "next_page_token": None,
+                "next_page_token": next_page_token,
                 "total": len(items),
-                "page_size": len(items),
-                "returned": len(items),
-                "has_more": False,
+                "page_size": page_size,
+                "returned": len(page_items),
+                "has_more": next_page_token is not None,
             },
             "meta": meta,
         }

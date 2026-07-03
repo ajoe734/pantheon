@@ -5,7 +5,9 @@
 | Status | Required for new Management BFF list endpoints |
 | Date | 2026-07-02 |
 | Scope | `/bff/management/*` list, table, board, ranking, inbox, and dashboard section endpoints |
-| Guardrail | `python3 scripts/audit_management_list_contract.py --baseline docs/architecture/management-list-contract-baseline.json --fail-on-new` |
+| Static Guardrail | `python3 scripts/audit_management_list_contract.py --baseline docs/architecture/management-list-contract-baseline.json --fail-on-new` |
+| Runtime Guardrail | `python3 scripts/audit_management_bff_list_responses.py --fail-on-issues` |
+| Frontend Guardrail | `python3 scripts/audit_management_frontend_tables.py --fail-on-issues` |
 
 ## Purpose
 
@@ -150,5 +152,7 @@ Before adding or changing a Management list endpoint:
 - move source/detail/health aggregates to detail endpoints;
 - add or update route and frontend adapter tests that consume only
   `data.items` and `data.summary`;
-- run the contract guardrail with `--fail-on-new`;
+- run the static source guardrail with `--fail-on-new`;
+- run the runtime response guardrail with `--fail-on-issues`;
+- run the frontend table guardrail with `--fail-on-issues` for table UX changes;
 - remove baseline fingerprints when an existing endpoint is slimmed.
