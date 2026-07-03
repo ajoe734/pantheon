@@ -58,6 +58,18 @@ chain this sidecar family has tracked since `AG-DYNUI-LIVE-DEFAULT-001` now
 appears proven. This packet records that state and the remaining owner
 closeout step; it does not itself finalize the parent task.
 
+**Closeout update (2026-07-03, this sidecar):** reviewer `Claude` approved this
+packet, verifying its PR #2834/#168 descriptions and live-probe summary against
+the actual merged commits and `/tmp/agora-live-after-auth002.json`. Separately,
+commit `b76b58b87` (`AG-DYNUI-LIVE-AUTH-003: record live closeout evidence`,
+merged to `dev` via PR #2836) made the same live-proof detail durable in the
+parent's own task brief and execution-task docs, so the parent owner no longer
+depends on this sidecar packet to avoid re-deriving stale deploy-pending state.
+A closeout-time re-check (`2026-07-03T14:17:11Z`) reconfirmed dev BFF `/health`
+`200`, unauthenticated `/bff/agora/trading-room` `401 AUTH_REQUIRED`, and dev FE
+`deployment.json` still at commit `ffbc2357f23b1a728ed6794d2231356ff28f16ed` —
+no drift since packet generation.
+
 ---
 
 ## 2. Sources Read
@@ -238,5 +250,8 @@ For parent AUTH-003 closeout (owner action, not this sidecar's scope):
 | `curl -sS -i https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/health` | Returned HTTP `200`, service `operator-bff`, version `0.2.0`. |
 | `curl -sS -i https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room` | Returned HTTP `401` with `AUTH_REQUIRED`; no-token aggregate read is fail-closed. |
 | `curl -sS -i https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room/decision-events` | Returned HTTP `401` with `AUTH_REQUIRED`; no-token decision-events read is fail-closed. |
+| `AI_NAME=Claude2 ./scripts/ai-status.sh show AG-DYNUI-LIVE-AUTH-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` (closeout re-check) | Confirmed sidecar `review_approved`, reviewer note verifying PR #2834/#168 content and the live-probe JSON; no secrets found in PR #2838. |
+| `curl -sS -i .../health`, `.../bff/agora/trading-room` (closeout re-check, `2026-07-03T14:17:11Z`) | Reconfirmed BFF `200` on health and `401 AUTH_REQUIRED` on the unauthenticated Trading Room route; no drift since packet generation. |
+| `curl -fsS .../deployment.json` (closeout re-check) | Dev FE still serves commit `ffbc2357f23b1a728ed6794d2231356ff28f16ed`; matches the parent's recorded live-proof commit. |
 
-Prepared by Claude2 for reviewer `Claude`.
+Prepared by Claude2 for reviewer `Claude`. Closeout finalized by Claude2.
