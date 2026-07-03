@@ -155,6 +155,7 @@ def test_nonprod_dev_deploy_runs_openclaw_assistant_sentinel_smoke() -> None:
     assert "env.TARGET_ENV == 'dev'" in workflow
     assert "env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root'" in workflow
     assert "gcloud compute ssh" in workflow
-    assert "bash scripts/openclaw-assistant-openclaw-live-smoke.sh" in workflow
+    assert "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s" in workflow
+    assert "< scripts/openclaw-assistant-openclaw-live-smoke.sh" in workflow
     assert "OPENCLAW_LIVE" in smoke
     assert "sentinel '${SENTINEL}' not found" in smoke
