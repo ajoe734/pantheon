@@ -30561,6 +30561,8 @@ def _human_inbox_persona_review_item(row: Dict[str, Any]) -> Optional[Dict[str, 
         "retire",
     }:
         return None
+    if _pplg_existing_open_promotion_review(persona_id, required_review):
+        return None
 
     gate_id = _pplg_human_gate_id(persona_id)
     review_status = str(row.get("reviewStatus") or row.get("review_status") or "pending").strip() or "pending"
@@ -30652,6 +30654,84 @@ def _human_inbox_persona_review_item(row: Dict[str, Any]) -> Optional[Dict[str, 
     }
 
 
+def _human_inbox_promotion_review_item(review: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    review_id = str(review.get("review_id") or review.get("id") or "").strip()
+    persona_id = str(review.get("persona_id") or "").strip()
+    if not review_id or not persona_id:
+        return None
+    status = str(review.get("status") or "pending").strip().lower()
+    review_type = str(review.get("review_type") or "promotion_to_canary").strip()
+    can_decide = status in _PPLG_PROMOTION_OPEN_STATUSES
+    inbox_id = f"promotion_review:{review_id}"
+    persona = read_store.get_persona(persona_id) or {}
+    persona_name = str(persona.get("name") or persona_id)
+    title = {
+        "promotion_to_canary": f"Paper to Canary promotion review: {persona_name}",
+        "canary_to_live": f"Canary to Live promotion review: {persona_name}",
+    }.get(review_type, f"Persona promotion review: {persona_name}")
+    evidence_refs = _pplg_review_evidence_refs(review.get("evidence_refs"))
+    decision_href = f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions"
+    detail_href = f"/management/human-inbox/{quote(inbox_id, safe='')}"
+    return {
+        "id": inbox_id,
+        "inbox_id": inbox_id,
+        "kind": "promotion_review",
+        "inboxType": "promotion_review",
+        "source_type": "promotion_review",
+        "source_id": review_id,
+        "review_id": review_id,
+        "review_type": review_type,
+        "persona_id": persona_id,
+        "title": title,
+        "summary": (
+            f"{review_type} is awaiting human decision."
+            if can_decide
+            else f"{review_type} decision is {status}."
+        ),
+        "priority": "high" if can_decide else "medium",
+        "risk_level": "high",
+        "status": status,
+        "action_state": "pending" if can_decide else "decided",
+        "requiredRole": "approver",
+        "required_role": "approver",
+        "created_at": review.get("created_at"),
+        "updated_at": review.get("updated_at") or review.get("created_at"),
+        "target": {"type": "HumanReviewRequest", "id": review_id},
+        "route": detail_href,
+        "bff_detail_path": f"/bff/management/human-inbox/{quote(inbox_id, safe='')}",
+        "decisionHref": decision_href,
+        "decision_href": decision_href,
+        "approval_decision_id": review.get("approval_decision_id"),
+        "canDecide": can_decide,
+        "canProceed": status in {"approved", "approved_with_conditions"},
+        "blockingReasons": [] if can_decide else [f"review status: {status}"],
+        "blocking_reasons": [] if can_decide else [f"review status: {status}"],
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "research_context": {
+            "review_type": review_type,
+            "recommendation": review.get("recommendation"),
+            "recommended_allocation": review.get("recommended_allocation"),
+            "cohort_id": review.get("cohort_id"),
+            "score_snapshot_id": review.get("score_snapshot_id"),
+            "system_authority": review.get("system_authority") or "advisory_only",
+            "decision_required": True,
+        },
+        "links": {
+            "manageHref": f"/management/persona-fleet?persona={quote(persona_id, safe='')}",
+            "primaryObjectHref": f"/management/persona-fleet?persona={quote(persona_id, safe='')}",
+            "recommendedActionHref": detail_href,
+            "decisionHref": decision_href,
+        },
+        "allowedActions": {
+            "canApprove": can_decide,
+            "canReject": can_decide,
+            "canRequestRevision": can_decide,
+            "canRequestEvidence": can_decide,
+        },
+    }
+
+
 def _human_inbox_persona_review_items(snapshot_at: str) -> List[Dict[str, Any]]:
     rows = _build_persona_health_items(
         snapshot_at,
@@ -30671,9 +30751,11 @@ def _human_inbox_all_items() -> tuple[
     List[Dict[str, Any]],
     List[Dict[str, Any]],
     List[Dict[str, Any]],
+    List[Dict[str, Any]],
 ]:
     approval_records = read_store.list_approval_queue_items() or []
     intervention_records = _v5_intervention_records()
+    promotion_review_records = read_store.list_promotion_reviews(status="pending,under_review")
     persona_review_records = _human_inbox_persona_review_items(utc_now())
     items: List[Dict[str, Any]] = []
     for approval in approval_records:
@@ -30682,6 +30764,10 @@ def _human_inbox_all_items() -> tuple[
             items.append(projected)
     for intervention in intervention_records:
         projected = _human_inbox_intervention_item(intervention)
+        if projected is not None:
+            items.append(projected)
+    for review in promotion_review_records:
+        projected = _human_inbox_promotion_review_item(review)
         if projected is not None:
             items.append(projected)
     items.extend(persona_review_records)
@@ -30693,7 +30779,7 @@ def _human_inbox_all_items() -> tuple[
         ),
         reverse=True,
     )
-    return items, approval_records, intervention_records, persona_review_records
+    return items, approval_records, intervention_records, persona_review_records, promotion_review_records
 
 
 def _human_inbox_filter_items(
@@ -30735,6 +30821,9 @@ def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Di
         "pending_items": len(pending_items),
         "approval_count": len([item for item in items if item.get("source_type") == "approval"]),
         "intervention_count": len([item for item in items if item.get("source_type") == "intervention"]),
+        "promotion_review_count": len([
+            item for item in items if item.get("source_type") == "promotion_review"
+        ]),
         "readiness_blocker_count": len([
             item for item in items if item.get("source_type") == "readiness_blocker"
         ]),
@@ -30749,8 +30838,10 @@ def _human_inbox_surfaces(
     approval_records: List[Dict[str, Any]],
     intervention_records: List[Dict[str, Any]],
     persona_review_records: Optional[List[Dict[str, Any]]] = None,
+    promotion_review_records: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     persona_review_records = persona_review_records or []
+    promotion_review_records = promotion_review_records or []
     approval_surface = _dataset_surface_status(
         "approval_queue_items",
         snapshot_at=snapshot_at,
@@ -30772,6 +30863,7 @@ def _human_inbox_surfaces(
         or bool(approval_records)
         or bool(intervention_records)
         or bool(persona_review_records)
+        or bool(promotion_review_records)
     )
     return {
         "human_inbox": _composed_surface_status(
@@ -30787,6 +30879,12 @@ def _human_inbox_surfaces(
             snapshot_at=snapshot_at,
             source="bff_composed",
         ),
+        "promotion_reviews": _composed_dataset_surface_status(
+            "promotion_reviews",
+            promotion_review_records,
+            snapshot_at=snapshot_at,
+            source="bff_local_dev_store",
+        ),
     }
 
 
@@ -30798,6 +30896,7 @@ def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
         str(item.get("source_id") or ""),
         str(item.get("approval_decision_id") or ""),
         str(item.get("intervention_id") or ""),
+        str(item.get("review_id") or ""),
     }
     return clean in candidates
 
@@ -31106,6 +31205,7 @@ def _management_hiq_backlog_response(
         approval_records,
         inbox_intervention_records,
         persona_review_records,
+        promotion_review_records,
     ) = _human_inbox_all_items()
     inbox_by_source_id = {
         str(item.get("source_id") or ""): item
@@ -31199,6 +31299,7 @@ def _management_hiq_backlog_response(
         approval_records=approval_records,
         intervention_records=inbox_intervention_records,
         persona_review_records=persona_review_records,
+        promotion_review_records=promotion_review_records,
     )
     hiq_surface = _aggregate_group_surface(
         "hiq_backlog",
@@ -32663,7 +32764,13 @@ async def bff_management_human_inbox(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    items, approval_records, intervention_records, persona_review_records = _human_inbox_all_items()
+    (
+        items,
+        approval_records,
+        intervention_records,
+        persona_review_records,
+        promotion_review_records,
+    ) = _human_inbox_all_items()
     filtered = _human_inbox_filter_items(
         items,
         source_type=source_type,
@@ -32678,6 +32785,7 @@ async def bff_management_human_inbox(
         approval_records=approval_records,
         intervention_records=intervention_records,
         persona_review_records=persona_review_records,
+        promotion_review_records=promotion_review_records,
     )
     return {
         "data": page_items,
@@ -32702,7 +32810,13 @@ async def bff_management_human_inbox_detail(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    items, approval_records, intervention_records, persona_review_records = _human_inbox_all_items()
+    (
+        items,
+        approval_records,
+        intervention_records,
+        persona_review_records,
+        promotion_review_records,
+    ) = _human_inbox_all_items()
     for item in items:
         if _human_inbox_detail_match(item, item_id):
             detail = json.loads(json.dumps(item))
@@ -32712,6 +32826,7 @@ async def bff_management_human_inbox_detail(
                 approval_records=approval_records,
                 intervention_records=intervention_records,
                 persona_review_records=persona_review_records,
+                promotion_review_records=promotion_review_records,
             )
             return {"data": detail, "meta": meta}
     raise _bff_error(
@@ -39210,6 +39325,582 @@ async def bff_management_persona_setup_retry(
     if record.get("status") == "setup_failed":
         response.status_code = 202
     return _paper_launch_envelope(record, idempotency_key=resolved_key, replayed=False)
+
+
+_PPLG_PROMOTION_OPEN_STATUSES = {"pending", "under_review"}
+_PPLG_PROMOTION_DECIDED_STATUSES = {"approved", "approved_with_conditions", "rejected"}
+_PPLG_PROMOTION_DECISION_VALUES = {
+    "approve": "approved",
+    "approved": "approved",
+    "approve_with_conditions": "approved_with_conditions",
+    "approved_with_conditions": "approved_with_conditions",
+    "reject": "rejected",
+    "rejected": "rejected",
+}
+
+
+def _pplg_generic_idempotency_conflict(idempotency_key: str) -> HTTPException:
+    return _bff_error(
+        409,
+        ErrorCode.IDEMPOTENCY_CONFLICT,
+        "Idempotency key already used with a different payload",
+        f"Key {idempotency_key!r} is bound to a different promotion review payload.",
+        precondition_failed="idempotency_conflict",
+        suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged.",
+    )
+
+
+def _pplg_timestamp_plus_days(timestamp: str, days: int) -> str:
+    parsed = _parse_rfc3339(timestamp) or datetime.now(timezone.utc)
+    return (parsed + timedelta(days=days)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _pplg_review_evidence_refs(*values: Any) -> List[str]:
+    refs: List[str] = []
+    for value in values:
+        if value in (None, ""):
+            continue
+        if isinstance(value, str):
+            refs.append(value.strip())
+            continue
+        if isinstance(value, dict):
+            ref = (
+                value.get("ref")
+                or value.get("ref_id")
+                or value.get("id")
+                or value.get("href")
+                or value.get("url")
+            )
+            if ref:
+                refs.append(str(ref).strip())
+            continue
+        if isinstance(value, list):
+            refs.extend(_pplg_review_evidence_refs(*value))
+    unique: List[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        if ref and ref not in seen:
+            seen.add(ref)
+            unique.append(ref)
+    return unique
+
+
+def _pplg_string_list(value: Any, *, default: Optional[List[str]] = None) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return list(default or [])
+
+
+def _pplg_promotion_review_contract(review: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "review_id": str(review.get("review_id") or review.get("id") or ""),
+        "review_type": str(review.get("review_type") or "promotion_to_canary"),
+        "persona_id": str(review.get("persona_id") or ""),
+        "cohort_id": str(review.get("cohort_id") or f"cohort-{review.get('persona_id') or 'unknown'}"),
+        "recommendation": str(review.get("recommendation") or "approve"),
+        "recommended_allocation": review.get("recommended_allocation"),
+        "evidence_refs": _pplg_review_evidence_refs(review.get("evidence_refs")),
+        "risk_notes": _pplg_string_list(review.get("risk_notes")),
+        "blocking_findings": _pplg_string_list(review.get("blocking_findings")),
+        "score_snapshot_id": str(review.get("score_snapshot_id") or f"score-{review.get('persona_id') or 'unknown'}"),
+        "decision_required": True,
+        "system_authority": "advisory_only",
+        "created_at": str(review.get("created_at") or utc_now()),
+        "expires_at": str(review.get("expires_at") or _pplg_timestamp_plus_days(utc_now(), 14)),
+    }
+
+
+def _pplg_promotion_review_public(review: Dict[str, Any]) -> Dict[str, Any]:
+    contract = _pplg_promotion_review_contract(review)
+    return {
+        **contract,
+        "id": contract["review_id"],
+        "status": str(review.get("status") or "pending"),
+        "decision_status": str(review.get("decision_status") or "pending"),
+        "approval_decision_id": review.get("approval_decision_id"),
+        "decided_at": review.get("decided_at"),
+        "decided_by": review.get("decided_by"),
+        "rationale": review.get("rationale"),
+        "created_by": review.get("created_by"),
+        "updated_at": review.get("updated_at"),
+        "links": {
+            "humanInboxHref": f"/management/human-inbox/{quote('promotion_review:' + contract['review_id'], safe='')}",
+            "bffDetailHref": f"/bff/management/promotion-reviews/{quote(contract['review_id'], safe='')}",
+            "decisionHref": f"/bff/management/promotion-reviews/{quote(contract['review_id'], safe='')}/decisions",
+        },
+    }
+
+
+def _pplg_promotion_review_envelope(
+    review: Dict[str, Any],
+    *,
+    replayed: bool = False,
+    idempotency_key: Optional[str] = None,
+    decision: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    snapshot_at = str(review.get("updated_at") or review.get("created_at") or utc_now())
+    meta = _snapshot_meta(snapshot_at)
+    meta["idempotency"] = {"idempotencyKey": idempotency_key, "replayed": replayed}
+    meta["surfaces"] = {
+        "promotion_reviews": _composed_dataset_surface_status(
+            "promotion_reviews",
+            [review],
+            snapshot_at=snapshot_at,
+            source="bff_local_dev_store",
+        ),
+        "approval_decisions": _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at),
+    }
+    payload = {
+        "data": _pplg_promotion_review_contract(review),
+        "review": _pplg_promotion_review_public(review),
+        "status": str(review.get("status") or "pending"),
+        "meta": meta,
+    }
+    if decision is not None:
+        payload["decision"] = json.loads(json.dumps(decision))
+    return payload
+
+
+def _pplg_persona_fleet_row(persona_id: str, snapshot_at: str) -> Optional[Dict[str, Any]]:
+    for row in _build_persona_health_items(snapshot_at, include_market_persona_defaults=True):
+        if str(row.get("persona_id") or row.get("personaId") or row.get("id") or "") == persona_id:
+            return json.loads(json.dumps(row))
+    return None
+
+
+def _pplg_existing_open_promotion_review(
+    persona_id: str,
+    review_type: str = "promotion_to_canary",
+) -> Optional[Dict[str, Any]]:
+    for review in read_store.list_promotion_reviews(persona_id=persona_id, review_type=review_type):
+        if str(review.get("status") or "").strip().lower() in _PPLG_PROMOTION_OPEN_STATUSES:
+            return review
+    return None
+
+
+def _pplg_normalize_promotion_review_payload(
+    payload: Dict[str, Any],
+    *,
+    persona_id: str,
+    actor_id: str,
+    idempotency_key: str,
+    request_hash: str,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    persona = read_store.get_persona(persona_id)
+    if persona is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist.",
+        )
+    review_type = str(payload.get("review_type") or payload.get("reviewType") or "promotion_to_canary").strip()
+    if review_type != "promotion_to_canary":
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Unsupported promotion review type",
+            "This route currently supports promotion_to_canary reviews.",
+            precondition_failed="review_type",
+        )
+    row = _pplg_persona_fleet_row(persona_id, snapshot_at) or {}
+    capital_scope = str(row.get("capitalScope") or row.get("capital_scope") or "").strip().lower()
+    deployment_stage = str(row.get("deploymentStage") or row.get("deployment_stage") or "").strip().lower()
+    if capital_scope not in {"", "paper"} or deployment_stage not in {"", "paper"}:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Promotion review requires a paper persona",
+            f"Persona {persona_id} is stage={deployment_stage or 'unknown'} capital_scope={capital_scope or 'unknown'}.",
+            precondition_failed="persona_stage",
+        )
+    existing = _pplg_existing_open_promotion_review(persona_id, review_type)
+    if existing is not None:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Promotion review already pending",
+            f"Persona {persona_id} already has open promotion review {existing.get('review_id')}.",
+            precondition_failed="open_promotion_review",
+        )
+    recommendation = str(payload.get("recommendation") or "approve").strip()
+    if recommendation not in {"approve", "approve_with_conditions", "reject", "reduce", "retire"}:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid promotion recommendation",
+            "recommendation must be approve, approve_with_conditions, reject, reduce, or retire.",
+            precondition_failed="recommendation",
+        )
+    recommended_allocation = payload.get("recommended_allocation", payload.get("recommendedAllocation"))
+    if recommended_allocation is not None:
+        try:
+            recommended_allocation = float(recommended_allocation)
+        except (TypeError, ValueError):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid recommended allocation",
+                "recommended_allocation must be a non-negative number or null.",
+                precondition_failed="recommended_allocation",
+            )
+        if recommended_allocation < 0:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid recommended allocation",
+                "recommended_allocation must be a non-negative number or null.",
+                precondition_failed="recommended_allocation",
+            )
+    evidence_refs = _pplg_review_evidence_refs(
+        payload.get("evidence_refs"),
+        payload.get("evidenceRefs"),
+        f"/bff/management/personas/{persona_id}/readiness",
+    )
+    competition = row.get("competitionStanding") or row.get("competition_standing") or {}
+    review_id = str(payload.get("review_id") or payload.get("reviewId") or f"review-promotion-{persona_id}-{uuid.uuid4().hex[:8]}")
+    key_map = {idempotency_key: request_hash}
+    return {
+        "id": review_id,
+        "review_id": review_id,
+        "review_type": review_type,
+        "persona_id": persona_id,
+        "cohort_id": str(payload.get("cohort_id") or payload.get("cohortId") or row.get("cohortId") or row.get("cohort_id") or f"cohort-{persona_id}"),
+        "recommendation": recommendation,
+        "recommended_allocation": recommended_allocation,
+        "evidence_refs": evidence_refs,
+        "risk_notes": _pplg_string_list(payload.get("risk_notes") or payload.get("riskNotes")),
+        "blocking_findings": _pplg_string_list(payload.get("blocking_findings") or payload.get("blockingFindings")),
+        "score_snapshot_id": str(payload.get("score_snapshot_id") or payload.get("scoreSnapshotId") or competition.get("score_snapshot_id") or competition.get("scoreSnapshotId") or f"score-{persona_id}"),
+        "decision_required": True,
+        "system_authority": "advisory_only",
+        "status": "pending",
+        "decision_status": "pending",
+        "created_at": snapshot_at,
+        "updated_at": snapshot_at,
+        "expires_at": str(payload.get("expires_at") or payload.get("expiresAt") or _pplg_timestamp_plus_days(snapshot_at, 14)),
+        "created_by": actor_id,
+        "request_payload": json.loads(json.dumps(payload)),
+        "request_hash": request_hash,
+        "idempotency_key": idempotency_key,
+        "idempotency_keys": key_map,
+        "persona_snapshot": {
+            "state": row.get("state"),
+            "competition_track": row.get("competitionTrack") or row.get("competition_track"),
+            "capital_scope": capital_scope or "paper",
+            "deployment_stage": deployment_stage or "paper",
+        },
+        "canonicalWriteAuthority": "governance_service",
+        "persistenceMode": "bff_local_dev_store",
+    }
+
+
+@app.post("/bff/management/personas/{persona_id}/promotion-reviews", status_code=201)
+async def bff_management_persona_promotion_review_request(
+    persona_id: str,
+    response: Response,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    _reject_body_idempotency_key(payload)
+    clean_id = persona_id.strip()
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /bff/management/personas/{persona_id}/promotion-reviews",
+            "persona_id": clean_id,
+            "payload": payload,
+        }
+    )
+    existing = read_store.get_promotion_review_by_idempotency_key(resolved_key)
+    if existing is not None:
+        key_map = existing.get("idempotency_keys") if isinstance(existing.get("idempotency_keys"), dict) else {}
+        if key_map.get(resolved_key) != request_hash:
+            raise _pplg_generic_idempotency_conflict(resolved_key)
+        response.status_code = 200
+        return _pplg_promotion_review_envelope(existing, replayed=True, idempotency_key=resolved_key)
+
+    review = _pplg_normalize_promotion_review_payload(
+        payload,
+        persona_id=clean_id,
+        actor_id=identity.operator_id,
+        idempotency_key=resolved_key,
+        request_hash=request_hash,
+    )
+    stored = read_store.upsert_promotion_review(review)
+    read_store.update_persona(
+        clean_id,
+        actor_id=identity.operator_id,
+        lifecycle_state="paper_running",
+        metadata={
+            "persona_status": "paper_running",
+            "promotion_review_id": stored["review_id"],
+            "promotion_review_status": "pending",
+            "recommended_governance_action": "promote_canary_review",
+        },
+        updated_at=str(stored.get("updated_at") or utc_now()),
+    )
+    return _pplg_promotion_review_envelope(stored, replayed=False, idempotency_key=resolved_key)
+
+
+@app.get("/bff/management/promotion-reviews")
+async def bff_management_promotion_reviews(
+    review_type: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    persona_id: Optional[str] = Query(default=None),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    reviews = read_store.list_promotion_reviews(
+        persona_id=persona_id,
+        review_type=review_type,
+        status=status,
+    )
+    page_items, next_page_token = _page_slice(reviews, page_token, page_size)
+    public_items = [_pplg_promotion_review_public(review) for review in page_items]
+    data_items = [_pplg_promotion_review_contract(review) for review in page_items]
+    return {
+        "data": data_items,
+        "items": public_items,
+        "summary": {
+            "total_reviews": len(reviews),
+            "returned_reviews": len(page_items),
+            "pending_reviews": len([
+                review for review in reviews
+                if str(review.get("status") or "").strip().lower() in _PPLG_PROMOTION_OPEN_STATUSES
+            ]),
+            "decided_reviews": len([
+                review for review in reviews
+                if str(review.get("status") or "").strip().lower() in _PPLG_PROMOTION_DECIDED_STATUSES
+            ]),
+        },
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": len(reviews),
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "promotion_reviews": _composed_dataset_surface_status(
+                    "promotion_reviews",
+                    reviews,
+                    snapshot_at=snapshot_at,
+                    source="bff_local_dev_store",
+                ),
+            },
+        },
+    }
+
+
+@app.get("/bff/management/promotion-reviews/{review_id}")
+async def bff_management_promotion_review_detail(
+    review_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = review_id.strip()
+    review = read_store.get_promotion_review(clean_id)
+    if review is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Promotion review not found",
+            f"Promotion review {clean_id} does not exist.",
+        )
+    decision = read_store.get_approval_decision(review.get("approval_decision_id"))
+    return _pplg_promotion_review_envelope(
+        review,
+        replayed=False,
+        idempotency_key=None,
+        decision=decision or review.get("decision"),
+    )
+
+
+@app.post("/bff/management/promotion-reviews/{review_id}/decisions")
+async def bff_management_promotion_review_decision(
+    review_id: str,
+    response: Response,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Promotion review decision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role.",
+            precondition_failed="role_check",
+        )
+    _reject_body_idempotency_key(payload)
+    clean_id = review_id.strip()
+    review = read_store.get_promotion_review(clean_id)
+    if review is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Promotion review not found",
+            f"Promotion review {clean_id} does not exist.",
+        )
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /bff/management/promotion-reviews/{review_id}/decisions",
+            "review_id": clean_id,
+            "payload": payload,
+        }
+    )
+    decision_key_map = review.get("decision_idempotency_keys") if isinstance(review.get("decision_idempotency_keys"), dict) else {}
+    if resolved_key in decision_key_map:
+        if decision_key_map.get(resolved_key) != request_hash:
+            raise _pplg_generic_idempotency_conflict(resolved_key)
+        response.status_code = 200
+        decision_record = read_store.get_approval_decision(review.get("approval_decision_id"))
+        return _pplg_promotion_review_envelope(
+            review,
+            replayed=True,
+            idempotency_key=resolved_key,
+            decision=decision_record or review.get("decision"),
+        )
+    status = str(review.get("status") or "").strip().lower()
+    if status not in _PPLG_PROMOTION_OPEN_STATUSES:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Promotion review already decided",
+            f"Promotion review {clean_id} is {status or 'unknown'}.",
+            precondition_failed="promotion_review_status",
+        )
+    raw_decision = str(payload.get("decision") or "").strip().lower()
+    outcome = _PPLG_PROMOTION_DECISION_VALUES.get(raw_decision)
+    if outcome is None:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid promotion review decision",
+            "decision must be approve, approve_with_conditions, or reject.",
+            precondition_failed="decision",
+        )
+    rationale = str(
+        payload.get("rationale")
+        or payload.get("rejection_reason")
+        or payload.get("approval_note")
+        or ""
+    ).strip()
+    if outcome == "rejected" and not rationale:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Reject decision requires rationale",
+            "Provide rationale or rejection_reason for rejected promotion reviews.",
+            precondition_failed="rationale",
+        )
+    requester = str(review.get("created_by") or "").strip()
+    if outcome in {"approved", "approved_with_conditions", "rejected"} and requester == identity.operator_id and "admin" not in identity.roles:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Promotion review self-decision is forbidden",
+            "The requester cannot approve or reject their own promotion review.",
+            precondition_failed="two_man_review",
+        )
+    timestamp = utc_now()
+    approval_decision_id = str(payload.get("approval_decision_id") or payload.get("approvalDecisionId") or f"approval-{clean_id}")
+    decision_record = read_store.create_approval_decision(
+        decision_id=approval_decision_id,
+        actor_id=identity.operator_id,
+        created_at=timestamp,
+        outcome=outcome,
+        state="decided",
+        risk_level=str(payload.get("risk_level") or payload.get("riskLevel") or "high"),
+        decision_type=str(review.get("review_type") or "promotion_to_canary"),
+        target_type="HumanReviewRequest",
+        target_id=clean_id,
+        rationale=rationale or "Promotion review approved by human reviewer.",
+        evidence_refs=[
+            {"ref_id": ref, "type": "PromotionReviewEvidence", "url": ref}
+            for ref in _pplg_review_evidence_refs(review.get("evidence_refs"), payload.get("evidence_refs"), payload.get("evidenceRefs"))
+        ],
+        metadata={
+            "review_id": clean_id,
+            "persona_id": review.get("persona_id"),
+            "review_type": review.get("review_type"),
+            "system_authority": "human_decision_required",
+            "may_promote": outcome in {"approved", "approved_with_conditions"},
+            "may_increase_allocation": False,
+            "activation_state": "authorized_not_started" if outcome in {"approved", "approved_with_conditions"} else "rejected",
+        },
+    )
+    decision_key_map[resolved_key] = request_hash
+    updated_review = {
+        **review,
+        "status": outcome,
+        "decision_status": "decided",
+        "approval_decision_id": approval_decision_id,
+        "decision": json.loads(json.dumps(decision_record)),
+        "decision_payload": json.loads(json.dumps(payload)),
+        "decision_idempotency_key": resolved_key,
+        "decision_idempotency_keys": decision_key_map,
+        "rationale": rationale,
+        "decided_at": timestamp,
+        "decided_by": identity.operator_id,
+        "updated_at": timestamp,
+    }
+    stored = read_store.upsert_promotion_review(updated_review)
+    persona_id = str(stored.get("persona_id") or "")
+    if persona_id:
+        if outcome == "rejected":
+            read_store.update_persona(
+                persona_id,
+                actor_id=identity.operator_id,
+                lifecycle_state="promotion_rejected",
+                metadata={
+                    "persona_status": "promotion_rejected",
+                    "promotion_review_id": clean_id,
+                    "promotion_review_status": "rejected",
+                    "promotion_rejection_reason": rationale,
+                    "recommended_governance_action": "none",
+                    "promotion_approval_decision_id": approval_decision_id,
+                },
+                updated_at=timestamp,
+            )
+        else:
+            read_store.update_persona(
+                persona_id,
+                actor_id=identity.operator_id,
+                lifecycle_state="paper_running",
+                metadata={
+                    "persona_status": "paper_running",
+                    "promotion_review_id": clean_id,
+                    "promotion_review_status": outcome,
+                    "recommended_governance_action": "none",
+                    "canary_activation_authority": "human_approved",
+                    "canary_activation_state": "authorized_not_started",
+                    "promotion_approval_decision_id": approval_decision_id,
+                },
+                updated_at=timestamp,
+            )
+    return _pplg_promotion_review_envelope(
+        stored,
+        replayed=False,
+        idempotency_key=resolved_key,
+        decision=decision_record,
+    )
 
 
 @app.get("/bff/personas/{persona_id}")

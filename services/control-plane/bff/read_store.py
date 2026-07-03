@@ -11087,6 +11087,83 @@ class ReadSurfaceStore:
         self._save()
         return json.loads(json.dumps(record))
 
+    def list_promotion_reviews(
+        self,
+        *,
+        persona_id: Optional[str] = None,
+        review_type: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        records: Dict[str, Dict[str, Any]] = {}
+        fallback = self._local_fallback("promotion_reviews")
+        if isinstance(fallback, dict):
+            for key, record in fallback.items():
+                if isinstance(record, dict):
+                    review_id = str(record.get("review_id") or record.get("id") or key)
+                    if review_id:
+                        records[review_id] = json.loads(json.dumps(record))
+        for key, record in self._local_overlay_records("promotion_reviews").items():
+            if isinstance(record, dict):
+                review_id = str(record.get("review_id") or record.get("id") or key)
+                if review_id:
+                    records[review_id] = json.loads(json.dumps(record))
+        reviews = list(records.values())
+        if persona_id:
+            reviews = [
+                review for review in reviews
+                if str(review.get("persona_id") or "") == str(persona_id)
+            ]
+        if review_type:
+            reviews = [
+                review for review in reviews
+                if str(review.get("review_type") or "") == str(review_type)
+            ]
+        if status:
+            requested = {token.strip().lower() for token in status.split(",") if token.strip()}
+            reviews = [
+                review for review in reviews
+                if str(review.get("status") or "").strip().lower() in requested
+            ]
+        return sorted(
+            [json.loads(json.dumps(review)) for review in reviews],
+            key=lambda review: str(review.get("updated_at") or review.get("created_at") or ""),
+            reverse=True,
+        )
+
+    def get_promotion_review(self, review_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_id = str(review_id or "").strip()
+        if not clean_id:
+            return None
+        for review in self.list_promotion_reviews():
+            if str(review.get("review_id") or review.get("id") or "") == clean_id:
+                return json.loads(json.dumps(review))
+        return None
+
+    def get_promotion_review_by_idempotency_key(self, idempotency_key: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_key = str(idempotency_key or "").strip()
+        if not clean_key:
+            return None
+        for review in self.list_promotion_reviews():
+            key_map = review.get("idempotency_keys")
+            if isinstance(key_map, dict) and clean_key in key_map:
+                return json.loads(json.dumps(review))
+            if str(review.get("idempotency_key") or "") == clean_key:
+                return json.loads(json.dumps(review))
+            decision_key_map = review.get("decision_idempotency_keys")
+            if isinstance(decision_key_map, dict) and clean_key in decision_key_map:
+                return json.loads(json.dumps(review))
+        return None
+
+    def upsert_promotion_review(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        review_id = str(record.get("review_id") or record.get("id") or "").strip()
+        if not review_id:
+            raise ValueError("promotion review record requires review_id")
+        reviews = self._ensure_local_overlay_records("promotion_reviews")
+        clean_record = json.loads(json.dumps({**record, "id": review_id, "review_id": review_id}))
+        reviews[review_id] = clean_record
+        self._save()
+        return json.loads(json.dumps(clean_record))
+
     def create_deployment_plan(
         self,
         *,
