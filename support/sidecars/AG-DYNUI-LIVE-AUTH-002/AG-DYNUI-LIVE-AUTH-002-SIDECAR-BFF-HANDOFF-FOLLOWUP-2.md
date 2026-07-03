@@ -226,12 +226,31 @@ frontend code was modified by this sidecar.
 
 ## 8. Handoff Status
 
-This packet is ready for `Claude` review as a support-only update to
+This packet was reviewed by `Claude` and approved as a support-only update to
 `AG-DYNUI-LIVE-AUTH-002`. It records that the parent PR's backend
 cookie-session fix supersedes the prior frontend-header implementation
-guidance while preserving the same live operator acceptance proof.
+guidance while preserving the same live operator acceptance proof. Delivery PR
+`#2810` merged into `dev` at `b086d8f7aa32ea17a0eb0d36b206a269380f6d23`
+with task head `a9b71659d085e25e95d120390718a35b67453c59`.
 
 If the parent deploy or live browser probe contradicts this packet, reviewer
 should ask for a narrow correction packet tied to that new evidence. No
 additional sidecar runtime work is needed from Codex2 unless reviewer finds
 the handoff inaccurate.
+
+---
+
+## 9. Closeout Finalization
+
+Closeout owner verification on `2026-07-03`:
+
+| Command | Result |
+|---|---|
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-DYNUI-LIVE-AUTH-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` | Confirmed sidecar is `review_approved`, owner `Codex2`, reviewer `Claude`, with this packet as the scoped artifact. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-DYNUI-LIVE-AUTH-002` | Confirmed parent is `review_approved` after PR #2808 merge, with owner closeout/live probe still assigned to `Claude`. |
+| `gh pr view 2810 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,title,headRefName,baseRefName,url,statusCheckRollup` | Confirmed PR #2810 is `MERGED` to `dev`, merge commit `b086d8f7aa32ea17a0eb0d36b206a269380f6d23`, with visible checks successful. |
+| `sed -n '1,260p' /tmp/review-followup2.md` | Confirmed reviewer approval: packet is accurate, support-only, and approved for parent-owner absorption/closeout. |
+
+This closeout note is support-only. It does not alter L1 canonical truth,
+core contracts, BFF runtime code, frontend runtime code, registry behavior, or
+governance behavior.
