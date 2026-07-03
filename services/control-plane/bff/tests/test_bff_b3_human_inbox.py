@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from urllib.parse import quote
 
 from fastapi.testclient import TestClient
 
@@ -111,6 +112,100 @@ def test_human_inbox_supports_filters_pagination_and_detail() -> None:
             detail_body = detail_resp.json()
             assert detail_body["data"]["intervention_id"] == "intv-human-001"
             assert detail_body["data"]["bff_detail_path"] == "/bff/v5/interventions/intv-human-001"
+        finally:
+            bff_main.read_store = original_store
+            bff_main._V5_INTERVENTIONS_STORE.clear()
+            bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+
+
+def test_human_inbox_projects_persona_paper_to_canary_review_items() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
+        try:
+            client = _fresh_client(td)
+            bff_main._V5_INTERVENTIONS_STORE.clear()
+            store = bff_main.read_store
+            store._data["personas"] = {
+                "persona-promotion-review": {
+                    "id": "persona-promotion-review",
+                    "persona_id": "persona-promotion-review",
+                    "name": "Promotion Review Persona",
+                    "lifecycle_state": "deployed",
+                    "status": "deployed",
+                    "updated_at": "2026-07-02T00:00:00Z",
+                    "canonicalWriteAuthority": "persona_registry_service",
+                    "persistenceMode": "bff_local_dev_store",
+                    "metadata": {
+                        "owner": "test",
+                        "capital_pool_id": "pool-promotion-review",
+                        "current_work": "Paper runtime passed stability window; canary review required.",
+                    },
+                },
+            }
+            store._data["persona_bindings"] = {
+                "binding-promotion-review": {
+                    "binding_id": "binding-promotion-review",
+                    "persona_id": "persona-promotion-review",
+                    "capital_pool_id": "pool-promotion-review",
+                    "status": "active",
+                    "validity": "active",
+                    "allowed_deployment_scope": "paper",
+                },
+            }
+            store._data["runtime_bindings"] = {
+                "runtime-promotion-review": {
+                    "runtime_binding_id": "rb-promotion-review",
+                    "runtime_id": "runtime-promotion-review",
+                    "capital_pool_id": "pool-promotion-review",
+                    "deployment_stage": "paper",
+                    "status": "active",
+                },
+            }
+            store._data["persona_league"] = {
+                "persona-promotion-review": {
+                    "persona_id": "persona-promotion-review",
+                    "deployment_stage": "paper",
+                    "capital_pool_id": "pool-promotion-review",
+                    "runtime_id": "runtime-promotion-review",
+                    "league_score": 82.0,
+                    "governance_required": True,
+                    "recommendation": "promote_canary_review",
+                    "status": "paper_running",
+                },
+            }
+            store._local_overlay_write_datasets.add("persona_bindings")
+            store._local_overlay_write_datasets.add("persona_league")
+            store._local_overlay_write_datasets.add("runtime_bindings")
+
+            list_resp = client.get(
+                "/bff/management/human-inbox?source_type=readiness_blocker",
+                headers=OPERATOR_HEADERS,
+            )
+
+            assert list_resp.status_code == 200, list_resp.text
+            items = {item["id"]: item for item in list_resp.json()["items"]}
+            gate_id = "readiness_blocker:persona:persona-promotion-review"
+            item = items[gate_id]
+            assert item["review_type"] == "promotion_to_canary"
+            assert item["source_type"] == "readiness_blocker"
+            assert item["research_context"]["state"] == "paper_running"
+            assert item["research_context"]["required_human_review"] == "promotion_to_canary"
+            assert item["canProceed"] is False
+            assert item["canDecide"] is False
+            assert item["links"]["manageHref"] == "/management/persona-fleet?persona=persona-promotion-review"
+            assert list_resp.json()["summary"]["readiness_blocker_count"] >= 1
+
+            detail_resp = client.get(
+                f"/bff/management/human-inbox/{quote(gate_id, safe='')}",
+                headers=OPERATOR_HEADERS,
+            )
+
+            assert detail_resp.status_code == 200, detail_resp.text
+            detail = detail_resp.json()["data"]
+            assert detail["id"] == gate_id
+            assert detail["target"] == {"type": "Persona", "id": "persona-promotion-review"}
+            assert detail["research_context"]["competition_track"] == "paper_challenger"
         finally:
             bff_main.read_store = original_store
             bff_main._V5_INTERVENTIONS_STORE.clear()
