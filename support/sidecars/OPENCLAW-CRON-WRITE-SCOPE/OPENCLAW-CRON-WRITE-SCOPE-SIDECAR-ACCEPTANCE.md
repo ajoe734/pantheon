@@ -197,3 +197,40 @@ Recommended parent-owner next steps:
    defense-in-depth layer regardless of what changes at the router layer.
 4. Finalize this sidecar as support material only; it should not itself be
    marked `done` as if it were the parent implementation.
+
+---
+
+## 9. Closeout Update (2026-07-03)
+
+Between this packet's review approval and this sidecar's own closeout, a
+real `OPENCLAW-CRON-WRITE-SCOPE` entry was created in the canonical
+`ai-status.json` (root `PANTHEON_STATUS_ROOT`, not the per-task worktree
+copy) by `dispatch_openclaw_live_wiring_followups_2026-07-03`, owned by
+`Claude`, reviewer `Codex`, status `blocked` on `Human/Ops`.
+
+Its actual scope is **materially different** from the working
+interpretation this packet built in §1–§4:
+
+- **Real scope**: the OpenClaw gateway's paired adapter device only holds
+  `operator.write` scope; `cron.add`/`update`/`remove`/`run` require
+  `operator.admin` on OpenClaw 2026.6.8, so live cron registration through
+  the adapter fails closed with a pairing/scope error. The fix is an
+  operator-approved device scope upgrade (`scripts/openclaw-approve-adapter-cron-scope.sh`)
+  plus a live smoke (`scripts/openclaw-cron-write-scope-smoke.sh`), not a
+  router/tool-class permission change.
+- **This packet's interpretation** (§1): a router-layer deny-first
+  tool-class gap for `channel="cron"` + `deployment` intents in
+  `services/control-plane/router/main.py`. That gap is real and still
+  worth fixing on its own merits, but it is **not** what the now-created
+  `OPENCLAW-CRON-WRITE-SCOPE` task is asking for.
+
+Disposition: this packet's acceptance checklist (§3) and dependency map
+(§4) remain accurate as independent analysis of the router/OC-002
+permission surface, and the router-layer gap they surface is still an
+open, real finding. But they should **not** be read as the acceptance
+criteria for the actual `OPENCLAW-CRON-WRITE-SCOPE` task — that task's own
+`acceptance` array in `ai-status.json` (adapter `cron.add` succeeds,
+full BFF persona-create path registers 4 cron jobs, scope survives a
+`openclaw-data` volume/container recreate) is the governing acceptance
+list. If the router-layer gap should become its own tracked task, it
+needs a new task id distinct from `OPENCLAW-CRON-WRITE-SCOPE`.
