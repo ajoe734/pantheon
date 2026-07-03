@@ -354,7 +354,14 @@ class AssistantOpenClawProvider:
         ]
         if params is not None:
             cmd.extend(["--params", json.dumps(params, separators=(",", ":"), sort_keys=True)])
-        run_env = {**os.environ, "NO_COLOR": "1"}
+        # Suppress the CLI banner / doctor notes so they don't land on stdout and
+        # corrupt the JSON envelope (NO_COLOR alone does not silence them).
+        run_env = {
+            **os.environ,
+            "NO_COLOR": "1",
+            "OPENCLAW_HIDE_BANNER": "1",
+            "OPENCLAW_SUPPRESS_NOTES": "1",
+        }
         try:
             proc = self._run(cmd, capture_output=True, text=True, timeout=self._timeout, env=run_env)
         except subprocess.TimeoutExpired as exc:
@@ -378,23 +385,30 @@ class AssistantOpenClawProvider:
 
     @staticmethod
     def _extract_gateway_json(stdout: str) -> Dict[str, Any]:
-        """Parse the last JSON object emitted by `gateway call --json` (banner/notes
-        may precede it on stdout)."""
+        """Extract the first complete JSON value from `gateway call --json` stdout.
+
+        The CLI may still prepend banner/doctor/migration noise (multi-line, with
+        box-drawing chars) before the JSON, and the payload itself is often
+        pretty-printed across many lines. A whole-string ``json.loads`` or a
+        single-line scan both fail on that shape, so we scan forward from each
+        ``{``/``[`` and use ``raw_decode`` to grab the first well-formed value,
+        ignoring any trailing noise. Objects are returned as-is; a top-level array
+        (e.g. ``agents list``) is wrapped as ``{"result": [...]}``.
+        """
         text = (stdout or "").strip()
         if not text:
             return {}
-        try:
-            parsed = json.loads(text)
-            return parsed if isinstance(parsed, dict) else {"result": parsed}
-        except json.JSONDecodeError:
-            pass
-        for line in reversed(text.splitlines()):
-            line = line.strip()
-            if line.startswith("{") and line.endswith("}"):
-                try:
-                    return json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+        decoder = json.JSONDecoder()
+        for idx, ch in enumerate(text):
+            if ch not in "{[":
+                continue
+            try:
+                value, _ = decoder.raw_decode(text[idx:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                return value
+            return {"result": value}
         raise OpenClawProviderError(
             f"openclaw gateway call returned non-JSON output: {text[:200]}",
             status_code=502, error_code="OPENCLAW_GATEWAY_SERIALIZATION_FAILURE",
