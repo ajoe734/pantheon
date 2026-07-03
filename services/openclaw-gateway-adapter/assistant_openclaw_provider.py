@@ -41,6 +41,13 @@ PROVIDER_RUNTIME = "openclaw_gateway_agent_cli"
 DEFAULT_AGENT_ID = "main"
 DEFAULT_TIMEOUT_SECONDS = 90
 DEFAULT_OPENCLAW_BIN = "openclaw"
+# `openclaw agent` accepts the prompt ONLY as an argv string (`-m/--message
+# <text>`); it has NO stdin support and `--message -` is taken LITERALLY — the
+# agent then receives a bare "-" heartbeat tick and replies "HEARTBEAT_OK"
+# instead of running the prompt. A single argv is bounded by the kernel's
+# MAX_ARG_STRLEN (128 KiB); cap below that and fail loudly rather than silently
+# truncating/dropping the prompt.
+_MAX_ARGV_PROMPT_BYTES = 96 * 1024
 # Canonical docker-compose service name — used when no URL is configured.
 _DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
 
@@ -209,6 +216,19 @@ class AssistantOpenClawProvider:
                 error_code="OPENCLAW_TOKEN_NOT_CONFIGURED",
             )
 
+        # The CLI only reads the prompt from `-m/--message <text>` (argv); it has
+        # no stdin mode. Guard the argv byte budget so an oversized prompt fails
+        # with a clear error instead of "[Errno 7] Argument list too long".
+        prompt_bytes = len(prompt.encode("utf-8"))
+        if prompt_bytes > _MAX_ARGV_PROMPT_BYTES:
+            raise OpenClawProviderError(
+                f"prompt is {prompt_bytes} bytes, exceeding the {_MAX_ARGV_PROMPT_BYTES}-byte "
+                "argv limit for `openclaw agent --message`. Trim the context pack or route "
+                "this turn through the gateway HTTP /v1/responses endpoint.",
+                status_code=413,
+                error_code="OPENCLAW_PROMPT_TOO_LARGE",
+            )
+
         request_id = str(uuid.uuid4())
         started_at = time.monotonic()
 
@@ -219,15 +239,15 @@ class AssistantOpenClawProvider:
         # "does not recognize option --url"). --json yields a structured
         # envelope on stdout (diagnostics go to stderr).
         #
-        # The prompt is fed via STDIN (`--message -`), NOT as an argv string:
-        # Management-AI prompts carry a large context pack and a single argv that
-        # big overflows the kernel's MAX_ARG_STRLEN (128 KiB) with
-        # "[Errno 7] Argument list too long". stdin has no such limit.
+        # The prompt MUST be passed as the `-m/--message` argv value. `--message -`
+        # does NOT read stdin — the CLI takes "-" literally, so the agent gets a
+        # bare heartbeat tick and replies "HEARTBEAT_OK" (verified live on the
+        # 2026.6.8 gateway). See _MAX_ARGV_PROMPT_BYTES for the size guard above.
         cmd = [
             binary,
             "agent",
             "--agent", self._agent_id,
-            "--message", "-",
+            "--message", prompt,
             "--json",
             "--timeout", str(self._timeout),
         ]
@@ -249,7 +269,6 @@ class AssistantOpenClawProvider:
                 text=True,
                 timeout=self._timeout,
                 env=run_env,
-                input=prompt,
             )
         except subprocess.TimeoutExpired as exc:
             raise OpenClawProviderError(
@@ -294,6 +313,91 @@ class AssistantOpenClawProvider:
             status="completed",
             output=output,
             redaction={"provider_invocation": {"redacted_fields": 0}},
+        )
+
+    # Only these gateway RPC methods may be proxied — persona OODA-loop cron
+    # registration/inspection. Keeps the proxy from becoming an arbitrary RPC hole.
+    _CRON_METHODS = frozenset({"cron.add", "cron.list", "cron.run", "cron.runs", "cron.remove"})
+
+    def gateway_cron_call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Proxy a whitelisted `cron.*` gateway RPC via `openclaw gateway call`.
+
+        Unlike `agent`, the `gateway call` subcommand DOES accept --url/--token.
+        Used by the BFF persona OODA-loop cron registrar, which cannot reach the
+        gateway directly (no docker socket / no openclaw binary in the BFF image).
+        """
+        if method not in self._CRON_METHODS:
+            raise OpenClawProviderError(
+                f"gateway method {method!r} is not permitted (allowed: {sorted(self._CRON_METHODS)}).",
+                status_code=403,
+                error_code="OPENCLAW_GATEWAY_METHOD_FORBIDDEN",
+            )
+        binary = self._openclaw_bin()
+        if not binary:
+            raise OpenClawProviderError(
+                "openclaw binary not found. Ensure the openclaw CLI is installed in the adapter image.",
+                status_code=503,
+                error_code="OPENCLAW_BINARY_NOT_FOUND",
+            )
+        if not self._token:
+            raise OpenClawProviderError(
+                "OPENCLAW_GATEWAY_TOKEN is not set. Configure the token in the compose env.",
+                status_code=503,
+                error_code="OPENCLAW_TOKEN_NOT_CONFIGURED",
+            )
+        effective_url = self._gateway_url or _DEFAULT_GATEWAY_WS_URL
+        cmd = [
+            binary, "gateway", "call", method,
+            "--url", effective_url,
+            "--token", self._token,
+            "--json",
+        ]
+        if params is not None:
+            cmd.extend(["--params", json.dumps(params, separators=(",", ":"), sort_keys=True)])
+        run_env = {**os.environ, "NO_COLOR": "1"}
+        try:
+            proc = self._run(cmd, capture_output=True, text=True, timeout=self._timeout, env=run_env)
+        except subprocess.TimeoutExpired as exc:
+            raise OpenClawProviderError(
+                f"openclaw gateway call {method} timed out after {self._timeout}s.",
+                status_code=504, error_code="OPENCLAW_GATEWAY_TIMEOUT",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise OpenClawProviderError(
+                f"openclaw gateway call {method} failed: {exc}",
+                status_code=502, error_code="OPENCLAW_GATEWAY_INVOCATION_FAILED",
+            ) from exc
+        if proc.returncode != 0:
+            stderr = (proc.stderr or "").strip()
+            raise OpenClawProviderError(
+                f"openclaw gateway call {method} exited {proc.returncode}: {stderr[:400]}",
+                status_code=502, error_code="OPENCLAW_GATEWAY_INVOCATION_FAILED",
+            )
+        raw = self._extract_gateway_json(proc.stdout or "")
+        return raw
+
+    @staticmethod
+    def _extract_gateway_json(stdout: str) -> Dict[str, Any]:
+        """Parse the last JSON object emitted by `gateway call --json` (banner/notes
+        may precede it on stdout)."""
+        text = (stdout or "").strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {"result": parsed}
+        except json.JSONDecodeError:
+            pass
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if line.startswith("{") and line.endswith("}"):
+                try:
+                    return json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+        raise OpenClawProviderError(
+            f"openclaw gateway call returned non-JSON output: {text[:200]}",
+            status_code=502, error_code="OPENCLAW_GATEWAY_SERIALIZATION_FAILURE",
         )
 
     # ------------------------------------------------------------------

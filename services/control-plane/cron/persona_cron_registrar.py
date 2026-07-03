@@ -10,6 +10,8 @@ import json
 import os
 import re
 import sys
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,6 +20,39 @@ from typing import Any
 
 from models import utc_now
 from workflows import WORKFLOW_CATALOG, WorkflowDefinition
+
+
+class AdapterCronRuntime:
+    """`gateway_call()` over the openclaw-gateway-adapter HTTP cron proxy.
+
+    The BFF cannot reach the gateway directly (no docker socket, no openclaw
+    binary), so it POSTs whitelisted `cron.*` RPCs to the adapter, which has the
+    CLI + ws:// reachability. Interface matches OpenClawDockerGatewayRuntime's
+    ``gateway_call(method, params) -> dict`` so PersonaCronRegistrar can use
+    either transport interchangeably.
+    """
+
+    def __init__(self, adapter_base_url: str, *, timeout_seconds: int = 30) -> None:
+        self._url = adapter_base_url.rstrip("/") + "/api/openclaw-adapter/gateway/cron"
+        self._timeout = timeout_seconds
+
+    def gateway_call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        body = json.dumps({"method": method, "params": params or {}}).encode("utf-8")
+        req = urllib.request.Request(
+            self._url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        if payload.get("status") != "ok":
+            raise RuntimeError(
+                f"adapter cron proxy error for {method}: "
+                f"{payload.get('error_code')}: {payload.get('message')}"
+            )
+        data = payload.get("data")
+        return data if isinstance(data, dict) else {}
 
 
 def _repo_root() -> str:
@@ -53,6 +88,7 @@ class PersonaCronRegistrationResult:
     mode: str  # "gateway_rpc" | "dry_run"
     registered: list[PersonaCronJobRecord] = field(default_factory=list)
     failed: list[dict[str, Any]] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)  # job names already present
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,6 +107,7 @@ class PersonaCronRegistrationResult:
                 for r in self.registered
             ],
             "failed": list(self.failed),
+            "skipped": list(self.skipped),
         }
 
 
@@ -91,17 +128,29 @@ class PersonaCronRegistrar:
         gateway_runtime: Any = None,
         *,
         dry_run: bool = False,
-        session_target: str = "main",
+        session_target: str | None = None,
         delivery_mode: str = "none",
     ) -> None:
         self._runtime = gateway_runtime
         self._dry_run = dry_run
+        # None → each persona's OODA jobs wake THAT persona's own agent (agent id
+        # == persona_id). An explicit value overrides (e.g. "main" to route every
+        # job through the orchestrator agent instead).
         self._session_target = session_target
         self._delivery_mode = delivery_mode
 
     def _get_runtime(self) -> Any:
         if self._runtime is not None:
             return self._runtime
+        # Preferred path from the BFF (which has no docker socket / openclaw
+        # binary): proxy cron.* RPCs through the openclaw-gateway-adapter HTTP
+        # endpoint. This is what makes creation-time registration actually
+        # register live jobs instead of silently no-op'ing in dry_run.
+        adapter_url = os.environ.get("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "").strip()
+        if adapter_url:
+            return AdapterCronRuntime(adapter_url)
+        # Host-side fallback: direct docker-exec runtime (only where a docker
+        # socket is available and explicitly enabled).
         if os.environ.get("OPENCLAW_PAPER_ADAPTER_ENABLED", "").lower() != "true":
             return None
         try:
@@ -153,8 +202,12 @@ class PersonaCronRegistrar:
             "name": job_name,
             "enabled": True,
             "deleteAfterRun": False,
-            "schedule": {"kind": "cron", "cron": workflow.schedule},
-            "sessionTarget": self._session_target,
+            # OpenClaw 2026.6.8 cron schema: the cron variant is
+            # {"kind":"cron","expr":"<5-field cron>"} — NOT "cron". Sending
+            # {"kind":"cron","cron":...} is rejected with a schema error, which
+            # is why no persona OODA job was ever registered.
+            "schedule": {"kind": "cron", "expr": workflow.schedule},
+            "sessionTarget": self._session_target or persona_id,
             "wakeMode": "next-heartbeat",
             "payload": {"kind": "systemEvent", "text": event_text},
             "delivery": {"mode": self._delivery_mode},
@@ -218,8 +271,15 @@ class PersonaCronRegistrar:
         mode = "gateway_rpc"
         registered: list[PersonaCronJobRecord] = []
         failed: list[dict[str, Any]] = []
+        skipped: list[str] = []
+        existing = self._existing_job_names(runtime)
 
         for workflow in WORKFLOW_CATALOG.values():
+            job_name = _job_name(workflow.workflow_id, persona_id)
+            if job_name in existing:
+                # Idempotent: a job with this name is already registered.
+                skipped.append(job_name)
+                continue
             try:
                 record = self._register_one(
                     runtime, workflow, persona_id, capital_pool_id, binding_id
@@ -241,4 +301,25 @@ class PersonaCronRegistrar:
             mode=mode,
             registered=registered,
             failed=failed,
+            skipped=skipped,
         )
+
+    def _existing_job_names(self, runtime: Any) -> set[str]:
+        """Names of cron jobs already registered in the gateway (best-effort)."""
+        try:
+            listing = runtime.gateway_call("cron.list", {"limit": 500})
+        except Exception:  # noqa: BLE001
+            return set()
+        jobs = (listing or {}).get("jobs") or []
+        return {str(j.get("name")) for j in jobs if isinstance(j, dict) and j.get("name")}
+
+    def reconcile_personas(
+        self, persona_ids: list[str]
+    ) -> list[PersonaCronRegistrationResult]:
+        """Register missing OODA cron jobs for each persona in *persona_ids*.
+
+        Idempotent backfill for personas that already exist but were created
+        before cron registration worked (or whose best-effort creation-time
+        registration silently no-op'd in dry_run). Returns one result per persona.
+        """
+        return [self.register_for_persona(pid) for pid in persona_ids]

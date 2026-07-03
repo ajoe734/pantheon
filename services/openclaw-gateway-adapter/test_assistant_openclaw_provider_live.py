@@ -111,6 +111,32 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             _run_func=run_func,
         )
 
+    def test_gateway_cron_call_shells_out_and_parses(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            captured.append(list(cmd))
+            class R:
+                returncode = 0
+                stdout = 'banner line\n{"id": "job-1", "name": "n"}'
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        out = provider.gateway_cron_call("cron.add", {"name": "n"})
+        self.assertEqual(out, {"id": "job-1", "name": "n"})
+        cmd = captured[0]
+        self.assertEqual(cmd[1:4], ["gateway", "call", "cron.add"])
+        self.assertIn("--url", cmd)
+        self.assertIn("--token", cmd)
+        self.assertIn("--params", cmd)
+
+    def test_gateway_cron_call_rejects_non_cron_method(self) -> None:
+        provider = self._make_provider(run_func=lambda *a, **k: None)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.gateway_cron_call("agent.invoke", {})
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_METHOD_FORBIDDEN")
+
     def test_readiness_no_binary_auth_probe(self) -> None:
         """auth_probe=True checks binary existence and returns degraded if missing."""
         provider = AssistantOpenClawProvider(
@@ -172,8 +198,10 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(result.output["transport"], "cli")
 
     def test_invoke_cli_args_and_env(self) -> None:
-        """CLI gets `agent --agent --message --json` (no --url/--token); the ws
-        URL + token are supplied via the subprocess env the CLI reads."""
+        """CLI gets `agent --agent --message <prompt> --json` (no --url/--token);
+        the prompt travels as the argv `--message` VALUE (the CLI has no stdin
+        mode — `--message -` is taken literally and yields HEARTBEAT_OK), and the
+        ws URL + token are supplied via the subprocess env the CLI reads."""
         captured: list[list[str]] = []
         captured_env: list[dict] = []
         captured_input: list = []
@@ -188,21 +216,22 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
                 stderr = ""
             return R()
 
-        big_prompt = "test " + ("x" * 200_000)  # would overflow a single argv
+        prompt = "Reply with exactly: OPENCLAW_LIVE"
         provider = self._make_provider(run_func=fake_run)
-        provider.invoke(big_prompt, operator_id="op-1")
+        provider.invoke(prompt, operator_id="op-1")
         self.assertTrue(captured, "subprocess.run was never called")
         cmd = captured[0]
         self.assertIn("agent", cmd)
         self.assertIn("--agent", cmd)
         self.assertIn("main", cmd)
-        self.assertIn("--message", cmd)
         self.assertIn("--json", cmd)
-        # The prompt is fed via stdin (`--message -`), never as an argv string
-        # (a large prompt as argv overflows MAX_ARG_STRLEN -> "Argument list too long").
-        self.assertIn("-", cmd)
-        self.assertNotIn(big_prompt, cmd)
-        self.assertEqual(captured_input[0], big_prompt)
+        # The prompt is the argv value immediately after --message, NOT stdin
+        # and NOT a literal "-".
+        self.assertIn("--message", cmd)
+        self.assertEqual(cmd[cmd.index("--message") + 1], prompt)
+        self.assertNotEqual(cmd[cmd.index("--message") + 1], "-")
+        # No stdin is fed (the CLI does not read it).
+        self.assertIsNone(captured_input[0])
         # The agent subcommand does NOT accept --url/--token.
         self.assertNotIn("--url", cmd)
         self.assertNotIn("--token", cmd)
@@ -210,6 +239,26 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         env = captured_env[0]
         self.assertEqual(env.get("OPENCLAW_GATEWAY_URL"), "ws://openclaw-gateway:18789")
         self.assertEqual(env.get("OPENCLAW_GATEWAY_TOKEN"), "test-token")
+
+    def test_invoke_oversized_prompt_fails_loudly(self) -> None:
+        """A prompt beyond the argv byte budget raises OPENCLAW_PROMPT_TOO_LARGE
+        instead of silently overflowing MAX_ARG_STRLEN or dropping the prompt."""
+        calls: list = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("response")
+                stderr = ""
+            return R()
+
+        big_prompt = "x" * (96 * 1024 + 1)
+        provider = self._make_provider(run_func=fake_run)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.invoke(big_prompt, operator_id="op-1")
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_PROMPT_TOO_LARGE")
+        self.assertFalse(calls, "subprocess must not run for an oversized prompt")
 
     def test_invoke_non_zero_exit_raises(self) -> None:
         def fake_run(cmd, **_kw):
