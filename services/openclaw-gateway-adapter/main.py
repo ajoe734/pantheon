@@ -1345,6 +1345,30 @@ def invoke_openclaw_provider_stream(
     )
 
 
+class GatewayCronCallRequest(BaseModel):
+    method: str
+    params: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/openclaw-adapter/gateway/cron")
+def gateway_cron_call(req: GatewayCronCallRequest) -> JSONResponse:
+    """Proxy a whitelisted `cron.*` gateway RPC through the adapter.
+
+    The BFF persona OODA-loop cron registrar cannot reach the gateway directly
+    (no docker socket, no openclaw binary in the BFF image). The adapter has the
+    openclaw CLI + ws:// reachability, so it registers/inspects the recurring
+    persona OODA cron jobs on the BFF's behalf. Only `cron.*` methods are allowed.
+    """
+    try:
+        result = _OPENCLAW_AGENT_PROVIDER.gateway_cron_call(req.method, req.params)
+    except GatewayOpenClawProviderError as exc:
+        return JSONResponse(
+            status_code=exc.status_code if exc.status_code in (403, 503) else 200,
+            content={"status": "error", "error_code": exc.error_code, "message": exc.message},
+        )
+    return JSONResponse(status_code=200, content={"status": "ok", "data": result})
+
+
 class ClaudeInvokeRequest(BaseModel):
     prompt: str
     mode: str = "user"
