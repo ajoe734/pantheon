@@ -83,38 +83,58 @@ export type PersonaFleetHealthStatus = "healthy" | "degraded" | "critical";
 export interface PersonaFleetItem {
   id: string;
   persona_id: string;
-  persona: Record<string, unknown>;
-  health: {
-    status: PersonaFleetHealthStatus;
-    severity: string;
-    score: number;
-    reasons: string[];
-    latest_telemetry_at?: string | null;
-    active_incident_count: number;
-  };
-  bindings: Array<Record<string, unknown>>;
-  capitalPools: Array<Record<string, unknown>>;
-  capital_pools: Array<Record<string, unknown>>;
-  runtimeBindings: Array<Record<string, unknown>>;
-  runtime_bindings: Array<Record<string, unknown>>;
-  telemetrySummary: Record<string, unknown>;
-  telemetry_summary: Record<string, unknown>;
-  training: Record<string, unknown>;
-  evolution: Record<string, unknown>;
-  allowedActions: Record<string, unknown>;
+  name: string;
+  owner?: string;
+  mode?: string;
+  status?: PersonaFleetHealthStatus | string;
+  health?: PersonaFleetHealthStatus | string;
+  score?: number;
+  ooda?: string;
+  autonomy?: string;
+  perf_delta?: number;
+  human_needed?: boolean;
+  last_mutation?: string;
+  state?: string;
+  current_work?: string;
+  routed_strategies?: number;
+  open_findings?: number;
+  market_scope?: string[];
+  asset_classes?: string[];
+  capital_pool_id?: string | null;
+  runtime_id?: string | null;
+  deployment_stage?: string;
+  ooda_stage?: string | null;
+  recommendation?: string;
+  governance_required?: boolean;
+  data_source_summary?: Record<string, unknown>;
+  research_summary?: Record<string, unknown>;
+  performance_summary?: Record<string, unknown>;
+  risk_flag_count?: number;
+  active_incident_count?: number;
+  updated_at?: string;
+  links?: Record<string, string | null | undefined>;
+  drill_down?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface PersonaFleetSummary {
+  total_personas: number;
+  returned_personas: number;
+  critical_personas: number;
+  degraded_personas: number;
+  healthy_personas: number;
+  bound_personas: number;
+  runtime_bound_personas: number;
+  available_personas?: number;
+  human_needed_personas?: number;
+  governance_required_personas?: number;
+  [key: string]: unknown;
 }
 
 export interface PersonaFleetAggregate {
-  data: PersonaFleetItem[];
-  items: PersonaFleetItem[];
-  summary: {
-    total_personas: number;
-    returned_personas: number;
-    critical_personas: number;
-    degraded_personas: number;
-    healthy_personas: number;
-    bound_personas: number;
-    runtime_bound_personas: number;
+  data: {
+    items: PersonaFleetItem[];
+    summary: PersonaFleetSummary;
   };
   page_info: {
     next_page_token: string | null;
@@ -328,57 +348,28 @@ function emptyPersonaFleetAggregate(): PersonaFleetAggregate {
   const items = seed.personas.map((persona) => ({
     id: persona.id,
     persona_id: persona.id,
-    persona,
-    health: {
-      status: "degraded",
-      severity: "medium",
-      score: 0,
-      reasons: ["mock_persona_fleet_unavailable"],
-      latest_telemetry_at: null,
-      active_incident_count: 0,
-    },
-    bindings: [],
-    capitalPools: [],
-    capital_pools: [],
-    runtimeBindings: [],
-    runtime_bindings: [],
-    telemetrySummary: {
-      latest: null,
-      runtime_count: 0,
-      covered_runtime_count: 0,
-      summaries: [],
-    },
-    telemetry_summary: {
-      latest: null,
-      runtime_count: 0,
-      covered_runtime_count: 0,
-      summaries: [],
-    },
-    training: {
-      session_count: 0,
-      active_session_count: 0,
-      completed_session_count: 0,
-      latest_session: null,
-    },
-    evolution: {
-      decision_count: 0,
-      pending_decision_count: 0,
-      latest_decision: null,
-      decisions: [],
-    },
-    allowedActions: {},
+    name: String(persona.name ?? persona.id),
+    owner: "mock",
+    mode: "mock",
+    status: "degraded",
+    health: "degraded",
+    score: 0,
+    data_source_summary: { state: "unavailable", provider_count: 0 },
+    research_summary: { stage: "unavailable", current_project_count: 0 },
+    performance_summary: { violation_count: 0 },
   })) as PersonaFleetItem[];
   return {
-    data: items,
-    items,
-    summary: {
-      total_personas: items.length,
-      returned_personas: items.length,
-      critical_personas: 0,
-      degraded_personas: items.length,
-      healthy_personas: 0,
-      bound_personas: 0,
-      runtime_bound_personas: 0,
+    data: {
+      items,
+      summary: {
+        total_personas: items.length,
+        returned_personas: items.length,
+        critical_personas: 0,
+        degraded_personas: items.length,
+        healthy_personas: 0,
+        bound_personas: 0,
+        runtime_bound_personas: 0,
+      },
     },
     page_info: {
       next_page_token: null,
@@ -775,26 +766,33 @@ function adaptLoopHealthDetail(body: unknown): LoopHealthEntry | undefined {
 
 function adaptPersonaFleetAggregate(body: unknown): PersonaFleetAggregate {
   const envelope = asObject(body);
-  const rawItems = Array.isArray(envelope.items)
-    ? envelope.items
-    : Array.isArray(envelope.data)
-      ? envelope.data
-      : [];
+  const dataEnvelope = asObject(envelope.data);
+  const rawItems = Array.isArray(dataEnvelope.items)
+    ? dataEnvelope.items
+    : Array.isArray(envelope.items)
+      ? envelope.items
+      : Array.isArray(envelope.data)
+        ? envelope.data
+        : [];
   const items = rawItems.filter((item) => item && typeof item === "object") as PersonaFleetItem[];
-  const summary = asObject(envelope.summary);
+  const summary = Object.keys(asObject(dataEnvelope.summary)).length > 0
+    ? asObject(dataEnvelope.summary)
+    : asObject(envelope.summary);
   const pageInfo = asObject(envelope.page_info);
   const meta = asObject(envelope.meta);
   return {
-    data: items,
-    items,
-    summary: {
-      total_personas: Number(summary.total_personas ?? items.length),
-      returned_personas: Number(summary.returned_personas ?? items.length),
-      critical_personas: Number(summary.critical_personas ?? 0),
-      degraded_personas: Number(summary.degraded_personas ?? 0),
-      healthy_personas: Number(summary.healthy_personas ?? 0),
-      bound_personas: Number(summary.bound_personas ?? 0),
-      runtime_bound_personas: Number(summary.runtime_bound_personas ?? 0),
+    data: {
+      items,
+      summary: {
+        ...summary,
+        total_personas: Number(summary.total_personas ?? summary.available_personas ?? items.length),
+        returned_personas: Number(summary.returned_personas ?? items.length),
+        critical_personas: Number(summary.critical_personas ?? 0),
+        degraded_personas: Number(summary.degraded_personas ?? 0),
+        healthy_personas: Number(summary.healthy_personas ?? 0),
+        bound_personas: Number(summary.bound_personas ?? summary.governance_required_personas ?? 0),
+        runtime_bound_personas: Number(summary.runtime_bound_personas ?? 0),
+      },
     },
     page_info: {
       next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,

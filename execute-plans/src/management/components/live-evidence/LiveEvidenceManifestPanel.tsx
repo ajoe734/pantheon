@@ -13,6 +13,7 @@ import type {
   ManagementEvidenceItem,
   ManagementEvidenceResponse,
 } from "@/lib/bff-v1/management";
+import { ManagementDenseTable } from "@/management/components/dense-table";
 import { cn } from "@/lib/utils";
 
 type LoadState = "loading" | "ready" | "error";
@@ -276,7 +277,7 @@ function ManifestRow({ manifest }: { manifest: LiveEvidenceManifestView }) {
       </div>
 
       {manifest.criteria.length > 0 ? (
-        <div className="mt-3 overflow-x-auto" data-testid={`live-evidence-criteria-${manifest.id}`}>
+        <ManagementDenseTable className="mt-3" testId={`live-evidence-criteria-${manifest.id}`}>
           <table className="w-full min-w-[560px] text-left text-xs">
             <thead className="text-muted-foreground">
               <tr>
@@ -299,11 +300,11 @@ function ManifestRow({ manifest }: { manifest: LiveEvidenceManifestView }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </ManagementDenseTable>
       ) : null}
 
       {manifest.files.length > 0 ? (
-        <div className="mt-3 overflow-x-auto">
+        <ManagementDenseTable className="mt-3" testId={`live-evidence-files-${manifest.id}`}>
           <table className="w-full min-w-[560px] text-left text-xs">
             <thead className="text-muted-foreground">
               <tr>
@@ -331,7 +332,7 @@ function ManifestRow({ manifest }: { manifest: LiveEvidenceManifestView }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </ManagementDenseTable>
       ) : null}
     </article>
   );

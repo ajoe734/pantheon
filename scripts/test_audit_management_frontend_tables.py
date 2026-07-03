@@ -34,3 +34,21 @@ def test_allows_management_table_with_sticky_scroll_affordance(tmp_path: Path) -
     )
 
     assert audit.audit(tmp_path, ("execute-plans/src",)) == []
+
+
+def test_pagination_text_without_dense_table_marker_is_not_enough(tmp_path: Path) -> None:
+    source = tmp_path / "execute-plans" / "src" / "management"
+    source.mkdir(parents=True)
+    table = source / "LooseTable.tsx"
+    table.write_text(
+        (
+            "export function LooseTable() { const page_size = 25; "
+            "return <div className=\"overflow-x-auto\"><table><tbody /></table></div>; }\n"
+        ),
+        encoding="utf-8",
+    )
+
+    issues = audit.audit(tmp_path, ("execute-plans/src",))
+
+    assert len(issues) == 1
+    assert issues[0].path == "execute-plans/src/management/LooseTable.tsx"

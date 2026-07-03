@@ -29,16 +29,18 @@ TABLE_PATTERNS = (
     re.compile(r"\bgridTemplateColumns\b"),
 )
 
-WIDE_SCROLL_PATTERN = re.compile(r"overflow-x\s*[:=]\s*[\"']?(auto|scroll)", re.IGNORECASE)
+WIDE_SCROLL_PATTERN = re.compile(
+    r"(overflow-x\s*[:=]\s*[\"']?(auto|scroll)|\boverflow-x-(auto|scroll)\b)",
+    re.IGNORECASE,
+)
 
 AFFORDANCE_PATTERNS = (
     re.compile(r"data-management-dense-table"),
     re.compile(r"\bManagementDenseTable\b"),
+    re.compile(r"data-pinned-horizontal-scroll"),
+    re.compile(r"data-sticky-scrollbar"),
     re.compile(r"\bsticky[-_]?scrollbar\b", re.IGNORECASE),
     re.compile(r"\bpinned[-_]?horizontal[-_]?scroll", re.IGNORECASE),
-    re.compile(r"position\s*:\s*sticky", re.IGNORECASE),
-    re.compile(r"\bpagination\b", re.IGNORECASE),
-    re.compile(r"\bpage[_-]?size\b", re.IGNORECASE),
     re.compile(r"\bvirtuali[sz]e", re.IGNORECASE),
 )
 

@@ -159,6 +159,11 @@ describe("LiveEvidenceManifestPanel", () => {
     expect(within(manifest).getByTestId("live-evidence-current-run-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY").textContent).toContain("Current-run 4/4");
     expect(within(manifest).getByText("BFF-LIVE-EVIDENCE-PREFLIGHT.json")).toBeTruthy();
     expect(within(manifest).getByText("release-gate-summary.json")).toBeTruthy();
+    const filesTable = screen.getByTestId("live-evidence-files-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY");
+    const criteriaTable = screen.getByTestId("live-evidence-criteria-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY");
+    expect(filesTable.getAttribute("data-management-dense-table")).toBe("true");
+    expect(filesTable.getAttribute("data-pinned-horizontal-scroll")).toBe("true");
+    expect(criteriaTable.getAttribute("data-management-dense-table")).toBe("true");
     expect(within(manifest).getByText("RBAC matrix")).toBeTruthy();
     expect(within(manifest).getByText("missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON")).toBeTruthy();
     expect(within(manifest).getByText("Current-run artifact scope")).toBeTruthy();
