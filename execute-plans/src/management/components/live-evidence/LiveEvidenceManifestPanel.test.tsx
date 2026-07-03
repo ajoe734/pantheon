@@ -8,6 +8,10 @@ import {
   LiveEvidenceManifestPanel,
 } from "./LiveEvidenceManifestPanel";
 
+const secretSetCommand = "gh secret set PANTHEON_BFF_RBAC_TOKENS_JSON --repo ajoe734/pantheon --env dev < /secure/path/PANTHEON_BFF_RBAC_TOKENS_JSON.txt";
+const workflowDispatchCommand = "gh workflow run \"Pantheon Stage 0 CI\" --repo ajoe734/pantheon --ref dev -f mode=live-evidence -f environment=dev";
+const remediationNote = "Set secrets on the selected GitHub environment, not only at repository scope.";
+
 const response: ManagementEvidenceResponse = {
   data: {
     id: "management-evidence",
@@ -97,6 +101,25 @@ const response: ManagementEvidenceResponse = {
             },
           ],
         },
+        operator_remediation: {
+          github_environment: "dev",
+          repository: "ajoe734/pantheon",
+          required_secret_names: [
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
+            "PANTHEON_BFF_RBAC_TOKENS_JSON",
+          ],
+          missing_secret_names: ["PANTHEON_BFF_RBAC_TOKENS_JSON"],
+          missing_workflow_inputs: ["APPROVAL_RACE_ID"],
+          invalid_inputs: [{ name: "SOAK_SECONDS", reason: "must be at least 75" }],
+          secret_set_commands: [secretSetCommand],
+          workflow_dispatch: {
+            recommended_workflow: "Pantheon Stage 0 CI",
+            mode: "live-evidence",
+            environment: "dev",
+            run_command_template: workflowDispatchCommand,
+          },
+          notes: [remediationNote],
+        },
       },
     ],
     summary: {
@@ -169,6 +192,25 @@ describe("LiveEvidenceManifestPanel", () => {
       label: "RBAC matrix",
       status: "pass",
     });
+    expect(manifests[0].remediation).toMatchObject({
+      githubEnvironment: "dev",
+      repository: "ajoe734/pantheon",
+      requiredSecretNames: [
+        "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
+        "PANTHEON_BFF_RBAC_TOKENS_JSON",
+      ],
+      missingSecretNames: ["PANTHEON_BFF_RBAC_TOKENS_JSON"],
+      missingWorkflowInputs: ["APPROVAL_RACE_ID"],
+      invalidInputs: [{ name: "SOAK_SECONDS", reason: "must be at least 75" }],
+      secretSetCommands: [secretSetCommand],
+      workflow: {
+        recommendedWorkflow: "Pantheon Stage 0 CI",
+        mode: "live-evidence",
+        environment: "dev",
+        runCommandTemplate: workflowDispatchCommand,
+      },
+      notes: [remediationNote],
+    });
   });
 
   it("renders manifest file counts, byte limits, current-run scope, and file paths", async () => {
@@ -197,6 +239,17 @@ describe("LiveEvidenceManifestPanel", () => {
     expect(criteriaTable.getAttribute("data-management-dense-table")).toBe("true");
     expect(within(manifest).getByText("Secret preflight")).toBeTruthy();
     expect(within(manifest).getByText("missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON")).toBeTruthy();
+    const remediation = within(manifest).getByTestId("live-evidence-remediation-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY");
+    expect(within(remediation).getByText("Operator remediation")).toBeTruthy();
+    expect(within(remediation).getByTestId("live-evidence-remediation-env-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY").textContent).toBe("env:dev");
+    expect(within(remediation).getByTestId("live-evidence-remediation-repo-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY").textContent).toBe("repo:ajoe734/pantheon");
+    expect(within(remediation).getByTestId("live-evidence-remediation-required-secret-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY-PANTHEON_BFF_SMOKE_BEARER_TOKEN").textContent).toBe("PANTHEON_BFF_SMOKE_BEARER_TOKEN");
+    expect(within(remediation).getByTestId("live-evidence-remediation-missing-secret-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY-PANTHEON_BFF_RBAC_TOKENS_JSON").textContent).toBe("PANTHEON_BFF_RBAC_TOKENS_JSON");
+    expect(within(remediation).getByTestId("live-evidence-remediation-missing-input-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY-APPROVAL_RACE_ID").textContent).toBe("APPROVAL_RACE_ID");
+    expect(within(remediation).getByText("SOAK_SECONDS: must be at least 75")).toBeTruthy();
+    expect(within(remediation).getByTestId("live-evidence-remediation-secret-command-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY-0").textContent).toBe(secretSetCommand);
+    expect(within(remediation).getByTestId("live-evidence-remediation-workflow-command-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY").textContent).toBe(workflowDispatchCommand);
+    expect(within(remediation).getByText(remediationNote)).toBeTruthy();
     expect(within(manifest).getByText("RBAC matrix")).toBeTruthy();
     expect(within(manifest).getByText("Dry-run BffErrorEnvelope")).toBeTruthy();
     expect(within(manifest).getByText("Approval race")).toBeTruthy();
