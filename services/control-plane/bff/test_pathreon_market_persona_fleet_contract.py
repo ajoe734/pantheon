@@ -28,7 +28,6 @@ PERSONA_FLEET_FORBIDDEN_LIST_KEYS = {
     "dataSourceStatus",
     "data_source_status",
     "dataSources",
-    "data_sources",
     "requiredDataSources",
     "required_data_sources",
     "researchRefs",
@@ -291,6 +290,25 @@ def test_management_persona_fleet_returns_slim_ui_safe_rows() -> None:
     assert tw["data_source_summary"]["provider_count"] == 5
     assert tw["data_source_summary"]["provider_status_counts"]["read_ok"] == 1
     assert tw["data_source_summary"]["provider_status_counts"]["read_unavailable"] == 3
+    assert [source["provider_key"] for source in tw["data_sources"]] == [
+        "shioaji",
+        "twse",
+        "tpex",
+        "mops",
+        "finmind",
+    ]
+    assert tw["data_sources"][0] == {
+        "provider_key": "shioaji",
+        "provider": "Shioaji quote",
+        "market": "TW",
+        "source_class": "broker_execution",
+        "status": "read_ok",
+        "order_capable_provider": True,
+        "read_only": True,
+        "order_side_effects_allowed": False,
+        "capital_side_effects_allowed": False,
+    }
+    assert "evidence_ref" not in tw["data_sources"][0]
     assert tw["research_summary"]["stage"] == "management_review_linked"
     assert tw["research_summary"]["framework"] == "qlib"
     assert tw["research_summary"]["artifact_id"] == "qlib-tw-cross-sectional-alpha-model-draft-v1"
@@ -305,7 +323,6 @@ def test_management_persona_fleet_returns_slim_ui_safe_rows() -> None:
         "dataSourceStatus",
         "data_source_status",
         "dataSources",
-        "data_sources",
         "dataSourceRefs",
         "data_source_refs",
         "requiredDataSources",
