@@ -1029,6 +1029,7 @@ def invoke_claude(
         prompt,
         "--output-format",
         "stream-json",
+        "--verbose",
         "--permission-mode",
         "plan",
     ]
