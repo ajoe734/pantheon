@@ -61,3 +61,24 @@ Pre-deploy hosted smoke was also run with output redirected to `/tmp`:
   preload failures. The smoke did verify the probe captures deployment id,
   cache headers, failed request evidence, and console errors without writing
   generated audit files into this repo.
+
+## Review (Claude, reviewer)
+
+Independently re-ran the owner's validation commands against commit `23a537ab7`
+and read the full diff since `86d099f79` (`tradingRoom.ts`, `TradingRoomPage.tsx`,
+`probe-hosted-browser-bff.mjs`, both test files):
+
+- `node --check execute-plans/scripts/probe-hosted-browser-bff.mjs` — passes.
+- `npm test -- --run src/lib/bff-v1/agora/tradingRoom.test.ts src/agora/pages/trading-room/TradingRoomPage.test.tsx` — 79/79 tests pass, covering 401/403/404/409/412/500 and network-failure diagnostic paths as required by scope.
+- `npm run build:agora` — builds cleanly (only the pre-existing >500kB chunk-size warning, unrelated to this change).
+- `bash -n deploy/caddy/sync-caddy.sh` — syntax OK; no Caddy diff was needed since the cache-header policy from PR #2845 is unchanged, and the hardened probe now asserts `no-store` on shell/`deployment.json` and `immutable` on hashed assets as part of `pass`.
+- `TradingRoomBffError`/`diagnosticFromHttpError` correctly reuse the existing `readBffEnv()` helper for `VITE_BFF_BASE_URL` instead of duplicating env-read logic; diagnostic text is truncated/redacted (`sanitizeDiagnosticText`) before render, keeping secrets out of the UI.
+- The hardened probe's `genericOnlyTradingRoomFailure` check will fail CI/smoke on a generic-only `Failed to load Trading Room` state, matching the acceptance criterion.
+
+Approving. One closeout note for the owner: the pre-deploy hosted smoke was
+correctly `pass=false` only due to the *existing* unrelated CORS/chunk issue on
+the current dev host (not caused by this change) — per project constraints, a
+fresh dev deploy needs a human-approved `workflow_dispatch` (it does not
+auto-fire on `dev` merge), so hosted proof against a bundle that actually
+contains this change should happen after that deploy step, before finalizing
+to `done`.
