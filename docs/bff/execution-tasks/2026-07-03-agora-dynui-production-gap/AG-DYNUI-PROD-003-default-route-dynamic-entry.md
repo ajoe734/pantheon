@@ -180,3 +180,17 @@ one-line, pre-verified merge command
 (`gh pr merge 173 --repo ajoe734/execute-plans --merge`) instead of having to
 re-derive merge-safety from the CI run. See the sidecar packet for full
 detail.
+
+**Re-verification (2026-07-04, pass 18):** confirmed no state change since
+the prior pass. `gh pr view 173 --repo ajoe734/execute-plans` shows the exact
+same `headRefOid` (`2b054ab9f`), `OPEN`/`MERGEABLE`/`CLEAN`, zero reviews,
+`autoMergeRequest=null`, and `integration-gate` `SUCCESS` at the same
+timestamp (`2026-07-04T03:28:21Z`). `gh pr view 173 --json state,mergedAt,closedAt`
+confirms it is still `OPEN` with `mergedAt=null`/`closedAt=null`. Pantheon-side
+commit `7b360cb60` is still an ancestor of `origin/dev`
+(`git merge-base --is-ancestor 7b360cb60 origin/dev`, current tip
+`d3aff7280`). `orchestrator_approval_broker` MCP was searched again via
+`ToolSearch` and is still not resolvable. No pantheon-side action is
+available this pass; the sole remaining blocker is unchanged — a human/chair
+merging `ajoe734/execute-plans#173`. Zero commits on the parent lane this
+pass beyond this re-verification note.
