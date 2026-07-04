@@ -29,19 +29,32 @@ describe("describeManagementRoute", () => {
     });
   });
 
-  it("classifies historical management URLs as planned workflows instead of pretending they are full pages", () => {
-    expect(describeManagementRoute("/management/control-room")).toMatchObject({
-      label: "Management Registry",
-      status: "planned-workflow",
-      panel: "planned",
-    });
+  it("maps newly mounted workflow suites to active panels", () => {
     expect(describeManagementRoute("/management/persona-league")).toMatchObject({
       label: "Performance Review",
-      status: "planned-workflow",
-      panel: "planned",
+      status: "active-panel",
+      panel: "performance-review",
     });
     expect(describeManagementRoute("/management/nl/ask")).toMatchObject({
       label: "Management AI Ops",
+      status: "active-panel",
+      panel: "ai-ops",
+    });
+    expect(describeManagementRoute("/management/readiness/broker-live")).toMatchObject({
+      label: "Readiness",
+      status: "active-panel",
+      panel: "readiness-suite",
+    });
+    expect(describeManagementRoute("/management/human-inbox")).toMatchObject({
+      label: "Decision Workbench",
+      status: "active-panel",
+      panel: "decision-workbench",
+    });
+  });
+
+  it("classifies historical registry URLs as planned workflows instead of pretending they are full pages", () => {
+    expect(describeManagementRoute("/management/control-room")).toMatchObject({
+      label: "Management Registry",
       status: "planned-workflow",
       panel: "planned",
     });
