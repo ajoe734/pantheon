@@ -235,3 +235,17 @@ auto-merge (merged `2026-07-04T11:14:24Z`, merge commit `d4b72d4a8`), so
 the pass-20 note is now live on `dev`. Not re-pinging the human/chair this
 pass — the ask is unchanged from pass 19. Sole remaining blocker: a
 human/chair merging `ajoe734/execute-plans#173`.
+
+**Re-verification (2026-07-04, pass 22):** confirmed no state change since
+pass 21. `gh pr view 173 --repo ajoe734/execute-plans` shows the identical
+`headRefOid` (`2b054ab9f0ad025c204bbf13251848caf8fe4599`), `OPEN`/
+`MERGEABLE`/`CLEAN`, zero reviews, `autoMergeRequest=null`. Also re-checked
+whether `orchestrator_approval_broker` (an MCP server this session initially
+listed as still connecting) had come online as an alternate human-approval
+path distinct from the blocked self-merge; `ToolSearch` still returns no
+matching tools for it. Pantheon-side pass-21 note (`d65a98463`, merged via
+PR #2947) is confirmed an ancestor of `origin/dev` (tip `bfa99de87` at task
+branch open time). Not re-pinging the human/chair this pass — the ask is
+unchanged since pass 19. No pantheon-side repo action is available this
+pass beyond this re-verification note. Sole remaining blocker: a
+human/chair merging `ajoe734/execute-plans#173`.
