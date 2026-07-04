@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
+import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -247,6 +249,194 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     assert "support/evidence/MGMT-QLIB-006/management_linkage_packet.json" in {
         ref.get("ref") for ref in tw["researchRefs"]
     }
+
+
+def test_persona_fleet_link_targets_mark_missing_detail_targets_unavailable() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        store._data["personas"] = {
+            "persona-link-missing": {
+                "id": "persona-link-missing",
+                "persona_id": "persona-link-missing",
+                "name": "Missing Detail Persona",
+                "lifecycle_state": "active",
+                "status": "active",
+                "created_at": "2026-07-04T00:00:00Z",
+                "updated_at": "2026-07-04T00:00:00Z",
+                "canonicalWriteAuthority": "persona_registry_service",
+                "persistenceMode": "bff_local_dev_store",
+                "metadata": {
+                    "owner": "test",
+                    "market_scope": ["US"],
+                    "deployment_stage": "live",
+                    "capital_pool_id": "pool-link-missing",
+                    "runtime_binding_id": "runtime-missing-detail",
+                    "performance": {"training_improvement_pct": 12.0},
+                    "data_sources": [{"provider_key": "nan", "status": "read_ok"}],
+                    "data_source_status": {"provider_statuses": {"nan": "read_ok"}},
+                    "research_status": {
+                        "experiment_id": "missing-exp",
+                        "artifact_id": "missing-artifact",
+                        "summary": "Formal research summary exists but no detail target exists.",
+                    },
+                    "current_research_projects": [
+                        {
+                            "project_id": "missing-project",
+                            "experiment_id": "missing-exp",
+                            "artifact_id": "missing-artifact",
+                        }
+                    ],
+                    "evolution_program_id": "not declared",
+                    "evolution_decision_id": "nan",
+                },
+            }
+        }
+        store._data["persona_league"] = {
+            "persona-link-missing": {
+                "persona_id": "persona-link-missing",
+                "deployment_stage": "live",
+                "capital_pool_id": "pool-link-missing",
+                "runtime_id": "runtime-missing-detail",
+                "league_score": 77.0,
+                "league_rank": 4,
+                "governance_required": False,
+                "recommendation": "",
+                "status": "live_running",
+            }
+        }
+
+        with _client_with_store(store) as client:
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    row = next(item for item in response.json()["items"] if item["persona_id"] == "persona-link-missing")
+    assert row["perfDelta"] == 0.12
+    assert row["runtimeId"] == "runtime-missing-detail"
+    assert row["researchStatus"]["experiment_id"] == "missing-exp"
+    assert row["researchStatus"]["artifact_id"] == "missing-artifact"
+
+    targets = row["linkTargets"]
+    for key, reason in {
+        "runtime": "no_runtime_target",
+        "performance": "no_attribution_detail",
+        "research": "no_research_detail",
+        "artifact": "no_artifact_detail",
+        "mutation": "no_mutation_detail",
+        "evolution": "no_evolution_program_detail",
+    }.items():
+        assert targets[key]["available"] is False
+        assert targets[key]["id"] is None
+        assert targets[key]["href"] is None
+        assert targets[key]["reason"] == reason
+
+    assert targets["dataSources"]["available"] is False
+    assert targets["dataSources"]["id"] is None
+    assert targets["dataSources"]["href"] is None
+    assert "nan" not in json.dumps(targets["dataSources"]).lower()
+    assert row["rowAction"]["actionId"] == "repair_paper_setup"
+    assert row["rowAction"]["available"] is False
+    assert row["rowAction"]["href"] is None
+    assert row["rowAction"]["reason"] == "no_repair_target"
+
+
+def test_persona_fleet_human_link_targets_readiness_blocker_before_review_id() -> None:
+    with _fleet_client() as client:
+        response = client.get("/bff/management/persona-fleet", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    tw = {item["persona_id"]: item for item in response.json()["items"]}["persona-tw-equity"]
+    human = tw["linkTargets"]["human"]
+    assert human["available"] is True
+    assert human["kind"] == "readiness_blocker"
+    assert human["id"] == "readiness_blocker:persona:persona-tw-equity"
+    assert human["href"] == "/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity"
+    assert human["bffHref"] == "/bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity"
+    assert "promotion_review" not in human["id"]
+    assert tw["rowAction"]["href"] == human["href"]
+
+
+def test_persona_fleet_research_link_targets_existing_tw_experiment() -> None:
+    with _fleet_client() as client:
+        response = client.get("/bff/management/persona-fleet", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    tw = {item["persona_id"]: item for item in response.json()["items"]}["persona-tw-equity"]
+    research = tw["linkTargets"]["research"]
+    assert research["available"] is True
+    assert research["id"] == "exp-mgmt-qlib-006"
+    assert research["href"] == "/management/experiments/exp-mgmt-qlib-006"
+    assert research["bffHref"] == "/bff/research-experiments/exp-mgmt-qlib-006"
+
+
+def test_persona_fleet_link_targets_use_execute_plans_management_routes() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        store.get_source_connector_registry = lambda: {
+            "source": "service_client",
+            "connectors": [
+                {
+                    "connector_id": "conn-shioaji",
+                    "provider_key": "shioaji",
+                    "provider": "Shioaji quote",
+                    "status": "active",
+                    "health": "ok",
+                }
+            ],
+            "provider_examples": [],
+            "policy_registry": None,
+            "financial_data_source_catalog": None,
+            "active_universe_policy": None,
+        }
+
+        with _client_with_store(store) as client:
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    tw = {item["persona_id"]: item for item in response.json()["items"]}["persona-tw-equity"]
+    targets = tw["linkTargets"]
+
+    persona = targets["persona"]
+    assert persona["available"] is True
+    assert persona["href"] == "/management/personas/persona-tw-equity"
+    assert persona["bffHref"] == "/bff/personas/persona-tw-equity"
+
+    runtime = targets["runtime"]
+    assert runtime["available"] is True
+    parsed_runtime = urllib.parse.urlsplit(runtime["href"])
+    runtime_query = urllib.parse.parse_qs(parsed_runtime.query)
+    assert parsed_runtime.path == "/management/runtimes"
+    assert runtime_query["persona"] == ["persona-tw-equity"]
+    assert runtime_query["runtime"] == ["runtime-tw-equity-paper"]
+    assert runtime["bffHref"] == "/bff/runtimes/runtime-tw-equity-paper"
+    assert runtime["filters"]["persona"] == "persona-tw-equity"
+    assert runtime["filters"]["runtime"] == "runtime-tw-equity-paper"
+    drilldown_href = tw["drillDown"]["href"]
+    assert urllib.parse.urlsplit(drilldown_href).path == "/management/runtimes"
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(drilldown_href).query)["persona"] == ["persona-tw-equity"]
+    assert tw["rowAction"]["href"].startswith("/management/human-inbox/")
+
+    performance = targets["performance"]
+    assert performance["available"] is True
+    assert performance["href"] == (
+        "/management/performance-attribution?dimension=persona&persona=persona-tw-equity"
+    )
+    assert performance["bffHref"] == (
+        "/bff/management/performance-attribution/by-persona?persona_id=persona-tw-equity"
+    )
+    assert performance["filters"]["persona"] == "persona-tw-equity"
+
+    data_sources = targets["dataSources"]
+    assert data_sources["available"] is True
+    assert data_sources["href"] == "/management/data-sources?persona=persona-tw-equity&source=shioaji"
+    assert data_sources["bffHref"] == "/bff/management/data-sources?provider_key=shioaji"
+    assert data_sources["filters"]["persona"] == "persona-tw-equity"
+    assert data_sources["filters"]["source"] == "shioaji"
 
 
 def test_management_fleet_keeps_market_personas_with_live_dev_overlay_only() -> None:
