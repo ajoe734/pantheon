@@ -35,6 +35,79 @@ def _future_schedule_at(prepared_at: str) -> str:
     return scheduled.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def _select_run(entries: list[dict[str, Any]], *, run_id: str | None) -> dict[str, Any] | None:
+    if not entries:
+        return None
+    if run_id:
+        for entry in entries:
+            if entry.get("runId") == run_id:
+                return entry
+    return entries[0]
+
+
+def _poll_for_terminal_run(
+    runtime: OpenClawDockerGatewayRuntime,
+    *,
+    job_id: str,
+    run_id: str | None,
+    poll_timeout_seconds: float,
+    poll_interval_seconds: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    deadline = time.time() + poll_timeout_seconds
+    latest_runs: dict[str, Any] = {}
+    while time.time() < deadline:
+        latest_runs = runtime.gateway_call("cron.runs", {"id": job_id, "limit": 5})
+        entries = latest_runs.get("entries") or []
+        latest_run = _select_run(entries, run_id=run_id)
+        if latest_run and latest_run.get("status") in _TERMINAL_RUN_STATUSES:
+            return latest_run, latest_runs
+        time.sleep(poll_interval_seconds)
+
+    raise OpenClawGatewayTransportError(
+        f"Timed out while waiting for OpenClaw cron job {job_id} to reach a terminal state.",
+        error_code="TIMEOUT",
+        error_layer="known",
+        retryable=True,
+        raw_payload={
+            "job_id": job_id,
+            "run_id": run_id,
+            "runs_response": latest_runs,
+        },
+    )
+
+
+def force_run_job(
+    runtime: OpenClawDockerGatewayRuntime,
+    job_id: str,
+    *,
+    poll_timeout_seconds: float = 30.0,
+    poll_interval_seconds: float = 1.0,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Force-run an ALREADY REGISTERED cron job and wait for a terminal run.
+
+    Unlike `OpenClawCronGatewayTransport.__call__` (which always creates a new
+    ad-hoc `cron.add` job for a one-shot envelope dispatch), this reuses an
+    existing job id — e.g. one of the four recurring per-persona jobs
+    `PersonaCronRegistrar` already registered — so a caller can force a
+    specific persona OODA cron job to run right now and observe its real
+    terminal status/run id instead of registering a duplicate job.
+
+    Returns ``(latest_run, runs_response)`` — the same shape
+    `OpenClawCronGatewayTransport` already returns from `cron.runs`, so
+    downstream code (e.g. the cron->OODA-packet closure) gets a real cron
+    run id / status / timestamps to fingerprint a packet with.
+    """
+    run_response = runtime.gateway_call("cron.run", {"id": job_id, "mode": "force"})
+    run_id = run_response.get("runId")
+    return _poll_for_terminal_run(
+        runtime,
+        job_id=job_id,
+        run_id=run_id,
+        poll_timeout_seconds=poll_timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+
+
 class OpenClawCronGatewayTransport:
     """Dispatch Pantheon workflow envelopes through the pinned OpenClaw cron RPC."""
 
@@ -134,34 +207,14 @@ class OpenClawCronGatewayTransport:
         }
 
     def _wait_for_terminal_run(self, *, job_id: str, run_id: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
-        deadline = time.time() + self.poll_timeout_seconds
-        latest_runs: dict[str, Any] = {}
-        while time.time() < deadline:
-            latest_runs = self.runtime.gateway_call("cron.runs", {"id": job_id, "limit": 5})
-            entries = latest_runs.get("entries") or []
-            latest_run = self._select_run(entries, run_id=run_id)
-            if latest_run and latest_run.get("status") in _TERMINAL_RUN_STATUSES:
-                return latest_run, latest_runs
-            time.sleep(self.poll_interval_seconds)
-
-        raise OpenClawGatewayTransportError(
-            f"Timed out while waiting for OpenClaw cron job {job_id} to reach a terminal state.",
-            error_code="TIMEOUT",
-            error_layer="known",
-            retryable=True,
-            raw_payload={
-                "job_id": job_id,
-                "run_id": run_id,
-                "runs_response": latest_runs,
-            },
+        return _poll_for_terminal_run(
+            self.runtime,
+            job_id=job_id,
+            run_id=run_id,
+            poll_timeout_seconds=self.poll_timeout_seconds,
+            poll_interval_seconds=self.poll_interval_seconds,
         )
 
     @staticmethod
     def _select_run(entries: list[dict[str, Any]], *, run_id: str | None) -> dict[str, Any] | None:
-        if not entries:
-            return None
-        if run_id:
-            for entry in entries:
-                if entry.get("runId") == run_id:
-                    return entry
-        return entries[0]
+        return _select_run(entries, run_id=run_id)
