@@ -252,3 +252,43 @@ on 2026-07-04 at merge commit
 `467d930957bf109405fa50a5bc252ff66ec3a7ee` after the integration gate passed.
 The remaining gap is hosted dev FE proof for gap (a), which belongs to
 `AG-DYNUI-PROD-006`'s hosted E2E/publish gate rather than local-dev evidence.
+
+## Hosted shell proof and dependency-cycle closeout (Codex supervisor, 2026-07-04)
+
+The hosted shell proof gap above has since been closed by the merged
+`AG-DYNUI-PROD-003` evidence packet:
+
+- `ajoe734/execute-plans` PR #173 merged into `dev` at
+  `691f2ec56af9bbc592814563558c001860d8bc7f`, and the hosted dev FE
+  `/deployment.json` reported that exact commit after the
+  `Pantheon Dev FE Deploy` workflow completed successfully.
+- Pantheon PR #2955 merged the hosted evidence into
+  `docs/deployment/evidence/ag-dynui-prod-003/20260704T123434Z/`.
+- The genuine live default-route capture in that evidence navigates to
+  `/agora/trading-room` without network mocking and shows the hosted app no
+  longer lands on the old inert Management/Trading Desk empty shell. It shows
+  the new Agora dynamic entry, live BFF 200 data for the tenant scope, and no
+  old `Position Actions` / `Decision Event Queue` / `No strategies in the
+  Trading Room` shell markers.
+- The same evidence packet records a route-mocked ready-strategy capture
+  against the already deployed hosted build, solely because the live dev tenant
+  had zero strategies and writes disabled. That ready-strategy capture is
+  useful for `AG-DYNUI-PROD-003`; the no-mock default-route capture is the
+  relevant `AG-DYNUI-PROD-002` shell proof.
+
+Therefore `AG-DYNUI-PROD-002` no longer needs to wait on
+`AG-DYNUI-PROD-006` for shell screenshot closeout. Keeping that wait creates a
+dependency cycle:
+
+- `AG-DYNUI-PROD-005` depends on `AG-DYNUI-PROD-002`, `AG-DYNUI-PROD-003`,
+  and `AG-DYNUI-PROD-004` all being `done`.
+- `AG-DYNUI-PROD-006` depends on `AG-DYNUI-PROD-005`.
+- If `AG-DYNUI-PROD-002` waits for `AG-DYNUI-PROD-006`, then 005 cannot
+  dispatch and 006 cannot become possible.
+
+Closeout guidance: the owner should cite PR #171, PR #173, and pantheon PR
+#2955, then finalize `AG-DYNUI-PROD-002` to `done` through the normal
+merged-delivery gate. `AG-DYNUI-PROD-006` remains responsible for the full
+hosted V10-to-V11 E2E workflow, including proposal, accept, grid edit, widget
+revision, version history, rollback, and final desktop/mobile evidence; it is
+not the remaining shell-architecture gate for this task.
