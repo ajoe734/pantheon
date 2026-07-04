@@ -404,3 +404,29 @@ Backend and frontend deep inventories were additionally produced by two
 parallel Explore agents against full-file reads (not excerpts) of every file
 listed in §"Sources Read" above; their findings are cross-cited throughout
 this packet.
+
+---
+
+## 12. Closeout Confirmation
+
+`Claude` approved this sidecar (`review_approved`, review notes confirming
+artifact-path corrections, route inventory, and mounting evidence against the
+worktree). At owner finalization (`Claude2`, 2026-07-04) the key claims were
+re-checked and are still current:
+
+- `grep -rn "DashboardProposalPreview\|WidgetRevisionDrawer\|DashboardChangeLog" execute-plans/src --include="*.tsx" | grep -v "\.test\."`
+  still shows only each component's own file (definition/export/import)
+  — none of the three is mounted anywhere else in the app.
+- `grep -n "onWidgetAdd\|onWidgetRemove\|onWidgetChartChange\|onPlacementsChange" execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx`
+  still shows `onWidgetRemove`/`onWidgetAdd`/`onWidgetChartChange` as no-ops
+  and `onPlacementsChange` as the only wired (local-state-only) callback.
+- `grep -rn "trading-room/workspaces\|trading-room/proposals\|widget-revision-proposals\|getTradingRoomWorkspace\|workspaceId" execute-plans/src --include="*.ts" --include="*.tsx" | grep -v "\.test\." | grep -v types.ts`
+  still returns zero matches — no V11 workspace client functions exist yet.
+- `AI_NAME=Claude2 python3 scripts/ai_status.py show AG-DYNUI-PROD-005` still
+  reports `status: todo`, owner `Claude`, reviewer `Codex2` — the parent has
+  not yet started implementation, so this handoff packet remains current and
+  useful at closeout.
+
+No further sidecar-owned changes were needed; this section only records that
+the approved packet's claims were re-verified as still true immediately before
+closing the task to `done`.
