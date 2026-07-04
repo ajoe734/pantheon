@@ -92,14 +92,32 @@ fi
 
 if [[ -n "$FE_HOST" ]]; then
   echo "=== verifying https://${FE_HOST}/ ==="
+  fe_ok=false
   for i in $(seq 1 8); do
     code="$(curl -sS -m 8 -o /dev/null -w '%{http_code}' "https://${FE_HOST}/" 2>/dev/null || echo 000)"
     echo "  attempt ${i}: http_code=${code}"
-    [[ "$code" == "200" ]] && { echo "OK: ${FE_HOST} live"; exit 0; }
+    if [[ "$code" == "200" ]]; then
+      echo "OK: ${FE_HOST} live"
+      fe_ok=true
+      break
+    fi
     sleep 5
   done
-  echo "WARN: ${FE_HOST}/ did not return 200 — check FE root ${FE_ROOT} and 'journalctl -u caddy'" >&2
-  exit 1
+  if [[ "$fe_ok" != "true" ]]; then
+    echo "WARN: ${FE_HOST}/ did not return 200 — check FE root ${FE_ROOT} and 'journalctl -u caddy'" >&2
+    exit 1
+  fi
+
+  echo "=== verifying frontend cache headers ==="
+  shell_cache="$(curl -sSI -m 8 "https://${FE_HOST}/agora/trading-room" | awk 'tolower($1) == "cache-control:" { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }')"
+  manifest_cache="$(curl -sSI -m 8 "https://${FE_HOST}/deployment.json" | awk 'tolower($1) == "cache-control:" { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }')"
+  echo "  /agora/trading-room Cache-Control: ${shell_cache:-<missing>}"
+  echo "  /deployment.json Cache-Control: ${manifest_cache:-<missing>}"
+  if [[ "${shell_cache}" != *"no-store"* || "${manifest_cache}" != *"no-store"* ]]; then
+    echo "WARN: frontend shell/deployment cache headers are missing no-store" >&2
+    exit 1
+  fi
+  exit 0
 fi
 
 exit 0

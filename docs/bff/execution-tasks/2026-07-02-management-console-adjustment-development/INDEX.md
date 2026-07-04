@@ -1,6 +1,7 @@
 # Management Console Adjustment Development Packet - 2026-07-02
 
-Status: planning archived; ready for fleet dispatch after this packet merges.
+Status: planning archived; superseded for active dispatch by the 2026-07-03
+fleet finish packet.
 
 This packet is the post-closeout development plan for the Management Console.
 It is not a re-open of `MGMT-GAP-*`; those tasks remain production-closed.
@@ -9,6 +10,18 @@ Source plan:
 
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/management-adjustment-development-plan-2026-07-02.md`
 - `docs/04/pantheon_management_console_gap_2026-06-30/archive/complete-reaudit-2026-07-02.md`
+
+Active fleet dispatch packet:
+
+- `docs/04/pantheon_management_console_gap_2026-06-30/archive/management-fleet-finish-plan-2026-07-03.md`
+- `docs/bff/execution-tasks/2026-07-03-management-console-fleet-finish/INDEX.md`
+
+Merged baseline after this planning packet:
+
+- PR #2793, `MGMT-FE-ROUTER-001`, merge
+  `f178346523b76dfe4802405d8b9de4ff6c396d4e`
+- PR #2794, `MGMT-FE-OODA-001`, merge
+  `716737008e918ace2f0bcac65af4a45046e20cb8`
 
 Primary evidence:
 

@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-03T12:23:32Z",
+  "updated_at": "2026-07-04T00:03:08Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -101,11 +101,13 @@
         "LOOP-AUTO-DEP-001",
         "MGMT-GAP-008",
         "MGMT-LOAD-003",
-        "OCLAW-PMEM-001"
+        "OCLAW-PMEM-001",
+        "AG-DYNUI-PROD-002",
+        "AG-DYNUI-PROD-005"
       ],
       "branch": "task/LSP-002-V2",
-      "next": "Define the runtime profile contract before OpenClaw sync or UI work proceeds.",
-      "last_update": "2026-07-03T12:23:32Z"
+      "next": "Pick up AG-DYNUI-PROD-005 from Agora DYNUI production-gap packet.",
+      "last_update": "2026-07-04T00:01:55Z"
     },
     {
       "name": "Gemini",
@@ -141,11 +143,13 @@
         "MGMT-GAP-007",
         "MGMT-LOAD-007",
         "OCLAW-PMEM-000",
-        "OCLAW-PMEM-005"
+        "OCLAW-PMEM-005",
+        "AG-DYNUI-PROD-001",
+        "AG-DYNUI-PROD-006"
       ],
       "branch": "task/ASST-OCGW-001",
-      "next": "Wait for OCLAW-PMEM-002/003/004, then add dev gates and close OCLAW-PMEM-000 with evidence.",
-      "last_update": "2026-07-03T12:23:32Z"
+      "next": "Pick up AG-DYNUI-PROD-006 from Agora DYNUI production-gap packet.",
+      "last_update": "2026-07-04T00:01:55Z"
     },
     {
       "name": "Codex2",
@@ -161,11 +165,12 @@
         "LOOP-AUTO-SRC-004",
         "LOOP-AUTO-RT-005",
         "MGMT-LOAD-004",
-        "OCLAW-PMEM-002"
+        "OCLAW-PMEM-002",
+        "AG-DYNUI-PROD-004"
       ],
       "branch": "task/ASST-OCGW-004",
-      "next": "Wait for OCLAW-PMEM-001, then reconcile existing and new OpenClaw persona agents.",
-      "last_update": "2026-07-03T12:23:32Z"
+      "next": "Pick up AG-DYNUI-PROD-004 from Agora DYNUI production-gap packet.",
+      "last_update": "2026-07-04T00:01:55Z"
     },
     {
       "name": "Copilot",
@@ -199,11 +204,12 @@
         "LOOP-AUTO-EVO-001",
         "MGMT-GAP-009",
         "MGMT-LOAD-002",
-        "OCLAW-PMEM-004"
+        "OCLAW-PMEM-004",
+        "AG-DYNUI-PROD-003"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Wait for OCLAW-PMEM-002 and OCLAW-PMEM-003, then wire BFF and Management UI surfaces.",
-      "last_update": "2026-07-03T12:23:32Z"
+      "next": "Pick up AG-DYNUI-PROD-003 from Agora DYNUI production-gap packet.",
+      "last_update": "2026-07-04T00:01:55Z"
     },
     {
       "name": "Gemini2",
@@ -3514,6 +3520,259 @@
       "wave": 3,
       "fleet_lane": "dev-gates-closeout",
       "last_update": "2026-07-03T12:23:32Z"
+    },
+    {
+      "id": "AG-DYNUI-PROD-001",
+      "title": "Restore Agora DYNUI source and task truth",
+      "summary_zh": "修復 Agora DYNUI 設計來源與任務真相：確認 AI Trading Desk Design.zip 或替代 closure pack 的 canonical 位置，恢復缺失 archive/task truth，列出舊 DYNUI PR 完成與未完成的邊界，讓後續 fleet 能接續。",
+      "phase": "Agora DYNUI Production Gap / Source Truth",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+        "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+        "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-001-source-task-truth.md",
+        "ai-task-archive/tasks/",
+        ".orchestrator/task-briefs/",
+        "/home/lupin/code/execute-plans",
+        "/home/lupin/code/pantheon/.fe-ep"
+      ],
+      "acceptance": [
+        "canonical design source is recorded or exact blocker is opened",
+        "canonical frontend deploy source is recorded and stale nested checkout risk is resolved or assigned",
+        "completed vs incomplete DYNUI work is reconciled with PR and merge SHA evidence",
+        "missing archive/task truth no longer blocks downstream production-gap tasks",
+        "Do not rebuild from imagination or static screenshots.",
+        "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+        "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+        "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+        "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+      ],
+      "next": "Assignment created from Agora DYNUI production-gap packet.",
+      "last_update": "2026-07-04T00:03:08Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+      "source_ref": {
+        "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+        "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-001-source-task-truth.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "fleet_lane": "agora-dynui-production-gap"
+    },
+    {
+      "id": "AG-DYNUI-PROD-002",
+      "title": "Agora standalone workbench shell",
+      "summary_zh": "修 execute-plans Agora shell 架構：/agora/* 不應只是被包在 Management PlatformShell 裡的 tab skeleton；建立符合設計稿的 Agora workbench shell 或提交明確批准的例外，並保留 auth/live 狀態。",
+      "phase": "Agora DYNUI Production Gap / Shell Architecture",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "AG-DYNUI-PROD-001"
+      ],
+      "artifacts": [
+        "execute-plans/src/App.tsx",
+        "execute-plans/src/platform/PlatformShell.tsx",
+        "execute-plans/src/agora/TradingDeskLayout.tsx",
+        "execute-plans/src/routes/agora.tsx",
+        "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-002-standalone-workbench-shell.md"
+      ],
+      "acceptance": [
+        "hosted /agora/trading-room shell is intentionally standalone or has documented approved exception",
+        "Agora workbench IA is not reduced to the old three-tab empty shell",
+        "desktop and mobile screenshots show corrected shell",
+        "Do not rebuild from imagination or static screenshots.",
+        "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+        "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+        "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+        "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+      ],
+      "next": "Assignment created from Agora DYNUI production-gap packet.",
+      "last_update": "2026-07-04T00:03:08Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+      "source_ref": {
+        "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+        "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-002-standalone-workbench-shell.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "fleet_lane": "agora-dynui-production-gap"
+    },
+    {
+      "id": "AG-DYNUI-PROD-003",
+      "title": "Trading Room default dynamic entry",
+      "summary_zh": "修 /agora/trading-room 預設路徑：沒有 strategyId/strategyVersion 時不得停在 All Strategies 空殼；必須由 BFF data 進入設計稿的動態 entry/readiness/workshop/proposal workflow。",
+      "phase": "Agora DYNUI Production Gap / Default Route",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "AG-DYNUI-PROD-001"
+      ],
+      "artifacts": [
+        "execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx",
+        "execute-plans/src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx",
+        "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts",
+        "services/control-plane/bff/agora/trading_room.py",
+        "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-003-default-route-dynamic-entry.md"
+      ],
+      "acceptance": [
+        "hosted default route never lands on inert empty table shell without meaningful dynamic next action",
+        "ready strategy path reaches proposal preview without manual URL surgery",
+        "no fake hardcoded strategy data is introduced",
+        "Do not rebuild from imagination or static screenshots.",
+        "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+        "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+        "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+        "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+      ],
+      "next": "Assignment created from Agora DYNUI production-gap packet.",
+      "last_update": "2026-07-04T00:03:08Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+      "source_ref": {
+        "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+        "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-003-default-route-dynamic-entry.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "fleet_lane": "agora-dynui-production-gap"
+    },
+    {
+      "id": "AG-DYNUI-PROD-004",
+      "title": "Trading Room error diagnostics and stale bundle recovery",
+      "summary_zh": "修 Trading Room production error state：不能只顯示 Failed to load Trading Room；保留 BFF status/code/request/correlation，提供 retry/safe reload，並讓 probe 能抓出 stale bundle/cache/header 問題。",
+      "phase": "Agora DYNUI Production Gap / Observability",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx",
+        "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts",
+        "deploy/caddy/dev.Caddyfile.tmpl",
+        "deploy/caddy/sync-caddy.sh",
+        "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-004-error-cache-diagnostics.md"
+      ],
+      "acceptance": [
+        "root error state exposes safe actionable diagnostics and retry behavior",
+        "hosted probe fails on generic-only Failed to load Trading Room",
+        "cache-header policy remains verified after changes",
+        "Do not rebuild from imagination or static screenshots.",
+        "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+        "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+        "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+        "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+      ],
+      "next": "Assignment created from Agora DYNUI production-gap packet.",
+      "last_update": "2026-07-04T00:03:08Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+      "source_ref": {
+        "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+        "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-004-error-cache-diagnostics.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "fleet_lane": "agora-dynui-production-gap"
+    },
+    {
+      "id": "AG-DYNUI-PROD-005",
+      "title": "Close Agora dynamic workflow wiring",
+      "summary_zh": "補齊 V11 dynamic workflow：proposal generation/accept、workspace load、layout patch、widget revision proposal、apply/keep-copy、version history、rollback 都必須走 strict BFF 和 allowlisted WidgetSpec/ChartSpec。",
+      "phase": "Agora DYNUI Production Gap / Dynamic Workflow",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "AG-DYNUI-PROD-002",
+        "AG-DYNUI-PROD-003",
+        "AG-DYNUI-PROD-004"
+      ],
+      "artifacts": [
+        "execute-plans/src/agora/trading-room/WorkspaceProposalPreview.tsx",
+        "execute-plans/src/agora/trading-room/WorkspaceGridEditor.tsx",
+        "execute-plans/src/agora/trading-room/WorkspaceWidgetRevisionDrawer.tsx",
+        "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts",
+        "services/control-plane/bff/agora/trading_room.py",
+        "services/control-plane/specs/agora/",
+        "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-005-dynamic-workflow-closeout.md"
+      ],
+      "acceptance": [
+        "full V11 workflow succeeds through strict BFF calls",
+        "idempotency optimistic concurrency scope isolation and widget allowlists are tested",
+        "no arbitrary frontend code or fake success fallback is accepted",
+        "Do not rebuild from imagination or static screenshots.",
+        "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+        "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+        "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+        "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+      ],
+      "next": "Assignment created from Agora DYNUI production-gap packet.",
+      "last_update": "2026-07-04T00:03:08Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+      "source_ref": {
+        "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+        "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-005-dynamic-workflow-closeout.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "fleet_lane": "agora-dynui-production-gap"
+    },
+    {
+      "id": "AG-DYNUI-PROD-006",
+      "title": "Hosted Winner Branch E2E publish gate",
+      "summary_zh": "最後 production gate：用 hosted dev FE + live BFF 跑 Winner Branch V10-to-V11 E2E，覆蓋 Strategy Workshop、readiness、join Trading Room、proposal、accept、grid edit、widget revision、version history、rollback、desktop/mobile screenshots。",
+      "phase": "Agora DYNUI Production Gap / Hosted Acceptance",
+      "owner": "Codex",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "AG-DYNUI-PROD-001",
+        "AG-DYNUI-PROD-002",
+        "AG-DYNUI-PROD-003",
+        "AG-DYNUI-PROD-004",
+        "AG-DYNUI-PROD-005"
+      ],
+      "artifacts": [
+        "execute-plans/tests/",
+        "execute-plans/playwright.config.ts",
+        "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-006-hosted-e2e-publish-gate.md",
+        "/tmp/agora-dynui-prod-e2e-*.png",
+        "/tmp/agora-dynui-prod-e2e-*.json"
+      ],
+      "acceptance": [
+        "hosted E2E passes against dev FE and live BFF",
+        "screenshots do not show old empty Trading Desk shell",
+        "PR merge SHAs deploy run IDs and live probe artifacts are recorded before closeout",
+        "Do not rebuild from imagination or static screenshots.",
+        "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+        "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+        "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+        "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+      ],
+      "next": "Assignment created from Agora DYNUI production-gap packet.",
+      "last_update": "2026-07-04T00:03:08Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+      "source_ref": {
+        "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+        "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+        "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-006-hosted-e2e-publish-gate.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "fleet_lane": "agora-dynui-production-gap"
     }
   ],
   "handoffs": [

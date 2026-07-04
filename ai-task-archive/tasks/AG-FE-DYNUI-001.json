@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DYNUI-001",
+  "archived_at": "2026-06-29T00:40:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "reconstructed_by": "AG-DYNUI-PROD-001",
+  "reconstruction_sources": [
+    "support/evidence/AG-FE-DYNUI-001/owner-closeout.md",
+    "support/reviews/AG-FE-DYNUI-001-claude2-review.md",
+    "https://github.com/ajoe734/pantheon/pull/2575"
+  ],
+  "task": {
+    "id": "AG-FE-DYNUI-001",
+    "title": "V10 Strategy Workshop dynamic runtime",
+    "phase": "EPIC AGORA-DESIGN-PACK-DYNUI / Frontend",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-SRC-001"
+    ],
+    "artifacts": [
+      "support/evidence/AG-FE-DYNUI-001/owner-closeout.md",
+      "support/reviews/AG-FE-DYNUI-001-claude2-review.md",
+      "execute-plans/src/agora/pages/strategy-workshop/"
+    ],
+    "acceptance": [
+      "Workshop is dynamic, not a chat, form, or static card page.",
+      "Strategy Reconstruction Card covers V10 content.",
+      "V10 12-block completeness rail is data-derived."
+    ],
+    "next": "Reconstructed terminal archive: PR #2569 implementation and Pantheon closeout PR #2575 merged; full hosted V10-to-V11 proof remains downstream.",
+    "last_update": "2026-06-29T00:40:34Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-29T00:40:34Z",
+      "reconstructed": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "implementation_pr": "https://github.com/ajoe734/pantheon/pull/2569",
+      "implementation_merge_commit": "70a8d1cf3d7b708c6ca24494a50e34874554d1e1",
+      "closeout_pr": "https://github.com/ajoe734/pantheon/pull/2575",
+      "commit": "16d5d53bc8c36208540c338d96965ef93715f71b",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

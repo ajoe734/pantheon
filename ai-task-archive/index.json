@@ -2,9 +2,9 @@
   "version": 1,
   "updated_at": "2026-07-01T20:27:20Z",
   "counts": {
-    "total": 1481,
-    "completed": 1458,
-    "superseded": 23
+    "total": 1958,
+    "completed": 1916,
+    "superseded": 42
   },
   "recent_terminal_ids": [
     "MGMT-GAP-007",
