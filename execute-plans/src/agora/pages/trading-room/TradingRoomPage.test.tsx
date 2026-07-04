@@ -135,6 +135,21 @@ const MOCK_RECIPE: import("@/lib/bff-v1/agora/types").DashboardRecipeV2 = {
   ],
 };
 
+function diagnosticError(status: number, code: string, message = "diagnostic failure"): Error {
+  return Object.assign(new Error(message), {
+    diagnostic: {
+      method: "GET",
+      url: "https://bff.example.test/bff/agora/trading-room",
+      status,
+      code,
+      message,
+      requestId: status > 0 ? "req-123" : null,
+      correlationId: status > 0 ? "corr-123" : null,
+      retryable: true,
+    },
+  });
+}
+
 afterEach(cleanup);
 
 describe("TradingRoomPage", () => {
@@ -244,9 +259,82 @@ describe("TradingRoomPage", () => {
   });
 
   it("shows error state when getTradingRoom fails", async () => {
-    vi.mocked(tradingRoomModule.getTradingRoom).mockRejectedValue(new Error("Network error"));
+    vi.mocked(tradingRoomModule.getTradingRoom).mockRejectedValue(
+      diagnosticError(500, "TRADING_ROOM_INTERNAL", "backend unavailable"),
+    );
+    render(<TradingRoomPage />);
+    const error = await screen.findByTestId("trading-room-error");
+    expect(error.getAttribute("data-bff-status")).toBe("500");
+    expect(error.getAttribute("data-bff-code")).toBe("TRADING_ROOM_INTERNAL");
+    expect(error.getAttribute("data-request-id")).toBe("req-123");
+    expect(error.getAttribute("data-correlation-id")).toBe("corr-123");
+    expect(screen.getByTestId("trading-room-error-message").textContent).toContain(
+      "backend unavailable",
+    );
+    expect(screen.getByTestId("trading-room-retry")).toBeDefined();
+    expect(screen.getByTestId("trading-room-safe-reload")).toBeDefined();
+    expect(screen.queryByText("Failed to load Trading Room.")).toBeNull();
+  });
+
+  it.each([
+    [401, "AUTH_REQUIRED"],
+    [403, "FORBIDDEN"],
+    [404, "TRADING_ROOM_NOT_FOUND"],
+    [409, "TRADING_ROOM_CONFLICT"],
+    [412, "TRADING_ROOM_PRECONDITION_FAILED"],
+    [500, "TRADING_ROOM_INTERNAL"],
+  ])("renders safe BFF diagnostics for HTTP %i", async (status, code) => {
+    vi.mocked(tradingRoomModule.getTradingRoom).mockRejectedValue(
+      diagnosticError(status, code, `load failed with ${status}`),
+    );
+    render(<TradingRoomPage />);
+    const error = await screen.findByTestId("trading-room-error");
+    expect(error.getAttribute("data-bff-status")).toBe(String(status));
+    expect(error.getAttribute("data-bff-code")).toBe(code);
+    expect(screen.getByTestId("trading-room-error-summary").textContent).toContain(
+      `HTTP ${status}`,
+    );
+    expect(screen.getByTestId("trading-room-error-diagnostics").textContent).toContain(
+      "req-123",
+    );
+    expect(screen.getByTestId("trading-room-error-diagnostics").textContent).toContain(
+      "corr-123",
+    );
+  });
+
+  it("renders network diagnostics without request identifiers", async () => {
+    vi.mocked(tradingRoomModule.getTradingRoom).mockRejectedValue(
+      diagnosticError(0, "BFF_NETWORK_ERROR", "fetch failed"),
+    );
+    render(<TradingRoomPage />);
+    const error = await screen.findByTestId("trading-room-error");
+    expect(error.getAttribute("data-bff-status")).toBe("0");
+    expect(error.getAttribute("data-bff-code")).toBe("BFF_NETWORK_ERROR");
+    expect(screen.getByTestId("trading-room-error-summary").textContent).toContain(
+      "Network failure",
+    );
+  });
+
+  it("retries the aggregate load from the error state", async () => {
+    vi.mocked(tradingRoomModule.getTradingRoom)
+      .mockRejectedValueOnce(diagnosticError(500, "TRADING_ROOM_INTERNAL"))
+      .mockResolvedValueOnce(MOCK_AGGREGATE);
     render(<TradingRoomPage />);
     await screen.findByTestId("trading-room-error");
+    fireEvent.click(screen.getByTestId("trading-room-retry"));
+    await screen.findByTestId("trading-room-page");
+    expect(tradingRoomModule.getTradingRoom).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers a cache-busting safe reload target", async () => {
+    vi.mocked(tradingRoomModule.getTradingRoom).mockRejectedValue(
+      diagnosticError(404, "TRADING_ROOM_NOT_FOUND"),
+    );
+    render(<TradingRoomPage />);
+    await screen.findByTestId("trading-room-error");
+    expect(screen.getByTestId("trading-room-safe-reload").getAttribute("data-reload-href")).toContain(
+      "pantheon_reload=",
+    );
   });
 
   it("calls getTradingRoom via the BFF module (not direct fetch)", async () => {
