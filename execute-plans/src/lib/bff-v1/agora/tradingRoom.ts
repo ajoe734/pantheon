@@ -16,6 +16,7 @@
  */
 
 import { buildHeaders } from "../headers";
+import { readBffEnv } from "../runtimeEnv";
 
 // ── Types derived from v4 schemas ──────────────────────────────────────────────
 
@@ -216,6 +217,8 @@ export function isTradingRoomBffError(error: unknown): error is TradingRoomBffEr
 
 function resolvedBase(baseUrl?: string): string {
   if (baseUrl) return baseUrl.replace(/\/+$/, "");
+  const configuredBase = readBffEnv().VITE_BFF_BASE_URL;
+  if (configuredBase) return configuredBase.replace(/\/+$/, "");
   if (typeof window !== "undefined" && window.location?.origin) {
     return window.location.origin.replace(/\/+$/, "");
   }

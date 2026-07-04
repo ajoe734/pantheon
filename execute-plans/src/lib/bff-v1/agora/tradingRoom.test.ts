@@ -61,6 +61,7 @@ function bffErrorResponse(
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   setAuthProvider(undefined);
 });
 
@@ -240,6 +241,27 @@ describe("getTradingRoom — read-only, no mutation headers", () => {
     expect((init.headers as Record<string, string>)["X-Request-Id"]).toBeUndefined();
     expect((init.headers as Record<string, string>)["If-Match"]).toBeUndefined();
     expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBeUndefined();
+  });
+
+  it("uses VITE_BFF_BASE_URL when no explicit baseUrl is passed", async () => {
+    vi.stubEnv("VITE_BFF_BASE_URL", "https://configured-bff.example/");
+    const aggregate = {
+      spec_version: "1.0",
+      user_scope_ref: "scope-1",
+      strategies: [],
+      queue_summary: { entry: 0, add: 0, reduce: 0, exit: 0, review: 0 },
+      risk_summary: { state: "normal" },
+      snapshot_at: "2026-06-22T10:00:00Z",
+      data_cutoff: "2026-06-22T09:55:00Z",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(ok({ data: aggregate }));
+    globalThis.fetch = fetchMock;
+
+    await getTradingRoom();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://configured-bff.example/bff/agora/trading-room",
+    );
   });
 });
 
