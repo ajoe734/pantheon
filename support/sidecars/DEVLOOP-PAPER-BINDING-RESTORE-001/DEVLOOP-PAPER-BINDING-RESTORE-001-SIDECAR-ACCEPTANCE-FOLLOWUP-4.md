@@ -185,3 +185,22 @@ Recommended reviewer use:
 4. Do not treat this sidecar approval as parent repair approval.
 5. Ask the parent owner to record a blocker for any missing gate (G1-G10)
    instead of accepting fixture-shaped or prose-only proof.
+
+---
+
+## 8. Owner Closeout (2026-07-04)
+
+Reviewer `Claude2` approved this follow-up (see `review_notes_zh` on the task
+record). Owner closeout re-verified before finalizing to `done`:
+
+- `PR #2901` ("DEVLOOP-PAPER-BINDING-RESTORE-001: add sidecar followup 4") is
+  merged into `dev`; this branch's HEAD is an ancestor of `origin/dev`.
+- Re-grepped `services/execution/lean_runtime/paper_runtime.py` — the
+  fail-closed guard string is still present at line 1072.
+- Re-grepped `services/execution/lean_runtime/pending_signal_store.py` — the
+  `pantheon:signals:pending:<binding_id>` key format is still documented.
+- No parent-repair progress claim in Section 4 needed further correction; the
+  live-store cross-check the reviewer verified is still current.
+
+This closeout does not re-open or re-scope the packet; it only confirms the
+approved content is still accurate at finalization time.
