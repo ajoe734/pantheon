@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -87,6 +88,10 @@ def strip_bearer_scheme(value: str | None) -> str:
 
 def bearer_value(value: str | None) -> str:
     return strip_bearer_scheme(value)
+
+
+def sha256_12(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
 def parse_args() -> argparse.Namespace:
@@ -259,6 +264,14 @@ def bearer_tokens_by_source(
     if approval_b:
         tokens_by_source["approval_race:b"] = approval_b
     return tokens_by_source
+
+
+def bearer_source_hashes(tokens_by_source: dict[str, str]) -> dict[str, str]:
+    return {
+        source: sha256_12(tokens_by_source[source])
+        for source in ordered_bearer_sources()
+        if tokens_by_source.get(source)
+    }
 
 
 def secret_source_family(source: str) -> str:
@@ -458,22 +471,32 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     present_map["TWO_MAN_RACE_ID"] = present(args.two_man_race_id)
     present_map["SOAK_SECONDS"] = present(args.soak_seconds)
     missing = [name for name in required if not present_map[name]]
-    rbac_matrix, rbac_invalid = inspect_rbac_tokens_json(os.environ.get("PANTHEON_BFF_RBAC_TOKENS_JSON", ""))
+    smoke_token = os.environ.get("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "")
+    rbac_tokens_json = os.environ.get("PANTHEON_BFF_RBAC_TOKENS_JSON", "")
+    approval_token_a = os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "")
+    approval_token_b = os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "")
+    tokens_by_source = bearer_tokens_by_source(
+        smoke_token=smoke_token,
+        rbac_tokens_json=rbac_tokens_json,
+        approval_token_a=approval_token_a,
+        approval_token_b=approval_token_b,
+    )
+    rbac_matrix, rbac_invalid = inspect_rbac_tokens_json(rbac_tokens_json)
     approval_race_tokens, approval_race_invalid = inspect_approval_race_tokens(
-        os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", ""),
-        os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", ""),
+        approval_token_a,
+        approval_token_b,
     )
     cross_secret_bearers, cross_secret_invalid = inspect_cross_secret_bearers(
-        smoke_token=os.environ.get("PANTHEON_BFF_SMOKE_BEARER_TOKEN", ""),
-        rbac_tokens_json=os.environ.get("PANTHEON_BFF_RBAC_TOKENS_JSON", ""),
-        approval_token_a=os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", ""),
-        approval_token_b=os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", ""),
+        smoke_token=smoke_token,
+        rbac_tokens_json=rbac_tokens_json,
+        approval_token_a=approval_token_a,
+        approval_token_b=approval_token_b,
     )
     bearer_shape, bearer_shape_invalid = inspect_bearer_shape(
-        smoke_token=os.environ.get("PANTHEON_BFF_SMOKE_BEARER_TOKEN", ""),
-        rbac_tokens_json=os.environ.get("PANTHEON_BFF_RBAC_TOKENS_JSON", ""),
-        approval_token_a=os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", ""),
-        approval_token_b=os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", ""),
+        smoke_token=smoke_token,
+        rbac_tokens_json=rbac_tokens_json,
+        approval_token_a=approval_token_a,
+        approval_token_b=approval_token_b,
     )
     invalid = [
         {"name": "SOAK_SECONDS", "reason": reason}
@@ -501,6 +524,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         "approval_race_tokens": approval_race_tokens,
         "cross_secret_bearers": cross_secret_bearers,
         "bearer_shape": bearer_shape,
+        "bearer_source_hashes": bearer_source_hashes(tokens_by_source),
         "ref": os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", ""),
         "sha": os.environ.get("GITHUB_SHA", ""),
         "required": required,

@@ -31,9 +31,11 @@ not find a new parent unblocker. Its only new observation is adjacent churn:
 `AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` appeared while this packet
 was being prepared, then merged through Pantheon PR #2895 at
 `2026-07-04T05:24:50Z` (`ff1dae8a45c15080950645e63fce00686ddee599`) and is now
-archived `done`. That sidecar's own review note says the `PROD-005` parent
-remains `todo`, no parent branch/PR exists, and the workspace-client/UI gaps
-have not drifted.
+archived `done`. During the later PR refresh, the `PROD-005` follow-up 6
+packet also landed through PR #2897 at `2026-07-04T05:30:15Z`
+(`ba5208c460c728d17ee246429cd6453a47dc5813`) and is currently `review`. Both
+packets say the `PROD-005` parent remains `todo`, no parent branch/PR exists,
+and the workspace-client/UI gaps have not drifted.
 
 Practical meaning: the readiness picture for `AG-DYNUI-PROD-006` is still
 unchanged from `FOLLOWUP-5`. The full hosted Winner Branch E2E remains blocked
@@ -54,7 +56,9 @@ research.
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-DYNUI-PROD-004` | Archived `done`; dependency remains complete. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-DYNUI-PROD-005` | Parent remains `todo`, owner `Claude`, reviewer `Codex2`, unchanged `last_update: 2026-07-04T00:09:32Z`; no direct implementation branch/PR exists. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | New adjacent sidecar is now archived `done`; review note explicitly confirms no parent implementation drift and recommends stopping additional same-shape BFF handoff churn. |
+| `AI_NAME=Codex python3 scripts/ai_status.py show AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6` | Newer adjacent sidecar is `review`, owner `Codex2`, reviewer `Claude`; packet repeats no-drift and stop-churn guidance. |
 | `gh pr view 2895 --repo ajoe734/pantheon` | The `PROD-005` follow-up 5 support packet PR is `MERGED` at `2026-07-04T05:24:50Z` with merge commit `ff1dae8a45c15080950645e63fce00686ddee599`; checks are successful. |
+| `gh pr list --repo ajoe734/pantheon --search "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6"` | The `PROD-005` follow-up 6 support packet PR #2897 is `MERGED` at `2026-07-04T05:30:15Z` with merge commit `ba5208c460c728d17ee246429cd6453a47dc5813`; the sidecar task is not approved yet. |
 | Hosted FE deployment | Still `execute-plans` commit `dd597405e014cc91cf73f4ea2e96a561fcbf9c61`, deployed `20260704T012041Z`; PR #171 and PR #173 are not deployed. |
 | Hosted BFF health | `operator-bff` is healthy at version `0.2.0`. |
 | Approval queue exact check | Central `/home/lupin/code/pantheon/.orchestrator/approval-queue.json` has no exact `AG-DYNUI-PROD`, `pull/171`, `pull/173`, `#171`, or `#173` match. |
@@ -74,7 +78,7 @@ scanned, per the task-scoped read-order instruction.
 | execute-plans PR #173 merges | **No.** Still open/clean/green/unreviewed. | `PROD-003` remains blocked on review/merge/deploy/screenshots. |
 | New hosted dev FE deploy | **No.** `deployment.json` still reports `dd597405...` from `20260704T012041Z`. | Hosted FE still predates `PROD-002` and `PROD-003`. |
 | `PROD-005` direct implementation branch/PR | **No.** No direct parent PR in `ajoe734/pantheon` or `ajoe734/execute-plans`; no `task/AG-DYNUI-PROD-005` parent branch on origin. | Full proposal/grid/widget revision/version/rollback E2E remains blocked. |
-| `PROD-005` adjacent support sidecar | **Yes.** `FOLLOWUP-5` exists and is now `done`, with PR #2895 merged. | Does not unblock parent; it repeats no-drift and stop-churn guidance. |
+| `PROD-005` adjacent support sidecars | **Yes.** `FOLLOWUP-5` is now `done` with PR #2895 merged; `FOLLOWUP-6` packet PR #2897 is merged but the task is still `review`. | Does not unblock parent; both repeat no-drift and stop-churn guidance. |
 | Parent `PROD-006` status/branch | **No.** Parent remains `todo`, no direct implementation branch/PR. | Parent hosted E2E still should not be treated as actionable for full flow. |
 | Approval queue signal for PR #171/#173 | **No exact match.** | No queued approval evidence was found from the central queue file. |
 
@@ -86,7 +90,7 @@ scanned, per the task-scoped read-order instruction.
 |---|---|---|
 | `AG-DYNUI-PROD-002` | `review_approved`; execute-plans PR #171 open, clean, green, zero reviews. Pantheon task-brief PR churn continues, including open PR #2890, but it does not merge the standalone frontend PR. | Human review/merge of PR #171, then hosted deploy and screenshot evidence. |
 | `AG-DYNUI-PROD-003` | `review_approved`; execute-plans PR #173 open, clean, green, zero reviews. | Review/merge PR #173, deploy to hosted dev FE, collect hosted no-strategy/ready-strategy screenshots, then finalize. |
-| `AG-DYNUI-PROD-005` | Parent still `todo`; no direct implementation branch or PR. Latest `PROD-005` sidecar follow-up is merged and archived `done`, but it is only support/review material. | Start and land strict BFF-backed proposal, grid edit, widget revision, version history, and rollback workflow wiring. |
+| `AG-DYNUI-PROD-005` | Parent still `todo`; no direct implementation branch or PR. Latest `PROD-005` sidecar follow-ups are support-only material: `FOLLOWUP-5` is done and `FOLLOWUP-6` is in review. | Start and land strict BFF-backed proposal, grid edit, widget revision, version history, and rollback workflow wiring. |
 | `AG-DYNUI-PROD-006` | Parent still `todo`; no direct branch/PR; hosted FE still predates PR #171/#173. | Cannot run the full hosted Winner Branch E2E until the deploy contains `PROD-002`, `PROD-003`, and `PROD-005` work. |
 
 The original BFF route inventory remains usable support guidance. There is
@@ -126,8 +130,9 @@ Reviewer (`Codex2`) should verify:
 
 1. This packet is support-only and made no change to canonical truth, BFF
    runtime, registry/governance code, or frontend code.
-2. §2/§3 correctly distinguish the only new observation (`PROD-005`
-   `FOLLOWUP-5` sidecar/merged PR #2895) from unchanged parent blockers.
+2. §2/§3 correctly distinguish the only new observations (`PROD-005`
+   `FOLLOWUP-5` done/PR #2895 and `FOLLOWUP-6` review/PR #2897) from
+   unchanged parent blockers.
 3. §4 does not treat support-sidecar progress as parent implementation
    progress.
 4. §5's stop-churn recommendation is consistent with both `PROD-006`
@@ -137,7 +142,7 @@ Recommended reviewer approval command:
 
 ```bash
 AI_NAME=Codex2 REVIEW_FILE=support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md \
-  REVIEW_NOTES_ZH="Support-only follow-up 6 核准：此 packet 沒有修改 canonical truth/runtime/frontend code；重新核實 PROD-002 PR #171 與 PROD-003 PR #173 仍 open/clean/green/零 reviews，hosted FE 仍是 dd597405，PROD-005 parent 仍 todo 且無 direct implementation PR，parent PROD-006 仍 todo。唯一新增事實是 PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-5 已透過 PR #2895 merge 並歸檔 done，但那只是同質 support packet，不解除 parent hosted E2E blocker；建議停止無實質觸發的同質 follow-up dispatch。" \
+  REVIEW_NOTES_ZH="Support-only follow-up 6 核准：此 packet 沒有修改 canonical truth/runtime/frontend code；重新核實 PROD-002 PR #171 與 PROD-003 PR #173 仍 open/clean/green/零 reviews，hosted FE 仍是 dd597405，PROD-005 parent 仍 todo 且無 direct implementation PR，parent PROD-006 仍 todo。唯一新增事實是 PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-5 已透過 PR #2895 merge 並歸檔 done，PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 也已透過 PR #2897 merge 但 task 仍在 review；兩者都是同質 support packet，不解除 parent hosted E2E blocker；建議停止無實質觸發的同質 follow-up dispatch。" \
   ./scripts/ai-status.sh approve AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 \
   "Support-only AG-DYNUI-PROD-006 follow-up 6 approved for parent owner absorption."
 ```
@@ -170,10 +175,12 @@ AI_NAME=Codex python3 scripts/ai_status.py show AG-DYNUI-PROD-004
 AI_NAME=Codex python3 scripts/ai_status.py show AG-DYNUI-PROD-005
 AI_NAME=Codex python3 scripts/ai_status.py show AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5
 AI_NAME=Codex python3 scripts/ai_status.py show AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-5
+AI_NAME=Codex python3 scripts/ai_status.py show AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6
 
 gh pr view 171 --repo ajoe734/execute-plans --json number,title,state,mergeable,mergeStateStatus,statusCheckRollup,autoMergeRequest,reviews,headRefName,baseRefName,url,mergedAt,commits,changedFiles,additions,deletions
 gh pr view 173 --repo ajoe734/execute-plans --json number,title,state,mergeable,mergeStateStatus,statusCheckRollup,autoMergeRequest,reviews,headRefName,baseRefName,url,mergedAt,commits,changedFiles,additions,deletions
 gh pr view 2895 --repo ajoe734/pantheon --json number,title,state,mergeable,mergeStateStatus,statusCheckRollup,reviews,headRefName,baseRefName,url,mergedAt,autoMergeRequest,commits,changedFiles,additions,deletions
+gh pr list --repo ajoe734/pantheon --search "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6" --state all --json number,title,state,headRefName,baseRefName,url,mergedAt,mergeCommit --limit 10
 gh pr list --repo ajoe734/execute-plans --head task/AG-DYNUI-PROD-005 --state all --json number,title,state,headRefName,baseRefName,url,mergedAt,mergeCommit --limit 20
 gh pr list --repo ajoe734/execute-plans --head task/AG-DYNUI-PROD-006 --state all --json number,title,state,headRefName,baseRefName,url,mergedAt,mergeCommit --limit 20
 gh pr list --repo ajoe734/pantheon --head task/AG-DYNUI-PROD-005 --state all --json number,title,state,headRefName,baseRefName,url,mergedAt,mergeCommit --limit 20

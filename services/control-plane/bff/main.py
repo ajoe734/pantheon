@@ -146,6 +146,7 @@ from loop_inventory import (
     truth_label_payload,
 )
 from read_store import ReadSurfaceStore, redact_evidence_refs
+from services.persona.runtime_profile import build_persona_runtime_profile
 from settings_store import SettingsStore
 
 logging.basicConfig(level=logging.INFO)
@@ -788,11 +789,33 @@ def _pack_d_direct_error_response(
     )
 
 
+def _with_cors_actual_response_headers(request: Request, headers: Dict[str, str]) -> Dict[str, str]:
+    response_headers = dict(headers)
+    origin = request.headers.get("origin")
+    if not origin or not _cors_origin_allowed(origin):
+        return response_headers
+
+    response_headers.setdefault("Access-Control-Allow-Origin", _normalized_origin(origin))
+    response_headers.setdefault("Access-Control-Allow-Credentials", "true")
+    response_headers.setdefault("Access-Control-Expose-Headers", ", ".join(_CORS_EXPOSE_HEADERS))
+
+    vary_value = response_headers.get("Vary") or response_headers.get("vary") or ""
+    vary_parts = [part.strip() for part in vary_value.split(",") if part.strip()]
+    if "Origin" not in {part.title() for part in vary_parts}:
+        vary_parts.append("Origin")
+    if vary_parts:
+        response_headers["Vary"] = ", ".join(vary_parts)
+    return response_headers
+
+
 def _pack_d_http_exception_response(
     request: Request,
     exc: StarletteHTTPException,
 ) -> JSONResponse:
-    headers = dict(getattr(exc, "headers", None) or {})
+    headers = _with_cors_actual_response_headers(
+        request,
+        dict(getattr(exc, "headers", None) or {}),
+    )
     correlation_id = _error_response_correlation_id(request, headers)
     detail = exc.detail
     source = detail
@@ -38763,6 +38786,42 @@ async def bff_get_persona_route_policy(
         "data": policy,
         "meta": _read_surface_meta(
             "personas", "persona_route_policy",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/runtime-profile")
+async def bff_get_persona_runtime_profile(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: persona OpenClaw runtime profile contract."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    persona = read_store.get_persona(persona_id) or {"persona_id": persona_id}
+    route_policy = None
+    fetcher = getattr(read_store, "get_route_policy_for_persona", None)
+    if callable(fetcher):
+        route_policy = fetcher(persona_id)
+    try:
+        profile = build_persona_runtime_profile(
+            persona,
+            route_policy=route_policy if isinstance(route_policy, dict) else None,
+        ).to_dict()
+    except ValueError as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid persona runtime profile",
+            str(exc),
+        ) from exc
+    return {
+        "data": profile,
+        "meta": _read_surface_meta(
+            "personas", "persona_runtime_profile",
             snapshot_at=snapshot_at,
         ),
     }

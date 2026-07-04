@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 BFF_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -127,6 +128,67 @@ def test_cors_exposes_bff_client_response_headers(monkeypatch) -> None:
         for header in response.headers["access-control-expose-headers"].split(",")
     }
     assert exposed == set(bff_main._CORS_EXPOSE_HEADERS)
+
+
+def test_pack_d_http_exception_response_preserves_cors_for_allowed_origin(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/bff/agora/trading-room",
+            "headers": [
+                (b"origin", b"https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io"),
+            ],
+        }
+    )
+    response = bff_main._pack_d_http_exception_response(
+        request,
+        HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": "FORBIDDEN",
+                    "message": "Tenant access denied",
+                    "details": {"precondition_failed": "tenant_scope"},
+                }
+            },
+        ),
+    )
+
+    assert response.status_code == 403
+    assert (
+        response.headers["access-control-allow-origin"]
+        == "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io"
+    )
+    assert response.headers["access-control-allow-credentials"] == "true"
+    assert response.headers["access-control-expose-headers"] == ", ".join(bff_main._CORS_EXPOSE_HEADERS)
+    assert "Origin" in response.headers["vary"]
+
+
+def test_pack_d_http_exception_response_does_not_add_cors_for_unlisted_origin(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-dev.lovable.app")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/bff/agora/trading-room",
+            "headers": [(b"origin", b"https://evil.example.com")],
+        }
+    )
+    response = bff_main._pack_d_http_exception_response(
+        request,
+        HTTPException(status_code=403, detail={"error": "FORBIDDEN", "message": "Nope"}),
+    )
+
+    assert response.status_code == 403
+    assert "access-control-allow-origin" not in response.headers
 
 
 def test_lovable_cors_preflight_accepts_bff_client_headers(monkeypatch) -> None:

@@ -156,3 +156,155 @@ redeploy and hosted re-probe follow without an extra dispatch ask. Not
 re-notifying the human again beyond this doc correction — the actual
 blocking action (merge PR #173) is unchanged and already surfaced
 repeatedly.
+
+**Re-verification (2026-07-04, subsequent pass):** confirmed no state change
+since the prior pass. `gh pr view 173 --repo ajoe734/execute-plans` shows the
+exact same `headRefOid` (`2b054ab9f`), `OPEN`/`MERGEABLE`/`CLEAN`, zero
+reviews, `autoMergeRequest=null`, and `integration-gate` `SUCCESS` at the same
+timestamp (`2026-07-04T03:28:21Z`). Pantheon-side commit `7b360cb60` is still
+an ancestor of `origin/dev`. `orchestrator_approval_broker` MCP is still not
+resolvable via `ToolSearch`. No pantheon-side action is available this pass;
+the sole remaining blocker is unchanged — a human/chair merging
+`ajoe734/execute-plans#173`. Zero commits this pass on the parent lane.
+
+A parallel sidecar (`AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4`,
+reviewed by this owner and merged `done`) added one new fact worth recording
+here: `gh api repos/ajoe734/execute-plans/branches/dev/protection` returns
+`404 Branch not protected`, and all three merge methods are enabled on that
+repo. This confirms the remaining block on PR #173 is a **self-imposed AI
+governance policy** (no self-merge of a PR this identity authored/reviewed),
+not a GitHub/CI technical restriction. That does not change what this owner
+is authorized to do — self-merge stays out of scope regardless of the
+technical merge path being open — but it gives the next human touchpoint a
+one-line, pre-verified merge command
+(`gh pr merge 173 --repo ajoe734/execute-plans --merge`) instead of having to
+re-derive merge-safety from the CI run. See the sidecar packet for full
+detail.
+
+**Re-verification (2026-07-04, pass 18):** confirmed no state change since
+the prior pass. `gh pr view 173 --repo ajoe734/execute-plans` shows the exact
+same `headRefOid` (`2b054ab9f`), `OPEN`/`MERGEABLE`/`CLEAN`, zero reviews,
+`autoMergeRequest=null`, and `integration-gate` `SUCCESS` at the same
+timestamp (`2026-07-04T03:28:21Z`). `gh pr view 173 --json state,mergedAt,closedAt`
+confirms it is still `OPEN` with `mergedAt=null`/`closedAt=null`. Pantheon-side
+commit `7b360cb60` is still an ancestor of `origin/dev`
+(`git merge-base --is-ancestor 7b360cb60 origin/dev`, current tip
+`d3aff7280`). `orchestrator_approval_broker` MCP was searched again via
+`ToolSearch` and is still not resolvable. No pantheon-side action is
+available this pass; the sole remaining blocker is unchanged — a human/chair
+merging `ajoe734/execute-plans#173`. Zero commits on the parent lane this
+pass beyond this re-verification note.
+
+**Re-verification (2026-07-04, pass 19):** confirmed no state change since
+pass 18. `gh pr view 173 --repo ajoe734/execute-plans` shows the same
+`headRefOid` (`2b054ab9f`), `OPEN`/`MERGEABLE`/`CLEAN`, zero reviews,
+`autoMergeRequest=null`, and `integration-gate` `SUCCESS` at the same
+timestamp (`2026-07-04T03:28:21Z`). Pantheon-side commit `079dc6560` (the
+pass-18 note) and its merge commit `b09dd1dbf` are both ancestors of
+`origin/dev` (tip `0fec49fef`). `orchestrator_approval_broker` MCP is still
+not resolvable via `ToolSearch`. Since this blocker has now persisted for 19
+consecutive passes with the technical merge path open the whole time (see
+the pass-18 branch-protection finding), this pass also sent a direct
+attention ping to the human/chair via the worker's proactive-notification
+channel, requesting the one merge action
+(`gh pr merge 173 --repo ajoe734/execute-plans --merge`) that unblocks
+closeout. No pantheon-side repo action is available this pass beyond this
+note and the notification.
+
+**Re-verification (2026-07-04, pass 20):** confirmed no state change since
+pass 19. `gh pr view 173 --repo ajoe734/execute-plans` shows the identical
+`headRefOid` (`2b054ab9f0ad025c204bbf13251848caf8fe4599`), `OPEN`/
+`MERGEABLE`/`CLEAN`, zero reviews, `autoMergeRequest=null` — the PR has not
+moved since the pass-19 notification (~2.5h prior at time of this check).
+Pantheon-side commits `7b360cb60` and `d0ef9fcec` (pass-19 note) are both
+ancestors of `origin/dev` (tip `869d05258`). `orchestrator_approval_broker`
+MCP is still not resolvable via `ToolSearch`. Not re-sending the human/chair
+notification this pass — one was already sent at pass 19 and the ask is
+unchanged; re-pinging on every single pass would be noise rather than
+signal. The sole remaining blocker is unchanged: a human/chair running
+`gh pr merge 173 --repo ajoe734/execute-plans --merge`. No pantheon-side
+repo action is available this pass beyond this re-verification note.
+
+**Re-verification (2026-07-04, pass 21):** `execute-plans#173` unchanged —
+same `headRefOid` (`2b054ab9f0ad025c204bbf13251848caf8fe4599`), `OPEN`/
+`MERGEABLE`/`CLEAN`, zero reviews, `autoMergeRequest=null`. This pass's
+actual work: the pass-20 note's pantheon PR (#2944) had gone `BEHIND` dev
+(dev is advancing fast across parallel tasks); merged `origin/dev` into
+`task/AG-DYNUI-PROD-003` and pushed, which let PR #2944 clear checks and
+auto-merge (merged `2026-07-04T11:14:24Z`, merge commit `d4b72d4a8`), so
+the pass-20 note is now live on `dev`. Not re-pinging the human/chair this
+pass — the ask is unchanged from pass 19. Sole remaining blocker: a
+human/chair merging `ajoe734/execute-plans#173`.
+
+**Re-verification (2026-07-04, pass 22):** confirmed no state change since
+pass 21. `gh pr view 173 --repo ajoe734/execute-plans` shows the identical
+`headRefOid` (`2b054ab9f0ad025c204bbf13251848caf8fe4599`), `OPEN`/
+`MERGEABLE`/`CLEAN`, zero reviews, `autoMergeRequest=null`. Also re-checked
+whether `orchestrator_approval_broker` (an MCP server this session initially
+listed as still connecting) had come online as an alternate human-approval
+path distinct from the blocked self-merge; `ToolSearch` still returns no
+matching tools for it. Pantheon-side pass-21 note (`d65a98463`, merged via
+PR #2947) is confirmed an ancestor of `origin/dev` (tip `bfa99de87` at task
+branch open time). Not re-pinging the human/chair this pass — the ask is
+unchanged since pass 19. No pantheon-side repo action is available this
+pass beyond this re-verification note. Sole remaining blocker: a
+human/chair merging `ajoe734/execute-plans#173`.
+
+**Re-verification (2026-07-04, pass 23):** confirmed no state change since
+pass 22. `gh pr view 173 --repo ajoe734/execute-plans` shows the identical
+`headRefOid` (`2b054ab9f0ad025c204bbf13251848caf8fe4599`), `OPEN`/
+`MERGEABLE`/`CLEAN`, zero reviews, `autoMergeRequest=null`. Re-checked
+`orchestrator_approval_broker` via `ToolSearch`; still no matching tools —
+no alternate human-approval path has come online. Pantheon-side pass-22
+note (`e87c98797`, merged via PR #2948) is confirmed live on `origin/dev`
+(fast-forwarded local `task/AG-DYNUI-PROD-003` from `aa0815cac` to
+`fbbf24cf0` this pass, a no-op content-wise since `aa0815cac` was already
+an ancestor of `origin/dev`). This blocker has now persisted unchanged for
+23 consecutive finalize-dispatch passes; not re-pinging the human/chair
+this pass per the pass-20 judgment (the ask is unchanged since pass 19 and
+was already escalated once). No pantheon-side repo action is available
+this pass beyond this re-verification note. Sole remaining blocker: a
+human/chair merging `ajoe734/execute-plans#173`.
+
+**Supervisor update (2026-07-04):** the execute-plans source merge blocker
+is now closed. `ajoe734/execute-plans` PR #173 merged into `dev` at merge
+commit `691f2ec56af9bbc592814563558c001860d8bc7f` after `integration-gate`
+passed. All prior re-verification notes that describe #173 as `OPEN`,
+`MERGEABLE`, or awaiting a human/chair merge are historical and superseded.
+The remaining closeout proof for this lane is hosted dev FE redeploy/re-probe
+evidence for no-strategy and ready-strategy default-entry behavior, not a
+source-merge blocker.
+
+## Owner Closeout — Hosted Proof Complete (Claude, 2026-07-04)
+
+Both remaining human-gated steps from the prior closeout note are now
+resolved:
+
+1. **Deploy verified current.** `Pantheon Dev FE Deploy` in
+   `ajoe734/execute-plans` auto-ran on push to `dev` (no manual dispatch
+   needed) and completed successfully for merge commit `691f2ec56a` at
+   `2026-07-04T12:22:40Z`. `curl .../deployment.json` on the hosted dev FE
+   confirms `"commit": "691f2ec56af9bbc592814563558c001860d8bc7f"` — the
+   served bundle is exactly the merged fix, not a stale build.
+2. **Hosted screenshot evidence captured**, replacing the interim
+   local-dev-server evidence — see
+   `docs/deployment/evidence/ag-dynui-prod-003/20260704T123434Z/README.md`:
+   - No-strategy case: genuine live capture against the hosted FE and real
+     dev BFF (zero strategies for the current tenant scope), showing the
+     new `Dynamic Entry` / "Strategy Workshop is the next step" card with
+     an "Open Strategy Workshop" CTA — confirms the old inert `All
+     Strategies` empty-table shell no longer renders as the default route.
+   - Ready-strategy case: same hosted, already-redeployed build with a
+     Playwright network-level route mock of the BFF response (live dev
+     tenant genuinely has zero strategies and dev writes are disabled, so
+     no real ready-strategy tenant data exists to capture without
+     fabrication — documented as a mock, not represented as live tenant
+     data). Confirms `selectDefaultReadyStrategy()` auto-enters the
+     workspace/proposal view for the ready strategy with no manual URL
+     surgery.
+
+All acceptance criteria are now met: hosted default route never lands on
+the inert empty shell, ready-strategy path reaches the proposal view without
+URL surgery, no fake hardcoded strategy data in product code, and live
+screenshot evidence covers both the no-strategy and ready-strategy cases.
+Closing this task to `done`.
