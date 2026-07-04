@@ -246,10 +246,9 @@ Observed in both screenshots:
   what this task's acceptance criteria are about. No console/page errors
   were thrown during either capture.
 
-This closes acceptance gap (b) directly for this task. It does not close
-gap (a) or the separate merge gate: `ajoe734/execute-plans` PR #171 is
-still `OPEN`/`MERGEABLE`/`CLEAN`/`integration-gate SUCCESS` with zero
-reviews, unmerged because AI self-merge into that repo's `dev` is
-governance-blocked and requires a human decision (already notified).
-`AG-DYNUI-PROD-002` still cannot move to `done` until PR #171 merges,
-regardless of this screenshot evidence.
+This closes acceptance gap (b) directly for this task. The separate source
+merge gate is now closed: `ajoe734/execute-plans` PR #171 merged into `dev`
+on 2026-07-04 at merge commit
+`467d930957bf109405fa50a5bc252ff66ec3a7ee` after the integration gate passed.
+The remaining gap is hosted dev FE proof for gap (a), which belongs to
+`AG-DYNUI-PROD-006`'s hosted E2E/publish gate rather than local-dev evidence.
