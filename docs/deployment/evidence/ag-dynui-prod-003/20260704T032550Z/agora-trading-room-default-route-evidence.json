@@ -1,0 +1,19 @@
+{
+  "url": "http://localhost:8082/agora/trading-room",
+  "capturedAt": "2026-07-04T03:25:53.286Z",
+  "bffRequests": [
+    {
+      "url": "http://localhost:8082/bff/agora/trading-room",
+      "status": 200
+    },
+    {
+      "url": "http://localhost:8082/bff/agora/trading-room/decision-events",
+      "status": 200
+    }
+  ],
+  "hasDefaultEntry": true,
+  "hasWorkspaceView": false,
+  "entryState": "empty",
+  "consoleErrors": [],
+  "bodyTextSnippet": "HYBRID\n資料來源：live / fallback standby\n⟁ Pantheon\nAgora 交易台\n搜尋策略、Persona、工作項…\n⌘K\nSNAPSHOT DATA\n即時\nzh-TW\npantheon-dev-browser\nA\nAGORA\n⚡\nServant\nTrading Room\nStrategy Workshop\nPerformance\nAll Strategies\nEntry: 0\nAdd: 0\nReduce: 0\nExit: 0\nReview: 0\nDynamic Entry\nStrategy Workshop is the next step\n\nThe BFF returned no user-scoped Trading Room strategies, so the default route starts from workshop intake instead of an empty table shell.\n\nStrategies: 0\nReady: 0\nPending decisions: 0\nSnapshot: 2026-07-04T03:25:49Z\nData cutoff: 2026-07-04T03:25:49Z\nOpen Strategy Workshop\nNo BFF strategy records were available for this scope. Continue in the Strategy Workshop to create or restore a strategy-specific readiness packet.\nJobs\nShadow\nJournal"
+}
