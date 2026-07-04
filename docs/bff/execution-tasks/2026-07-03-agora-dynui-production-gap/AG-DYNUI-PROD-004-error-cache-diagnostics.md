@@ -82,3 +82,18 @@ fresh dev deploy needs a human-approved `workflow_dispatch` (it does not
 auto-fire on `dev` merge), so hosted proof against a bundle that actually
 contains this change should happen after that deploy step, before finalizing
 to `done`.
+
+## Owner Closeout Revalidation (Codex2)
+
+After refreshing this task branch with `origin/dev`, Codex2 re-ran the focused
+validation on 2026-07-04:
+
+- `node --check execute-plans/scripts/probe-hosted-browser-bff.mjs` — passed.
+- `bash -n deploy/caddy/sync-caddy.sh` — passed.
+- `npm test -- --run src/lib/bff-v1/agora/tradingRoom.test.ts src/agora/pages/trading-room/TradingRoomPage.test.tsx` — 79/79 tests passed.
+- `npm run build:agora` — passed with the existing large chunk-size warning.
+
+Publication state: task implementation and reviewer notes are ready for the
+task PR into `dev`. Hosted proof is still pending because the dev frontend
+bundle cannot contain this branch until the PR merges and the human-gated dev
+deploy workflow dispatch completes.
