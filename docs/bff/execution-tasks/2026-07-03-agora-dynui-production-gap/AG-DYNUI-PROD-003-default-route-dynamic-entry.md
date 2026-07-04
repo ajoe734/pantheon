@@ -265,3 +265,12 @@ this pass per the pass-20 judgment (the ask is unchanged since pass 19 and
 was already escalated once). No pantheon-side repo action is available
 this pass beyond this re-verification note. Sole remaining blocker: a
 human/chair merging `ajoe734/execute-plans#173`.
+
+**Supervisor update (2026-07-04):** the execute-plans source merge blocker
+is now closed. `ajoe734/execute-plans` PR #173 merged into `dev` at merge
+commit `691f2ec56af9bbc592814563558c001860d8bc7f` after `integration-gate`
+passed. All prior re-verification notes that describe #173 as `OPEN`,
+`MERGEABLE`, or awaiting a human/chair merge are historical and superseded.
+The remaining closeout proof for this lane is hosted dev FE redeploy/re-probe
+evidence for no-strategy and ready-strategy default-entry behavior, not a
+source-merge blocker.
