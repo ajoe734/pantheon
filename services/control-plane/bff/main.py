@@ -52842,6 +52842,497 @@ def _pplg_human_gate_id(persona_id: str) -> str:
     return f"readiness_blocker:persona:{persona_id}"
 
 
+_PPLG_INVALID_LINK_KEYS = {
+    "nan",
+    "none",
+    "null",
+    "undefined",
+    "unknown",
+    "n/a",
+    "na",
+    "not declared",
+    "not_declared",
+    "not-declared",
+}
+
+
+def _pplg_link_key(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, float) and value != value:
+            return None
+    except Exception:
+        return None
+    clean = str(value).strip()
+    if not clean:
+        return None
+    normalized = clean.lower().replace("-", "_").replace(" ", "_")
+    if clean.lower() in _PPLG_INVALID_LINK_KEYS or normalized in _PPLG_INVALID_LINK_KEYS:
+        return None
+    return clean
+
+
+def _pplg_first_link_key(*values: Any) -> Optional[str]:
+    for value in values:
+        key = _pplg_link_key(value)
+        if key:
+            return key
+    return None
+
+
+def _pplg_link_target(
+    *,
+    kind: str,
+    target_id: Optional[str],
+    href: Optional[str],
+    available: bool,
+    reason: Optional[str] = None,
+    bff_href: Optional[str] = None,
+    summary_id: Optional[str] = None,
+    ids: Optional[List[str]] = None,
+    filters: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    clean_id = _pplg_link_key(target_id) if available else None
+    clean_href = href if available and href else None
+    clean_bff_href = bff_href if available and bff_href else clean_href
+    target = {
+        "kind": kind,
+        "id": clean_id,
+        "href": clean_href,
+        "bff_href": clean_bff_href,
+        "bffHref": clean_bff_href,
+        "available": bool(available),
+        "availability": "available" if available else "unavailable",
+        "reason": None if available else reason,
+    }
+    clean_summary_id = _pplg_link_key(summary_id)
+    if clean_summary_id and clean_summary_id != clean_id:
+        target["summary_id"] = clean_summary_id
+        target["summaryId"] = clean_summary_id
+    clean_ids = [key for key in (_pplg_link_key(item) for item in (ids or [])) if key]
+    if clean_ids:
+        target["ids"] = clean_ids
+    if filters:
+        safe_filters = {
+            key: value
+            for key, value in filters.items()
+            if value not in (None, "", [], {})
+        }
+        if safe_filters:
+            target["filters"] = safe_filters
+    return target
+
+
+def _pplg_unavailable_target(kind: str, reason: str, *, summary_id: Optional[str] = None) -> Dict[str, Any]:
+    return _pplg_link_target(
+        kind=kind,
+        target_id=None,
+        href=None,
+        available=False,
+        reason=reason,
+        summary_id=summary_id,
+    )
+
+
+def _pplg_data_source_registry_provider_keys() -> set[str]:
+    try:
+        registry = read_store.get_source_connector_registry()
+    except Exception:
+        return set()
+    if str(registry.get("source") or "").strip().lower() in {"missing", "unavailable"}:
+        return set()
+    keys: set[str] = set()
+    for connector in registry.get("connectors") or []:
+        if not isinstance(connector, dict):
+            continue
+        for field in ("provider_key", "source_key", "key", "connector_id", "id", "provider"):
+            key = _pplg_link_key(connector.get(field))
+            if key:
+                if field == "provider" and not re.fullmatch(r"[A-Za-z0-9_-]+", key):
+                    continue
+                keys.add(key.lower())
+    for provider in registry.get("provider_examples") or []:
+        key = _pplg_link_key(provider)
+        if key:
+            keys.add(key.lower())
+    return keys
+
+
+def _pplg_performance_attribution_persona_ids() -> set[str]:
+    try:
+        sources = _pm12_performance_attribution_sources()
+        facts = _pm12_performance_attribution_facts(sources, "latest")
+        rows = _pm12_performance_attribution_rows(
+            facts,
+            dimensions=["persona"],
+            period_key="latest",
+            sources=sources,
+        )
+    except Exception:
+        return set()
+    return {
+        key
+        for key in (_pplg_link_key(row.get("dimensionKey") or row.get("dimension_key")) for row in rows)
+        if key
+    }
+
+
+def _pplg_persona_target(persona_id: str) -> Dict[str, Any]:
+    key = _pplg_link_key(persona_id)
+    if not key or read_store.get_persona(key) is None:
+        return _pplg_unavailable_target("persona", "no_persona_detail", summary_id=persona_id)
+    return _pplg_link_target(
+        kind="persona",
+        target_id=key,
+        href=_pplg_persona_management_href(key),
+        bff_href=f"/bff/personas/{quote(key, safe='')}",
+        available=True,
+    )
+
+
+def _pplg_persona_management_href(persona_id: Any) -> str:
+    key = _pplg_link_key(persona_id)
+    if not key:
+        return "/management/personas"
+    return f"/management/personas/{quote(key, safe='')}"
+
+
+def _pplg_runtime_management_href(
+    *,
+    persona_id: Any = None,
+    runtime_id: Any = None,
+    binding_id: Any = None,
+) -> str:
+    persona_key = _pplg_link_key(persona_id)
+    runtime_key = _pplg_link_key(runtime_id)
+    binding_key = _pplg_link_key(binding_id)
+    params: List[tuple[str, str]] = []
+    if persona_key:
+        params.append(("persona", persona_key))
+    if runtime_key:
+        params.append(("runtime", runtime_key))
+    if binding_key and binding_key != runtime_key:
+        params.append(("binding", binding_key))
+    if params:
+        return f"/management/runtimes?{urlencode(params)}"
+    if persona_key:
+        return _pplg_persona_management_href(persona_key)
+    return "/management/runtimes"
+
+
+def _pplg_runtime_target(
+    runtime_id: Any,
+    *,
+    persona_id: Any = None,
+    binding_id: Any = None,
+) -> Dict[str, Any]:
+    key = _pplg_link_key(runtime_id)
+    if not key:
+        return _pplg_unavailable_target("runtime", "no_runtime_target", summary_id=runtime_id)
+    runtime = read_store.get_runtime_binding_by_runtime_id(key) or read_store.get_runtime_binding(key)
+    if not runtime:
+        return _pplg_unavailable_target("runtime", "no_runtime_target", summary_id=key)
+    quoted = quote(key, safe="")
+    filters = {"runtime": key, "runtime_id": key, "runtimeId": key}
+    persona_key = _pplg_link_key(persona_id)
+    binding_key = _pplg_link_key(binding_id)
+    if persona_key:
+        filters.update({"persona": persona_key, "persona_id": persona_key, "personaId": persona_key})
+    if binding_key:
+        filters.update({"binding": binding_key, "binding_id": binding_key, "bindingId": binding_key})
+    return _pplg_link_target(
+        kind="runtime",
+        target_id=key,
+        href=_pplg_runtime_management_href(
+            persona_id=persona_id,
+            runtime_id=key,
+            binding_id=binding_id,
+        ),
+        bff_href=f"/bff/runtimes/{quoted}",
+        available=True,
+        filters=filters,
+    )
+
+
+def _pplg_human_target(row: Dict[str, Any]) -> Dict[str, Any]:
+    persona_id = _pplg_link_key(row.get("persona_id") or row.get("personaId") or row.get("id"))
+    required_review = _pplg_link_key(
+        row.get("requiredHumanReview")
+        or row.get("required_human_review")
+        or (row.get("readinessProjection") or {}).get("required_human_review")
+    )
+    if not persona_id:
+        return _pplg_unavailable_target("human_review", "no_persona_detail")
+
+    readiness_item = _human_inbox_persona_review_item(row)
+    if readiness_item is not None:
+        inbox_id = str(readiness_item.get("id") or readiness_item.get("inbox_id") or "")
+        quoted = quote(inbox_id, safe="")
+        links = readiness_item.get("links") if isinstance(readiness_item.get("links"), dict) else {}
+        return _pplg_link_target(
+            kind=str(readiness_item.get("source_type") or "readiness_blocker"),
+            target_id=inbox_id,
+            href=links.get("recommendedActionHref") or f"/management/human-inbox/{quoted}",
+            bff_href=str(readiness_item.get("bff_detail_path") or f"/bff/management/human-inbox/{quoted}"),
+            available=True,
+        )
+
+    for review in read_store.list_promotion_reviews(persona_id=persona_id, review_type=required_review):
+        review_id = _pplg_link_key(review.get("review_id") or review.get("id"))
+        if not review_id or read_store.get_promotion_review(review_id) is None:
+            continue
+        inbox_id = f"promotion_review:{review_id}"
+        quoted_inbox = quote(inbox_id, safe="")
+        quoted_review = quote(review_id, safe="")
+        return _pplg_link_target(
+            kind="promotion_review",
+            target_id=inbox_id,
+            href=f"/management/human-inbox/{quoted_inbox}",
+            bff_href=f"/bff/management/promotion-reviews/{quoted_review}",
+            available=True,
+            summary_id=review_id,
+        )
+
+    if required_review:
+        return _pplg_unavailable_target("human_review", "no_human_inbox_target")
+    return _pplg_unavailable_target("human_review", "no_human_review_required")
+
+
+def _pplg_research_target(
+    research_status: Dict[str, Any],
+    current_research_projects: List[Any],
+) -> Dict[str, Any]:
+    candidates: List[Any] = [research_status.get("experiment_id")]
+    for project in current_research_projects:
+        if isinstance(project, dict):
+            candidates.extend([project.get("experiment_id"), project.get("experimentId")])
+    experiment_id = _pplg_first_link_key(*candidates)
+    if not experiment_id:
+        return _pplg_unavailable_target("research_experiment", "no_research_detail")
+    if read_store.get_research_experiment(experiment_id) is None:
+        return _pplg_unavailable_target("research_experiment", "no_research_detail", summary_id=experiment_id)
+    quoted = quote(experiment_id, safe="")
+    return _pplg_link_target(
+        kind="research_experiment",
+        target_id=experiment_id,
+        href=f"/management/experiments/{quoted}",
+        bff_href=f"/bff/research-experiments/{quoted}",
+        available=True,
+    )
+
+
+def _pplg_artifact_target(*values: Any) -> Dict[str, Any]:
+    artifact_id = _pplg_first_link_key(*values)
+    if not artifact_id:
+        return _pplg_unavailable_target("artifact", "no_artifact_detail")
+    if read_store.get_research_artifact(artifact_id) is None:
+        return _pplg_unavailable_target("artifact", "no_artifact_detail", summary_id=artifact_id)
+    quoted = quote(artifact_id, safe="")
+    return _pplg_link_target(
+        kind="artifact",
+        target_id=artifact_id,
+        href=f"/management/artifacts/{quoted}",
+        bff_href=f"/bff/artifacts/{quoted}",
+        available=True,
+    )
+
+
+def _pplg_performance_target(persona_id: str, available_persona_ids: set[str]) -> Dict[str, Any]:
+    key = _pplg_link_key(persona_id)
+    if key and key in available_persona_ids:
+        quoted = quote(key, safe="")
+        return _pplg_link_target(
+            kind="performance_attribution",
+            target_id=key,
+            href=f"/management/performance-attribution?dimension=persona&persona={quoted}",
+            bff_href=f"/bff/management/performance-attribution/by-persona?persona_id={quoted}",
+            available=True,
+            filters={"dimension": "persona", "persona": key, "persona_id": key, "personaId": key},
+        )
+    return _pplg_unavailable_target("performance_attribution", "no_attribution_detail", summary_id=persona_id)
+
+
+def _pplg_data_source_target(
+    persona_id: str,
+    data_sources: List[Any],
+    data_source_status: Dict[str, Any],
+    registry_provider_keys: set[str],
+) -> Dict[str, Any]:
+    candidates: List[Any] = []
+    for source in data_sources:
+        if isinstance(source, dict):
+            candidates.extend([source.get("provider_key"), source.get("provider"), source.get("id")])
+    provider_statuses = data_source_status.get("provider_statuses")
+    if isinstance(provider_statuses, dict):
+        candidates.extend(provider_statuses.keys())
+    provider_keys = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = _pplg_link_key(candidate)
+        if key and key.lower() not in seen:
+            seen.add(key.lower())
+            provider_keys.append(key)
+    matched = [key for key in provider_keys if key.lower() in registry_provider_keys]
+    if not matched:
+        reason = "data_source_registry_unavailable" if provider_keys and not registry_provider_keys else "no_data_source_detail"
+        return _pplg_link_target(
+            kind="data_sources",
+            target_id=None,
+            href=None,
+            available=False,
+            reason=reason,
+            ids=provider_keys,
+        )
+    provider_query = ",".join(matched)
+    persona_query = quote(persona_id, safe="")
+    source_query = quote(provider_query, safe=",")
+    href = f"/management/data-sources?persona={persona_query}&source={source_query}"
+    bff_href = f"/bff/management/data-sources?provider_key={quote(provider_query, safe=',')}"
+    return _pplg_link_target(
+        kind="data_sources",
+        target_id=matched[0],
+        href=href,
+        bff_href=bff_href,
+        available=True,
+        ids=matched,
+        filters={
+            "persona": persona_id,
+            "persona_id": persona_id,
+            "personaId": persona_id,
+            "source": provider_query,
+            "provider_keys": matched,
+            "providerKeys": matched,
+        },
+    )
+
+
+def _pplg_evolution_decision_id(decision: Dict[str, Any]) -> Optional[str]:
+    return _pplg_first_link_key(
+        decision.get("decision_id"),
+        decision.get("evolution_decision_id"),
+        decision.get("id"),
+    )
+
+
+def _pplg_decision_matches_persona(
+    decision: Dict[str, Any],
+    *,
+    persona_id: str,
+    artifact_ids: set[str],
+    runtime_id: Optional[str],
+) -> bool:
+    target = decision.get("target") if isinstance(decision.get("target"), dict) else {}
+    persona_candidates = {
+        _pplg_link_key(decision.get("persona_id")),
+        _pplg_link_key(decision.get("target_id")),
+        _pplg_link_key(target.get("persona_id")),
+        _pplg_link_key(target.get("id")) if str(target.get("type") or "").lower() == "persona" else None,
+    }
+    if persona_id in {candidate for candidate in persona_candidates if candidate}:
+        return True
+    artifact_id = _pplg_link_key(decision.get("artifact_id") or target.get("artifact_id"))
+    if artifact_id and artifact_id in artifact_ids:
+        return True
+    decision_runtime_id = _pplg_link_key(decision.get("runtime_id") or target.get("runtime_id"))
+    return bool(runtime_id and decision_runtime_id == runtime_id)
+
+
+def _pplg_mutation_target(
+    *,
+    persona_id: str,
+    runtime_id: Optional[str],
+    artifact_ids: set[str],
+    candidate_ids: List[Any],
+    evolution_decisions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    for candidate in candidate_ids:
+        decision_id = _pplg_link_key(candidate)
+        if not decision_id:
+            continue
+        decision = read_store.get_evolution_decision(decision_id) or read_store.get_evolution_decision_by_id(decision_id)
+        if decision is not None:
+            quoted = quote(decision_id, safe="")
+            return _pplg_link_target(
+                kind="mutation_review",
+                target_id=decision_id,
+                href=f"/management/evolution-journal?mutation_review={quoted}",
+                bff_href=f"/api/v1/operator/mutation-review/{quoted}",
+                available=True,
+            )
+    for decision in evolution_decisions:
+        decision_id = _pplg_evolution_decision_id(decision)
+        if not decision_id:
+            continue
+        if not _pplg_decision_matches_persona(
+            decision,
+            persona_id=persona_id,
+            artifact_ids=artifact_ids,
+            runtime_id=runtime_id,
+        ):
+            continue
+        quoted = quote(decision_id, safe="")
+        return _pplg_link_target(
+            kind="mutation_review",
+            target_id=decision_id,
+            href=f"/management/evolution-journal?mutation_review={quoted}",
+            bff_href=f"/api/v1/operator/mutation-review/{quoted}",
+            available=True,
+        )
+    return _pplg_unavailable_target("mutation_review", "no_mutation_detail")
+
+
+def _pplg_evolution_target(*program_candidates: Any) -> Dict[str, Any]:
+    program_id = _pplg_first_link_key(*program_candidates)
+    if not program_id:
+        return _pplg_unavailable_target("evolution_program", "no_evolution_program_detail")
+    if read_store.get_evolution_program(program_id) is None:
+        return _pplg_unavailable_target("evolution_program", "no_evolution_program_detail", summary_id=program_id)
+    quoted = quote(program_id, safe="")
+    return _pplg_link_target(
+        kind="evolution_program",
+        target_id=program_id,
+        href=f"/management/evolution-programs/{quoted}",
+        bff_href=f"/bff/evolution-programs/{quoted}",
+        available=True,
+    )
+
+
+def _pplg_action_target(row_action: Dict[str, Any], targets: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    action_id = str(row_action.get("actionId") or row_action.get("action_id") or "").strip()
+    if action_id in {"open_promotion_review", "open_human_review"}:
+        target = targets.get("human")
+        return json.loads(json.dumps(target)) if isinstance(target, dict) else _pplg_unavailable_target("action", "no_human_inbox_target")
+    if action_id.startswith("monitor_"):
+        target = targets.get("runtime")
+        return json.loads(json.dumps(target)) if isinstance(target, dict) else _pplg_unavailable_target("action", "no_runtime_target")
+    if action_id == "repair_paper_setup":
+        persona_id = _pplg_link_key(row_action.get("persona_id") or row_action.get("personaId"))
+        if persona_id and _paper_launch_latest_for_persona(persona_id) is not None:
+            href = str(row_action.get("href") or f"/bff/management/personas/{quote(persona_id, safe='')}/setup/retry")
+            return _pplg_link_target(
+                kind="repair_action",
+                target_id=persona_id,
+                href=href,
+                bff_href=href,
+                available=True,
+            )
+        return _pplg_unavailable_target("repair_action", "no_repair_target", summary_id=persona_id)
+    if action_id == "view_persona":
+        target = targets.get("persona")
+        return json.loads(json.dumps(target)) if isinstance(target, dict) else _pplg_unavailable_target("action", "no_persona_detail")
+    href = row_action.get("href")
+    if href:
+        return _pplg_link_target(
+            kind="action",
+            target_id=action_id,
+            href=str(href),
+            bff_href=str(href),
+            available=True,
+        )
+    return _pplg_unavailable_target("action", "no_action_target")
+
+
 def _pplg_row_action(
     *,
     setup_status: str,
@@ -52852,6 +53343,7 @@ def _pplg_row_action(
     review_state: str,
     persona_id: str,
     runtime_id: Any,
+    binding_id: Any = None,
 ) -> Dict[str, Any]:
     if product_lifecycle_state in {"risk_off", "frozen"}:
         action_id = "open_incident_review"
@@ -52872,24 +53364,38 @@ def _pplg_row_action(
     elif str(deployment_stage or "").lower() == "live":
         action_id = "monitor_live_runtime"
         label = "監控實盤"
-        href = f"/management/runtimes/{runtime_id}" if runtime_id else f"/personas/{persona_id}"
+        href = _pplg_runtime_management_href(
+            persona_id=persona_id,
+            runtime_id=runtime_id,
+            binding_id=binding_id,
+        )
     elif str(deployment_stage or "").lower() == "canary":
         action_id = "monitor_canary_runtime"
         label = "監控 canary"
-        href = f"/management/runtimes/{runtime_id}" if runtime_id else f"/personas/{persona_id}"
+        href = _pplg_runtime_management_href(
+            persona_id=persona_id,
+            runtime_id=runtime_id,
+            binding_id=binding_id,
+        )
     elif str(deployment_stage or "").lower() == "paper" and runtime_status in {"active", "warming_up", "starting"}:
         action_id = "monitor_paper_runtime"
         label = "監控 paper runtime"
-        href = f"/management/runtimes/{runtime_id}" if runtime_id else f"/personas/{persona_id}"
+        href = _pplg_runtime_management_href(
+            persona_id=persona_id,
+            runtime_id=runtime_id,
+            binding_id=binding_id,
+        )
     else:
         action_id = "view_persona"
         label = "查看 persona"
-        href = f"/personas/{persona_id}"
+        href = _pplg_persona_management_href(persona_id)
     return {
         "action_id": action_id,
         "actionId": action_id,
         "label": label,
         "href": href,
+        "persona_id": persona_id,
+        "personaId": persona_id,
         "requires_human_review": required_human_review is not None,
         "requiresHumanReview": required_human_review is not None,
         "startup_wizard_visible": False,
@@ -52910,6 +53416,12 @@ def _build_persona_health_items(
     *,
     include_market_persona_defaults: bool = False,
 ) -> List[Dict[str, Any]]:
+    data_source_registry_provider_keys = _pplg_data_source_registry_provider_keys()
+    performance_attribution_persona_ids = _pplg_performance_attribution_persona_ids()
+    try:
+        evolution_decisions = list(read_store.list_evolution_decisions() or [])
+    except Exception:
+        evolution_decisions = []
     league_by_persona = {
         str(item.get("persona_id") or item.get("id") or ""): item
         for item in read_store.list_persona_league(
@@ -53097,17 +53609,17 @@ def _build_persona_health_items(
                 metadata.get("repair_url")
                 or f"/bff/management/personas/{persona_id}/paper-launch/repair"
             )
+        runtime_binding_id = _pplg_link_key(
+            runtime.get("runtime_binding_id")
+            or runtime.get("binding_id")
+            or runtime.get("id")
+        )
         readiness_projection = {
             "persona_id": persona_id,
             "product_lifecycle_state": product_lifecycle_state,
             "setup_status": setup_status,
             "paper_runtime": {
-                "runtime_binding_id": (
-                    runtime.get("runtime_binding_id")
-                    or runtime.get("binding_id")
-                    or runtime.get("id")
-                    or None
-                ),
+                "runtime_binding_id": runtime_binding_id or None,
                 "runtime_id": runtime_id or None,
                 "status": runtime_status,
                 "heartbeat_status": _pplg_heartbeat_status(runtime),
@@ -53137,7 +53649,30 @@ def _build_persona_health_items(
             review_state=review_state,
             persona_id=persona_id,
             runtime_id=runtime_id,
+            binding_id=runtime_binding_id,
         )
+        artifact_candidates: List[Any] = [
+            research_status.get("artifact_id"),
+            metadata.get("artifact_id"),
+            league_entry.get("artifact_id"),
+            binding.get("artifact_id"),
+            runtime.get("artifact_id"),
+        ]
+        for project in current_research_projects:
+            if isinstance(project, dict):
+                artifact_candidates.extend([project.get("artifact_id"), project.get("artifactId")])
+        artifact_id_candidates = {
+            key for key in (_pplg_link_key(candidate) for candidate in artifact_candidates) if key
+        }
+        mutation_candidate_ids = [
+            metadata.get("mutation_review_id"),
+            metadata.get("mutationReviewId"),
+            metadata.get("evolution_decision_id"),
+            metadata.get("evolutionDecisionId"),
+            metadata.get("last_evolution_decision_id"),
+            league_entry.get("mutation_review_id"),
+            league_entry.get("evolution_decision_id"),
+        ]
         competition_standing = {
             "standing_id": f"standing-{persona_id}",
             "persona_id": persona_id,
@@ -53279,16 +53814,114 @@ def _build_persona_health_items(
             "updated_at": updated_at,
             "drill_down": {
                 "kind": "runtime" if runtime_id else "persona",
-                "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
+                "href": (
+                    _pplg_runtime_management_href(
+                        persona_id=persona_id,
+                        runtime_id=runtime_id,
+                        binding_id=runtime_binding_id,
+                    )
+                    if runtime_id
+                    else _pplg_persona_management_href(persona_id)
+                ),
                 "runtime_id": runtime_id,
+                "runtime_binding_id": runtime_binding_id,
                 "persona_id": persona_id,
             },
             "drillDown": {
                 "kind": "runtime" if runtime_id else "persona",
-                "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
+                "href": (
+                    _pplg_runtime_management_href(
+                        persona_id=persona_id,
+                        runtime_id=runtime_id,
+                        binding_id=runtime_binding_id,
+                    )
+                    if runtime_id
+                    else _pplg_persona_management_href(persona_id)
+                ),
                 "runtimeId": runtime_id,
+                "runtimeBindingId": runtime_binding_id,
                 "personaId": persona_id,
             },
+        }
+        link_targets = {
+            "persona": _pplg_persona_target(persona_id),
+            "dataSources": _pplg_data_source_target(
+                persona_id,
+                data_sources,
+                data_source_status,
+                data_source_registry_provider_keys,
+            ),
+            "data_sources": _pplg_data_source_target(
+                persona_id,
+                data_sources,
+                data_source_status,
+                data_source_registry_provider_keys,
+            ),
+            "research": _pplg_research_target(research_status, current_research_projects),
+            "performance": _pplg_performance_target(persona_id, performance_attribution_persona_ids),
+            "runtime": _pplg_runtime_target(
+                runtime_id,
+                persona_id=persona_id,
+                binding_id=runtime_binding_id,
+            ),
+            "human": _pplg_human_target(item),
+            "artifact": _pplg_artifact_target(*artifact_candidates),
+            "mutation": _pplg_mutation_target(
+                persona_id=persona_id,
+                runtime_id=_pplg_link_key(runtime_id),
+                artifact_ids=artifact_id_candidates,
+                candidate_ids=mutation_candidate_ids,
+                evolution_decisions=evolution_decisions,
+            ),
+            "evolution": _pplg_evolution_target(
+                metadata.get("evolution_program_id"),
+                metadata.get("evolutionProgramId"),
+                league_entry.get("evolution_program_id"),
+                league_entry.get("evolutionProgramId"),
+            ),
+        }
+        link_targets["action"] = _pplg_action_target(row_action, link_targets)
+        item["linkTargets"] = json.loads(json.dumps(link_targets))
+        item["link_targets"] = json.loads(json.dumps(link_targets))
+        item["links"] = json.loads(json.dumps(link_targets))
+
+        action_target = link_targets["action"]
+        row_action["available"] = bool(action_target.get("available"))
+        row_action["availability"] = action_target.get("availability")
+        row_action["reason"] = action_target.get("reason")
+        row_action["target_id"] = action_target.get("id")
+        row_action["targetId"] = action_target.get("id")
+        row_action["target_kind"] = action_target.get("kind")
+        row_action["targetKind"] = action_target.get("kind")
+        row_action["bff_href"] = action_target.get("bff_href")
+        row_action["bffHref"] = action_target.get("bffHref")
+        row_action["href"] = action_target.get("href")
+        item["row_action"] = row_action
+        item["rowAction"] = row_action
+
+        runtime_target = link_targets["runtime"]
+        persona_target = link_targets["persona"]
+        drill_target_link = runtime_target if runtime_target.get("available") else persona_target
+        drill_down = {
+            "kind": drill_target_link.get("kind"),
+            "href": drill_target_link.get("href"),
+            "bff_href": drill_target_link.get("bff_href"),
+            "available": bool(drill_target_link.get("available")),
+            "availability": drill_target_link.get("availability"),
+            "reason": drill_target_link.get("reason"),
+            "runtime_id": runtime_id if runtime_target.get("available") else None,
+            "persona_id": persona_id,
+        }
+        item["drill_down"] = drill_down
+        item["drillDown"] = {
+            "kind": drill_down["kind"],
+            "href": drill_down["href"],
+            "bffHref": drill_down["bff_href"],
+            "available": drill_down["available"],
+            "availability": drill_down["availability"],
+            "reason": drill_down["reason"],
+            "runtimeId": drill_down["runtime_id"],
+            "personaId": drill_down["persona_id"],
         }
         items.append(item)
     ranked_items = sorted(

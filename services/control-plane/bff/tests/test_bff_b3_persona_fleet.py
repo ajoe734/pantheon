@@ -64,7 +64,7 @@ def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolutio
             assert alpha["capitalPoolId"] == "pool-main"
             assert alpha["health"] in {"healthy", "degraded", "critical"}
             assert alpha["governanceRequired"] is True
-            assert alpha["drillDown"]["href"] == "/personas/persona-alpha"
+            assert alpha["drillDown"]["href"] == "/management/personas/persona-alpha"
             assert "metrics" in alpha
             assert "currentWork" in alpha
             boundary = body["data"]["execution_boundary"]
