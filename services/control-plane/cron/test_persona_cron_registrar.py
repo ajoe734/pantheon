@@ -28,7 +28,11 @@ class GatewayRuntimeSpy:
         self.calls.append((method, params))
         if method == "cron.list":
             return {"jobs": list(self._existing_jobs)}
-        workflow_id = (params or {}).get("metadata", {}).get("workflow_id", "unknown")
+        # OpenClaw's cron.add schema has no "metadata" property; workflow_id
+        # is only recoverable from the systemEvent payload text, same as in
+        # production (see persona_cron_registrar._build_system_event_text).
+        payload_text = (params or {}).get("payload", {}).get("text", "{}")
+        workflow_id = json.loads(payload_text).get("workflow_id", "unknown")
         if workflow_id in self._fail_on:
             raise RuntimeError(f"Simulated failure for {workflow_id}")
         return {"id": f"job-{workflow_id}-001"}
@@ -124,13 +128,15 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         for _, params in spy.add_calls:
             self.assertFalse((params or {}).get("deleteAfterRun"))
 
-    def test_persona_id_is_embedded_in_metadata(self):
+    def test_persona_id_is_embedded_in_payload_text(self):
+        # cron.add has no "metadata" property in OpenClaw's schema (additionalProperties:
+        # false rejects it), so persona_id must travel in the systemEvent payload text.
         spy = GatewayRuntimeSpy()
         PersonaCronRegistrar(gateway_runtime=spy).register_for_persona("persona-meta-001", binding_id="bind-001")
         for _, params in spy.add_calls:
-            metadata = (params or {}).get("metadata", {})
-            self.assertEqual(metadata.get("persona_id"), "persona-meta-001")
-            self.assertEqual(metadata.get("binding_id"), "bind-001")
+            self.assertNotIn("metadata", params or {})
+            payload_text = json.loads((params or {}).get("payload", {}).get("text", "{}"))
+            self.assertEqual(payload_text.get("persona_id"), "persona-meta-001")
 
     def test_idempotent_skip_when_job_already_present(self):
         # Pre-seed two of the four workflow job names as already-registered.
