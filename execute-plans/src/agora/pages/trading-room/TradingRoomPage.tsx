@@ -241,7 +241,7 @@ function StrategyLensSwitcher({
           whiteSpace: "nowrap",
         }}
       >
-        All Strategies
+        Workbench Entry
       </button>
       {strategies.map((s) => (
         <button
@@ -682,82 +682,85 @@ function PositionActionQueue({ positionSummaries }: PositionActionQueueProps): J
   );
 }
 
-// ── Strategy List (aggregate view) ────────────────────────────────────────────
+// ── Default Dynamic Entry (no explicit strategy selected) ────────────────────
 
-interface StrategyListProps {
-  strategies: TradingRoomStrategyEntry[];
-  onSelect: (strategyId: string) => void;
-}
-
-function StrategyList({ strategies, onSelect }: StrategyListProps): JSX.Element {
+function pendingEventTotal(strategy: TradingRoomStrategyEntry): number {
   return (
-    <div data-testid="strategy-list" style={{ padding: "8px 16px" }}>
-      {strategies.length === 0 ? (
-        <div data-testid="strategy-list-empty" style={{ fontSize: 13, color: C.muted }}>
-          No strategies in the Trading Room.
-        </div>
-      ) : (
-        <table
-          data-testid="strategy-list-table"
-          style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, color: C.text }}
-        >
-          <thead>
-            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              <th style={{ textAlign: "left", padding: "6px 0", fontWeight: 500, color: C.secondary }}>Strategy</th>
-              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: C.secondary }}>Readiness</th>
-              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: C.secondary }}>Monitoring</th>
-              <th style={{ textAlign: "right", padding: "6px 0", fontWeight: 500, color: C.secondary }}>Pending</th>
-            </tr>
-          </thead>
-          <tbody>
-            {strategies.map((s) => {
-              const total =
-                (s.pending_event_counts.entry ?? 0) +
-                (s.pending_event_counts.add ?? 0) +
-                (s.pending_event_counts.reduce ?? 0) +
-                (s.pending_event_counts.exit ?? 0) +
-                (s.pending_event_counts.review ?? 0);
-              return (
-                <tr
-                  key={s.strategy_id}
-                  data-testid={`strategy-row-${s.strategy_id}`}
-                  style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}
-                  onClick={() => onSelect(s.strategy_id)}
-                >
-                  <td style={{ padding: "6px 0" }}>{s.title}</td>
-                  <td style={{ padding: "6px 8px" }}>{s.readiness_state}</td>
-                  <td style={{ padding: "6px 8px" }}>{s.monitoring_state}</td>
-                  <td style={{ padding: "6px 0", textAlign: "right" }}>{total > 0 ? total : "—"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </div>
+    (strategy.pending_event_counts.entry ?? 0) +
+    (strategy.pending_event_counts.add ?? 0) +
+    (strategy.pending_event_counts.reduce ?? 0) +
+    (strategy.pending_event_counts.exit ?? 0) +
+    (strategy.pending_event_counts.review ?? 0)
   );
 }
 
-// ── Aggregate View (no strategy selected) ────────────────────────────────────
+const MONITORING_PRIORITY: Record<TradingRoomStrategyEntry["monitoring_state"], number> = {
+  monitoring: 5,
+  paper_requested: 4,
+  shadow: 3,
+  paused: 2,
+  inactive: 1,
+};
 
-interface AggregateViewProps {
+function selectDefaultReadyStrategy(
+  strategies: TradingRoomStrategyEntry[],
+): TradingRoomStrategyEntry | undefined {
+  return strategies
+    .filter((strategy) => strategy.readiness_state === "ready")
+    .slice()
+    .sort((a, b) => {
+      const recipeDiff = Number(Boolean(b.dashboard_recipe_id)) - Number(Boolean(a.dashboard_recipe_id));
+      if (recipeDiff !== 0) return recipeDiff;
+      const pendingDiff = pendingEventTotal(b) - pendingEventTotal(a);
+      if (pendingDiff !== 0) return pendingDiff;
+      const monitoringDiff = MONITORING_PRIORITY[b.monitoring_state] - MONITORING_PRIORITY[a.monitoring_state];
+      if (monitoringDiff !== 0) return monitoringDiff;
+      return a.title.localeCompare(b.title);
+    })[0];
+}
+
+function readinessReason(strategy: TradingRoomStrategyEntry): string {
+  if (strategy.readiness_state === "conditional") {
+    return "Conditional readiness: continue Strategy Workshop validation before proposal generation.";
+  }
+  if (strategy.readiness_state === "stale") {
+    return strategy.staleness_reasons?.[0] ?? "Readiness is stale; refresh workshop evidence.";
+  }
+  return "Blocked readiness: Strategy Workshop must close the missing gate before Trading Room entry.";
+}
+
+interface TradingRoomDefaultEntryProps {
   aggregate: TradingRoomAggregate;
-  events: TradingDecisionEvent[];
-  eventsLoading: boolean;
-  eventsEtag: string | null;
+  onOpenWorkshop?: () => void;
   onStrategySelect: (strategyId: string) => void;
 }
 
-function AggregateView({
+function TradingRoomDefaultEntry({
   aggregate,
-  events,
-  eventsLoading,
-  eventsEtag,
+  onOpenWorkshop,
   onStrategySelect,
-}: AggregateViewProps): JSX.Element {
+}: TradingRoomDefaultEntryProps): JSX.Element {
+  const strategies = aggregate.strategies;
+  const pendingTotal = strategies.reduce((total, strategy) => total + pendingEventTotal(strategy), 0);
+  const entryState = strategies.length === 0 ? "empty" : "no-ready-strategy";
+  const readinessRows = strategies
+    .slice()
+    .sort((a, b) => {
+      const readinessOrder: Record<TradingRoomStrategyEntry["readiness_state"], number> = {
+        conditional: 0,
+        stale: 1,
+        blocked: 2,
+        ready: 3,
+      };
+      const orderDiff = readinessOrder[a.readiness_state] - readinessOrder[b.readiness_state];
+      if (orderDiff !== 0) return orderDiff;
+      return (b.candidate_count ?? 0) - (a.candidate_count ?? 0);
+    });
+
   return (
     <div
-      data-testid="trading-room-aggregate-view"
+      data-entry-state={entryState}
+      data-testid="trading-room-default-entry"
       style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}
     >
       <QueueSummaryStrip {...aggregate.queue_summary} />
@@ -766,12 +769,163 @@ function AggregateView({
         summary={aggregate.risk_summary.summary}
         alerts={aggregate.risk_summary.alerts}
       />
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <StrategyList strategies={aggregate.strategies} onSelect={onStrategySelect} />
-          <TradingEventQueue events={events} loading={eventsLoading} eventsEtag={eventsEtag} />
-        </div>
-        <PositionActionQueue positionSummaries={aggregate.position_summaries ?? []} />
+
+      <div style={{ flex: 1, overflow: "auto", padding: 18 }}>
+        <section
+          style={{
+            background: C.surface,
+            border: `1px solid ${C.border}`,
+            borderRadius: 8,
+            display: "grid",
+            gap: 14,
+            padding: 18,
+          }}
+        >
+          <div>
+            <div style={{ color: C.secondary, fontSize: 12, fontWeight: 700 }}>Dynamic Entry</div>
+            <h2 style={{ color: C.text, fontSize: 20, fontWeight: 800, letterSpacing: 0, margin: "4px 0 0" }}>
+              {strategies.length === 0
+                ? "Strategy Workshop is the next step"
+                : "No strategy is ready for proposal generation yet"}
+            </h2>
+            <p style={{ color: C.secondary, fontSize: 13, lineHeight: 1.55, margin: "8px 0 0", maxWidth: 860 }}>
+              {strategies.length === 0
+                ? "The BFF returned no user-scoped Trading Room strategies, so the default route starts from workshop intake instead of an empty table shell."
+                : "The BFF returned strategies, but none has reached the trading_room readiness gate. Continue the readiness workflow before opening a generated V11 workspace."}
+            </p>
+          </div>
+
+          <div
+            data-testid="trading-room-default-snapshot"
+            style={{
+              color: C.secondary,
+              display: "flex",
+              flexWrap: "wrap",
+              fontSize: 12,
+              gap: 12,
+            }}
+          >
+            <span>Strategies: {strategies.length}</span>
+            <span>Ready: 0</span>
+            <span>Pending decisions: {pendingTotal}</span>
+            <span>Snapshot: {aggregate.snapshot_at || "unavailable"}</span>
+            <span>Data cutoff: {aggregate.data_cutoff || "unavailable"}</span>
+          </div>
+
+          <div>
+            <button
+              data-testid="trading-room-open-workshop"
+              disabled={!onOpenWorkshop}
+              onClick={onOpenWorkshop}
+              style={{
+                background: onOpenWorkshop ? C.amber : C.elevated,
+                border: `1px solid rgba(232,183,80,0.45)`,
+                borderRadius: 6,
+                color: onOpenWorkshop ? C.bg : C.muted,
+                cursor: onOpenWorkshop ? "pointer" : "not-allowed",
+                fontSize: 13,
+                fontWeight: 800,
+                padding: "8px 12px",
+              }}
+              type="button"
+            >
+              Open Strategy Workshop
+            </button>
+          </div>
+        </section>
+
+        {strategies.length > 0 ? (
+          <section
+            data-testid="trading-room-readiness-entry"
+            style={{
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              marginTop: 14,
+            }}
+          >
+            {readinessRows.map((strategy) => (
+              <article
+                data-testid={`trading-room-readiness-${strategy.strategy_id}`}
+                key={strategy.strategy_id}
+                style={{
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  color: C.text,
+                  padding: 14,
+                }}
+              >
+                <div style={{ color: C.secondary, fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>
+                  {strategy.readiness_state} · {strategy.monitoring_state}
+                </div>
+                <h3 style={{ fontSize: 15, fontWeight: 800, margin: "4px 0 0" }}>{strategy.title}</h3>
+                <p style={{ color: C.secondary, fontSize: 12, lineHeight: 1.45, margin: "8px 0 0" }}>
+                  {readinessReason(strategy)}
+                </p>
+                <div style={{ color: C.muted, display: "flex", flexWrap: "wrap", fontSize: 12, gap: 10, marginTop: 10 }}>
+                  <span>Version: {strategy.strategy_spec_registry_id}</span>
+                  <span>Candidates: {strategy.candidate_count ?? 0}</span>
+                  <span>Pending: {pendingEventTotal(strategy)}</span>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <button
+                    data-testid={`trading-room-open-workshop-${strategy.strategy_id}`}
+                    disabled={!onOpenWorkshop}
+                    onClick={onOpenWorkshop}
+                    style={{
+                      background: "transparent",
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 6,
+                      color: onOpenWorkshop ? C.amber : C.muted,
+                      cursor: onOpenWorkshop ? "pointer" : "not-allowed",
+                      fontSize: 12,
+                      padding: "6px 10px",
+                    }}
+                    type="button"
+                  >
+                    Review readiness
+                  </button>
+                  {strategy.readiness_state === "ready" && (
+                    <button
+                      data-testid={`trading-room-open-strategy-${strategy.strategy_id}`}
+                      onClick={() => onStrategySelect(strategy.strategy_id)}
+                      style={{
+                        background: C.elevated,
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 6,
+                        color: C.text,
+                        cursor: "pointer",
+                        fontSize: 12,
+                        padding: "6px 10px",
+                      }}
+                      type="button"
+                    >
+                      Open workspace
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </section>
+        ) : (
+          <section
+            data-testid="trading-room-workshop-empty-entry"
+            style={{
+              background: C.surface,
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+              color: C.secondary,
+              fontSize: 13,
+              lineHeight: 1.5,
+              marginTop: 14,
+              padding: 14,
+            }}
+          >
+            No BFF strategy records were available for this scope. Continue in the Strategy Workshop to create
+            or restore a strategy-specific readiness packet.
+          </section>
+        )}
       </div>
     </div>
   );
@@ -949,9 +1103,14 @@ type LoadState = "loading" | "loaded" | "error";
 interface TradingRoomPageProps {
   strategyId?: string;
   onStrategySelect?: (strategyId: string | undefined) => void;
+  onOpenWorkshop?: () => void;
 }
 
-export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPageProps): JSX.Element {
+export function TradingRoomPage({
+  strategyId,
+  onStrategySelect,
+  onOpenWorkshop,
+}: TradingRoomPageProps): JSX.Element {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [aggregate, setAggregate] = useState<TradingRoomAggregate | null>(null);
   const [loadError, setLoadError] = useState<TradingRoomBffDiagnostic | null>(null);
@@ -1026,8 +1185,11 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
     );
   }
 
-  const activeStrategy = strategyId
-    ? aggregate.strategies.find((s) => s.strategy_id === strategyId)
+  const defaultReadyStrategy =
+    !strategyId && aggregate ? selectDefaultReadyStrategy(aggregate.strategies) : undefined;
+  const effectiveStrategyId = strategyId ?? defaultReadyStrategy?.strategy_id;
+  const activeStrategy = effectiveStrategyId
+    ? aggregate.strategies.find((s) => s.strategy_id === effectiveStrategyId)
     : undefined;
 
   return (
@@ -1037,13 +1199,13 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
     >
       <StrategyLensSwitcher
         strategies={aggregate.strategies}
-        activeStrategyId={strategyId}
+        activeStrategyId={effectiveStrategyId}
         onSelect={handleStrategySelect}
       />
 
-      {strategyId ? (
+      {effectiveStrategyId ? (
         <StrategyWorkspaceView
-          strategyId={strategyId}
+          strategyId={effectiveStrategyId}
           strategy={activeStrategy}
           aggregate={aggregate}
           events={events}
@@ -1051,12 +1213,10 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
           eventsEtag={eventsEtag}
         />
       ) : (
-        <AggregateView
+        <TradingRoomDefaultEntry
           aggregate={aggregate}
-          events={events}
-          eventsLoading={eventsLoading}
-          eventsEtag={eventsEtag}
-          onStrategySelect={(id) => handleStrategySelect(id)}
+          onOpenWorkshop={onOpenWorkshop}
+          onStrategySelect={handleStrategySelect}
         />
       )}
     </div>
