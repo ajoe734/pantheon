@@ -24,8 +24,8 @@ implementation. Parent ownership and review decide how to absorb this packet.
 | `AI_COLLABORATION_GUIDE.md` | L0 state coordinates ownership; support packets do not override canonical architecture or policy truth. |
 | `.orchestrator/task-briefs/ag_dynui_prod_006_sidecar_bff_handoff.md` | Sidecar scope is support-only: BFF query gap, operator journey, frontend handoff materials; no canonical truth changes. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Meaningful support-doc work should be committed through the task workflow with explicit scope. |
-| `.orchestrator/skills/task-closeout-finalization.md` | Read for the closeout shape this sidecar will need once it reaches `review_approved`; not applied yet since this run starts the sidecar in `in_progress`. |
-| `python3 scripts/ai_status.py show AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF` | Sidecar is `in_progress`, owner `Claude`, reviewer `Claude2`, `depends_on` is `AG-DYNUI-PROD-001` and `AG-DYNUI-PROD-004` only (not the full parent dependency set). |
+| `.orchestrator/skills/task-closeout-finalization.md` | Closeout applies now: this sidecar is `review_approved` and the owner must make the approved support state durable before `done`. |
+| `AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF` | Sidecar is `review_approved`, owner `Claude`, reviewer `Claude2`, `depends_on` is `AG-DYNUI-PROD-001` and `AG-DYNUI-PROD-004` only (not the full parent dependency set), with `review_notes_zh` confirming the route inventory, gap table, and dependency snapshot were verified against current code. |
 | `python3 scripts/ai_status.py show AG-DYNUI-PROD-006` | Parent is `todo`, owner `Codex`, reviewer `Claude2`, depends on all of `AG-DYNUI-PROD-001..005`; parent branch `task/AG-DYNUI-PROD-006` has not been created yet. |
 | `python3 scripts/ai_status.py show AG-DYNUI-PROD-001` / `-004` (archive) | Both are `done`. PROD-001 merged in PR #2851 (source/deploy truth restored). PROD-004 merged in PR #2855 (Trading Room diagnostics + cache policy), with hosted probe already passing. |
 | `python3 scripts/ai_status.py show AG-DYNUI-PROD-002` / `-003` / `-005` | PROD-002 is `review` (standalone Agora shell). PROD-003 is `review_approved` (dynamic default entry into Trading Room). PROD-005 is `todo` (dynamic workflow closeout: proposal preview, grid editor, widget revision drawer, version/rollback wiring) — this is the task that must land before the E2E flow in this packet has full frontend coverage. |
@@ -283,3 +283,42 @@ owner (`Codex`) as support material. It should not be treated as
 implementation approval by itself, and it does not modify
 `services/control-plane/bff/agora/trading_room/router.py`,
 `execute-plans/src/lib/bff-v1/agora/tradingRoom.ts`, or any other runtime file.
+
+---
+
+## 11. Sidecar Closeout State
+
+`Claude2` approved this packet (recorded in `ai-status.json` /
+`AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF`)
+after independently verifying the route inventory, frontend client gap table,
+and `AG-DYNUI-PROD-001..005` dependency snapshot against `router.py`,
+`tradingRoom.ts`, and current `ai_status.py show` output, and confirming the
+`execute-plans/e2e` vs `execute-plans/tests/e2e` test-location distinction.
+The task returned to owner `Claude` for finalization.
+
+Closeout re-verification for this finalization pass re-read `router.py`,
+`tradingRoom.ts`, `playwright.config.ts`, and current status for
+`AG-DYNUI-PROD-001` through `AG-DYNUI-PROD-006`; the dependency snapshot in
+§4 is unchanged (`PROD-001` done, `PROD-002` review, `PROD-003`
+review_approved, `PROD-004` done, `PROD-005` todo, `PROD-006` todo) and the
+route/gap claims in §3 still hold. No canonical truth, BFF/runtime code, or
+frontend code was touched in this closeout pass — only this packet and the
+mirrored task brief.
+
+Focused closeout verification used:
+
+- `AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF`
+- `AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-001`
+- `AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-002`
+- `AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-003`
+- `AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-004`
+- `AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-005`
+- `AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-006`
+- `git diff --check -- .orchestrator/task-briefs/ag_dynui_prod_006_sidecar_bff_handoff.md support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF.md`
+- `gh pr view 2869 --json number,state,mergeable,mergeStateStatus,statusCheckRollup,autoMergeRequest`
+
+After this closeout commit merges, the owner should run:
+
+```bash
+AI_NAME=Claude ./scripts/ai-status.sh done AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF "Sidecar handoff packet reviewed by Claude2, closeout record merged; support-only BFF/frontend handoff is ready for parent-owner (Codex) absorption."
+```
