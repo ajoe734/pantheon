@@ -119,3 +119,77 @@ Implemented in `ajoe734/execute-plans` PR
   SSE-soak steps; if those are unavailable to this run, a human/CI owner
   should confirm the failure is infra-related, not a regression from this
   change, before merging.
+
+## Review (Claude2, reviewer)
+
+PR #170 was closed unmerged (missing required commit trailers) and replaced
+by [#171](https://github.com/ajoe734/execute-plans/pull/171)
+(`task/AG-DYNUI-PROD-002-agora-standalone-shell-compliant`, commit
+`67c0b0480d0999a2b8318c3d9ad44366f5b2f768`), which carries the identical
+source diff plus the required trailers — see the separate
+`task/AG-DYNUI-PROD-002-docs-pr171` PR for the detailed #170->#171 evidence
+correction in this doc. PR #171 is the PR to merge for this task; its
+`integration-gate` check is green.
+
+Reviewed PR #171 (commit `67c0b0480d0999a2b8318c3d9ad44366f5b2f768`) against
+this task's scope and acceptance criteria. Read the full diff (`App.tsx`,
+`routes/agora.tsx` + new `agora.test.tsx`, `agora/TradingDeskLayout.tsx` +
+test, `platform/PlatformShell.tsx`, `platform/hooks.ts`) and independently
+re-ran the owner's validation from a fresh clone of the PR branch (not just
+trusted the PR description):
+
+- `npx vitest run` (full suite) — 118 files / 1102 tests pass.
+- `npx tsc --noEmit -p .` — no type errors.
+- `npm run build` — production build succeeds (only the pre-existing >500kB
+  chunk-size warning).
+- `npx eslint` on the touched files above — clean, exit 0.
+
+Findings:
+
+- The route restructuring in `App.tsx` correctly moves the whole `/agora`
+  subtree to be a sibling of `/management` (previously both were children of
+  the same `<Route element={<PlatformShellRoute />}>`), so Agora no longer
+  renders Management's `TopBar`/`NotificationCenter`/`JobProgressDrawer`/
+  `HandoffDrawer`/`BulkResultDrawer`/`RollbackSagaDrawer`. Confirmed by
+  `agora.test.tsx`'s `getAllByRole("banner")).toHaveLength(1)` and
+  `queryByLabelText(/notification/i)).toBeNull()` assertions, which pass.
+- Verified the `useParams()` call in the ancestor `AgoraLayoutRoute` (rendered
+  at the parent `/agora` layout route, not the `/agora/strategy-workshop/:workshopId`
+  leaf) really does receive `workshopId`. This looked suspicious at first —
+  React Router v6's `_renderMatches` gives each nesting level its own
+  truncated `matches` slice — but `matchRouteBranch` in
+  `@remix-run/router/dist/router.js` pushes every match in a branch with a
+  reference to the *same* mutable `matchedParams` object, so by the time
+  render happens every match in the branch (including the ancestor's) shares
+  the fully-merged param set. Confirmed empirically too:
+  `npx vitest run src/routes/agora.test.tsx` including
+  `"propagates the :workshopId route param from the leaf route into the
+  servant drawer context"` passes. Not a bug.
+- `useLiveSseConnection()` extraction is a clean shared-lifecycle refactor:
+  `PlatformShell` and `AgoraLayoutRoute` are mutually exclusive route
+  branches (disjoint top-level paths), so there is no double-connect/leak
+  risk from both mounting the hook.
+- `ServantDrawer`'s workshop-context loading/error/loaded states and the
+  mobile full-width-overlay / horizontally-scrolling tab bar are real,
+  BFF-backed behavior (`getWorkshop()`), not fabricated content — matches the
+  "no static placeholder" requirement.
+- Grepped the rest of the app for stale assumptions about Agora being nested
+  under `PlatformShell`: `TopBar`'s Agora nav item (`navigate("/agora")`) now
+  correctly leaves the Management shell entirely rather than staying inside
+  it, which is the intended fix, not a regression.
+
+Acceptance-criteria gap (approving with a flagged closeout condition, not
+blocking): the packet-level `ai-status.json` acceptance list for this task
+still includes "desktop and mobile screenshots show corrected shell" and
+"Close only after ... hosted proof." This task's hosted screenshot evidence
+is explicitly deferred to `AG-DYNUI-PROD-006` (wave 3, "Hosted E2E and
+publish gate for production-level closeout" per this packet's own
+`INDEX.md` wave table), which is a reasonable, disclosed split rather than a
+silent skip — but the owner must not run `ai-status.sh done` on this task
+until either (a) `AG-DYNUI-PROD-006` has produced and linked hosted
+desktop+mobile `/agora/trading-room` screenshots that this task's closeout
+note can cite, or (b) an equivalent hosted/local-dev-server screenshot is
+captured directly for this task. Do not close `AG-DYNUI-PROD-002` to `done`
+on source-only evidence.
+
+Approving to `review_approved`.
