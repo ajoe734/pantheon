@@ -103,10 +103,22 @@ Reviewer should verify:
 4. The packet does not treat existing route/client code as hosted production
    proof.
 
+## Owner Closeout Note
+
+Codex approved the support-only scope and PR #2854 merged the original packet
+at `1965dda3d271943c062a6c49c17f746b9338cc84`. Owner finalization keeps this
+packet as downstream handoff material only; parent truth-map absorption and
+runtime/frontend implementation remain owned by their parent and downstream
+tasks.
+
 ## Verification Notes
 
 Verification was source inspection only. No runtime, frontend, canonical,
 registry, governance, deploy, or hosted environment changes were made.
+
+Owner closeout additionally confirmed the active task is `review_approved`,
+PR #2854 is merged with required checks green, and the finalization diff is
+limited to this task brief plus this support packet.
 
 Commands used:
 
@@ -114,6 +126,10 @@ Commands used:
 git status -sb
 git branch --show-current
 git remote -v
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-DYNUI-PROD-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2
+gh pr view 2854 --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,url,statusCheckRollup
+git diff --check
+git diff --stat
 sed -n '1,240p' AI_COLLABORATION_GUIDE.md
 sed -n '1,260p' .orchestrator/task-briefs/ag_dynui_prod_001_sidecar_bff_handoff_followup_2.md
 sed -n '1,240p' .orchestrator/skills/worker-anchor-commit.md
