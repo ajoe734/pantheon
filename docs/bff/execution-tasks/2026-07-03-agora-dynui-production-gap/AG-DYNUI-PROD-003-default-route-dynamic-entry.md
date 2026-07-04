@@ -210,3 +210,17 @@ channel, requesting the one merge action
 (`gh pr merge 173 --repo ajoe734/execute-plans --merge`) that unblocks
 closeout. No pantheon-side repo action is available this pass beyond this
 note and the notification.
+
+**Re-verification (2026-07-04, pass 20):** confirmed no state change since
+pass 19. `gh pr view 173 --repo ajoe734/execute-plans` shows the identical
+`headRefOid` (`2b054ab9f0ad025c204bbf13251848caf8fe4599`), `OPEN`/
+`MERGEABLE`/`CLEAN`, zero reviews, `autoMergeRequest=null` — the PR has not
+moved since the pass-19 notification (~2.5h prior at time of this check).
+Pantheon-side commits `7b360cb60` and `d0ef9fcec` (pass-19 note) are both
+ancestors of `origin/dev` (tip `869d05258`). `orchestrator_approval_broker`
+MCP is still not resolvable via `ToolSearch`. Not re-sending the human/chair
+notification this pass — one was already sent at pass 19 and the ask is
+unchanged; re-pinging on every single pass would be noise rather than
+signal. The sole remaining blocker is unchanged: a human/chair running
+`gh pr merge 173 --repo ajoe734/execute-plans --merge`. No pantheon-side
+repo action is available this pass beyond this re-verification note.
