@@ -204,3 +204,49 @@ the expected result confirming the client-implementation and
 workshop-handoff gaps remain. The parent commit-subject grep also returns
 no matches; that is the expected result confirming no parent task
 implementation commit exists.
+
+---
+
+## 6. Post-Approval Correction (same day, before closeout merge)
+
+While this packet's original PR (`#2958`) was queued for merge during
+closeout, `ajoe734/pantheon` PR `#2959` ("AG-DYNUI-PROD-002: record hosted
+shell proof") merged directly into `dev` at `2026-07-04T12:51:34Z` and a
+human closed `#2958` as stale/superseded with this note:
+
+> Closing this support-only sidecar as stale/superseded. PR #2959 has now
+> merged the cycle-break evidence that AG-DYNUI-PROD-002's hosted shell
+> screenshot gate is satisfied by #2955; this packet still states that 002
+> is pending AG-DYNUI-PROD-006, which would preserve the 002 -> 005 -> 006
+> dependency cycle. Parent AG-DYNUI-PROD-005 remains todo and still needs
+> the real V11 workflow implementation.
+
+This is a factual correction to one line in §3 of this packet (the
+"Dependency status" row), not a change to the packet's core conclusion:
+
+- **Corrected:** `AG-DYNUI-PROD-002`'s hosted `/agora/trading-room` shell
+  screenshot evidence is already satisfied by merged pantheon PR `#2955`
+  (desktop/mobile/default-route evidence). `AG-DYNUI-PROD-006` is the full
+  V11 hosted E2E gate, not the remaining shell-architecture gate for `002`.
+  Waiting on `006` before finalizing `002` created an artificial
+  `002 -> 006 -> 005 -> 002` dependency cycle (`006` depends on `005`,
+  `005` depends on `002`). `AG-DYNUI-PROD-002`'s own `next` field (as of
+  `2026-07-04T12:45:05Z`) now directs its owner to re-run closeout against
+  the `#2955` evidence and finalize `002` to `done` through the normal
+  merged-delivery gate, or raise an explicit blocker naming any remaining
+  `002`-only acceptance gap, instead of waiting on `006`.
+- **Unchanged:** `AG-DYNUI-PROD-005` itself (this packet's actual subject)
+  remains `todo`, with no parent branch, PR, or implementation commit, and
+  every gap identified in §3 (unmounted components, no-op grid callbacks,
+  missing V11 workspace clients, `onAddToTradingRoom` not threaded through
+  `agora-main.tsx`, unchanged allowlist/blocklist, and the SSE stub) is
+  still present. The PR-close comment itself confirms this: "Parent
+  AG-DYNUI-PROD-005 remains todo and still needs the real V11 workflow
+  implementation."
+
+Net effect: this correction removes a stale secondary claim about
+`AG-DYNUI-PROD-002`'s dependency posture; it does not change this packet's
+finding that the `AG-DYNUI-PROD-005` implementation gap is unmoved. The
+branch (`task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9`) was not
+deleted when `#2958` closed, so this correction is pushed as a new commit
+on the same branch and re-opened as a fresh PR for merge.
