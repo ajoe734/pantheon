@@ -182,7 +182,7 @@ def test_bff_strategies_actions_use_final_envelope_and_precondition() -> None:
             ok = client.post(
                 f"/bff/actions/strategy/{strategy_id}/edit",
                 json={"reason": "operator review"},
-                headers={**HEADERS, "Idempotency-Key": "strategy-action-001"},
+                headers={**HEADERS, "Idempotency-Key": f"strategy-action-{strategy_id}"},
             )
             assert ok.status_code == 202, ok.text
             assert get_catalog_entry(CommandType.STRATEGY_ACTION.value) is not None
@@ -284,7 +284,18 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 headers={**HEADERS, "Idempotency-Key": "create-persona-001"},
             )
             assert create.status_code == 201, create.text
-            persona_id = create.json()["data"]["id"]
+            create_body = create.json()
+            created = create_body["data"]
+            persona_id = created["id"]
+            assert created["state"] == "paper_running"
+            assert created["capitalMode"] == "paper"
+            assert created["deploymentStage"] == "paper"
+            assert created["capitalPoolId"].startswith("paper-pool-")
+            assert created["runtimeId"].startswith("runtime-")
+            assert created["runtimeBindingId"].endswith("-paper")
+            assert create_body["meta"]["create_flow"] == "one_shot_paper_running"
+            assert create_body["meta"]["live_capital_side_effects"] is False
+            assert create_body["meta"]["human_review_required_for_live"] is True
 
             bff_main._PERSONA_BFF_OVERLAY.clear()
             bff_main.read_store = ReadSurfaceStore(
@@ -294,6 +305,21 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail.status_code == 200, detail.text
             assert detail.json()["data"]["id"] == persona_id
+            assert detail.json()["data"]["state"] == "paper_running"
+            assert detail.json()["data"]["capitalMode"] == "paper"
+            assert detail.json()["data"]["runtimeId"] == created["runtimeId"]
+
+            fleet = client.get(f"/bff/management/persona-fleet?persona={persona_id}", headers=HEADERS)
+            assert fleet.status_code == 200, fleet.text
+            rows = {item["persona_id"]: item for item in fleet.json()["data"]["items"]}
+            row = rows[persona_id]
+            assert row["state"] == "paper_running"
+            assert row["capital_mode"] == "paper"
+            assert row["capital_pool_id"] == created["capitalPoolId"]
+            assert row["runtime_id"] == created["runtimeId"]
+            assert row["runtime_binding_id"] == created["runtimeBindingId"]
+            assert row["runtime_binding"]["state"] == "running"
+            assert row["deployment_stage"] == "paper"
 
             for subpath in ("route-policy", "activity", "evaluations", "memory", "audit"):
                 resp = client.get(f"/bff/personas/{persona_id}/{subpath}", headers=HEADERS)
@@ -301,6 +327,25 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 body = resp.json()
                 assert "data" in body or "items" in body
                 assert "meta" in body
+        finally:
+            bff_main.read_store = original
+
+
+def test_bff_personas_create_rejects_initial_live_or_canary_mode() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            for mode in ("live", "canary"):
+                response = client.post(
+                    "/bff/personas",
+                    json={"name": f"{mode.title()} Persona", "initialMode": mode},
+                    headers={**HEADERS, "Idempotency-Key": f"create-persona-{mode}"},
+                )
+                assert response.status_code == 422, response.text
+                err = _error(response)
+                assert err["code"] == "VALIDATION_FAILED"
+                assert err["details"]["precondition_failed"] == "capital_mode"
         finally:
             bff_main.read_store = original
 
@@ -362,7 +407,7 @@ def test_bff_personas_actions_route_through_command_envelope() -> None:
             ok = client.post(
                 f"/bff/actions/persona/{persona_id}/retire",
                 json={"reason": "decommission"},
-                headers={**HEADERS, "Idempotency-Key": "persona-action-001"},
+                headers={**HEADERS, "Idempotency-Key": f"persona-action-{persona_id}"},
             )
             assert ok.status_code == 202, ok.text
             assert get_catalog_entry(CommandType.PERSONA_ACTION.value) is not None
