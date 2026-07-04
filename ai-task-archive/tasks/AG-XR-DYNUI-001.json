@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-DYNUI-001",
+  "archived_at": "2026-06-29T05:59:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "reconstructed_by": "AG-DYNUI-PROD-001",
+  "reconstruction_sources": [
+    "support/sidecars/AG-XR-DYNUI-001/AG-XR-DYNUI-001-SIDECAR-ACCEPTANCE.md",
+    "support/sidecars/AG-XR-DYNUI-001/AG-XR-DYNUI-001-SIDECAR-REVIEW.md",
+    "https://github.com/ajoe734/pantheon/pull/2593",
+    "https://github.com/ajoe734/execute-plans/pull/80"
+  ],
+  "task": {
+    "id": "AG-XR-DYNUI-001",
+    "title": "Dynamic Trading Room OpenAPI and generated frontend types",
+    "phase": "EPIC AGORA-DESIGN-PACK-DYNUI / Cross-repo contracts",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-DYNUI-001",
+      "AG-BE-DYNUI-002"
+    ],
+    "artifacts": [
+      "services/control-plane/openapi/agora_v1_5.openapi.yaml",
+      "services/control-plane/specs/agora/bundle_index.v1_5.json",
+      "services/control-plane/specs/agora/v6/capability_manifest_v1_5.json",
+      "execute-plans/src/lib/bff-v1/agora/"
+    ],
+    "acceptance": [
+      "Agora v1.5 dynamic Trading Room contract bundle is published.",
+      "Generated frontend contract evidence exists.",
+      "No arbitrary executable UI contract is introduced."
+    ],
+    "next": "Reconstructed terminal archive: Pantheon PR #2593 and execute-plans PR #80 merged; execute-plans PR #80 had a visible failed integration-gate and must not be treated as production proof.",
+    "last_update": "2026-06-29T05:59:24Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-29T05:59:24Z",
+      "reconstructed": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "implementation_pr": "https://github.com/ajoe734/pantheon/pull/2593",
+      "commit": "ab19264f01b9e2984092edad8ee15a781fa398f5",
+      "frontend_pr": "https://github.com/ajoe734/execute-plans/pull/80",
+      "frontend_merge_commit": "5e5a260160fd3d35ac29da23ddc299434686dee6",
+      "frontend_check_caveat": "execute-plans PR #80 was merged but its visible integration-gate check concluded FAILURE.",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}
