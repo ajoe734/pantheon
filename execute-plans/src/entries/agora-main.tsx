@@ -90,6 +90,7 @@ function AgoraApp() {
       <TradingRoomPage
         strategyId={strategyId}
         onStrategySelect={handleStrategySelect}
+        onOpenWorkshop={() => handleTabChange("strategy-workshop")}
       />
     );
   } else {

@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DYNUI-004",
+  "archived_at": "2026-06-29T13:02:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "reconstructed_by": "AG-DYNUI-PROD-001",
+  "reconstruction_sources": [
+    ".orchestrator/task-briefs/ag_fe_dynui_004.md",
+    "support/evidence/AG-FE-DYNUI-004/owner-closeout.md",
+    "https://github.com/ajoe734/execute-plans/pull/84",
+    "https://github.com/ajoe734/pantheon/pull/2616"
+  ],
+  "task": {
+    "id": "AG-FE-DYNUI-004",
+    "title": "Widget adjustment drawer and before-after revision flow",
+    "phase": "EPIC AGORA-DESIGN-PACK-DYNUI / Frontend",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-DYNUI-002",
+      "AG-FE-DYNUI-003",
+      "AG-BE-DYNUI-002"
+    ],
+    "artifacts": [
+      ".orchestrator/task-briefs/ag_fe_dynui_004.md",
+      "support/evidence/AG-FE-DYNUI-004/owner-closeout.md",
+      "execute-plans/src/agora/widgets/WidgetRevisionDrawer.tsx"
+    ],
+    "acceptance": [
+      "Widget-context adjustment drawer exists.",
+      "Before/after revision proposal flow is exposed without direct mutation.",
+      "Revision actions remain controlled and validator-backed."
+    ],
+    "next": "Reconstructed terminal archive: execute-plans PR #84 and Pantheon closeout PR #2616 merged; full hosted server-backed workflow remains downstream.",
+    "last_update": "2026-06-29T13:02:58Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-29T13:02:58Z",
+      "reconstructed": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "frontend_pr": "https://github.com/ajoe734/execute-plans/pull/84",
+      "frontend_merge_commit": "ff1b3a3bb744f40939a9c025bcef2b58ba796fb3",
+      "closeout_pr": "https://github.com/ajoe734/pantheon/pull/2616",
+      "commit": "7d6f34fb75d684e1d4d6ebaf3e9df741baeb7be6",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

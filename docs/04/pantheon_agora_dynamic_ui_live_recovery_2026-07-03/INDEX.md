@@ -1,6 +1,6 @@
 # Agora Dynamic UI Live Recovery Archive - 2026-07-03
 
-Status: ready for fleet execution
+Status: live recovery verified; owner closeout pending task archival
 
 Execution packet:
 
@@ -40,7 +40,43 @@ verification.
 - Deployed OpenAPI evidence: Trading Room BFF routes now expose the
   `pantheon_session` cookie parameter.
 
-## Current Live Failure
+## Final Live Verification - 2026-07-03
+
+The auth-header and backend aggregate failures are now verified fixed in the
+hosted dev environment.
+
+- execute-plans frontend auth fallback PR:
+  `https://github.com/ajoe734/execute-plans/pull/168`
+- execute-plans merge commit:
+  `ffbc2357f23b1a728ed6794d2231356ff28f16ed`
+- execute-plans dev FE deploy run: `28664312966`
+- execute-plans FE-BFF integration gate: `28664312972` - success
+- Pantheon backend aggregate fix PR:
+  `https://github.com/ajoe734/pantheon/pull/2834`
+- Pantheon merge commit:
+  `2dd82311dcd95b9ebe4ed33a8d16666ecbb82791`
+- Pantheon Nonprod Deploy run: `28664660985` - success
+- Live browser probe time: `2026-07-03T14:01:55Z`
+- Live browser URL:
+  `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/trading-room`
+- Probe artifact: `/tmp/agora-live-after-auth002.png`
+
+Verified browser-session BFF responses:
+
+- `/bff/me`: `200`
+- `/bff/agora/trading-room`: `200`
+- `/bff/agora/trading-room/decision-events`: `200`
+- `/bff/events/stream`: `200`
+- `/bff/management/shell-summary`: `200`
+
+The page no longer shows `Failed to load Trading Room`, and the hosted view is
+the dark Agora layout rather than the earlier white fallback layout. The live
+Trading Room still shows empty-state copy such as `All Strategies` and
+`Position Actions` because the BFF aggregate currently returns empty strategy,
+decision-event, and position arrays; that is a data-driven empty state, not a
+static-page replacement.
+
+## Historical Live Failure
 
 After PR #2808 deployed, live probing still showed:
 
@@ -130,4 +166,3 @@ This recovery is complete only when all of the following are true:
   session.
 - Closeout records PR number, merge commit, deploy run, live probe artifacts,
   and residual risks.
-

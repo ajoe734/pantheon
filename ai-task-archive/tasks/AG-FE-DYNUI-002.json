@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DYNUI-002",
+  "archived_at": "2026-06-29T08:40:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "reconstructed_by": "AG-DYNUI-PROD-001",
+  "reconstruction_sources": [
+    ".orchestrator/task-briefs/ag_fe_dynui_002.md",
+    "support/sidecars/AG-FE-DYNUI-002/AG-FE-DYNUI-002-SIDECAR-REVIEW.md",
+    "https://github.com/ajoe734/execute-plans/pull/81",
+    "https://github.com/ajoe734/pantheon/pull/2602"
+  ],
+  "task": {
+    "id": "AG-FE-DYNUI-002",
+    "title": "V11 Trading Room proposal preview and workspace shell",
+    "phase": "EPIC AGORA-DESIGN-PACK-DYNUI / Frontend",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-DYNUI-001",
+      "AG-BE-DYNUI-003",
+      "AG-FE-DYNUI-001"
+    ],
+    "artifacts": [
+      ".orchestrator/task-briefs/ag_fe_dynui_002.md",
+      "support/sidecars/AG-FE-DYNUI-002/",
+      "execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx",
+      "execute-plans/src/agora/trading-room/WorkspaceProposalPreview.tsx"
+    ],
+    "acceptance": [
+      "V11 generation progress and proposal preview exist.",
+      "Workspace shell renders from TradingRoomWorkspace state.",
+      "DashboardRecipeV2 is not substituted for the V11 workspace proposal."
+    ],
+    "next": "Reconstructed terminal archive: execute-plans PR #81 and Pantheon closeout PR #2602 merged; grid edit, revision, version history, rollback, and hosted E2E remain downstream.",
+    "last_update": "2026-06-29T08:40:13Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-29T08:40:13Z",
+      "reconstructed": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "frontend_pr": "https://github.com/ajoe734/execute-plans/pull/81",
+      "frontend_merge_commit": "64a963119e85f2e91efbedbd83c4fbd97c7c2e20",
+      "closeout_pr": "https://github.com/ajoe734/pantheon/pull/2602",
+      "commit": "d65ae35c98702427515b13e34380b794a4f6b607",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

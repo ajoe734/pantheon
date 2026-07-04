@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-DYNUI-002",
+  "archived_at": "2026-06-29T01:11:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "reconstructed_by": "AG-DYNUI-PROD-001",
+  "reconstruction_sources": [
+    "support/sidecars/AG-BE-DYNUI-002/AG-BE-DYNUI-002-SIDECAR-ACCEPTANCE.md",
+    "https://github.com/ajoe734/pantheon/pull/2581"
+  ],
+  "task": {
+    "id": "AG-BE-DYNUI-002",
+    "title": "Trading Room widget revisions, versions, and rollback",
+    "phase": "EPIC AGORA-DESIGN-PACK-DYNUI / Backend",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-DYNUI-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/trading_room/",
+      "services/control-plane/specs/agora/trading_room_workspace.schema.json",
+      "support/sidecars/AG-BE-DYNUI-002/AG-BE-DYNUI-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "WidgetRevisionProposal lifecycle, accept/keep-copy/cancel, versions, change log, and rollback backend foundation is present.",
+      "Direct servant widget patching remains rejected.",
+      "DashboardRecipeV2 rollback is not substituted for Trading Room workspace rollback."
+    ],
+    "next": "Reconstructed terminal archive: PR #2581 merged; frontend/runtime production behavior remains downstream.",
+    "last_update": "2026-06-29T01:11:38Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-29T01:11:38Z",
+      "reconstructed": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "implementation_pr": "https://github.com/ajoe734/pantheon/pull/2581",
+      "commit": "b3c8e654be5502be7c97e69d69f8aabee3a2ab53",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

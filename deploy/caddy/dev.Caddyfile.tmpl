@@ -36,6 +36,18 @@ __FE_HOST__ {
 		Strict-Transport-Security "max-age=31536000"
 		-Server
 	}
+	@release_manifest path /deployment.json
+	header @release_manifest Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+
+	@hashed_assets path /assets/*
+	header @hashed_assets Cache-Control "public, max-age=31536000, immutable"
+
+	@spa_shell {
+		not path /assets/*
+		not path /deployment.json
+	}
+	header @spa_shell Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+
 	encode zstd gzip
 	try_files {path} /index.html
 	file_server
