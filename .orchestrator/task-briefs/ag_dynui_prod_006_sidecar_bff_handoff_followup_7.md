@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Support-only AG-DYNUI-PROD-006 follow-up 7 approved for parent owner absorption; all facts independently re-verified.
+- Next: Closeout finalized; owner re-verified reviewer-approved state was still true (PR #171/#173 still OPEN/MERGEABLE/CLEAN/unreviewed, hosted deployment.json still dd597405e014cc91cf73f4ea2e96a561fcbf9c61, parent AG-DYNUI-PROD-006 still todo) and ran `ai-status.sh done`.
 
 ## Summary
 平行支援 AG-DYNUI-PROD-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
