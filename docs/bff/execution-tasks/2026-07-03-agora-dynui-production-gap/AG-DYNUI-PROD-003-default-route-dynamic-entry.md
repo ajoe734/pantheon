@@ -224,3 +224,14 @@ unchanged; re-pinging on every single pass would be noise rather than
 signal. The sole remaining blocker is unchanged: a human/chair running
 `gh pr merge 173 --repo ajoe734/execute-plans --merge`. No pantheon-side
 repo action is available this pass beyond this re-verification note.
+
+**Re-verification (2026-07-04, pass 21):** `execute-plans#173` unchanged —
+same `headRefOid` (`2b054ab9f0ad025c204bbf13251848caf8fe4599`), `OPEN`/
+`MERGEABLE`/`CLEAN`, zero reviews, `autoMergeRequest=null`. This pass's
+actual work: the pass-20 note's pantheon PR (#2944) had gone `BEHIND` dev
+(dev is advancing fast across parallel tasks); merged `origin/dev` into
+`task/AG-DYNUI-PROD-003` and pushed, which let PR #2944 clear checks and
+auto-merge (merged `2026-07-04T11:14:24Z`, merge commit `d4b72d4a8`), so
+the pass-20 note is now live on `dev`. Not re-pinging the human/chair this
+pass — the ask is unchanged from pass 19. Sole remaining blocker: a
+human/chair merging `ajoe734/execute-plans#173`.
