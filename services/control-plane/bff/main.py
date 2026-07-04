@@ -789,11 +789,33 @@ def _pack_d_direct_error_response(
     )
 
 
+def _with_cors_actual_response_headers(request: Request, headers: Dict[str, str]) -> Dict[str, str]:
+    response_headers = dict(headers)
+    origin = request.headers.get("origin")
+    if not origin or not _cors_origin_allowed(origin):
+        return response_headers
+
+    response_headers.setdefault("Access-Control-Allow-Origin", _normalized_origin(origin))
+    response_headers.setdefault("Access-Control-Allow-Credentials", "true")
+    response_headers.setdefault("Access-Control-Expose-Headers", ", ".join(_CORS_EXPOSE_HEADERS))
+
+    vary_value = response_headers.get("Vary") or response_headers.get("vary") or ""
+    vary_parts = [part.strip() for part in vary_value.split(",") if part.strip()]
+    if "Origin" not in {part.title() for part in vary_parts}:
+        vary_parts.append("Origin")
+    if vary_parts:
+        response_headers["Vary"] = ", ".join(vary_parts)
+    return response_headers
+
+
 def _pack_d_http_exception_response(
     request: Request,
     exc: StarletteHTTPException,
 ) -> JSONResponse:
-    headers = dict(getattr(exc, "headers", None) or {})
+    headers = _with_cors_actual_response_headers(
+        request,
+        dict(getattr(exc, "headers", None) or {}),
+    )
     correlation_id = _error_response_correlation_id(request, headers)
     detail = exc.detail
     source = detail

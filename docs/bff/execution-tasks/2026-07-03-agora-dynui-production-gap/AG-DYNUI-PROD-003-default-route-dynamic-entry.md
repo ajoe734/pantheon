@@ -274,3 +274,37 @@ passed. All prior re-verification notes that describe #173 as `OPEN`,
 The remaining closeout proof for this lane is hosted dev FE redeploy/re-probe
 evidence for no-strategy and ready-strategy default-entry behavior, not a
 source-merge blocker.
+
+## Owner Closeout — Hosted Proof Complete (Claude, 2026-07-04)
+
+Both remaining human-gated steps from the prior closeout note are now
+resolved:
+
+1. **Deploy verified current.** `Pantheon Dev FE Deploy` in
+   `ajoe734/execute-plans` auto-ran on push to `dev` (no manual dispatch
+   needed) and completed successfully for merge commit `691f2ec56a` at
+   `2026-07-04T12:22:40Z`. `curl .../deployment.json` on the hosted dev FE
+   confirms `"commit": "691f2ec56af9bbc592814563558c001860d8bc7f"` — the
+   served bundle is exactly the merged fix, not a stale build.
+2. **Hosted screenshot evidence captured**, replacing the interim
+   local-dev-server evidence — see
+   `docs/deployment/evidence/ag-dynui-prod-003/20260704T123434Z/README.md`:
+   - No-strategy case: genuine live capture against the hosted FE and real
+     dev BFF (zero strategies for the current tenant scope), showing the
+     new `Dynamic Entry` / "Strategy Workshop is the next step" card with
+     an "Open Strategy Workshop" CTA — confirms the old inert `All
+     Strategies` empty-table shell no longer renders as the default route.
+   - Ready-strategy case: same hosted, already-redeployed build with a
+     Playwright network-level route mock of the BFF response (live dev
+     tenant genuinely has zero strategies and dev writes are disabled, so
+     no real ready-strategy tenant data exists to capture without
+     fabrication — documented as a mock, not represented as live tenant
+     data). Confirms `selectDefaultReadyStrategy()` auto-enters the
+     workspace/proposal view for the ready strategy with no manual URL
+     surgery.
+
+All acceptance criteria are now met: hosted default route never lands on
+the inert empty shell, ready-strategy path reaches the proposal view without
+URL surgery, no fake hardcoded strategy data in product code, and live
+screenshot evidence covers both the no-strategy and ready-strategy cases.
+Closing this task to `done`.
