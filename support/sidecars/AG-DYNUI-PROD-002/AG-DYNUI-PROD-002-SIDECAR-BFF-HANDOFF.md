@@ -25,8 +25,8 @@ to absorb this packet.
 | `AI_COLLABORATION_GUIDE.md` | L0 state coordinates work; support packets do not override L1/L2 architecture or task ownership. |
 | `.orchestrator/task-briefs/ag_dynui_prod_002_sidecar_bff_handoff.md` | Sidecar scope is BFF query gap, operator journey, and frontend handoff material only. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Meaningful docs/support work should be committed through the task branch workflow with explicit scope. |
-| `.orchestrator/skills/task-closeout-finalization.md` | Closeout is separate from handoff; this sidecar is not `review_approved` and does not move to `done` here. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF` | Sidecar is `in_progress`, owner `Codex`, reviewer `Claude`, artifact path is this file. |
+| `.orchestrator/skills/task-closeout-finalization.md` | A `review_approved` task returns to the owner for finalization, task-scoped commit/PR flow, and `done` only after merge. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF` | Sidecar is `review_approved`, owner `Codex`, reviewer `Claude`, artifact path is this file, with reviewer notes recorded in status. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-DYNUI-PROD-002` | Parent is `in_progress`, owner `Claude`, reviewer `Codex`; acceptance requires an intentional standalone shell or an approved exception while preserving auth/live state. |
 | `docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-002-standalone-workbench-shell.md` | Parent scope is shell architecture, deep-linking, mobile safety, and real contextual shell state or blocker. |
 | `docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md` | Production gap remains: Agora is still under global `PlatformShell` plus tab shell, and default route/workflow proof remains incomplete. |
@@ -252,7 +252,25 @@ Reviewer should verify:
 
 ---
 
-## 10. Verification Notes
+## 10. Reviewer Approval And Finalization
+
+Reviewer approval recorded in `ai-status`:
+
+- Verified against execute-plans `origin/dev` commit
+  `702b236adb76a4e9a2029fce1a4b9c487f69a290`.
+- Confirmed the packet's route composition claims are accurate.
+- Confirmed this task only added support material and did not touch canonical
+  truth, BFF/runtime code, frontend code, registries, governance, or deployment
+  state.
+- Approved the sidecar packet and returned it to owner `Codex` for closeout.
+
+Finalization remains support-only. The owner closeout commit should include
+this packet plus the task-scoped brief/status record, then follow the task PR
+flow before `AI_NAME=Codex ./scripts/ai-status.sh done`.
+
+---
+
+## 11. Verification Notes
 
 Verification was source inspection and anonymous hosted read probing only. No
 runtime, frontend, canonical, registry, governance, deploy, or hosted
@@ -298,4 +316,5 @@ curl -sS https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/health
 curl -sS https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room
 curl -sS https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/me
 git diff --check -- support/sidecars/AG-DYNUI-PROD-002/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF.md
+AI_NAME=Codex ./scripts/ai-status.sh show AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF
 ```
