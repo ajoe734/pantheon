@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DYNUI-003",
+  "archived_at": "2026-06-29T09:25:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "reconstructed_by": "AG-DYNUI-PROD-001",
+  "reconstruction_sources": [
+    ".orchestrator/task-briefs/ag_fe_dynui_003.md",
+    "support/evidence/AG-FE-DYNUI-003/owner-closeout.md",
+    "https://github.com/ajoe734/execute-plans/pull/82",
+    "https://github.com/ajoe734/pantheon/pull/2606"
+  ],
+  "task": {
+    "id": "AG-FE-DYNUI-003",
+    "title": "Trading Room grid editor and personalization events",
+    "phase": "EPIC AGORA-DESIGN-PACK-DYNUI / Frontend",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-DYNUI-002"
+    ],
+    "artifacts": [
+      ".orchestrator/task-briefs/ag_fe_dynui_003.md",
+      "support/evidence/AG-FE-DYNUI-003/owner-closeout.md",
+      "execute-plans/src/agora/pages/trading-room/",
+      "execute-plans/src/agora/dashboard/"
+    ],
+    "acceptance": [
+      "Trading Room grid editor supports the V11 edit runtime slice.",
+      "Personalization/layout events are wired through controlled BFF-facing helpers.",
+      "No broker, capital, direct order, or arbitrary code surface is introduced."
+    ],
+    "next": "Reconstructed terminal archive: execute-plans PR #82 and Pantheon closeout PR #2606 merged; widget revision, version history, rollback, and hosted E2E remain downstream.",
+    "last_update": "2026-06-29T09:25:31Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-29T09:25:31Z",
+      "reconstructed": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "frontend_pr": "https://github.com/ajoe734/execute-plans/pull/82",
+      "frontend_merge_commit": "98516d129e377842f1d5866af61e326134751439",
+      "closeout_pr": "https://github.com/ajoe734/pantheon/pull/2606",
+      "commit": "28ac6a95578192a22db7f536e64024d955c40fe7",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}
