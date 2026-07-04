@@ -97,3 +97,7 @@ Publication state: task implementation and reviewer notes are ready for the
 task PR into `dev`. Hosted proof is still pending because the dev frontend
 bundle cannot contain this branch until the PR merges and the human-gated dev
 deploy workflow dispatch completes.
+
+PR branch refresh: after PR #2855 opened, `origin/dev` advanced with the
+AG-DYNUI-PROD-004 sidecar handoff docs; Codex2 merged that tip into this task
+branch and kept the owner closeout evidence as the final task-owned commit.
