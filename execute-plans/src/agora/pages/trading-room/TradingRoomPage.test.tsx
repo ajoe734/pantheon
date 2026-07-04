@@ -182,10 +182,10 @@ describe("TradingRoomPage", () => {
     expect(screen.getByTestId("strategy-lens-switcher")).toBeDefined();
   });
 
-  it("shows all-strategies button in the switcher", async () => {
+  it("shows workbench entry button in the switcher", async () => {
     render(<TradingRoomPage />);
     await screen.findByTestId("trading-room-page");
-    expect(screen.getByTestId("strategy-lens-all")).toBeDefined();
+    expect(screen.getByTestId("strategy-lens-all").textContent).toContain("Workbench Entry");
   });
 
   it("renders each strategy as a selectable lens", async () => {
@@ -195,24 +195,83 @@ describe("TradingRoomPage", () => {
     expect(screen.getByTestId("strategy-lens-strat-002")).toBeDefined();
   });
 
-  it("renders the aggregate view by default (no strategyId)", async () => {
+  it("enters the highest-value ready strategy workspace by default", async () => {
     render(<TradingRoomPage />);
-    await screen.findByTestId("trading-room-aggregate-view");
+    await screen.findByTestId("strategy-workspace-strat-001");
+    await screen.findByTestId("strategy-recipe-workspace");
+    expect(dashboardModule.getDashboardRecipeById).toHaveBeenCalledWith("recipe-001");
+    expect(screen.queryByTestId("trading-room-aggregate-view")).toBeNull();
+    expect(screen.getByTestId("strategy-lens-strat-001").getAttribute("aria-selected")).toBe("true");
   });
 
-  it("shows queue summary strip in the aggregate view", async () => {
+  it("shows queue summary strip in the default entry when no strategy is ready", async () => {
+    vi.mocked(tradingRoomModule.getTradingRoom).mockResolvedValue({
+      ...MOCK_AGGREGATE,
+      strategies: [
+        {
+          ...MOCK_AGGREGATE.strategies[0],
+          readiness_state: "conditional",
+          dashboard_recipe_id: undefined,
+        },
+        MOCK_AGGREGATE.strategies[1],
+      ],
+    });
     render(<TradingRoomPage />);
+    await screen.findByTestId("trading-room-default-entry");
     await screen.findByTestId("queue-summary-strip");
     expect(screen.getByTestId("queue-entry-count").textContent).toContain("2");
     expect(screen.getByTestId("queue-reduce-count").textContent).toContain("1");
     expect(screen.getByTestId("queue-review-count").textContent).toContain("1");
   });
 
-  it("renders strategy list table in the aggregate view", async () => {
+  it("renders readiness rows instead of an inert aggregate table when no strategy is ready", async () => {
+    vi.mocked(tradingRoomModule.getTradingRoom).mockResolvedValue({
+      ...MOCK_AGGREGATE,
+      strategies: [
+        {
+          ...MOCK_AGGREGATE.strategies[0],
+          readiness_state: "conditional",
+          dashboard_recipe_id: undefined,
+        },
+        MOCK_AGGREGATE.strategies[1],
+      ],
+    });
     render(<TradingRoomPage />);
-    await screen.findByTestId("strategy-list-table");
-    expect(screen.getByTestId("strategy-row-strat-001")).toBeDefined();
-    expect(screen.getByTestId("strategy-row-strat-002")).toBeDefined();
+    await screen.findByTestId("trading-room-readiness-entry");
+    expect(screen.getByTestId("trading-room-readiness-strat-001")).toBeDefined();
+    expect(screen.getByTestId("trading-room-readiness-strat-002")).toBeDefined();
+    expect(screen.queryByTestId("trading-room-aggregate-view")).toBeNull();
+  });
+
+  it("renders workshop intake as the default entry when the BFF returns no strategies", async () => {
+    vi.mocked(tradingRoomModule.getTradingRoom).mockResolvedValue({
+      ...MOCK_AGGREGATE,
+      strategies: [],
+      queue_summary: { entry: 0, add: 0, reduce: 0, exit: 0, review: 0 },
+    });
+    render(<TradingRoomPage />);
+    const entry = await screen.findByTestId("trading-room-default-entry");
+    expect(entry.getAttribute("data-entry-state")).toBe("empty");
+    expect(screen.getByTestId("trading-room-workshop-empty-entry")).toBeDefined();
+    expect(screen.queryByText("No strategies in the Trading Room.")).toBeNull();
+  });
+
+  it("routes the default entry workshop CTA through the parent callback", async () => {
+    const onOpenWorkshop = vi.fn();
+    vi.mocked(tradingRoomModule.getTradingRoom).mockResolvedValue({
+      ...MOCK_AGGREGATE,
+      strategies: [
+        {
+          ...MOCK_AGGREGATE.strategies[0],
+          readiness_state: "conditional",
+          dashboard_recipe_id: undefined,
+        },
+      ],
+    });
+    render(<TradingRoomPage onOpenWorkshop={onOpenWorkshop} />);
+    await screen.findByTestId("trading-room-default-entry");
+    fireEvent.click(screen.getByTestId("trading-room-open-workshop"));
+    expect(onOpenWorkshop).toHaveBeenCalledTimes(1);
   });
 
   it("renders the decision event queue with loaded events", async () => {
