@@ -27,6 +27,11 @@ CRON_ENDPOINT="${BASE_URL}/api/openclaw-adapter/gateway/cron"
 echo "Adapter base URL: ${BASE_URL}"
 echo "Probe job name:   ${JOB_NAME}"
 
+# Gateway rejects schedule.at more than 10 years out; pick a fixed +5y offset
+# from now so this never fires (job stays enabled:false) without drifting
+# into the rejection window as calendar time passes.
+PROBE_AT="$(date -u -d "+5 years" +%Y-%m-%dT%H:%M:%SZ)"
+
 cleanup() {
   if [ -n "${JOB_ID:-}" ]; then
     echo ""
@@ -40,13 +45,13 @@ trap cleanup EXIT
 
 echo ""
 echo "=== 1/3 cron.add (a disabled, far-future one-shot probe job) ==="
-ADD_PAYLOAD=$(jq -nc --arg name "$JOB_NAME" '{
+ADD_PAYLOAD=$(jq -nc --arg name "$JOB_NAME" --arg at "$PROBE_AT" '{
   method: "cron.add",
   params: {
     name: $name,
     enabled: false,
     deleteAfterRun: true,
-    schedule: {kind: "cron", expr: "0 0 31 2 *"},
+    schedule: {kind: "at", at: $at},
     sessionTarget: "main",
     wakeMode: "next-heartbeat",
     payload: {kind: "systemEvent", text: "{\"kind\":\"pantheon.cron_write_scope_smoke\"}"}
@@ -81,7 +86,7 @@ echo ""
 echo "=== 2/3 cron.list shows the new job (not dry_run) ==="
 LIST_BODY=$(curl -sS -m 20 -X POST "${CRON_ENDPOINT}" \
   -H "Content-Type: application/json" \
-  -d '{"method":"cron.list","params":{"limit":500}}')
+  -d '{"method":"cron.list","params":{"limit":200,"includeDisabled":true}}')
 FOUND=$(echo "${LIST_BODY}" | jq -r --arg id "$JOB_ID" '[.data.jobs[]? | select(.id == $id)] | length')
 if [ "${FOUND}" != "1" ]; then
   echo "FAIL: job ${JOB_ID} not found in cron.list."
