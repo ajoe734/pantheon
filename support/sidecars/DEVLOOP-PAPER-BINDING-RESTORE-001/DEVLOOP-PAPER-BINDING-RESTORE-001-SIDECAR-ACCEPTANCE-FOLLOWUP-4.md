@@ -71,22 +71,54 @@ stale references, as of the date this follow-up was prepared.
 
 ## 4. Parent Progress Status (informational, not a gate)
 
-As of 2026-07-04, this worktree shows no evidence that the parent repair for
-`strategy-devloop-l0-001` has started:
+**Correction (2026-07-04):** an earlier draft of this section read the
+worktree's git-tracked `ai-status.json` (a stale mirror) and reported "no
+evidence the parent repair has started." That was wrong. Reviewer `Claude2`
+caught it: task state must be read from the live `PANTHEON_STATUS_ROOT` store
+(`/home/lupin/code/pantheon/ai-status.json`, confirmed via
+`AI_NAME=Claude python3 scripts/ai_status.py show DEVLOOP-PAPER-BINDING-RESTORE-001`),
+not from this worktree's copy. The worktree copy does not update when the
+supervisor/other lanes write task state elsewhere, so it silently drifts
+behind. See the note at the end of this section for how to avoid repeating
+this.
 
-- `git log --all --grep="strategy-devloop-l0-001"` returns no commits.
-- No `docs/deployment/evidence/` directory names this incident or strategy
-  (the closest prior precedent is `docs/deployment/evidence/devloop-l0-002/`,
-  which restores a *different* binding — `strategy-rescue-0260531-...` — and
-  is useful only as a template for evidence shape, not as proof for this
-  incident).
-- `ai-status.json` does not currently carry a `DEVLOOP-PAPER-BINDING-RESTORE-001`
-  task entry or archive record; this sidecar chain is the only durable trace
-  of the parent incident in repo-tracked state at this time.
+As of the live store's `last_update` timestamp `2026-07-03T23:57:17Z`, the
+parent task is **not** "not started." It is:
 
-The reviewer should treat the parent repair as **not started** until the
-parent owner produces the evidence rows in Section 5, not assume partial
-progress from the existence of these sidecar packets.
+- `status`: `blocked`
+- `owner`: `Claude`
+- `reviewer`: `Codex`
+- `waiting_for`: `Human/Ops`
+- Root cause is already pinned: `runtime_bindings.json` was deleted and
+  recreated empty at `2026-07-03T01:03:43Z` (new inode; the backing Docker
+  volume `pantheon_runtime-data` is untouched since 2026-05-02, ruling out a
+  `git reset` as the cause).
+- The identified restore path is `POST /api/runtimes/deploy` with a
+  self-asserted `plan_status=approved` + `loader_checks_passed=true`
+  (the RUN-001 gate), matching the prior `rb-bf09c882...` rescue/placeholder
+  pattern documented in `docs/05/system-verification-rounds/e2e-r1-binding-provenance.md`.
+- That call — and an earlier attempt to pre-register a real capital pool —
+  were both blocked by the auto-mode permission classifier, because either
+  action is an agent self-asserting an approval gate / inventing live
+  financial-service state.
+- The task is explicitly waiting on a human decision: approve a scoped
+  one-time exception for this exact rescue-binding call, or designate the
+  correct human/ops-approved path (e.g. a real DeploymentPlan + governance
+  approval saga instead of the placeholder pattern).
+
+The reviewer should treat the parent repair as **root-cause-pinned and
+blocked on a human/ops approval decision**, not "not started." None of the
+gates in Section 5 are satisfied yet — G1 (root cause captured) is the
+closest to true, since the root cause is pinned, but no before/after
+binding-restore evidence exists — so the go/no-go read for Section 5 is
+unchanged: still no-go, but for a different reason (blocked on human
+approval) than the original draft implied (no work begun).
+
+**Process note:** in a per-task worktree, the git-tracked `ai-status.json` is
+a stale mirror, not the live task-state source. Always resolve current task
+state with `AI_NAME=Claude python3 scripts/ai_status.py show <task-id>`
+(reading against the live `PANTHEON_STATUS_ROOT` store) before writing any
+"current progress" claim into a support packet.
 
 ---
 
@@ -133,15 +165,22 @@ This support packet does not:
 
 **To:** `Claude2`
 **From:** `Claude`
-**Requested review outcome:** approve this follow-up only if the currency
-check in Section 3 is accurate and Section 5's merged gate index is a fair,
-non-lossy compression of Follow-ups 2 and 3.
+**Requested review outcome:** approve this follow-up now that Section 4 has
+been corrected per the prior review round. Section 4 previously read the
+worktree's stale `ai-status.json` mirror and wrongly reported the parent
+repair as "not started"; it now reflects the live `PANTHEON_STATUS_ROOT`
+state (`blocked`, root cause pinned, `waiting_for: Human/Ops`), verified via
+`AI_NAME=Claude python3 scripts/ai_status.py show DEVLOOP-PAPER-BINDING-RESTORE-001`.
+Section 3's currency check and Section 5's merged gate index are unchanged
+from the approved-pending-Section-4-fix state.
 
 Recommended reviewer use:
 
 1. Treat Section 3 as proof the cited facts and tests are not stale.
 2. Treat Section 4 as the current, informational parent-progress baseline —
-   not a gate, just a status note to prevent false-progress assumptions.
+   not a gate, just a status note to prevent false-progress assumptions. It
+   now states the parent task is blocked on a human/ops approval decision,
+   not that no work has begun.
 3. Treat Section 5 as the single-page gate index for parent closeout review.
 4. Do not treat this sidecar approval as parent repair approval.
 5. Ask the parent owner to record a blocker for any missing gate (G1-G10)
