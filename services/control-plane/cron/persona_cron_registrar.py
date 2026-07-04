@@ -211,13 +211,13 @@ class PersonaCronRegistrar:
             "wakeMode": "next-heartbeat",
             "payload": {"kind": "systemEvent", "text": event_text},
             "delivery": {"mode": self._delivery_mode},
-            "metadata": {
-                "persona_id": persona_id,
-                "workflow_id": workflow.workflow_id,
-                "policy_id": workflow.policy_id,
-                "capital_pool_id": capital_pool_id,
-                "binding_id": binding_id,
-            },
+            # NOTE: OpenClaw 2026.6.8's cron.add schema has no "metadata"
+            # property (additionalProperties: false rejects it outright, which
+            # is why every persona cron.add call failed before this fix).
+            # persona_id / workflow_id / policy_id are already embedded in
+            # payload.text via _build_system_event_text; capital_pool_id /
+            # binding_id are tracked in PersonaCronRegistrationResult instead
+            # of on the gateway job itself.
         }
         response = runtime.gateway_call("cron.add", params)
         job_id = str(response.get("id") or "")
