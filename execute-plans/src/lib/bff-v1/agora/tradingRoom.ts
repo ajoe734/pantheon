@@ -184,6 +184,34 @@ export interface DecisionBody {
   modifications?: Record<string, unknown>;
 }
 
+export type TradingRoomHttpMethod = "GET" | "POST";
+
+export interface TradingRoomBffDiagnostic {
+  method: TradingRoomHttpMethod;
+  url: string;
+  status: number;
+  statusText?: string;
+  code: string;
+  message: string;
+  requestId: string | null;
+  correlationId: string | null;
+  retryable: boolean;
+}
+
+export class TradingRoomBffError extends Error {
+  readonly diagnostic: TradingRoomBffDiagnostic;
+
+  constructor(diagnostic: TradingRoomBffDiagnostic) {
+    super(diagnostic.message);
+    this.name = "TradingRoomBffError";
+    this.diagnostic = diagnostic;
+  }
+}
+
+export function isTradingRoomBffError(error: unknown): error is TradingRoomBffError {
+  return error instanceof TradingRoomBffError;
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 function resolvedBase(baseUrl?: string): string {
@@ -198,6 +226,10 @@ function recordFrom(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function stringFrom(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 async function parseJson(res: Response): Promise<unknown> {
@@ -231,22 +263,98 @@ function extractDecisionEvent(value: unknown): TradingDecisionEvent {
   return data as unknown as TradingDecisionEvent;
 }
 
+function diagnosticFromHttpError(
+  method: TradingRoomHttpMethod,
+  url: string,
+  res: Response,
+  body: unknown,
+): TradingRoomBffDiagnostic {
+  const root = recordFrom(body);
+  const error = recordFrom(root.error);
+  const meta = recordFrom(error.meta ?? root.meta);
+  const message =
+    stringFrom(error.message) ??
+    stringFrom(root.message) ??
+    `${method} ${url} failed ${res.status}`;
+  const code =
+    stringFrom(error.code) ??
+    stringFrom(root.code) ??
+    `BFF_HTTP_${res.status}`;
+
+  return {
+    method,
+    url,
+    status: res.status,
+    statusText: res.statusText,
+    code,
+    message,
+    requestId:
+      stringFrom(error.request_id) ??
+      stringFrom(error.requestId) ??
+      stringFrom(meta.request_id) ??
+      stringFrom(meta.requestId) ??
+      stringFrom(res.headers.get("X-Request-Id")),
+    correlationId:
+      stringFrom(error.correlation_id) ??
+      stringFrom(error.correlationId) ??
+      stringFrom(meta.correlation_id) ??
+      stringFrom(meta.correlationId) ??
+      stringFrom(res.headers.get("X-Correlation-Id")),
+    retryable: res.status === 408 || res.status === 409 || res.status === 412 || res.status >= 500,
+  };
+}
+
+function diagnosticFromTransportError(
+  method: TradingRoomHttpMethod,
+  url: string,
+  error: unknown,
+): TradingRoomBffDiagnostic {
+  return {
+    method,
+    url,
+    status: 0,
+    code: "BFF_NETWORK_ERROR",
+    message: error instanceof Error ? error.message : "Network request failed",
+    requestId: null,
+    correlationId: null,
+    retryable: true,
+  };
+}
+
+async function fetchTradingRoom(
+  url: string,
+  init: RequestInit,
+  method: TradingRoomHttpMethod,
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    throw new TradingRoomBffError(diagnosticFromTransportError(method, url, error));
+  }
+}
+
+async function assertOk(
+  res: Response,
+  method: TradingRoomHttpMethod,
+  url: string,
+): Promise<void> {
+  if (res.ok) return;
+  const body = await parseJson(res);
+  throw new TradingRoomBffError(diagnosticFromHttpError(method, url, res, body));
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /** Get the user-scoped Trading Room aggregate (all strategies, queue summary, risk). */
 export async function getTradingRoom(baseUrl?: string): Promise<TradingRoomAggregate> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/trading-room`;
-  const res = await fetch(url, {
+  const res = await fetchTradingRoom(url, {
     method: "GET",
     credentials: "include",
     headers: buildHeaders({ method: "GET" }),
-  });
-  if (!res.ok) {
-    const body = await parseJson(res);
-    const message = recordFrom(recordFrom(body).error).message ?? `GET ${url} failed ${res.status}`;
-    throw new Error(String(message));
-  }
+  }, "GET");
+  await assertOk(res, "GET", url);
   const body = await parseJson(res);
   return extractAggregate(body);
 }
@@ -258,17 +366,13 @@ export async function getTradingRoomStrategy(
 ): Promise<Record<string, unknown> | null> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/trading-room/strategies/${encodeURIComponent(strategyId)}`;
-  const res = await fetch(url, {
+  const res = await fetchTradingRoom(url, {
     method: "GET",
     credentials: "include",
     headers: buildHeaders({ method: "GET" }),
-  });
+  }, "GET");
   if (res.status === 404) return null;
-  if (!res.ok) {
-    const body = await parseJson(res);
-    const message = recordFrom(recordFrom(body).error).message ?? `GET ${url} failed ${res.status}`;
-    throw new Error(String(message));
-  }
+  await assertOk(res, "GET", url);
   const body = await parseJson(res);
   const root = recordFrom(body);
   return recordFrom(root.data ?? root);
@@ -296,16 +400,12 @@ export async function listDecisionEvents(
   if (params?.state) qs.set("state", params.state);
   const query = qs.toString();
   const url = `${base}/bff/agora/trading-room/decision-events${query ? `?${query}` : ""}`;
-  const res = await fetch(url, {
+  const res = await fetchTradingRoom(url, {
     method: "GET",
     credentials: "include",
     headers: buildHeaders({ method: "GET" }),
-  });
-  if (!res.ok) {
-    const body = await parseJson(res);
-    const message = recordFrom(recordFrom(body).error).message ?? `GET ${url} failed ${res.status}`;
-    throw new Error(String(message));
-  }
+  }, "GET");
+  await assertOk(res, "GET", url);
   const body = await parseJson(res);
   return {
     items: extractDecisionEvents(body),
@@ -320,17 +420,13 @@ export async function getDecisionEvent(
 ): Promise<TradingDecisionEvent | null> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/trading-room/decision-events/${encodeURIComponent(decisionEventId)}`;
-  const res = await fetch(url, {
+  const res = await fetchTradingRoom(url, {
     method: "GET",
     credentials: "include",
     headers: buildHeaders({ method: "GET" }),
-  });
+  }, "GET");
   if (res.status === 404) return null;
-  if (!res.ok) {
-    const body = await parseJson(res);
-    const message = recordFrom(recordFrom(body).error).message ?? `GET ${url} failed ${res.status}`;
-    throw new Error(String(message));
-  }
+  await assertOk(res, "GET", url);
   const body = await parseJson(res);
   return extractDecisionEvent(body);
 }
@@ -355,19 +451,13 @@ export async function decideOnEvent(
   if (options?.ifMatch) extra["If-Match"] = options.ifMatch;
   if (options?.idempotencyKey) extra["Idempotency-Key"] = options.idempotencyKey;
   if (options?.requestId) extra["X-Request-Id"] = options.requestId;
-  const res = await fetch(url, {
+  const res = await fetchTradingRoom(url, {
     method: "POST",
     credentials: "include",
     headers: buildHeaders({ method: "POST", extra }),
     body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const responseBody = await parseJson(res);
-    const message =
-      recordFrom(recordFrom(responseBody).error).message ??
-      `POST ${url} failed ${res.status}`;
-    throw new Error(String(message));
-  }
+  }, "POST");
+  await assertOk(res, "POST", url);
   const responseBody = await parseJson(res);
   const root = recordFrom(responseBody);
   return recordFrom(root.data ?? root);

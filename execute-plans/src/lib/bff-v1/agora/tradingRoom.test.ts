@@ -17,6 +17,7 @@ import {
   getTradingRoom,
   getTradingRoomStrategy,
   getDecisionEvent,
+  TradingRoomBffError,
 } from "./tradingRoom";
 import { setAuthProvider } from "../headers";
 
@@ -27,6 +28,35 @@ function ok(body: unknown, status = 200, extraHeaders?: Record<string, string>):
     status,
     headers: { "Content-Type": "application/json", ...extraHeaders },
   });
+}
+
+function bffErrorResponse(
+  status: number,
+  code: string,
+  message: string,
+  headers?: Record<string, string>,
+): Response {
+  return new Response(
+    JSON.stringify({
+      error: {
+        code,
+        message,
+        meta: {
+          request_id: "req-from-body",
+          correlation_id: "corr-from-body",
+        },
+      },
+    }),
+    {
+      status,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-from-header",
+        "X-Correlation-Id": "corr-from-header",
+        ...headers,
+      },
+    },
+  );
 }
 
 afterEach(() => {
@@ -341,6 +371,80 @@ describe("shared BFF auth headers", () => {
 // ── Error handling ────────────────────────────────────────────────────────────
 
 describe("error handling", () => {
+  it.each([
+    [401, "AUTH_REQUIRED"],
+    [403, "FORBIDDEN"],
+    [404, "TRADING_ROOM_NOT_FOUND"],
+    [409, "TRADING_ROOM_CONFLICT"],
+    [412, "TRADING_ROOM_PRECONDITION_FAILED"],
+    [500, "TRADING_ROOM_INTERNAL"],
+  ])("getTradingRoom preserves diagnostics for HTTP %i", async (status, code) => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      bffErrorResponse(status, code, `Trading Room failed with ${status}`),
+    );
+    globalThis.fetch = fetchMock;
+
+    try {
+      await getTradingRoom(BASE);
+      throw new Error("expected getTradingRoom to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(TradingRoomBffError);
+      const diagnostic = (error as TradingRoomBffError).diagnostic;
+      expect(diagnostic.status).toBe(status);
+      expect(diagnostic.code).toBe(code);
+      expect(diagnostic.message).toBe(`Trading Room failed with ${status}`);
+      expect(diagnostic.requestId).toBe("req-from-body");
+      expect(diagnostic.correlationId).toBe("corr-from-body");
+      expect(diagnostic.method).toBe("GET");
+      expect(diagnostic.url).toBe(`${BASE}/bff/agora/trading-room`);
+    }
+  });
+
+  it("falls back to response headers for request and correlation ids", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { code: "AUTH_REQUIRED", message: "unauthorized" } }),
+        {
+          status: 401,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-Id": "req-header-only",
+            "X-Correlation-Id": "corr-header-only",
+          },
+        },
+      ),
+    );
+    globalThis.fetch = fetchMock;
+
+    try {
+      await getTradingRoom(BASE);
+      throw new Error("expected getTradingRoom to throw");
+    } catch (error) {
+      const diagnostic = (error as TradingRoomBffError).diagnostic;
+      expect(diagnostic.requestId).toBe("req-header-only");
+      expect(diagnostic.correlationId).toBe("corr-header-only");
+    }
+  });
+
+  it("preserves network failure as status 0 diagnostics", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    globalThis.fetch = fetchMock;
+
+    try {
+      await getTradingRoom(BASE);
+      throw new Error("expected getTradingRoom to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(TradingRoomBffError);
+      const diagnostic = (error as TradingRoomBffError).diagnostic;
+      expect(diagnostic.status).toBe(0);
+      expect(diagnostic.code).toBe("BFF_NETWORK_ERROR");
+      expect(diagnostic.message).toBe("fetch failed");
+      expect(diagnostic.requestId).toBeNull();
+      expect(diagnostic.correlationId).toBeNull();
+      expect(diagnostic.retryable).toBe(true);
+    }
+  });
+
   it("decideOnEvent throws on 412 with message from error envelope", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

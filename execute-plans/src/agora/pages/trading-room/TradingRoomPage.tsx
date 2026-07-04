@@ -7,6 +7,7 @@ import {
   type TradingRoomStrategyEntry,
   type TradingDecisionEvent,
   type DecisionChoice,
+  type TradingRoomBffDiagnostic,
 } from "@/lib/bff-v1/agora/tradingRoom";
 
 function newUUID(): string {
@@ -40,6 +41,159 @@ const C = {
   rejectBtn: "rgba(248,113,113,0.12)",
   rejectBtnText: "#f87171",
 } as const;
+
+function recordFrom(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function isTradingRoomBffDiagnostic(value: unknown): value is TradingRoomBffDiagnostic {
+  const record = recordFrom(value);
+  return (
+    typeof record.method === "string" &&
+    typeof record.url === "string" &&
+    typeof record.status === "number" &&
+    typeof record.code === "string" &&
+    typeof record.message === "string"
+  );
+}
+
+function diagnosticFromUnknown(error: unknown): TradingRoomBffDiagnostic {
+  const diagnostic = recordFrom(error).diagnostic;
+  if (isTradingRoomBffDiagnostic(diagnostic)) return diagnostic;
+  return {
+    method: "GET",
+    url: "/bff/agora/trading-room",
+    status: 0,
+    code: "TRADING_ROOM_CLIENT_ERROR",
+    message: error instanceof Error ? error.message : "Trading Room load failed",
+    requestId: null,
+    correlationId: null,
+    retryable: true,
+  };
+}
+
+function sanitizeDiagnosticText(value: string): string {
+  return value
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[redacted]")
+    .replace(/((?:access_)?token=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/(password=)[^&\s]+/gi, "$1[redacted]")
+    .slice(0, 240);
+}
+
+function endpointFromUrl(url: string): string {
+  try {
+    const base = typeof window !== "undefined" ? window.location.origin : "https://pantheon.local";
+    return new URL(url, base).pathname;
+  } catch {
+    return "/bff/agora/trading-room";
+  }
+}
+
+function buildSafeReloadHref(): string {
+  if (typeof window === "undefined") return "/agora/trading-room?pantheon_reload=latest";
+  const next = new URL(window.location.href);
+  next.searchParams.set("pantheon_reload", String(Date.now()));
+  return next.toString();
+}
+
+function safeReloadTradingRoom(href: string): void {
+  if (typeof window === "undefined") return;
+  window.location.assign(href);
+}
+
+function ErrorDiagnosticRow({ label, value }: { label: string; value: string | null }): JSX.Element {
+  return (
+    <div style={{ display: "flex", gap: 8, minWidth: 0 }}>
+      <span style={{ width: 90, color: C.muted, flexShrink: 0 }}>{label}</span>
+      <span style={{ color: C.text, overflowWrap: "anywhere" }}>{value || "unavailable"}</span>
+    </div>
+  );
+}
+
+interface TradingRoomErrorStateProps {
+  diagnostic: TradingRoomBffDiagnostic;
+  onRetry: () => void;
+}
+
+function TradingRoomErrorState({ diagnostic, onRetry }: TradingRoomErrorStateProps): JSX.Element {
+  const reloadHref = buildSafeReloadHref();
+  const endpoint = endpointFromUrl(diagnostic.url);
+  const statusLabel = diagnostic.status > 0 ? `HTTP ${diagnostic.status}` : "Network failure";
+
+  return (
+    <div
+      data-testid="trading-room-error"
+      data-bff-status={diagnostic.status}
+      data-bff-code={diagnostic.code}
+      data-request-id={diagnostic.requestId ?? ""}
+      data-correlation-id={diagnostic.correlationId ?? ""}
+      style={{
+        display: "flex",
+        height: "100%",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        background: C.bg,
+        color: C.text,
+      }}
+    >
+      <div style={{ width: "min(680px, 100%)", border: `1px solid ${C.border}`, background: C.surface, padding: 18 }}>
+        <div style={{ color: C.red, fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
+          Trading Room load failed
+        </div>
+        <div data-testid="trading-room-error-summary" style={{ fontSize: 13, color: C.secondary, marginBottom: 14 }}>
+          {statusLabel} · {diagnostic.code}
+        </div>
+        <div data-testid="trading-room-error-message" style={{ fontSize: 13, color: C.text, marginBottom: 14 }}>
+          {sanitizeDiagnosticText(diagnostic.message)}
+        </div>
+        <div
+          data-testid="trading-room-error-diagnostics"
+          style={{ display: "grid", gap: 6, fontSize: 12, marginBottom: 16 }}
+        >
+          <ErrorDiagnosticRow label="Endpoint" value={endpoint} />
+          <ErrorDiagnosticRow label="Request ID" value={diagnostic.requestId} />
+          <ErrorDiagnosticRow label="Correlation" value={diagnostic.correlationId} />
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <button
+            type="button"
+            data-testid="trading-room-retry"
+            onClick={onRetry}
+            style={{
+              padding: "7px 12px",
+              border: `1px solid ${C.amber}`,
+              background: "rgba(232,183,80,0.12)",
+              color: C.amber,
+              cursor: "pointer",
+              fontSize: 13,
+            }}
+          >
+            Retry
+          </button>
+          <button
+            type="button"
+            data-testid="trading-room-safe-reload"
+            data-reload-href={reloadHref}
+            onClick={() => safeReloadTradingRoom(reloadHref)}
+            style={{
+              padding: "7px 12px",
+              border: `1px solid ${C.border}`,
+              background: C.elevated,
+              color: C.text,
+              cursor: "pointer",
+              fontSize: 13,
+            }}
+          >
+            Reload latest bundle
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Strategy Lens Switcher ────────────────────────────────────────────────────
 
@@ -800,6 +954,8 @@ interface TradingRoomPageProps {
 export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPageProps): JSX.Element {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [aggregate, setAggregate] = useState<TradingRoomAggregate | null>(null);
+  const [loadError, setLoadError] = useState<TradingRoomBffDiagnostic | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [events, setEvents] = useState<TradingDecisionEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [eventsEtag, setEventsEtag] = useState<string | null>(null);
@@ -807,6 +963,7 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
   useEffect(() => {
     let cancelled = false;
     setLoadState("loading");
+    setLoadError(null);
 
     getTradingRoom()
       .then((agg) => {
@@ -814,14 +971,16 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
         setAggregate(agg);
         setLoadState("loaded");
       })
-      .catch(() => {
-        if (!cancelled) setLoadState("error");
+      .catch((error) => {
+        if (cancelled) return;
+        setLoadError(diagnosticFromUnknown(error));
+        setLoadState("error");
       });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadAttempt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -860,12 +1019,10 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
 
   if (loadState === "error" || !aggregate) {
     return (
-      <div
-        data-testid="trading-room-error"
-        style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center", fontSize: 13, color: C.red }}
-      >
-        Failed to load Trading Room.
-      </div>
+      <TradingRoomErrorState
+        diagnostic={loadError ?? diagnosticFromUnknown(new Error("Trading Room aggregate missing"))}
+        onRetry={() => setLoadAttempt((attempt) => attempt + 1)}
+      />
     );
   }
 
