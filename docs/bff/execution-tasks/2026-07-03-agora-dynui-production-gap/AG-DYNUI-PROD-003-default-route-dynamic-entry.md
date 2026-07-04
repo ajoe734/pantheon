@@ -131,11 +131,28 @@ auto-mode classifier even when CI is green and review is clean):
 1. A human/chair needs to merge
    [ajoe734/execute-plans#173](https://github.com/ajoe734/execute-plans/pull/173)
    into that repo's `dev`.
-2. A human/chair needs to dispatch `Pantheon Nonprod Deploy`
-   (`environment=dev`) against the new `dev` tip.
-3. Re-run the hosted browser probe against the redeployed host to replace
+2. Re-run the hosted browser probe against the redeployed host to replace
    the local-dev-server evidence with true hosted screenshots.
 
-This task stays in `review_approved` (not `done`) until those three steps
-land — closing it now would misrepresent an unmet "hosted proof" acceptance
-line.
+This task stays in `review_approved` (not `done`) until those steps land —
+closing it now would misrepresent an unmet "hosted proof" acceptance line.
+
+**Re-verification (2026-07-04):** PR #173 unchanged — still
+OPEN/MERGEABLE/CLEAN, `integration-gate` SUCCESS at `2026-07-04T03:28:21Z`,
+`autoMergeRequest=null` (self-merge still blocked). Corrected a prior
+assumption while re-checking the deploy path: this repo's own
+`Pantheon Nonprod Deploy` workflow (`.github/workflows/nonprod-deploy.yml`)
+is irrelevant here — `services/control-plane/bff/agora/trading_room.py`
+was never actually created/touched by this task, so there is no in-tree
+BFF component to redeploy. The hosted FE for this task is served from the
+**standalone** `ajoe734/execute-plans` repo, whose own
+`Pantheon Dev FE Deploy` workflow
+(`.github/workflows/pantheon-dev-fe-deploy.yml` in that repo) has
+auto-deployed on every push to its `dev` branch since commit `37332ee92`
+(2026-06-19, "auto-deploy on merge to dev (decouple from integration
+gate)") — no separate manual `workflow_dispatch` is required. So the
+remaining human-gated surface is a single step (merge PR #173); the
+redeploy and hosted re-probe follow without an extra dispatch ask. Not
+re-notifying the human again beyond this doc correction — the actual
+blocking action (merge PR #173) is unchanged and already surfaced
+repeatedly.
