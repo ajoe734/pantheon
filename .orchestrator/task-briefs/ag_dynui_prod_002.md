@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Re-verified 2026-07-04 (check 17): still review_approved, no external state changed since check 16. execute-plans PR #171 (head 67c0b048, unchanged) still OPEN/MERGEABLE/CLEAN, zero reviews, autoMergeRequest null -- still governance-blocked on human self-merge into ajoe734/execute-plans:dev; not retrying merge, not re-sending duplicate notification. AG-DYNUI-PROD-006 (hosted E2E screenshot gate this task's remaining acceptance gap defers to, owner Codex) confirmed still todo/unstarted via live ai_status.py show. Note-only per review-approved closeout gate; not calling progress/blocker/done.
+- Next: Re-verified 2026-07-04 (check 18): still review_approved, no external state changed since check 17. execute-plans PR #171 (head 67c0b048, unchanged) still OPEN/MERGEABLE/CLEAN, zero reviews, autoMergeRequest null -- still governance-blocked on human self-merge into ajoe734/execute-plans:dev; not retrying merge, not re-sending duplicate notification. AG-DYNUI-PROD-006 (hosted E2E screenshot gate, owner Codex) confirmed still todo/unstarted. Note-only per review-approved closeout gate; not calling progress/blocker/done. Anchor commit bd089ca53.
 
 ## Summary
 修 execute-plans Agora shell 架構：/agora/* 不應只是被包在 Management PlatformShell 裡的 tab skeleton；建立符合設計稿的 Agora workbench shell 或提交明確批准的例外，並保留 auth/live 狀態。
