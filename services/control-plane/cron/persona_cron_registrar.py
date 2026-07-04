@@ -6,6 +6,7 @@ WorkflowDefinition so OpenClaw drives the OODA loop on the correct cadence.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -65,10 +66,25 @@ def _ensure_adapter_path() -> None:
         sys.path.insert(0, root)
 
 
+_MAX_JOB_NAME_LEN = 60
+
+
 def _job_name(workflow_id: str, persona_id: str) -> str:
     wf_slug = re.sub(r"[^a-z0-9]+", "-", workflow_id.lower()).strip("-")
-    persona_slug = re.sub(r"[^a-z0-9]+", "-", persona_id.lower()).strip("-")[:16]
-    return f"pantheon-{wf_slug}-{persona_slug}"
+    persona_slug = re.sub(r"[^a-z0-9]+", "-", persona_id.lower()).strip("-")
+    prefix = f"pantheon-{wf_slug}-"
+    budget = _MAX_JOB_NAME_LEN - len(prefix)
+    if len(persona_slug) > budget:
+        # A blind fixed-length truncation collides whenever two persona ids
+        # share a long common prefix (e.g. "persona-<same-creation-date>-"
+        # followed by a distinct id suffix) — that made every persona created
+        # on the same day skip real registration once one had already claimed
+        # the name. Keep a stable hash of the full id as a suffix so distinct
+        # ids never truncate to the same job name.
+        digest = hashlib.sha1(persona_slug.encode("utf-8")).hexdigest()[:8]
+        keep = max(0, budget - len(digest) - 1)
+        persona_slug = f"{persona_slug[:keep]}-{digest}"
+    return f"{prefix}{persona_slug}"
 
 
 @dataclass
@@ -272,12 +288,31 @@ class PersonaCronRegistrar:
         registered: list[PersonaCronJobRecord] = []
         failed: list[dict[str, Any]] = []
         skipped: list[str] = []
-        existing = self._existing_job_names(runtime)
+        try:
+            existing = self._existing_registrations(runtime)
+        except Exception as exc:  # noqa: BLE001
+            # Fail closed: if we cannot verify what's already registered, do
+            # NOT fall through to blindly calling cron.add for every workflow
+            # — that would create duplicate jobs for personas that already
+            # have them instead of detecting them as already-registered.
+            return PersonaCronRegistrationResult(
+                persona_id=persona_id,
+                capital_pool_id=capital_pool_id,
+                binding_id=binding_id,
+                mode=mode,
+                failed=[
+                    {
+                        "workflow_id": "all",
+                        "error": f"cron.list failed, refusing to register blind: {exc}",
+                        "persona_id": persona_id,
+                    }
+                ],
+            )
 
         for workflow in WORKFLOW_CATALOG.values():
             job_name = _job_name(workflow.workflow_id, persona_id)
-            if job_name in existing:
-                # Idempotent: a job with this name is already registered.
+            if (persona_id, workflow.workflow_id) in existing:
+                # Idempotent: this persona already has a job for this workflow.
                 skipped.append(job_name)
                 continue
             try:
@@ -304,14 +339,50 @@ class PersonaCronRegistrar:
             skipped=skipped,
         )
 
-    def _existing_job_names(self, runtime: Any) -> set[str]:
-        """Names of cron jobs already registered in the gateway (best-effort)."""
-        try:
-            listing = runtime.gateway_call("cron.list", {"limit": 500})
-        except Exception:  # noqa: BLE001
-            return set()
-        jobs = (listing or {}).get("jobs") or []
-        return {str(j.get("name")) for j in jobs if isinstance(j, dict) and j.get("name")}
+    def _existing_registrations(self, runtime: Any) -> set[tuple[str, str]]:
+        """(persona_id, workflow_id) pairs already registered in the gateway.
+
+        Identity is read from each job's systemEvent payload text, not its
+        gateway "name" field. ``_job_name`` truncates/hashes long ids to stay
+        under the gateway's job-name length limit, so two distinct personas
+        (or the same persona re-registered after a naming-scheme change) can
+        legitimately share a display name — matching on name would then
+        either skip a persona that was never actually registered, or (worse)
+        fail to recognize an already-registered persona and re-add it under
+        a new name every time ``_job_name`` changes. The payload always
+        carries the real ``persona_id``/``workflow_id``, so matching on that
+        is stable across any naming scheme.
+
+        Paginates because the gateway rejects ``limit`` above 200 (a single
+        ``limit=500`` call used to fail outright, and the caller previously
+        swallowed that error and treated the gateway as empty — silently
+        re-registering every workflow as a duplicate on each rerun instead of
+        detecting it as already present). Raises on failure so the caller can
+        fail closed instead of registering blind.
+        """
+        pairs: set[tuple[str, str]] = set()
+        offset = 0
+        while True:
+            listing = runtime.gateway_call("cron.list", {"limit": 200, "offset": offset}) or {}
+            jobs = listing.get("jobs") or []
+            for job in jobs:
+                if not isinstance(job, dict):
+                    continue
+                text = (job.get("payload") or {}).get("text")
+                if not text:
+                    continue
+                try:
+                    inner = json.loads(text)
+                except (TypeError, ValueError):
+                    continue
+                pid = inner.get("persona_id")
+                workflow_id = inner.get("workflow_id")
+                if pid and workflow_id:
+                    pairs.add((pid, workflow_id))
+            if not listing.get("hasMore"):
+                break
+            offset = listing.get("nextOffset", offset + len(jobs))
+        return pairs
 
     def reconcile_personas(
         self, persona_ids: list[str]
