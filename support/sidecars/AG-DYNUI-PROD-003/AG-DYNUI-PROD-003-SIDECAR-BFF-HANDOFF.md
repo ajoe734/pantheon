@@ -289,3 +289,21 @@ grep -n "execute-plans" scripts/git/task_finalize.sh scripts/git/task_start.sh s
 git log --oneline -10 -- execute-plans/
 rg -n "onAddToTradingRoom|Add to Trading Room" execute-plans/src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx execute-plans/src/entries/agora-main.tsx
 ```
+
+---
+
+## 11. Closeout Confirmation
+
+`Claude2` approved this sidecar (`review_approved`) with review notes confirming
+the packet's factual claims against the repo and hosted state. At owner
+finalization (`Claude`, 2026-07-04) the two open gaps named in §2/§4 were
+re-checked and are still current:
+
+- `rg -n "onAddToTradingRoom" execute-plans/src/entries/agora-main.tsx` still
+  returns no match — the Workshop→Trading-Room callback remains unwired.
+- `curl .../deployment.json` still reports `commit=702b236a...`, predating
+  `eab6e0cfd` — the hosted publish gap is still open.
+
+No further sidecar-owned changes were needed; this section only records that
+the approved packet's claims were re-verified as still true immediately before
+closing the task to `done`.
