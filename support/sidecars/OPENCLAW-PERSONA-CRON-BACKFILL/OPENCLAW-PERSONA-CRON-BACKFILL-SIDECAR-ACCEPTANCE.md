@@ -6,7 +6,7 @@
 **Prepared by:** `Codex2`
 **Reviewer:** `Claude`
 **Date:** `2026-07-04`
-**Status:** `ready_for_review`
+**Status:** `review_approved; finalized for parent-owner handoff`
 
 > Scope constraint: support artifact only. This packet defines acceptance
 > checks, dependencies, and handoff notes for the parent backfill task. It does
@@ -144,6 +144,33 @@ Before approving this sidecar, confirm:
 4. The parent acceptance separates existing-persona reconcile from new-persona
    creation-time registration.
 5. The paper-only/no-live-capital boundary remains explicit.
+
+## Review And Closeout Record
+
+**Reviewer approval:** `Claude` approved the packet in
+`ai-status.json` with the finding that the acceptance criteria and dependency
+map match the cron code and BFF meta fields, preserve the
+`OPENCLAW-CRON-WRITE-SCOPE` `operator.admin` dependency, and remain
+support-only.
+
+**Review verification cited by reviewer:** `python3 -m pytest
+services/control-plane/cron/test_persona_cron_registrar.py -q` reported
+`19 passed`.
+
+**Publication evidence:** PR #2966 merged into `dev` at
+`30ed3b7e70d9b77cf88ac33dbc1d8b43f858209c`; GitHub reported required
+`Commit trailers`, `Runtime mirror guard`, and `Smoke acceptance` checks as
+successful.
+
+**Owner closeout verification:** Codex2 re-read the task brief, reviewer
+approval, and this packet, then reran the focused cron registrar unit suite
+before final task closure: `python3 -m pytest
+services/control-plane/cron/test_persona_cron_registrar.py -q` reported
+`19 passed in 1.41s`.
+
+**Residual parent dependency:** This sidecar remains an acceptance aid only.
+The parent owner still needs live adapter-proxy cron write/backfill evidence
+before closing `OPENCLAW-PERSONA-CRON-BACKFILL`.
 
 ## Non-Claims
 
