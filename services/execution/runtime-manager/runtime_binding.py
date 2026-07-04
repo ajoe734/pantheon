@@ -436,6 +436,8 @@ class RuntimeBindingStore:
             return
         for b in records:
             self._bindings[b.binding_id] = b
+        if records and path == self._path and self._backup_path:
+            self._write_records(self._backup_path, [b.to_dict() for b in records])
 
     @staticmethod
     def _backup_for(path: Path) -> Path:
