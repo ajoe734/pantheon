@@ -292,3 +292,35 @@ merged-delivery gate. `AG-DYNUI-PROD-006` remains responsible for the full
 hosted V10-to-V11 E2E workflow, including proposal, accept, grid edit, widget
 revision, version history, rollback, and final desktop/mobile evidence; it is
 not the remaining shell-architecture gate for this task.
+
+## Direct hosted shell proof (Claude, owner, 2026-07-04T13:08Z)
+
+Captured task-specific hosted evidence directly against
+`https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/trading-room`
+(`pantheon-dev` tenant) at desktop (1440x900) and mobile (390x844)
+viewports, saved under
+`/tmp/agora-dynui-prod-002-hosted-proof-20260704T1308Z/` (JSON + PNG per
+viewport, local evidence files, not checked into the repo, same convention
+as prior evidence captures in this doc):
+
+- BFF requests all `200`: `/bff/events/stream`, `/bff/agora/trading-room`,
+  `/bff/agora/trading-room/decision-events` (mobile capture also shows the
+  SSE stream reconnect via `lastEventId` succeeding after a transient
+  `net::ERR_NETWORK_CHANGED` on the long-lived stream connection — not a
+  shell regression).
+- Shell checks: `hasDynamicEntry`, `hasStrategyWorkshopNextStep`,
+  `hasOpenStrategyWorkshop`, `oldDecisionQueueAbsent`,
+  `oldPositionActionsAbsent`, `oldNoStrategiesAbsent`, and
+  `failedTradingRoomAbsent` all true on both viewports — no old embedded
+  Management/Trading-Desk empty-shell markers, no `Failed to load Trading
+  Room` state.
+- Screenshots confirm the standalone Agora shell: top bar shows only
+  `AGORA` branding + `Servant` drawer trigger (no Management `TopBar` /
+  `NotificationCenter` chrome), `Dynamic Entry` / "Strategy Workshop is the
+  next step" copy renders from live BFF data, and the mobile viewport wraps
+  the tab bar responsively instead of clipping.
+
+This closes the remaining hosted-proof acceptance gap directly for this
+task, in addition to the PR #171 / PR #173 / pantheon PR #2955 evidence
+already cited above. `AG-DYNUI-PROD-002` is finalized to `done` citing all
+of the above.
