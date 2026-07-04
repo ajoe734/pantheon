@@ -24040,6 +24040,17 @@ _STRATEGY_BFF_LIFECYCLE_MAP = {
     "deployed": "deployed",
     "paused": "paused",
     "retired": "retired",
+    "paper": "paper_running",
+    "paper_running": "paper_running",
+    "canary": "canary_running",
+    "canary_running": "canary_running",
+    "canary_authorized_not_started": "canary_authorized_not_started",
+    "live": "live_running",
+    "live_running": "live_running",
+    "needs_human_approval": "needs_human_approval",
+    "rollback_required": "rollback_required",
+    "stopped": "stopped",
+    "failed": "failed",
 }
 
 _PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
@@ -24047,6 +24058,12 @@ _PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
     "deployed",
     "ready",
     "running",
+    "paper",
+    "paper_running",
+    "canary",
+    "canary_running",
+    "live",
+    "live_running",
 })
 
 
@@ -25100,7 +25117,10 @@ def _project_persona_dto(
         "marketScope": list(metadata.get("market_scope") or []),
         "assetClasses": list(metadata.get("asset_classes") or []),
         "capitalPoolId": metadata.get("capital_pool_id"),
-        "runtimeId": metadata.get("runtime_binding_id"),
+        "capitalMode": metadata.get("capital_mode"),
+        "runtimeId": metadata.get("runtime_id") or metadata.get("runtime_binding_id"),
+        "runtimeBindingId": metadata.get("runtime_binding_id"),
+        "deploymentPlanId": metadata.get("deployment_plan_id"),
         "deploymentStage": metadata.get("deployment_stage"),
         "oodaStage": metadata.get("ooda_stage"),
         "currentWork": metadata.get("current_work"),
@@ -38255,6 +38275,93 @@ async def bff_list_personas(
     }
 
 
+_PERSONA_CREATE_FORBIDDEN_INITIAL_MODES = frozenset({
+    "canary",
+    "canary_running",
+    "live",
+    "live_running",
+    "prod",
+    "production",
+    "real",
+})
+
+
+def _persona_create_requested_capital_mode(payload: Dict[str, Any]) -> str:
+    for key in (
+        "capitalMode",
+        "capital_mode",
+        "capitalPoolMode",
+        "capital_pool_mode",
+        "deploymentStage",
+        "deployment_stage",
+        "executionMode",
+        "execution_mode",
+        "initialMode",
+        "initial_mode",
+    ):
+        value = str(payload.get(key) or "").strip().lower()
+        if value:
+            return value
+    return "paper"
+
+
+def _persona_create_validate_paper_only(payload: Dict[str, Any]) -> str:
+    requested = _persona_create_requested_capital_mode(payload)
+    if requested in _PERSONA_CREATE_FORBIDDEN_INITIAL_MODES:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Initial Persona capital mode must be paper",
+            "New Personas start in paper trading only. Canary/live capital requires a Human Inbox promotion review.",
+            precondition_failed="capital_mode",
+            suggestion="Create the Persona in paper mode, then request promotion review after evidence is ready.",
+        )
+    return "paper"
+
+
+def _persona_create_paper_refs(persona_id: str, payload: Dict[str, Any]) -> Dict[str, str]:
+    pool_id = str(
+        payload.get("paperCapitalPoolId")
+        or payload.get("paper_capital_pool_id")
+        or payload.get("capitalPoolId")
+        or payload.get("capital_pool_id")
+        or f"paper-pool-{persona_id}"
+    ).strip()
+    binding_id = str(
+        payload.get("paperBindingId")
+        or payload.get("paper_binding_id")
+        or payload.get("bindingId")
+        or payload.get("binding_id")
+        or f"binding-{persona_id}-paper"
+    ).strip()
+    plan_id = str(
+        payload.get("paperDeploymentPlanId")
+        or payload.get("paper_deployment_plan_id")
+        or payload.get("deploymentPlanId")
+        or payload.get("deployment_plan_id")
+        or f"paper-plan-{persona_id}"
+    ).strip()
+    runtime_id = str(
+        payload.get("paperRuntimeId")
+        or payload.get("paper_runtime_id")
+        or payload.get("runtimeId")
+        or payload.get("runtime_id")
+        or f"runtime-{persona_id}-paper"
+    ).strip()
+    artifact_id = str(
+        payload.get("artifactId")
+        or payload.get("artifact_id")
+        or f"paper-artifact-{persona_id}"
+    ).strip()
+    return {
+        "capital_pool_id": pool_id,
+        "binding_id": binding_id,
+        "deployment_plan_id": plan_id,
+        "runtime_id": runtime_id,
+        "artifact_id": artifact_id,
+    }
+
+
 @app.post("/bff/personas", status_code=201)
 async def bff_create_persona(
     payload: Dict[str, Any] = Body(...),
@@ -38285,9 +38392,9 @@ async def bff_create_persona(
     owner = str(payload.get("owner") or identity.operator_id)
     archetype = str(payload.get("archetype") or "generalist")
     risk = _normalize_risk_level(payload.get("risk") or "low")
-    lifecycle_state = _normalize_lifecycle_state(
-        payload.get("state") or payload.get("lifecycleStatus") or "draft"
-    )
+    capital_mode = _persona_create_validate_paper_only(payload)
+    refs = _persona_create_paper_refs(persona_id, payload)
+    lifecycle_state = "paper_running"
     # Real persona identity + trading-character traits — these flow to the
     # persona's OpenClaw agent SOUL (integrations/openclaw/persona_agent_sync).
     mandate = str(payload.get("mandate") or "").strip() or None
@@ -38304,6 +38411,39 @@ async def bff_create_persona(
         "initial_mode": payload.get("initialMode"),
         "execution_mode": payload.get("executionMode") or payload.get("initialMode"),
         "success_rate": float(payload.get("successRate") or 0.0),
+        "capital_mode": capital_mode,
+        "capital_pool_id": refs["capital_pool_id"],
+        "persona_capital_binding_id": refs["binding_id"],
+        "binding_id": refs["binding_id"],
+        "runtime_id": refs["runtime_id"],
+        "runtime_binding_id": refs["binding_id"],
+        "deployment_plan_id": refs["deployment_plan_id"],
+        "deployment_stage": "paper",
+        "paper_runtime_state": "running",
+        "live_capital_enabled": False,
+        "live_write_enabled": False,
+        "order_side_effects_allowed": False,
+        "capital_side_effects_allowed": False,
+        "governance_required": True,
+        "recommended_governance_action": "none",
+        "data_source_status": payload.get("dataSourceStatus") or payload.get("data_source_status") or {
+            "state": "paper_readback_pending",
+            "provider_count": len(payload.get("dataSources") or payload.get("data_sources") or []),
+            "provider_status_counts": {},
+            "live_ingestion_enabled": False,
+            "order_side_effects_allowed": False,
+        },
+        "data_sources": payload.get("dataSources") or payload.get("data_sources") or [],
+        "risk_profile": payload.get("riskProfile") or payload.get("risk_profile") or {
+            "risk_level": risk,
+            "max_drawdown": payload.get("maxDrawdown") or payload.get("max_drawdown"),
+            "daily_loss_limit": payload.get("dailyLossLimit") or payload.get("daily_loss_limit"),
+        },
+        "evidence_refs": [
+            f"evidence://persona-create/{persona_id}/request",
+            f"evidence://persona-create/{persona_id}/paper-capital-binding",
+            f"evidence://persona-create/{persona_id}/paper-runtime-binding",
+        ],
     }
     if dry_run:
         persona_record = {
@@ -38338,11 +38478,80 @@ async def bff_create_persona(
             traits=traits,
             metadata=persona_metadata,
         )
+        read_store.create_capital_pool(
+            pool_id=refs["capital_pool_id"],
+            name=f"{name} paper capital pool",
+            actor_id=owner,
+            created_at=snapshot_at,
+            risk_policy_ref=f"risk-policy:{risk}:paper",
+            params={
+                "capital_mode": "paper",
+                "persona_id": persona_id,
+                "paper_budget": payload.get("paperBudget") or payload.get("paper_budget"),
+                "live_capital_enabled": False,
+                "capital_side_effects_allowed": False,
+            },
+            status="active",
+        )
+        read_store.create_persona_binding(
+            binding_id=refs["binding_id"],
+            persona_id=persona_id,
+            capital_pool_id=refs["capital_pool_id"],
+            actor_id=owner,
+            created_at=snapshot_at,
+            role="paper_owner",
+            validity="active",
+            metadata={
+                "capital_mode": "paper",
+                "live_capital_enabled": False,
+                "created_via": "POST /bff/personas",
+            },
+        )
+        read_store.create_deployment_plan(
+            plan_id=refs["deployment_plan_id"],
+            binding_id=refs["binding_id"],
+            artifact_id=refs["artifact_id"],
+            deployment_mode="paper",
+            capital_pool_id=refs["capital_pool_id"],
+            actor_id=owner,
+            created_at=snapshot_at,
+            params={
+                "persona_id": persona_id,
+                "capital_mode": "paper",
+                "human_review_required_for_live": True,
+            },
+            locked=True,
+            status="approved",
+        )
+        read_store.create_runtime_binding(
+            runtime_id=refs["runtime_id"],
+            name=f"{name} paper runtime",
+            persona_id=persona_id,
+            binding_id=refs["binding_id"],
+            deployment_plan_id=refs["deployment_plan_id"],
+            runtime_kind="paper",
+            actor_id=owner,
+            created_at=snapshot_at,
+            params={
+                "capital_pool_id": refs["capital_pool_id"],
+                "capital_mode": "paper",
+                "live_write_enabled": False,
+                "order_side_effects_allowed": False,
+            },
+            state="running",
+        )
     overlay = _project_persona_dto(
         persona_record,
         overlay={
             "routedStrategies": int(payload.get("routedStrategies") or 0),
             "successRate": float(payload.get("successRate") or 0.0),
+            "capitalMode": "paper",
+            "capitalPoolId": refs["capital_pool_id"],
+            "runtimeId": refs["runtime_id"],
+            "runtimeBindingId": refs["binding_id"],
+            "deploymentPlanId": refs["deployment_plan_id"],
+            "deploymentStage": "paper",
+            "evidenceRefs": list(persona_metadata["evidence_refs"]),
         },
         routed_strategies=0,
     )
@@ -38369,7 +38578,18 @@ async def bff_create_persona(
 
     result = {
         "data": overlay,
-        "meta": {"snapshot_at": snapshot_at, **ooda_meta},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "create_flow": "one_shot_paper_running",
+            "capital_mode": "paper",
+            "capital_pool_id": refs["capital_pool_id"],
+            "runtime_binding_id": refs["binding_id"],
+            "runtime_id": refs["runtime_id"],
+            "deployment_plan_id": refs["deployment_plan_id"],
+            "live_capital_side_effects": False,
+            "human_review_required_for_live": True,
+            **ooda_meta,
+        },
     }
     _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
@@ -51608,9 +51828,19 @@ _PERSONA_FLEET_CONTEXT_METADATA_KEYS = (
     "current_work",
     "ooda_stage",
     "deployment_stage",
+    "capital_mode",
+    "capital_pool_id",
+    "runtime_id",
+    "runtime_binding_id",
+    "league_rank",
     "league_score",
     "recommended_governance_action",
     "governance_required",
+    "review_id",
+    "review_type",
+    "review_status",
+    "promotion_review_id",
+    "inbox_id",
     "risk_flags",
     "performance",
     "data_source_status",
@@ -51758,6 +51988,7 @@ def _build_persona_health_items(
         pool_id = (
             league_entry.get("capital_pool_id")
             or metadata.get("capital_pool_id")
+            or context_metadata.get("capital_pool_id")
             or binding.get("capital_pool_id")
         )
         runtime = _runtime_for_pool(
@@ -51768,6 +51999,8 @@ def _build_persona_health_items(
             league_entry.get("runtime_id")
             or runtime.get("runtime_id")
             or runtime.get("id")
+            or context_metadata.get("runtime_id")
+            or context_metadata.get("runtime_binding_id")
             or metadata.get("runtime_binding_id")
         )
         deployment_stage = (
@@ -52131,6 +52364,202 @@ def _persona_fleet_list_research_summary(metadata: Dict[str, Any]) -> Dict[str, 
     }
 
 
+_PERSONA_FLEET_RUNNING_STAGE_STATES = {
+    "paper": "paper_running",
+    "canary": "canary_running",
+    "live": "live_running",
+}
+
+_PERSONA_FLEET_TERMINAL_OR_GOVERNED_STATES = {
+    "draft",
+    "needs_human_approval",
+    "canary_authorized_not_started",
+    "rollback_required",
+    "paused",
+    "retired",
+    "stopped",
+    "failed",
+}
+
+
+def _persona_fleet_record_value(record: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return value
+    for nested_key in ("params", "metadata"):
+        nested = record.get(nested_key)
+        if not isinstance(nested, dict):
+            continue
+        for key in keys:
+            value = nested.get(key)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _persona_fleet_capital_mode(
+    *,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    binding: Dict[str, Any],
+    runtime: Dict[str, Any],
+    deployment_stage: Any,
+) -> str:
+    for value in (
+        league_entry.get("capital_mode"),
+        league_entry.get("capitalMode"),
+        raw_metadata.get("capital_mode"),
+        raw_metadata.get("capitalMode"),
+        _persona_fleet_record_value(binding, "capital_mode", "capitalMode", "allowed_deployment_scope"),
+        _persona_fleet_record_value(runtime, "capital_mode", "capitalMode", "runtime_kind"),
+        deployment_stage,
+    ):
+        normalized = str(value or "").strip().lower()
+        if normalized in _PERSONA_FLEET_RUNNING_STAGE_STATES:
+            return normalized
+    return "none"
+
+
+def _persona_fleet_runtime_binding_id(
+    *,
+    runtime_id: Any,
+    runtime: Dict[str, Any],
+    binding: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+) -> Optional[str]:
+    for value in (
+        runtime.get("runtime_binding_id"),
+        runtime.get("binding_id"),
+        raw_metadata.get("runtime_binding_id"),
+        binding.get("runtime_binding_id"),
+        binding.get("binding_id"),
+        binding.get("id"),
+        runtime_id,
+    ):
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return None
+
+
+def _persona_fleet_runtime_status(runtime: Dict[str, Any]) -> str:
+    return str(runtime.get("state") or runtime.get("status") or "").strip().lower()
+
+
+def _persona_fleet_optional_int(value: Any) -> Optional[int]:
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _persona_fleet_lifecycle_state(
+    *,
+    persona_status: Any,
+    lifecycle_state: Any,
+    capital_mode: str,
+    deployment_stage: Any,
+    runtime: Dict[str, Any],
+    has_runtime_or_binding: bool,
+) -> str:
+    raw_state = str(persona_status or lifecycle_state or "unknown").strip().lower()
+    normalized_lifecycle = str(lifecycle_state or "").strip().lower()
+    if raw_state in _PERSONA_FLEET_RUNNING_STAGE_STATES.values():
+        return raw_state
+    if raw_state in _PERSONA_FLEET_TERMINAL_OR_GOVERNED_STATES:
+        return raw_state
+    if normalized_lifecycle in _PERSONA_FLEET_TERMINAL_OR_GOVERNED_STATES:
+        return normalized_lifecycle
+
+    runtime_status = _persona_fleet_runtime_status(runtime)
+    if runtime_status in {"failed", "error"}:
+        return "failed"
+    if runtime_status in {"stopped", "paused"} and capital_mode == "none":
+        return runtime_status
+
+    stage = str(deployment_stage or "").strip().lower()
+    for candidate in (capital_mode, stage):
+        if candidate in _PERSONA_FLEET_RUNNING_STAGE_STATES:
+            return _PERSONA_FLEET_RUNNING_STAGE_STATES[candidate]
+
+    if raw_state in {"deployed", "active", "running", "ready", "paper"} and has_runtime_or_binding:
+        return "paper_running"
+    return raw_state or "unknown"
+
+
+def _persona_fleet_review_projection(
+    *,
+    persona_id: str,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    binding: Dict[str, Any],
+    runtime: Dict[str, Any],
+    human_needed: bool,
+    recommendation: Any,
+) -> Dict[str, Any]:
+    review_id = str(
+        league_entry.get("review_id")
+        or league_entry.get("reviewId")
+        or league_entry.get("promotion_review_id")
+        or raw_metadata.get("review_id")
+        or raw_metadata.get("promotion_review_id")
+        or binding.get("review_id")
+        or binding.get("approval_decision_id")
+        or runtime.get("review_id")
+        or runtime.get("approval_decision_id")
+        or ""
+    ).strip()
+    recommendation_text = str(recommendation or "").strip().lower()
+    review_type = str(
+        league_entry.get("review_type")
+        or raw_metadata.get("review_type")
+        or ""
+    ).strip().lower()
+    if not review_type and any(term in recommendation_text for term in ("promote", "canary", "live")):
+        review_type = "promotion_review"
+    if not review_type and human_needed:
+        review_type = "human_gate_review"
+    if not review_id and human_needed:
+        review_id = f"readiness_blocker:persona:{persona_id}"
+        review_type = review_type or "readiness_blocker"
+    inbox_id = str(
+        league_entry.get("inbox_id")
+        or raw_metadata.get("inbox_id")
+        or (f"{review_type}:{review_id}" if review_id and review_type else "")
+    ).strip()
+    promotion_review_id = str(
+        league_entry.get("promotion_review_id")
+        or raw_metadata.get("promotion_review_id")
+        or (review_id if review_type == "promotion_review" else "")
+    ).strip()
+    status = str(
+        league_entry.get("review_status")
+        or raw_metadata.get("review_status")
+        or ("pending" if human_needed else "none")
+    ).strip().lower()
+    route = "/bff/management/human-inbox"
+    if inbox_id:
+        route = f"/bff/management/human-inbox/{inbox_id}"
+    return {
+        "review_id": review_id or None,
+        "review_type": review_type or None,
+        "promotion_review_id": promotion_review_id or None,
+        "inbox_id": inbox_id or None,
+        "review_status": status,
+        "review": {
+            "id": review_id or None,
+            "type": review_type or None,
+            "status": status,
+            "inbox_id": inbox_id or None,
+            "route": route if review_id or human_needed else None,
+            "requires_human_gate": bool(human_needed),
+        },
+    }
+
+
 def _project_persona_fleet_list_row(
     *,
     persona: Dict[str, Any],
@@ -52158,12 +52587,15 @@ def _project_persona_fleet_list_row(
     pool_id = (
         league_entry.get("capital_pool_id")
         or raw_metadata.get("capital_pool_id")
+        or context_metadata.get("capital_pool_id")
         or binding.get("capital_pool_id")
     )
     runtime_id = (
         league_entry.get("runtime_id")
         or runtime.get("runtime_id")
         or runtime.get("id")
+        or context_metadata.get("runtime_id")
+        or context_metadata.get("runtime_binding_id")
         or raw_metadata.get("runtime_binding_id")
     )
     deployment_stage = (
@@ -52173,6 +52605,13 @@ def _project_persona_fleet_list_row(
         or raw_metadata.get("deployment_stage")
         or context_metadata.get("deployment_stage")
         or "none"
+    )
+    capital_mode = _persona_fleet_capital_mode(
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        binding=binding,
+        runtime=runtime,
+        deployment_stage=deployment_stage,
     )
     market_scope = list(league_entry.get("market_scope") or context_metadata.get("market_scope") or [])
     risk_flags = list(league_entry.get("risk_flags") or context_metadata.get("risk_flags") or [])
@@ -52210,6 +52649,29 @@ def _project_persona_fleet_list_row(
         or persona.get("status")
         or lifecycle_state
     )
+    runtime_binding_id = _persona_fleet_runtime_binding_id(
+        runtime_id=runtime_id,
+        runtime=runtime,
+        binding=binding,
+        raw_metadata=raw_metadata,
+    )
+    normalized_state = _persona_fleet_lifecycle_state(
+        persona_status=persona_status,
+        lifecycle_state=lifecycle_state,
+        capital_mode=capital_mode,
+        deployment_stage=deployment_stage,
+        runtime=runtime,
+        has_runtime_or_binding=bool(runtime or binding or pool_id),
+    )
+    review_projection = _persona_fleet_review_projection(
+        persona_id=persona_id,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        binding=binding,
+        runtime=runtime,
+        human_needed=human_needed,
+        recommendation=recommendation,
+    )
     updated_at = (
         league_entry.get("updated_at")
         or persona.get("updated_at")
@@ -52221,6 +52683,12 @@ def _project_persona_fleet_list_row(
         _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), 75.0),
         _as_float(operational_health.get("score"), 100.0),
     )
+    league_rank = _persona_fleet_optional_int(
+        league_entry.get("league_rank")
+        or league_entry.get("rank")
+        or context_metadata.get("league_rank")
+    )
+    league_score = _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), score)
     routed = _routed_strategies_for_persona(persona_id)
     drill_target = runtime_id or persona_id
     data_source_status = (
@@ -52293,18 +52761,47 @@ def _project_persona_fleet_list_row(
         "perf_delta": _training_improvement_delta(metrics),
         "human_needed": human_needed,
         "last_mutation": str(updated_at)[:10],
-        "state": persona_status,
+        "state": normalized_state,
         "current_work": context_metadata.get("current_work"),
         "routed_strategies": routed,
         "open_findings": len(risk_flags) + int(metrics.get("violation_count") or 0) + len(active_incidents),
         "market_scope": market_scope,
         "asset_classes": list(context_metadata.get("asset_classes") or []),
+        "capital_mode": capital_mode,
         "capital_pool_id": pool_id,
+        "capital_pool": {
+            "id": pool_id,
+            "mode": capital_mode,
+            "live_capital_enabled": capital_mode == "live",
+        },
         "runtime_id": runtime_id,
+        "runtime_binding_id": runtime_binding_id,
+        "runtime_binding": {
+            "id": runtime_binding_id,
+            "runtime_id": runtime_id,
+            "state": _persona_fleet_runtime_status(runtime) or None,
+            "deployment_stage": deployment_stage,
+            "capital_mode": capital_mode,
+            "health": operational_health.get("status"),
+        },
         "deployment_stage": deployment_stage,
         "ooda_stage": ooda_stage,
         "recommendation": recommendation,
         "governance_required": governance_required,
+        "review_id": review_projection["review_id"],
+        "review_type": review_projection["review_type"],
+        "promotion_review_id": review_projection["promotion_review_id"],
+        "inbox_id": review_projection["inbox_id"],
+        "review_status": review_projection["review_status"],
+        "review": review_projection["review"],
+        "league_rank": league_rank,
+        "league_score": league_score,
+        "rank": {
+            "league_rank": league_rank,
+            "league_score": league_score,
+            "basis": "persona_league",
+        },
+        "runtime_health": operational_health,
         "data_source_summary": _persona_fleet_list_data_source_summary(
             metadata=row_context_metadata,
             persona=persona,
@@ -52368,6 +52865,21 @@ def _persona_fleet_slim_list_payload(
         for runtime in runtimes
         if str(runtime.get("capital_pool_id") or "").strip()
     }
+    runtime_by_persona = {
+        str(runtime.get("persona_id") or ""): runtime
+        for runtime in runtimes
+        if str(runtime.get("persona_id") or "").strip()
+    }
+    runtime_by_binding = {
+        candidate: runtime
+        for runtime in runtimes
+        for candidate in (
+            str(runtime.get("binding_id") or "").strip(),
+            str(runtime.get("runtime_binding_id") or "").strip(),
+            str(runtime.get("id") or "").strip(),
+        )
+        if candidate
+    }
 
     rows: List[Dict[str, Any]] = []
     for persona in personas:
@@ -52385,9 +52897,17 @@ def _persona_fleet_slim_list_payload(
         pool_id = (
             league_entry.get("capital_pool_id")
             or raw_metadata.get("capital_pool_id")
+            or context_metadata.get("capital_pool_id")
             or binding.get("capital_pool_id")
         )
         runtime = runtime_by_pool.get(str(pool_id or ""), {})
+        if not runtime:
+            runtime = runtime_by_persona.get(persona_id, {})
+        if not runtime and binding:
+            runtime = runtime_by_binding.get(
+                str(binding.get("binding_id") or binding.get("id") or "").strip(),
+                {},
+            )
         binding_ids = {
             str(binding.get("id") or binding.get("binding_id") or "").strip()
         }
@@ -52505,6 +53025,8 @@ def _persona_fleet_slim_list_payload(
         "human_needed_personas": len([item for item in rows if item.get("human_needed")]),
         "governance_required_personas": len([item for item in rows if item.get("governance_required")]),
         "by_deployment_stage": _persona_fleet_count_by(rows, "deployment_stage"),
+        "by_capital_mode": _persona_fleet_count_by(rows, "capital_mode"),
+        "by_lifecycle_state": _persona_fleet_count_by(rows, "state"),
         "by_market_scope": {
             market: sum(1 for item in rows if market in {str(scope) for scope in item.get("market_scope") or []})
             for market in sorted({str(scope) for item in rows for scope in (item.get("market_scope") or [])})
