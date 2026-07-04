@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare OPENCLAW-PERSONA-CRON-BACKFILL acceptance packet and dependency map
-- Status: in_progress
+- Status: done
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Authored FOLLOWUP-5 packet capturing the parent's status=review evidence bundle (68/68, orphan-job scoping, registered=0 bug-fix-vs-new-registration nuance for Codex), independently reverified PR #2985 merge state (still OPEN/BEHIND, not merged). PR #2986 opened with auto-merge, awaiting CI/merge before closeout.
+- Next: Closeout: re-confirmed FOLLOWUP-5's approved content still matches the canonical status root (parent OPENCLAW-PERSONA-CRON-BACKFILL still status=review with the same 68/68 + orphan-job + idempotent-rerun + force-run evidence bundle; OPENCLAW-CRON-WRITE-SCOPE still done/archived; OPENCLAW-OODA-PACKET-CLOSURE still todo, unchanged; PR #2985 independently re-checked via `gh pr view 2985` and `git merge-base --is-ancestor` — still OPEN/BEHIND, all checks green, auto-merge enabled, not yet merged into dev, consistent with the reviewer-approved packet's non-claim). Reran `python3 -m pytest services/control-plane/cron/test_persona_cron_registrar.py -q` -> 19 passed. No canonical truth, runtime, or registry files touched. Finalizing review_approved -> done.
 
 ## Summary
 平行支援 OPENCLAW-PERSONA-CRON-BACKFILL，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
