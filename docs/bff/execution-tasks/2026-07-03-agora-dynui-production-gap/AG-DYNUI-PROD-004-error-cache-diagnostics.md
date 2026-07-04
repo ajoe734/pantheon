@@ -101,3 +101,6 @@ deploy workflow dispatch completes.
 PR branch refresh: after PR #2855 opened, `origin/dev` advanced with the
 AG-DYNUI-PROD-004 sidecar handoff docs; Codex2 merged that tip into this task
 branch and kept the owner closeout evidence as the final task-owned commit.
+A later dev advance from PR #2854 only added AG-DYNUI-PROD-001 sidecar
+follow-up docs; Codex2 refreshed through that tip as well without changing this
+task's runtime surface.
