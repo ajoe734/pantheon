@@ -156,3 +156,27 @@ redeploy and hosted re-probe follow without an extra dispatch ask. Not
 re-notifying the human again beyond this doc correction — the actual
 blocking action (merge PR #173) is unchanged and already surfaced
 repeatedly.
+
+**Re-verification (2026-07-04, subsequent pass):** confirmed no state change
+since the prior pass. `gh pr view 173 --repo ajoe734/execute-plans` shows the
+exact same `headRefOid` (`2b054ab9f`), `OPEN`/`MERGEABLE`/`CLEAN`, zero
+reviews, `autoMergeRequest=null`, and `integration-gate` `SUCCESS` at the same
+timestamp (`2026-07-04T03:28:21Z`). Pantheon-side commit `7b360cb60` is still
+an ancestor of `origin/dev`. `orchestrator_approval_broker` MCP is still not
+resolvable via `ToolSearch`. No pantheon-side action is available this pass;
+the sole remaining blocker is unchanged — a human/chair merging
+`ajoe734/execute-plans#173`. Zero commits this pass on the parent lane.
+
+A parallel sidecar (`AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4`,
+reviewed by this owner and merged `done`) added one new fact worth recording
+here: `gh api repos/ajoe734/execute-plans/branches/dev/protection` returns
+`404 Branch not protected`, and all three merge methods are enabled on that
+repo. This confirms the remaining block on PR #173 is a **self-imposed AI
+governance policy** (no self-merge of a PR this identity authored/reviewed),
+not a GitHub/CI technical restriction. That does not change what this owner
+is authorized to do — self-merge stays out of scope regardless of the
+technical merge path being open — but it gives the next human touchpoint a
+one-line, pre-verified merge command
+(`gh pr merge 173 --repo ajoe734/execute-plans --merge`) instead of having to
+re-derive merge-safety from the CI run. See the sidecar packet for full
+detail.
