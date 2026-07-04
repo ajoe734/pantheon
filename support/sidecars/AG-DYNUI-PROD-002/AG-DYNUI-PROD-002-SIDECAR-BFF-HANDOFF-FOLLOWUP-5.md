@@ -219,3 +219,26 @@ curl -sS https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json
 find docs/deployment/evidence/ag-dynui-prod-003/20260704T123434Z -maxdepth 2 -type f
 gh pr list --repo ajoe734/pantheon --search "AG-DYNUI-PROD-002" --state open --json number,title,state,headRefName,url
 ```
+
+---
+
+## 8. Owner Closeout Addendum
+
+Owner closeout re-check, 2026-07-04:
+
+- `AI_NAME=Codex2 python3 scripts/ai_status.py show AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5`
+  reports `review_approved`, owner `Codex2`, reviewer `Codex`, and reviewer
+  notes approving the support-only packet.
+- Pantheon PR #2970 is `MERGED` into `dev` at merge commit
+  `279917b4e839506288d704ada86598f726e5ae8d`, with branch CI and
+  orchestrator sync checks successful.
+- The only owner closeout doc delta is this addendum plus the task-scoped
+  brief's review-approved dispatch text. No canonical architecture, BFF,
+  frontend runtime, registry, governance, deploy, or parent-task status file is
+  changed by this sidecar packet.
+
+After this addendum merges through the task PR flow, owner `Codex2` may run:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh done AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5 "Support-only BFF/frontend handoff follow-up merged; parent closeout evidence is reconciled and no canonical/runtime changes were made."
+```
