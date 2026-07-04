@@ -24,9 +24,9 @@ implementation. Parent ownership and review decide how to absorb this packet.
 | `AI_COLLABORATION_GUIDE.md` | L0 state coordinates ownership; support packets do not override canonical architecture or policy truth. |
 | `.orchestrator/task-briefs/ag_dynui_prod_004_sidecar_bff_handoff.md` | Sidecar scope is support-only: BFF query gap, operator journey, frontend handoff materials; no canonical truth changes. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Meaningful doc/support work should be committed through the task workflow with explicit scope. |
-| `.orchestrator/skills/task-closeout-finalization.md` | Closeout is separate from handoff; this task is not `review_approved` and does not move to `done` here. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-DYNUI-PROD-004-SIDECAR-BFF-HANDOFF` | Sidecar is `in_progress`, owner `Codex`, reviewer `Codex2`, artifact path is this file. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-DYNUI-PROD-004` | Parent is in `review`, owner `Codex2`, reviewer `Claude`, current parent branch note cites diagnostics/retry/safe reload at `23a537ab7` and reviewer notes at `2b2fe316a`. |
+| `.orchestrator/skills/task-closeout-finalization.md` | Closeout applies because this sidecar is `review_approved`; owner must make the approved support state durable before `done`. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-DYNUI-PROD-004-SIDECAR-BFF-HANDOFF` | Sidecar is `review_approved`, owner `Codex`, reviewer `Codex2`, artifact path is this file. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-DYNUI-PROD-004` | Parent is also `review_approved`; parent closeout still owns deployment/hosted proof and runtime implementation acceptance. |
 | `docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-004-error-cache-diagnostics.md` | Parent scope: preserve BFF status/code/request/correlation details, add retry/safe reload, harden probes, keep secrets out of UI/logs. |
 | `task/AG-DYNUI-PROD-004` branch diff from this sidecar base | Parent branch changes Trading Room diagnostics UI/client/tests/probe; this sidecar branch intentionally does not absorb or edit those runtime files. |
 | `deploy/caddy/dev.Caddyfile.tmpl` and `deploy/caddy/sync-caddy.sh` | Current dev Caddy template already asserts no-store for SPA shell and `deployment.json`, immutable for hashed assets, and the sync script verifies those headers. |
@@ -270,3 +270,29 @@ Before `AG-DYNUI-PROD-004` moves from review approval toward done, record:
 This packet should be handed to `Codex2` for sidecar review and to the parent
 owner/reviewer as support material. It should not be treated as implementation
 approval by itself.
+
+---
+
+## 11. Sidecar Closeout State
+
+Sidecar review passed through PR #2853. That PR changed only the generated task
+brief and this support handoff packet, and it merged into `dev` at
+`c9f77a8d14c222b5b2dd81495c5b71da9b62b6d2`.
+
+This closeout update records the reviewer approval mirror and current
+`review_approved` state. It still does not change parent runtime code,
+canonical architecture truth, BFF route contracts, frontend behavior,
+governance policy, or deployment configuration.
+
+Focused closeout verification used:
+
+- `AI_NAME=Codex ./scripts/ai-status.sh show AG-DYNUI-PROD-004-SIDECAR-BFF-HANDOFF`
+- `AI_NAME=Codex ./scripts/ai-status.sh show AG-DYNUI-PROD-004`
+- `gh pr view --json number,state,mergeCommit,statusCheckRollup`
+- `git diff --check -- .orchestrator/task-briefs/ag_dynui_prod_004_sidecar_bff_handoff.md support/sidecars/AG-DYNUI-PROD-004/AG-DYNUI-PROD-004-SIDECAR-BFF-HANDOFF.md`
+
+After the closeout commit merges, the owner should run:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh done AG-DYNUI-PROD-004-SIDECAR-BFF-HANDOFF "Sidecar handoff packet reviewed in PR #2853 and closeout record merged; support-only BFF/frontend handoff is ready for parent-owner absorption."
+```
