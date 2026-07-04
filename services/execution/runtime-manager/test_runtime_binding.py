@@ -425,3 +425,68 @@ class TestPersistence:
         loaded = store2.get("rtb-001")
         assert loaded is not None
         assert loaded.status == "pending_pause"
+
+    def test_non_empty_store_writes_backup_snapshot(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+    ) -> None:
+        b = _base(binding_id="rtb-001")
+        persisted_store.create(b, single_runtime_enforced=False)
+
+        backup_path = tmp_path / "bindings.json.bak"
+        assert backup_path.exists()
+
+        store2 = RuntimeBindingStore(path=backup_path)
+        loaded = store2.get("rtb-001")
+        assert loaded is not None
+        assert loaded.binding_id == b.binding_id
+
+    def test_missing_primary_store_restores_from_backup(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+    ) -> None:
+        b = _base(binding_id="rtb-001")
+        persisted_store.create(b, single_runtime_enforced=False)
+
+        store_path = tmp_path / "bindings.json"
+        store_path.unlink()
+
+        store2 = RuntimeBindingStore(path=store_path)
+        loaded = store2.get("rtb-001")
+        assert loaded is not None
+        assert loaded.binding_id == b.binding_id
+        assert store_path.exists()
+
+    def test_blank_primary_store_restores_from_backup(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+    ) -> None:
+        b = _base(binding_id="rtb-001")
+        persisted_store.create(b, single_runtime_enforced=False)
+
+        store_path = tmp_path / "bindings.json"
+        store_path.write_text("", encoding="utf-8")
+
+        store2 = RuntimeBindingStore(path=store_path)
+        loaded = store2.get("rtb-001")
+        assert loaded is not None
+        assert loaded.binding_id == b.binding_id
+
+    def test_empty_array_primary_store_restores_from_backup(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+    ) -> None:
+        b = _base(binding_id="rtb-001")
+        persisted_store.create(b, single_runtime_enforced=False)
+
+        store_path = tmp_path / "bindings.json"
+        store_path.write_text("[]\n", encoding="utf-8")
+
+        store2 = RuntimeBindingStore(path=store_path)
+        loaded = store2.get("rtb-001")
+        assert loaded is not None
+        assert loaded.binding_id == b.binding_id
