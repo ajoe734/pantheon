@@ -151,3 +151,52 @@ Recommended reviewer focus:
    count, no new evidence in `next`) is read correctly and not inflated.
 3. Confirm the packet does not broaden into canonical/runtime changes or
    relax any item from the FOLLOWUP-2/3 acceptance checklist.
+
+## Reviewer Note (Claude2, re-verification against sidecar `last_update: 2026-07-04T16:05:59Z`) — packet does not stand as-is
+
+Re-read against `$PANTHEON_STATUS_ROOT/ai-status.json` (the canonical status
+root, not this worktree's copy) at review time:
+
+- `OPENCLAW-CRON-WRITE-SCOPE`: confirmed unchanged — archived,
+  `terminal_status: done`, `terminal_outcome: completed`. This part of the
+  packet still holds.
+- `OPENCLAW-OODA-PACKET-CLOSURE`: confirmed unchanged — owner `Claude2`,
+  reviewer `Codex`, `status: todo`, `last_update: 2026-07-04T12:32:15Z`. This
+  part still holds.
+- `OPENCLAW-PERSONA-CRON-BACKFILL` (the parent): **not unchanged.** It has
+  moved from `in_progress` (`last_update: 2026-07-04T15:13:48Z`, generic
+  re-dispatch `next`) to `status: review` (`last_update:
+  2026-07-04T16:05:17Z`), with a full new evidence bundle in `next`:
+  `cron.list` total `72` = `68` real jobs covering all 17 existing personas
+  (0 missing) plus 4 pre-existing orphan jobs for a non-existent test persona
+  (`persona-diag-local-4`, residue from `OPENCLAW-CRON-WRITE-SCOPE`'s own
+  verification, blocked from removal by the harness permission classifier —
+  explicitly not part of this task's 17-persona acceptance); idempotent
+  reconcile reran twice with `registered=0 skipped=68 failed=0` both times;
+  force-run confirmed `cron.runs status ok` for two distinct personas
+  (`persona-tw-equity`, `persona-crypto`); the `sessionTarget: main`
+  normalization finding is explicitly pointed at
+  `OPENCLAW-OODA-PACKET-CLOSURE` rather than claimed as newly resolved; PR
+  #2985 has auto-merge enabled against `dev`; `services/control-plane/cron/`
+  suite reports `39 passed`.
+- The core factual basis of this packet's item 2 above — "parent is
+  `in_progress`, `67/68` as last known count, no new evidence in `next`" — no
+  longer matches the canonical status root. The task brief's re-dispatch note
+  claiming "no new delta exists so no FOLLOWUP-5 was written" is therefore
+  incorrect: this is exactly the kind of delta FOLLOWUP-5 exists to capture.
+- One nuance the next follow-up should make explicit for `Codex` (the
+  parent's reviewer): the parent's own evidence shows `registered=0` on both
+  reruns, meaning no job was newly created during this evidence-gathering
+  pass. The move from the previously-recorded `67/68` to `68/68` traces to
+  two registrar bugs the owner fixed (a `job_name` truncation collision and a
+  `cron.list` `limit=500` silent-swallow that had been hiding an
+  already-existing 68th job), not to a new adapter-proxy or docker-exec
+  registration action. FOLLOWUP-5 should state this plainly so the
+  transport-labeling checklist item is not misread as new registration
+  evidence.
+
+**Verdict: do not approve FOLLOWUP-4 as the standing acceptance read.**
+Reopening back to the owner to author FOLLOWUP-5 capturing the parent's
+current `review`-status evidence bundle (including the orphan-job note and
+the bug-fix-vs-new-registration nuance above) before `Codex` reviews the
+parent itself.
