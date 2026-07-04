@@ -442,6 +442,23 @@ class TestPersistence:
         assert loaded is not None
         assert loaded.binding_id == b.binding_id
 
+    def test_existing_primary_store_backfills_missing_backup(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+    ) -> None:
+        b = _base(binding_id="rtb-001")
+        persisted_store.create(b, single_runtime_enforced=False)
+
+        backup_path = tmp_path / "bindings.json.bak"
+        backup_path.unlink()
+
+        store2 = RuntimeBindingStore(path=tmp_path / "bindings.json")
+        loaded = store2.get("rtb-001")
+        assert loaded is not None
+        assert loaded.binding_id == b.binding_id
+        assert backup_path.exists()
+
     def test_missing_primary_store_restores_from_backup(
         self,
         persisted_store: RuntimeBindingStore,
