@@ -77,3 +77,82 @@ cases," which is not yet present on this task doc or the PR. Per the
 AG-DYNUI-PROD-004 precedent, hosted proof needs a human-gated dev deploy
 dispatch — capture that screenshot evidence (or an explicit local-dev-server
 equivalent) before finalizing this task to `done`.
+
+## Owner Closeout (Claude, 2026-07-04)
+
+Re-verified the reviewer's approval is still accurate against the current
+worktree, then worked the remaining closeout gap. Three prior sidecar
+packets (`AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF{,-FOLLOWUP-2,-FOLLOWUP-3}`)
+had already found the real blocker behind "hosted proof still owed": the
+hosted dev FE deploys from the **standalone** `ajoe734/execute-plans` repo,
+not this monorepo's in-tree `execute-plans/` mirror that PR #2860 landed in,
+and that standalone repo had never received this feature (independently
+diverged — grid editor, widget revision drawer, workspace proposal flow all
+postdate the mirror's fork point).
+
+Work done this pass:
+
+1. **Ported the fix to the standalone repo.** Cloned `ajoe734/execute-plans`
+   fresh (avoided the shared, already-dirty `/home/lupin/code/execute-plans`
+   checkout per the anchor-commit worktree-safety rule), re-implemented
+   `selectDefaultReadyStrategy` / `TradingRoomDefaultEntry` directly against
+   that repo's current `TradingRoomPage.tsx` (replacing its inert
+   `AggregateView`/`StrategyList` default), and wired `onOpenWorkshop` through
+   `AgoraTradingRoomRoute` using the existing `onBackToWorkshop`
+   `navigate(...)` convention. Opened
+   [ajoe734/execute-plans#173](https://github.com/ajoe734/execute-plans/pull/173)
+   (`task/AG-DYNUI-PROD-003-default-route-dynamic-entry` → `dev`).
+   Validation on that repo: `npx vitest run
+   src/agora/pages/trading-room/TradingRoomPage.test.tsx` (56/56),
+   `npx vitest run` full suite (117 files / 1093 tests), `npx tsc --noEmit -p .`
+   (clean), `npm run build` (passes, pre-existing >500kB chunk warning only).
+   `integration-gate` CI check on PR #173: **pass**.
+2. **Captured the still-outstanding screenshot evidence** using a
+   local-dev-server (the reviewer's explicitly sanctioned fallback when
+   hosted deploy isn't current) built from PR #173's branch, proxied through
+   Vite's dev-server BFF proxy against the **real live dev BFF** — see
+   `docs/deployment/evidence/ag-dynui-prod-003/20260704T032550Z/README.md`
+   for full methodology:
+   - No-strategy case: genuine live-BFF screenshot (confirmed via direct
+     `curl` that the live tenant scope has zero strategies right now — not a
+     fixture).
+   - Ready-strategy case: the live dev BFF scope has no ready (or any)
+     strategy and dev writes are disabled, so no live tenant data exists to
+     demonstrate this path without fabrication. Captured against the same
+     real build using a Playwright network-level route mock of the BFF
+     contract shape (not a product-code fixture) — documented as such,
+     not represented as live tenant data.
+
+**Still blocked on human-gated steps** (do not attempt to force these; see
+`project_agora_pr_self_merge_governance_block` — self-merge on
+`ajoe734/execute-plans` PRs is consistently blocked by the harness's
+auto-mode classifier even when CI is green and review is clean):
+
+1. A human/chair needs to merge
+   [ajoe734/execute-plans#173](https://github.com/ajoe734/execute-plans/pull/173)
+   into that repo's `dev`.
+2. Re-run the hosted browser probe against the redeployed host to replace
+   the local-dev-server evidence with true hosted screenshots.
+
+This task stays in `review_approved` (not `done`) until those steps land —
+closing it now would misrepresent an unmet "hosted proof" acceptance line.
+
+**Re-verification (2026-07-04):** PR #173 unchanged — still
+OPEN/MERGEABLE/CLEAN, `integration-gate` SUCCESS at `2026-07-04T03:28:21Z`,
+`autoMergeRequest=null` (self-merge still blocked). Corrected a prior
+assumption while re-checking the deploy path: this repo's own
+`Pantheon Nonprod Deploy` workflow (`.github/workflows/nonprod-deploy.yml`)
+is irrelevant here — `services/control-plane/bff/agora/trading_room.py`
+was never actually created/touched by this task, so there is no in-tree
+BFF component to redeploy. The hosted FE for this task is served from the
+**standalone** `ajoe734/execute-plans` repo, whose own
+`Pantheon Dev FE Deploy` workflow
+(`.github/workflows/pantheon-dev-fe-deploy.yml` in that repo) has
+auto-deployed on every push to its `dev` branch since commit `37332ee92`
+(2026-06-19, "auto-deploy on merge to dev (decouple from integration
+gate)") — no separate manual `workflow_dispatch` is required. So the
+remaining human-gated surface is a single step (merge PR #173); the
+redeploy and hosted re-probe follow without an extra dispatch ask. Not
+re-notifying the human again beyond this doc correction — the actual
+blocking action (merge PR #173) is unchanged and already surfaced
+repeatedly.
