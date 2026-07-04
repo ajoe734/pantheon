@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-DYNUI-003",
+  "archived_at": "2026-06-29T01:49:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "reconstructed_by": "AG-DYNUI-PROD-001",
+  "reconstruction_sources": [
+    "support/sidecars/AG-BE-DYNUI-003/AG-BE-DYNUI-003-IMPLEMENTATION-EVIDENCE.md",
+    "support/sidecars/AG-BE-DYNUI-003/AG-BE-DYNUI-003-SIDECAR-REVIEW.md",
+    "https://github.com/ajoe734/pantheon/pull/2585",
+    "https://github.com/ajoe734/pantheon/pull/2587"
+  ],
+  "task": {
+    "id": "AG-BE-DYNUI-003",
+    "title": "Servant workspace generator and safe widget validator",
+    "phase": "EPIC AGORA-DESIGN-PACK-DYNUI / Backend",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-DYNUI-001",
+      "AG-BE-DYNUI-002"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/trading_room/",
+      "support/sidecars/AG-BE-DYNUI-003/"
+    ],
+    "acceptance": [
+      "Servant workspace generator remains declarative.",
+      "Registry and route validators remain enforced.",
+      "Generator metadata is persisted/readable."
+    ],
+    "next": "Reconstructed terminal archive: implementation PR #2585 and closeout PR #2587 merged; readiness/store-backed caveats remain production-gap inputs.",
+    "last_update": "2026-06-29T01:49:26Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-29T01:49:26Z",
+      "reconstructed": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "implementation_pr": "https://github.com/ajoe734/pantheon/pull/2585",
+      "implementation_merge_commit": "ef246b2da4d6d48f2fd47ca55dc2465415c71efd",
+      "closeout_pr": "https://github.com/ajoe734/pantheon/pull/2587",
+      "commit": "de81d70b19c2903ff03cd7ce2f5611e9bf19e2ab",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

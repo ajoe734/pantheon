@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-DYNUI-001",
+  "archived_at": "2026-06-29T00:56:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "reconstructed_by": "AG-DYNUI-PROD-001",
+  "reconstruction_sources": [
+    "support/sidecars/AG-BE-DYNUI-001/AG-BE-DYNUI-001-IMPLEMENTATION-EVIDENCE.md",
+    "support/sidecars/AG-BE-DYNUI-001/AG-BE-DYNUI-001-SIDECAR-REVIEW.md",
+    "https://github.com/ajoe734/pantheon/pull/2577",
+    "https://github.com/ajoe734/pantheon/pull/2579"
+  ],
+  "task": {
+    "id": "AG-BE-DYNUI-001",
+    "title": "Trading Room workspace proposal contract",
+    "phase": "EPIC AGORA-DESIGN-PACK-DYNUI / Backend",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-SRC-001"
+    ],
+    "artifacts": [
+      "services/control-plane/specs/agora/trading_room_workspace.schema.json",
+      "services/control-plane/bff/agora/trading_room/",
+      "support/sidecars/AG-BE-DYNUI-001/"
+    ],
+    "acceptance": [
+      "V11 workspace proposal schema, store, routes, and focused tests are present.",
+      "TradingRoomWorkspaceProposal and TradingRoomWorkspace are distinct from DashboardRecipeV2.",
+      "No direct order, broker, runtime, or capital authority is introduced."
+    ],
+    "next": "Reconstructed terminal archive: implementation PR #2577 and closeout PR #2579 merged; downstream work must not overclaim durable DB persistence or hosted FE behavior.",
+    "last_update": "2026-06-29T00:56:07Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-29T00:56:07Z",
+      "reconstructed": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "implementation_pr": "https://github.com/ajoe734/pantheon/pull/2577",
+      "implementation_merge_commit": "cb8b03193a47bc1fadf7183f0f8c4af84b1740c5",
+      "closeout_pr": "https://github.com/ajoe734/pantheon/pull/2579",
+      "commit": "eac485c90360a93545b5bf023e9324ca50c1b342",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}
