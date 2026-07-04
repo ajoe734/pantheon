@@ -83,10 +83,25 @@ Verification run before PR:
   still have hit the pre-fix bundle.
 
 Publish checklist:
-- [ ] PR: `ajoe734/execute-plans#177` (`task/AG-DYNUI-PROD-006` -> `dev`) — opened 2026-07-04, pending `integration-gate` checks
-- [ ] Merge commit SHA: _pending merge_
-- [ ] `Pantheon Dev FE Deploy` run ID / deployed SHA: _pending — auto-triggers on push to `execute-plans` `dev`_
-- [ ] Post-deploy hosted E2E re-run (desktop + mobile) against
+- [x] PR: `ajoe734/execute-plans#177` (`task/AG-DYNUI-PROD-006` -> `dev`) — opened
+      2026-07-04, merged 2026-07-04T19:11:25Z
+- [x] Merge commit SHA: `2862e2a57c350335ae208aca2f9a203906dee2a2`
+- [x] `Pantheon Dev FE Deploy` run ID / deployed SHA: run
+      [`28716752521`](https://github.com/ajoe734/execute-plans/actions/runs/28716752521),
+      `conclusion: success`, deployed SHA `2862e2a5`
+- [x] Post-deploy hosted E2E re-run (desktop + mobile) against
       `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io` +
-      `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`: _pending_
-- [ ] Live probe artifacts: _pending_
+      `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`: both projects
+      passed (`2 passed (10.9s)`) after the auto-deploy picked up the merged
+      fix; live workshop IDs `f811cefa-712d-4c5d-9d6a-9528cc33a140` (desktop)
+      / `8b680398-e73a-40a7-8c03-58797b876818` (mobile) confirm real,
+      per-run BFF writes, not a cached/static response.
+- [x] Live probe artifacts: 12 screenshots per viewport
+      (`/tmp/agora-dynui-prod-e2e-01..10-*-{desktop,mobile}.png`) and
+      disclosure summaries
+      (`/tmp/agora-dynui-prod-e2e-summary-{desktop,mobile}.json`), same
+      disclosure split as the pre-merge local-preview run (steps 1-3 fully
+      live, steps 4-10 real product code against disclosed BFF-shaped
+      fixtures). Screenshots show the populated Trading Room dashboard
+      (Strategy Status Summary / Strategy Completeness Map / widget grid),
+      not the old empty Trading Desk shell.
