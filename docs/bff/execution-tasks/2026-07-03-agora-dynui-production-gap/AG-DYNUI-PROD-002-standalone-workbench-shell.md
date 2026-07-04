@@ -193,3 +193,59 @@ captured directly for this task. Do not close `AG-DYNUI-PROD-002` to `done`
 on source-only evidence.
 
 Approving to `review_approved`.
+
+## Local-dev-server screenshot evidence (Claude, owner, 2026-07-04)
+
+Per the reviewer's option (b) above, captured equivalent local-dev-server
+screenshot evidence directly for this task rather than waiting on
+`AG-DYNUI-PROD-006` (still `todo`/unowned progress at the time of this
+check):
+
+- Fresh clone of `ajoe734/execute-plans` at PR #171's exact commit
+  `67c0b0480d0999a2b8318c3d9ad44366f5b2f768`
+  (`task/AG-DYNUI-PROD-002-agora-standalone-shell-compliant`), isolated
+  under `/tmp/pantheon-ag-dynui-prod-002-shell-proof/execute-plans`.
+- `npm install` (909 packages via local cache) then `npx vite --port 5173`
+  (local dev server, no build changes).
+- Playwright (already a project devDependency/cached Chromium) opened
+  `/agora/trading-room` with a dev bearer token injected into
+  local/session storage (same `installOidcDevLogin` mechanism the repo's
+  own `e2e/helpers/auth.ts` uses), at two viewports:
+  desktop `1280x800` and mobile `375x812` (iPhone-class, `isMobile: true`).
+- Screenshots: `/tmp/agora-dynui-prod-002-shell-proof-desktop.png` and
+  `/tmp/agora-dynui-prod-002-shell-proof-mobile.png` (local evidence
+  files, not checked into the repo, same convention as
+  `AG-DYNUI-PROD-006`'s `/tmp/agora-dynui-prod-e2e-*.png` artifact
+  pointers).
+
+Observed in both screenshots:
+
+- Top bar is `LiveStatusBanner` only ("HYBRID / 資料來源：live / fallback
+  standby") — live status is preserved for Agora exactly as intended.
+- Header shows Agora's own `AGORA` branding and a `Servant` drawer
+  trigger, not Management's `TopBar`.
+- No Management `NotificationCenter` bell, `JobProgressDrawer`,
+  `HandoffDrawer`, `BulkResultDrawer`, or `RollbackSagaDrawer` chrome is
+  present anywhere in either viewport.
+- `TradingDeskLayout`'s own tab bar (`Trading Room` / `Strategy Workshop`
+  / `Performance`) and bottom surface (`Jobs` / `Shadow` / `Journal`)
+  render correctly; on the mobile viewport the tab bar wraps instead of
+  clipping or being replaced by a hidden overflow menu, confirming the
+  mobile-safe layout change.
+- The page shows an honest `Failed to load Trading Room.` state instead
+  of any fabricated data. This is expected: this sandbox has no network
+  path to the real dev BFF
+  (`pantheon-lupin-dev-bff.35.201.239.38.sslip.io`) that the local dev
+  server's `VITE_BFF_*` config points at, so the data fetch itself
+  fails closed rather than rendering placeholder content — the shell
+  chrome renders correctly regardless of that connectivity gap, which is
+  what this task's acceptance criteria are about. No console/page errors
+  were thrown during either capture.
+
+This closes acceptance gap (b) directly for this task. It does not close
+gap (a) or the separate merge gate: `ajoe734/execute-plans` PR #171 is
+still `OPEN`/`MERGEABLE`/`CLEAN`/`integration-gate SUCCESS` with zero
+reviews, unmerged because AI self-merge into that repo's `dev` is
+governance-blocked and requires a human decision (already notified).
+`AG-DYNUI-PROD-002` still cannot move to `done` until PR #171 merges,
+regardless of this screenshot evidence.
