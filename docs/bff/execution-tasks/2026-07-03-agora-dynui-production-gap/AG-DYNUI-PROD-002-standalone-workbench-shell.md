@@ -61,8 +61,12 @@ re-verified against `ajoe734/execute-plans` before being trusted as shipped.
 ### What changed
 
 Implemented in `ajoe734/execute-plans` PR
-[#170](https://github.com/ajoe734/execute-plans/pull/170)
-(`task/AG-DYNUI-PROD-002-agora-standalone-shell`, base `dev`):
+[#171](https://github.com/ajoe734/execute-plans/pull/171)
+(`task/AG-DYNUI-PROD-002-agora-standalone-shell-compliant`, base `dev`,
+head `67c0b0480d0999a2b8318c3d9ad44366f5b2f768`).
+PR [#170](https://github.com/ajoe734/execute-plans/pull/170) was opened
+from the pre-trailer commit `ea714cd` and was closed; it is not the
+publishable evidence for this task.
 
 - `src/App.tsx`: moved the `/agora` route tree out of
   `<Route element={<PlatformShellRoute />}>` so it is a sibling of
@@ -99,9 +103,9 @@ Implemented in `ajoe734/execute-plans` PR
 - `npm run build` — production build succeeds.
 - `npx tsc --noEmit` — no type errors.
 - `npx eslint` on touched files — clean.
-- PR #170 CI (`Pantheon FE-BFF Integration Gate`, `pull_request` trigger)
-  was still running at hand-off time; hosted browser/mobile screenshot
-  evidence for the deployed dev FE is explicitly deferred to
+- PR #171 CI (`Pantheon FE-BFF Integration Gate`, `pull_request` trigger)
+  is the active publish gate for this source change. Hosted browser/mobile
+  screenshot evidence for the deployed dev FE is explicitly deferred to
   `AG-DYNUI-PROD-006` (hosted E2E/publish gate), consistent with this
   fleet's wave routing — this task closes the shell-architecture gap in
   source, not the hosted-deploy proof.
@@ -114,7 +118,7 @@ Implemented in `ajoe734/execute-plans` PR
   from before this task and is out of this task's scope to fix, but is
   flagged here so `AG-DYNUI-PROD-006` (hosted E2E/publish gate) does not
   assume `AG-DYNUI-PROD-004`'s diagnostics work is already deployed.
-- PR #170 CI depends on live BFF secrets
+- PR #171 CI depends on live BFF secrets
   (`PANTHEON_BFF_OIDC_CLIENT_ID`/`SECRET`) for its authenticated-smoke and
   SSE-soak steps; if those are unavailable to this run, a human/CI owner
   should confirm the failure is infra-related, not a regression from this
