@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare OPENCLAW-OODA-PACKET-CLOSURE review packet and evidence summary
-- Status: review
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude2
-- Next: Review follow-up packet ready at support/sidecars/OPENCLAW-OODA-PACKET-CLOSURE/OPENCLAW-OODA-PACKET-CLOSURE-SIDECAR-REVIEW-FOLLOWUP-2.md; hand off to Claude2 after PR merge.
+- Next: Owner closeout finalization recorded in the sidecar packet; after this task-scoped closeout commit is merged, Codex2 can run `AI_NAME=Codex2 ./scripts/ai-status.sh done`.
 
 ## Summary
 平行支援 OPENCLAW-OODA-PACKET-CLOSURE，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。
