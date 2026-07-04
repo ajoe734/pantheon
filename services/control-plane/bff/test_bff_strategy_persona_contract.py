@@ -13,6 +13,7 @@ Covers:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -45,9 +46,11 @@ def _fresh_client(td: str) -> TestClient:
         os.path.join(td, "read_surfaces.json"),
         allow_local_snapshot_fallback=True,
     )
+    bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
     bff_main._PERSONA_BFF_OVERLAY.clear()
+    bff_main._COMMAND_AUTH_CONTEXT.clear()
     return TestClient(bff_main.app)
 
 
@@ -295,12 +298,86 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             assert detail.status_code == 200, detail.text
             assert detail.json()["data"]["id"] == persona_id
 
-            for subpath in ("route-policy", "activity", "evaluations", "memory", "audit"):
+            for subpath in ("route-policy", "runtime-profile", "activity", "evaluations", "memory", "audit"):
                 resp = client.get(f"/bff/personas/{persona_id}/{subpath}", headers=HEADERS)
                 assert resp.status_code == 200, f"{subpath}: {resp.text}"
                 body = resp.json()
                 assert "data" in body or "items" in body
                 assert "meta" in body
+        finally:
+            bff_main.read_store = original
+
+
+def test_bff_persona_runtime_profile_exposes_route_policy_model_contract() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            create = client.post(
+                "/bff/personas",
+                json={"name": "Runtime Persona", "archetype": "macro"},
+                headers={**HEADERS, "Idempotency-Key": "create-persona-runtime-profile"},
+            )
+            assert create.status_code == 201, create.text
+            persona_id = create.json()["data"]["id"]
+
+            def route_policy(pid: str):
+                assert pid == persona_id
+                return {
+                    "personaId": pid,
+                    "model_routing": {
+                        "mode": "hard_pin",
+                        "model": "openai/gpt-5.5",
+                    },
+                }
+
+            bff_main.read_store.get_route_policy_for_persona = route_policy
+            resp = client.get(f"/bff/personas/{persona_id}/runtime-profile", headers=HEADERS)
+            assert resp.status_code == 200, resp.text
+            data = resp.json()["data"]
+            assert data["persona_id"] == persona_id
+            assert data["workspace_ref"].endswith(f"/{persona_id}")
+            assert data["model_routing"]["mode"] == "hard_pin"
+            assert data["model_routing"]["status"] == "ready"
+            assert data["model_routing"]["primary_model"] == "openai/gpt-5.5"
+            assert data["model_routing"]["fallback_models"] == []
+            assert data["memory_policy"]["source"] == "canonical_persona_memory_plane"
+            assert data["memory_policy"]["cache_mutation_policy"] == "memory_bridge_only"
+            assert data["memory_policy"]["direct_session_writes"] is False
+
+            payload = json.dumps(data)
+            for forbidden in ("api_key", "secret", "token", "credential", "oauth"):
+                assert forbidden not in payload.lower()
+        finally:
+            bff_main.read_store = original
+
+
+def test_bff_persona_runtime_profile_fails_closed_for_unknown_model_ref() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            create = client.post(
+                "/bff/personas",
+                json={"name": "Invalid Runtime Persona", "archetype": "macro"},
+                headers={**HEADERS, "Idempotency-Key": "create-persona-invalid-runtime-profile"},
+            )
+            assert create.status_code == 201, create.text
+            persona_id = create.json()["data"]["id"]
+
+            bff_main.read_store.get_route_policy_for_persona = lambda pid: {
+                "personaId": pid,
+                "model_routing": {"mode": "preferred_pool_model", "model": "vendor/unknown"},
+            }
+
+            resp = client.get(f"/bff/personas/{persona_id}/runtime-profile", headers=HEADERS)
+            assert resp.status_code == 200, resp.text
+            routing = resp.json()["data"]["model_routing"]
+            assert routing["status"] == "degraded"
+            assert routing["primary_model"] is None
+            assert routing["fallback_models"] == []
+            assert routing["blocked_reason"] == "unknown_model_ref"
+            assert routing["invalid_refs"] == ["vendor/unknown"]
         finally:
             bff_main.read_store = original
 

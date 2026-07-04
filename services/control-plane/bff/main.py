@@ -146,6 +146,7 @@ from loop_inventory import (
     truth_label_payload,
 )
 from read_store import ReadSurfaceStore, redact_evidence_refs
+from services.persona.runtime_profile import build_persona_runtime_profile
 from settings_store import SettingsStore
 
 logging.basicConfig(level=logging.INFO)
@@ -38447,6 +38448,42 @@ async def bff_get_persona_route_policy(
         "data": policy,
         "meta": _read_surface_meta(
             "personas", "persona_route_policy",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/runtime-profile")
+async def bff_get_persona_runtime_profile(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: persona OpenClaw runtime profile contract."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    persona = read_store.get_persona(persona_id) or {"persona_id": persona_id}
+    route_policy = None
+    fetcher = getattr(read_store, "get_route_policy_for_persona", None)
+    if callable(fetcher):
+        route_policy = fetcher(persona_id)
+    try:
+        profile = build_persona_runtime_profile(
+            persona,
+            route_policy=route_policy if isinstance(route_policy, dict) else None,
+        ).to_dict()
+    except ValueError as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid persona runtime profile",
+            str(exc),
+        ) from exc
+    return {
+        "data": profile,
+        "meta": _read_surface_meta(
+            "personas", "persona_runtime_profile",
             snapshot_at=snapshot_at,
         ),
     }
