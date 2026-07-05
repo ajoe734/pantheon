@@ -224,6 +224,45 @@ def _strict_sse_reconnect_bearer(**kwargs):
 def _strict_sse_reconnect_cookie(**kwargs):
     return _strict_sse_reconnect_mode("cookie_session", **kwargs)
 
+
+def _strict_sse_soak_mode(
+    mode: str,
+    *,
+    duration_ms: int = 76000,
+    heartbeat_count: int = 2,
+    duplicate_event_ids: list[str] | None = None,
+    missing_expected_event_ids: list[str] | None = None,
+):
+    auth_headers = (
+        {"Authorization": "present", "Cookie": "absent"}
+        if mode == "bearer_polyfill"
+        else {"Authorization": "absent", "Cookie": "present"}
+    )
+    return {
+        "ok": True,
+        "duration_ms": duration_ms,
+        "timeline": {
+            "requested_seconds": 75.0,
+            "observed_duration_ms": duration_ms,
+            "observed_duration_seconds": duration_ms / 1000,
+        },
+        "request_headers": auth_headers,
+        "missing_expected_event_ids": list(missing_expected_event_ids or []),
+        "blocks": {
+            "heartbeat_count": heartbeat_count,
+            "duplicate_event_ids": list(duplicate_event_ids or []),
+        },
+    }
+
+
+def _strict_sse_soak_bearer(**kwargs):
+    return _strict_sse_soak_mode("bearer_polyfill", **kwargs)
+
+
+def _strict_sse_soak_cookie(**kwargs):
+    return _strict_sse_soak_mode("cookie_session", **kwargs)
+
+
 def _strict_rbac_matrix_items(
     *,
     with_write_side_effect_checks: bool = True,
@@ -941,24 +980,8 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "cookie_session": _strict_sse_reconnect_cookie(),
@@ -1005,7 +1028,78 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "pass"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+
+
+def test_release_gate_rejects_strict_sse_soak_when_observed_duration_is_short(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-CONSOL-011",
+                "channel": "approval",
+                "strict_live_evidence": True,
+                "strict_live_evidence_requirements": {"min_reconnect_attempts": 5},
+                "summary": {"passed": True},
+                "soak": {
+                    "enabled": True,
+                    "seconds": 75.0,
+                    "min_heartbeats": 2,
+                    "cookie_session": _strict_sse_soak_cookie(duration_ms=1000),
+                    "bearer_polyfill": _strict_sse_soak_bearer(duration_ms=1000),
+                },
+                "reconnect_sequence": {
+                    "cookie_session": _strict_sse_reconnect_cookie(),
+                    "bearer_polyfill": _strict_sse_reconnect_bearer(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    sse_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
+    )
+    assert sse_check["status"] == "fail"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:1/75 heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_cookie_browser_path(tmp_path: Path) -> None:
@@ -1028,15 +1122,7 @@ def test_release_gate_rejects_strict_sse_soak_without_cookie_browser_path(tmp_pa
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "bearer_polyfill": _strict_sse_reconnect_bearer(),
@@ -1082,7 +1168,7 @@ def test_release_gate_rejects_strict_sse_soak_without_cookie_browser_path(tmp_pa
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:0/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:0/75 heartbeat:0/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp_path: Path) -> None:
@@ -1105,24 +1191,8 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "cookie_session": _strict_sse_reconnect_cookie(),
@@ -1169,7 +1239,7 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:2/5 attemptDetails:false attemptLineage:false observed:2/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:2/5 attemptDetails:false attemptLineage:false observed:2/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp_path: Path) -> None:
@@ -1192,24 +1262,8 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "cookie_session": _strict_sse_reconnect_cookie(),
@@ -1259,7 +1313,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:false attemptLineage:false observed:5/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:5/5 attemptDetails:false attemptLineage:false observed:5/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_lineage(tmp_path: Path) -> None:
@@ -1282,24 +1336,8 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "cookie_session": _strict_sse_reconnect_cookie(),
@@ -1346,7 +1384,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tmp_path: Path) -> None:
@@ -1369,24 +1407,8 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "cookie_session": _strict_sse_reconnect_cookie(),
@@ -1433,7 +1455,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_path: Path) -> None:
@@ -1456,24 +1478,8 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
             }
         ),
@@ -1516,7 +1522,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> None:
