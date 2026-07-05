@@ -8,12 +8,16 @@ Routing repair, 2026-07-05:
   must not be re-created by a later dispatch.
 - Claude and Claude2 are unavailable for the remaining mainline work because
   their quota is exhausted.
+- Antigravity, Antigravity2, and Copilot are disabled in durable supervisor
+  config for this recovery path.
 - Gemini and Gemini2 are not valid mainline owners for this wave because the
   supervisor guard marks them disabled/sidecar-only/auth-down and auto-routes
   them away.
-- Underutilization sidecar dispatch is configured to exclude Claude and
-  Claude2 for the same quota reason.
-- The remaining task owners/reviewers below are the current executable lanes.
+- Underutilization sidecar dispatch is configured to exclude exhausted or
+  disabled lanes.
+- Remaining executable work is routed through Codex/Codex2. If Codex2 is
+  quota-paused, Codex may continue implementation but the task cannot close
+  production gates without recorded reviewer evidence.
 
 Source audit:
 
@@ -23,9 +27,18 @@ Wave 0 owner artifact:
 
 - `AG-DYNUI-FULL-001-source-truth-and-parity-matrix.md`
 
-Wave 1 owner artifact:
+Current status artifact:
+
+- `CURRENT_STATUS_20260705T1445Z.md`
+
+Wave owner artifacts:
 
 - `AG-DYNUI-FULL-002-live-workshop-readiness-bff.md`
+- `AG-DYNUI-FULL-003-ready-strategy-projection.md`
+- `AG-DYNUI-FULL-004-frontend-handoff.md`
+- `AG-DYNUI-FULL-005-live-dynamic-workflow.md`
+- `AG-DYNUI-FULL-006-no-fixture-hosted-gate.md`
+- `AG-DYNUI-FULL-007-production-closeout.md`
 
 Dispatch command:
 
@@ -51,10 +64,10 @@ pairs for fleet execution.
 |---|---|---|---|---|
 | 0 | `AG-DYNUI-FULL-001` | Codex | Claude2 | Closed source-truth/parity matrix; historical reviewer only. |
 | 1 | `AG-DYNUI-FULL-002` | Codex | Codex2 | Implement live Strategy Workshop cards/readiness BFF routes and tests. |
-| 2 | `AG-DYNUI-FULL-003` | Codex2 | Codex | Materialize ready strategies into the live Trading Room aggregate. |
-| 2 | `AG-DYNUI-FULL-004` | Codex2 | Codex | Wire frontend workshop handoff and explicit strategy route behavior. |
-| 3 | `AG-DYNUI-FULL-005` | Copilot | Codex | Prove live proposal/accept/workspace/grid/revision/version/rollback without fixtures. |
-| 4 | `AG-DYNUI-FULL-006` | Codex2 | Codex | Replace hosted E2E fixture gate with no-fixture production gate and fix CI gate failures. |
+| 2 | `AG-DYNUI-FULL-003` | Codex | Codex2 | Materialize ready strategies into the live Trading Room aggregate; backend partial is merged, closeout review remains. |
+| 2 | `AG-DYNUI-FULL-004` | Codex | Codex2 | Wire frontend workshop handoff and explicit strategy route behavior; execute-plans PR #185 is open. |
+| 3 | `AG-DYNUI-FULL-005` | Codex | Codex2 | Prove live proposal/accept/workspace/grid/revision/version/rollback without fixtures. |
+| 4 | `AG-DYNUI-FULL-006` | Codex | Codex2 | Replace hosted E2E fixture gate with no-fixture production gate and fix CI gate failures. |
 | 5 | `AG-DYNUI-FULL-007` | Codex | Codex2 | Final production closeout, deploy evidence, and residual-risk audit. |
 
 ## Global Rules
@@ -62,8 +75,10 @@ pairs for fleet execution.
 - Do not reuse archived `AG-DYNUI-PROD-*` IDs.
 - Do not re-create archived terminal `AG-DYNUI-FULL-*` IDs on dispatch.
 - Do not assign remaining `AG-DYNUI-FULL-*` mainline work to Claude,
-  Claude2, Gemini, or Gemini2 while the live quota/guardrail state marks those
-  lanes unavailable.
+  Claude2, Gemini, Gemini2, Antigravity, Antigravity2, or Copilot while the
+  live quota/guardrail state marks those lanes unavailable.
+- If Codex2 is quota-paused, continue implementation with Codex but leave the
+  task review gate open until reviewer evidence is available.
 - Do not close from `AG-DYNUI-PROD-006` fixture-backed evidence.
 - Do not use `page.route()` or mocked BFF responses in production-gate E2E.
 - Do not fabricate design details if the design zip remains missing.

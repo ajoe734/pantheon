@@ -44,34 +44,43 @@ Result:
 
 ## Live Proof Status
 
-Post-deploy live curl proof is still pending until this Pantheon PR is merged
-and deployed to the dev BFF. Required probes after deploy:
+Post-deploy direct dev BFF proof is available after Pantheon PR #3021 deployed
+the Postgres workshop store. With:
+
+- `Authorization: Bearer pantheon-dev-browser:operator,reviewer,approver:mfa`
+- `X-Tenant-Id: pantheon-dev`
+- workshop `ce63ec2a-c5f1-4e41-8219-e410d22037c7`
+
+These probes return `200`:
 
 ```sh
 curl -fsS \
   -H 'Authorization: Bearer pantheon-dev-browser:operator,reviewer,approver:mfa' \
   -H 'X-Tenant-Id: pantheon-dev' \
-  https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/<workshop_id>/readiness
+  http://127.0.0.1:18001/bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7/readiness
 
 curl -fsS \
   -H 'Authorization: Bearer pantheon-dev-browser:operator,reviewer,approver:mfa' \
   -H 'X-Tenant-Id: pantheon-dev' \
-  https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/<workshop_id>/cards
+  http://127.0.0.1:18001/bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7/cards
 ```
 
-Expected:
+Observed:
 
 - readiness response has `data.gates` for `preliminary_research`,
   `full_validation`, and `trading_room`;
-- a sufficiently complete scoped state map with a Strategy Registry ref can
-  reach `data.highest_ready_gate = "trading_room"`;
-- cards response returns typed card objects derived from scoped workshop
-  events, completeness snapshots, and readiness assessment state.
+- cards response returns typed user-strategy and readiness-gate cards derived
+  from scoped workshop state;
+- the workshop does not reach `trading_room` because completeness and Strategy
+  Registry references are missing;
+- cross-user reads return `403 CROSS_USER_ACCESS_FORBIDDEN`, confirming scope
+  enforcement.
 
 ## Residual Risks
 
 - A workshop without a completeness snapshot returns a live but not-ready
   assessment; downstream tasks still need to create or restore real workshop
   completeness evidence before production E2E can prove Trading Room handoff.
-- `AG-DYNUI-FULL-003` still owns materializing ready workshop strategies into
-  the Trading Room aggregate.
+- SQL-seeded backend projection exists, but the browser-scoped public workflow
+  still needs `AG-DYNUI-FULL-005` to produce a non-empty Trading Room
+  aggregate.
