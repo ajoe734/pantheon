@@ -885,17 +885,95 @@ def provider_config_for(config: dict[str, Any], provider: str | None) -> dict[st
     return {}
 
 
+def _provider_lookup_variants(value: str | None) -> list[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    normalized = normalize_agent_id(raw)
+    return list(dict.fromkeys([raw, normalized, raw.replace("_", "-"), raw.replace("-", "_")]))
+
+
+def _provider_capability_account_group(config: dict[str, Any], provider: str | None, provider_cfg: dict[str, Any]) -> str:
+    try:
+        provider_report = _cached_provider_capabilities(config)
+    except Exception:
+        return ""
+    providers = provider_report.get("providers") if isinstance(provider_report, dict) else {}
+    if not isinstance(providers, dict) or not providers:
+        return ""
+
+    candidates: list[str] = []
+    candidates.extend(_provider_lookup_variants(provider))
+    for key in ("quota_group", "dispatch_group"):
+        candidates.extend(_provider_lookup_variants(provider_cfg.get(key)))
+
+    for candidate in dict.fromkeys(candidates):
+        entry = providers.get(candidate)
+        if not isinstance(entry, dict):
+            normalized = normalize_agent_id(str(candidate))
+            entry = next(
+                (
+                    provider_entry
+                    for provider_id, provider_entry in providers.items()
+                    if normalize_agent_id(str(provider_id)) == normalized and isinstance(provider_entry, dict)
+                ),
+                {},
+            )
+        account_group = normalize_agent_id(str((entry or {}).get("account_group") or ""))
+        if account_group:
+            return account_group
+    return ""
+
+
+def _provider_config_alias_account_group(config: dict[str, Any], provider_cfg: dict[str, Any]) -> str:
+    for key in ("quota_group", "dispatch_group"):
+        alias = str(provider_cfg.get(key) or "").strip()
+        if not alias:
+            continue
+        alias_cfg = provider_config_for(config, alias)
+        account_group = normalize_agent_id(str(alias_cfg.get("account_group") or ""))
+        if account_group:
+            return account_group
+    return ""
+
+
 def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> str:
     provider_id = normalize_agent_id(provider or "")
     if not provider_id:
         return ""
     provider_cfg = provider_config_for(config, provider)
     group = (
-        provider_cfg.get("quota_group")
+        provider_cfg.get("account_group")
+        or _provider_config_alias_account_group(config, provider_cfg)
+        or _provider_capability_account_group(config, provider, provider_cfg)
+        or provider_cfg.get("quota_group")
         or provider_cfg.get("dispatch_group")
-        or provider_cfg.get("account_group")
     )
     return normalize_agent_id(str(group or provider_id))
+
+
+def provider_dispatch_identity_ids(config: dict[str, Any], provider: str | None) -> list[str]:
+    provider_id = normalize_agent_id(provider or "")
+    if not provider_id:
+        return []
+    provider_cfg = provider_config_for(config, provider)
+    primary_group = provider_dispatch_group_id(config, provider)
+    ids: list[str] = [primary_group, provider_id]
+    for key in ("account_group", "quota_group", "dispatch_group"):
+        value = normalize_agent_id(str(provider_cfg.get(key) or ""))
+        if value:
+            ids.append(value)
+    if primary_group:
+        for configured_provider, configured_cfg in (config.get("providers", {}) or {}).items():
+            if provider_dispatch_group_id(config, configured_provider) != primary_group:
+                continue
+            ids.append(normalize_agent_id(str(configured_provider)))
+            if isinstance(configured_cfg, dict):
+                for key in ("account_group", "quota_group", "dispatch_group"):
+                    value = normalize_agent_id(str(configured_cfg.get(key) or ""))
+                    if value:
+                        ids.append(value)
+    return [value for value in dict.fromkeys(ids) if value]
 
 
 def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
@@ -911,6 +989,15 @@ def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
     return provider_dispatch_group_id(config, provider_id or agent_id)
 
 
+def agent_quota_identity_ids(config: dict[str, Any], agent_id: str | None) -> list[str]:
+    provider_id = agent_provider_id(config, agent_id)
+    ids = [agent_quota_group_id(config, agent_id)]
+    ids.extend(provider_dispatch_identity_ids(config, provider_id or agent_id))
+    ids.append(provider_id)
+    ids.append(normalize_agent_id(agent_id or ""))
+    return [value for value in dict.fromkeys(ids) if value]
+
+
 def active_quota_group_counts(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -923,9 +1010,10 @@ def active_quota_group_counts(
         group_id = normalize_agent_id(str(worker.get("quota_group") or ""))
         if not group_id:
             group_id = provider_dispatch_group_id(config, str(worker.get("provider") or worker.get("agent_id") or ""))
-        if not group_id:
-            continue
-        counts[group_id] = counts.get(group_id, 0) + 1
+        group_ids = [group_id]
+        group_ids.extend(provider_dispatch_identity_ids(config, str(worker.get("provider") or worker.get("agent_id") or "")))
+        for quota_group_id in dict.fromkeys(group_id for group_id in group_ids if group_id):
+            counts[quota_group_id] = counts.get(quota_group_id, 0) + 1
     return counts
 
 
@@ -954,7 +1042,10 @@ def queued_quota_group_counts(config: dict[str, Any], state: dict[str, Any]) -> 
         group_id = agent_quota_group_id(config, str(event.get("target_agent") or ""))
         if not group_id:
             continue
-        counts[group_id] = counts.get(group_id, 0) + 1
+        group_ids = [group_id]
+        group_ids.extend(agent_quota_identity_ids(config, str(event.get("target_agent") or "")))
+        for quota_group_id in dict.fromkeys(group_id for group_id in group_ids if group_id):
+            counts[quota_group_id] = counts.get(quota_group_id, 0) + 1
     return counts
 
 
@@ -969,7 +1060,14 @@ def quota_group_concurrency_limit(
     if isinstance(raw, dict):
         provider_id = agent_provider_id(config, agent_id)
         display_name = display_name_for(config, normalize_agent_id(agent_id or ""))
-        for key in (group_id, provider_id, normalize_agent_id(agent_id or ""), display_name):
+        keys = [
+            *agent_quota_identity_ids(config, agent_id),
+            group_id,
+            provider_id,
+            normalize_agent_id(agent_id or ""),
+            display_name,
+        ]
+        for key in dict.fromkeys(key for key in keys if key):
             if key in raw:
                 try:
                     return max(0, int(raw[key]))
@@ -4752,8 +4850,8 @@ def current_provider_dispatch_pause(
     if not provider_id:
         return None
     bucket = _dispatch_pause_bucket(state)
-    group_id = provider_dispatch_group_id(config, provider) if config is not None else provider_id
-    for pause_id in dict.fromkeys([group_id, provider_id]):
+    pause_ids = provider_dispatch_identity_ids(config, provider) if config is not None else [provider_id]
+    for pause_id in pause_ids:
         entry = bucket.get(pause_id)
         if not isinstance(entry, dict):
             continue
@@ -4939,7 +5037,7 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
     pause_provider_id = provider_dispatch_group_id(config, provider_id) or provider_id
     bucket = _dispatch_pause_bucket(state)
     removed: list[tuple[str, dict[str, Any]]] = []
-    for pause_id in dict.fromkeys([pause_provider_id, provider_id]):
+    for pause_id in dict.fromkeys([pause_provider_id, *provider_dispatch_identity_ids(config, provider_id)]):
         entry = bucket.pop(pause_id, None)
         if isinstance(entry, dict):
             removed.append((pause_id, entry))
@@ -5446,11 +5544,19 @@ def default_reassignment_candidates(config: dict[str, Any], exclude: set[str] | 
     return out
 
 
-def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
+def agent_can_take_task(
+    config: dict[str, Any],
+    agent_name: str | None,
+    task: dict[str, Any] | None,
+    *,
+    state: dict[str, Any] | None = None,
+) -> bool:
     name = str(agent_name or "").strip()
     if not name:
         return False
     if agent_dispatch_disabled(config, name):
+        return False
+    if state is not None and agent_dispatch_paused(config, state, name):
         return False
     if agent_provider_auth_blocked(config, name):
         return False
@@ -5479,7 +5585,7 @@ def first_viable_agent(
         if name in known:
             if state is not None and agent_dispatch_paused(config, state, name):
                 continue
-            if task is not None and not agent_can_take_task(config, name, task):
+            if task is not None and not agent_can_take_task(config, name, task, state=state):
                 continue
             return name
     return None
@@ -8259,7 +8365,12 @@ def preferred_agents_for_sidecar(kind: str) -> list[str]:
     return mapping.get(kind, ["Codex", "Codex2", "Claude"])
 
 
-def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, Any]) -> bool:
+def normalize_mainline_task_assignment(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    state: dict[str, Any] | None = None,
+) -> bool:
     if task_is_sidecar(task):
         return False
     settings = worker_reassignment_settings(config)
@@ -8274,8 +8385,9 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
 
     owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
-    owner_allowed = agent_can_take_task(config, owner, task)
-    reviewer_allowed = agent_can_take_task(config, reviewer, task)
+    assignment_state = None if task_status == "in_progress" else state
+    owner_allowed = agent_can_take_task(config, owner, task, state=assignment_state)
+    reviewer_allowed = agent_can_take_task(config, reviewer, task, state=assignment_state)
     if owner_allowed and reviewer_allowed:
         return False
 
@@ -8287,7 +8399,7 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
         owner_candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), owner)
         if not owner_candidates:
             owner_candidates = default_reassignment_candidates(config, exclude={owner, reviewer})
-        replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task)
+        replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, state=state, task=task)
         if not replacement_owner:
             return False
         new_owner = replacement_owner
@@ -8301,7 +8413,7 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
         if owner:
             reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), owner))
             reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), owner))
-        replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, task=task)
+        replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task)
         if not replacement_reviewer:
             return False
         new_reviewer = replacement_reviewer
@@ -8314,12 +8426,12 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
     blocked_agents = [
         agent_name
         for agent_name in (owner, reviewer)
-        if agent_name and not agent_can_take_task(config, agent_name, task)
+        if agent_name and not agent_can_take_task(config, agent_name, task, state=assignment_state)
     ]
     blocked_summary = ", ".join(dict.fromkeys(blocked_agents)) or "disallowed lane"
     message = (
         f"Auto-reassigned {task_id} away from unavailable lane {blocked_summary} "
-        f"(disabled, sidecar-only, or auth-down); {', '.join(changed_fields)}."
+        f"(disabled, paused, sidecar-only, or auth-down); {', '.join(changed_fields)}."
     )
     if not persist_task_reassignment(
         config,
@@ -9457,7 +9569,7 @@ def dispatch_ready_tasks(
         task_id = str(task.get(task_id_field) or "")
         if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
             continue
-        normalized = normalize_mainline_task_assignment(config, task) or normalized
+        normalized = normalize_mainline_task_assignment(config, task, state=state) or normalized
 
     if normalized:
         changed = True
@@ -9553,7 +9665,7 @@ def dispatch_ready_tasks(
                 reason = "owned_ready_dispatch"
                 priority = 3
 
-            if reason is not None and not agent_can_take_task(config, target_agent, task):
+            if reason is not None and not agent_can_take_task(config, target_agent, task, state=state):
                 continue
             if reason is not None and (task_id, target_agent) in failure_loop_task_agents:
                 continue
