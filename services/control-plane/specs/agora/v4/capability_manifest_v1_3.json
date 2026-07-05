@@ -11,7 +11,9 @@
         "/bff/agora/workshops",
         "/bff/agora/workshops/{workshop_id}/patch-proposals",
         "/bff/agora/workshops/{workshop_id}/version-comparisons",
-        "/bff/agora/workshops/{workshop_id}/readiness"
+        "/bff/agora/workshops/{workshop_id}/readiness",
+        "/bff/agora/workshops/{workshop_id}/readiness/reassess",
+        "/bff/agora/workshops/{workshop_id}/cards"
       ],
       "schemas": [
         "v4/version_patch_proposal.schema.json",

@@ -11,6 +11,9 @@ Routes implemented in this module:
   POST /bff/agora/workshops/{workshop_id}/messages   — append event (private_content_ref only)
   GET  /bff/agora/workshops/{workshop_id}/events     — list events
   GET  /bff/agora/workshops/{workshop_id}/completeness — latest completeness snapshot
+  GET  /bff/agora/workshops/{workshop_id}/cards — typed live card projection
+  GET  /bff/agora/workshops/{workshop_id}/readiness — latest readiness assessment
+  POST /bff/agora/workshops/{workshop_id}/readiness/reassess — persist fresh readiness assessment
   GET  /bff/agora/workshops/{workshop_id}/stream — SSE aggregate (AG-BE-SW-004)
 
 Routes still in main.py (migration pending — see router stub comment):
@@ -29,12 +32,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from collections import deque
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -174,6 +179,537 @@ def _raise_cross_user_forbidden(
     )
 
 
+def _identity_for_scope(identity: Any) -> Any:
+    """Normalize test-injected dict identities to the OperatorIdentity shape."""
+    if not isinstance(identity, dict):
+        return identity
+    claims = identity.get("claims") if isinstance(identity.get("claims"), dict) else dict(identity)
+    operator_id = (
+        identity.get("operator_id")
+        or identity.get("operatorId")
+        or identity.get("sub")
+        or claims.get("operator_id")
+        or claims.get("operatorId")
+        or claims.get("sub")
+        or claims.get("user_id")
+        or claims.get("userId")
+        or ""
+    )
+    roles = identity.get("roles") or claims.get("roles") or ["operator"]
+    if isinstance(roles, str):
+        roles = [part.strip() for part in re.split(r"[\s,]+", roles) if part.strip()]
+    return SimpleNamespace(
+        operator_id=str(operator_id),
+        roles=list(roles or []),
+        claims=claims,
+        token_kind=identity.get("token_kind", identity.get("tokenKind", "test")),
+    )
+
+
+def _clean_optional(value: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: item
+        for key, item in value.items()
+        if item is not None and item != [] and item != {}
+    }
+
+
+def _safe_card_id(*parts: Any) -> str:
+    raw = "_".join(str(part or "") for part in parts)
+    clean = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_")
+    return clean or uuid.uuid4().hex
+
+
+def _state_map_from_snapshot(snapshot: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    if not snapshot:
+        return {}
+    raw = snapshot.get("state_map_json") or {}
+    if isinstance(raw, dict) and isinstance(raw.get("state_map"), dict):
+        raw = raw["state_map"]
+    if not isinstance(raw, dict):
+        return {}
+    result: Dict[str, str] = {}
+    for key, value in raw.items():
+        if isinstance(value, dict):
+            state = value.get("state") or value.get("grade") or value.get("status")
+        else:
+            state = value
+        if key and state is not None:
+            result[str(key)] = str(state)
+    return result
+
+
+def _explicit_blockers(snapshot: Optional[Dict[str, Any]]) -> List[str]:
+    if not snapshot:
+        return []
+    raw = snapshot.get("blocking_items_json") or []
+    if not isinstance(raw, list):
+        return [str(raw)]
+    result: List[str] = []
+    for item in raw:
+        if isinstance(item, dict):
+            result.append(str(item.get("reason") or item.get("field") or item))
+        else:
+            result.append(str(item))
+    return [item for item in result if item]
+
+
+def _readiness_helpers() -> tuple[Callable[[Any], Any], Callable[[Any], Any], Callable[[Any], str]]:
+    try:
+        from services.research.strategy_spec.completeness import (  # type: ignore
+            assess_blocking_items,
+            assess_readiness,
+            compute_overall_grade,
+        )
+    except Exception:
+        def assess_blocking_items(state_map: Dict[str, str]) -> List[Dict[str, str]]:
+            return [
+                {
+                    "field": key,
+                    "reason": f"Field '{key}' is {state}; blocks research gate.",
+                    "gate": "research",
+                }
+                for key, state in state_map.items()
+                if state in {"missing", "conflicting"}
+            ]
+
+        def assess_readiness(blocking_items: List[Any]) -> tuple[bool, bool, bool]:
+            return (not blocking_items, not blocking_items, not blocking_items)
+
+        def compute_overall_grade(state_map: Dict[str, str]) -> str:
+            return "complete" if state_map and not assess_blocking_items(state_map) else "partial"
+
+    return assess_blocking_items, assess_readiness, compute_overall_grade
+
+
+def _blocking_attr(item: Any, attr: str) -> str:
+    if isinstance(item, dict):
+        return str(item.get(attr) or "")
+    return str(getattr(item, attr, "") or "")
+
+
+def _requirement(
+    requirement_id: str,
+    title: str,
+    state: str,
+    *,
+    hardness: str = "hard",
+    summary: Optional[str] = None,
+) -> Dict[str, Any]:
+    return _clean_optional({
+        "requirement_id": requirement_id,
+        "title": title,
+        "hardness": hardness,
+        "state": state,
+        "summary": summary,
+    })
+
+
+def _gate_payload(
+    *,
+    gate_name: str,
+    gate_state: str,
+    requirements: List[Dict[str, Any]],
+    blockers: List[str],
+    assessed_at: str,
+) -> Dict[str, Any]:
+    blocking_ids = [
+        req["requirement_id"]
+        for req in requirements
+        if req.get("state") in {"missing", "partial", "stale"}
+        and req.get("hardness") == "hard"
+    ]
+    return _clean_optional({
+        "gate": gate_name,
+        "state": gate_state,
+        "requirements": requirements,
+        "blocking_requirement_ids": blocking_ids,
+        "conditional_assumptions": blockers if gate_state == "conditional" else [],
+        "evaluated_at": assessed_at,
+    })
+
+
+def _build_evidence_refs(
+    events: List[Dict[str, Any]],
+    snapshot: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    refs: List[Dict[str, Any]] = []
+    for event in events:
+        ref_id = event.get("private_content_ref") or event.get("event_id")
+        if not ref_id:
+            continue
+        refs.append(_clean_optional({
+            "ref_type": "evidence_item",
+            "ref_id": ref_id,
+            "summary": event.get("redacted_summary") or f"Workshop event {event.get('sequence_no')}",
+            "data_cutoff": event.get("created_at"),
+        }))
+    if snapshot and snapshot.get("snapshot_id"):
+        refs.append(_clean_optional({
+            "ref_type": "evidence_bundle",
+            "ref_id": snapshot["snapshot_id"],
+            "summary": "Latest StrategyCompleteness snapshot",
+            "data_cutoff": snapshot.get("created_at"),
+        }))
+    return refs
+
+
+def _build_readiness_assessment(
+    *,
+    session: Dict[str, Any],
+    events: List[Dict[str, Any]],
+    snapshot: Optional[Dict[str, Any]],
+    assessed_at: str,
+    assessment_version: Optional[int] = None,
+) -> Dict[str, Any]:
+    assess_blocking_items, assess_readiness, _compute_overall_grade = _readiness_helpers()
+    state_map = _state_map_from_snapshot(snapshot)
+    hard_blockers = _explicit_blockers(snapshot)
+    blocking_items = list(assess_blocking_items(state_map)) if state_map else []
+    research_ready, validation_ready, trading_room_ready = assess_readiness(blocking_items)
+
+    strategy_id = (
+        session.get("strategy_id")
+        or session.get("active_strategy_spec_registry_id")
+        or f"unbound-{session['workshop_id']}"
+    )
+    workshop_version_id = (
+        session.get("selected_version_id")
+        or (snapshot or {}).get("strategy_version_id")
+        or strategy_id
+    )
+    registry_id = (
+        session.get("active_strategy_spec_registry_id")
+        or session.get("strategy_id")
+        or strategy_id
+    )
+    has_state = bool(state_map)
+    has_events = bool(events)
+    has_strategy_ref = bool(session.get("strategy_id") or session.get("active_strategy_spec_registry_id"))
+    explicit_blocked = bool(hard_blockers)
+
+    gate_blockers = {
+        "preliminary_research": [
+            _blocking_attr(item, "reason")
+            for item in blocking_items
+            if _blocking_attr(item, "gate") == "research"
+        ],
+        "full_validation": [
+            _blocking_attr(item, "reason")
+            for item in blocking_items
+            if _blocking_attr(item, "gate") == "validation"
+        ],
+        "trading_room": [
+            _blocking_attr(item, "reason")
+            for item in blocking_items
+            if _blocking_attr(item, "gate") == "trading_room"
+        ],
+    }
+
+    if explicit_blocked and not blocking_items:
+        gate_blockers = {key: list(hard_blockers) for key in gate_blockers}
+        research_ready = validation_ready = trading_room_ready = False
+
+    preliminary_state = "ready" if research_ready and has_state else (
+        "conditional" if has_events or has_strategy_ref else "not_assessed"
+    )
+    if gate_blockers["preliminary_research"]:
+        preliminary_state = "blocked"
+
+    validation_state = "ready" if validation_ready and has_state else (
+        "conditional" if preliminary_state == "ready" else "not_assessed"
+    )
+    if gate_blockers["full_validation"] or preliminary_state == "blocked":
+        validation_state = "blocked"
+
+    trading_state = "ready" if trading_room_ready and has_state and has_strategy_ref else (
+        "conditional" if trading_room_ready and has_state else "not_assessed"
+    )
+    if gate_blockers["trading_room"] or validation_state == "blocked":
+        trading_state = "blocked"
+
+    gates = [
+        _gate_payload(
+            gate_name="preliminary_research",
+            gate_state=preliminary_state,
+            assessed_at=assessed_at,
+            blockers=gate_blockers["preliminary_research"],
+            requirements=[
+                _requirement(
+                    "state_map_present",
+                    "Strategy completeness state map is present",
+                    "satisfied" if has_state else "missing",
+                    hardness="soft",
+                ),
+                _requirement(
+                    "workshop_evidence_present",
+                    "Workshop event evidence exists in scoped store",
+                    "satisfied" if has_events else "missing",
+                    hardness="hard",
+                ),
+                _requirement(
+                    "research_blockers_clear",
+                    "No research gate hard blockers",
+                    "satisfied" if not gate_blockers["preliminary_research"] else "missing",
+                    summary="; ".join(gate_blockers["preliminary_research"]) or None,
+                ),
+            ],
+        ),
+        _gate_payload(
+            gate_name="full_validation",
+            gate_state=validation_state,
+            assessed_at=assessed_at,
+            blockers=gate_blockers["full_validation"],
+            requirements=[
+                _requirement(
+                    "preliminary_research_ready",
+                    "Preliminary research gate is ready",
+                    "satisfied" if preliminary_state == "ready" else "partial",
+                ),
+                _requirement(
+                    "validation_blockers_clear",
+                    "No validation gate hard blockers",
+                    "satisfied" if not gate_blockers["full_validation"] else "missing",
+                    summary="; ".join(gate_blockers["full_validation"]) or None,
+                ),
+            ],
+        ),
+        _gate_payload(
+            gate_name="trading_room",
+            gate_state=trading_state,
+            assessed_at=assessed_at,
+            blockers=gate_blockers["trading_room"],
+            requirements=[
+                _requirement(
+                    "strategy_registry_ref_present",
+                    "Strategy Registry reference exists in scoped workshop session",
+                    "satisfied" if has_strategy_ref else "missing",
+                ),
+                _requirement(
+                    "full_validation_ready",
+                    "Full validation gate is ready",
+                    "satisfied" if validation_state == "ready" else "partial",
+                ),
+                _requirement(
+                    "trading_room_blockers_clear",
+                    "No Trading Room hard blockers",
+                    "satisfied" if not gate_blockers["trading_room"] else "missing",
+                    summary="; ".join(gate_blockers["trading_room"]) or None,
+                ),
+            ],
+        ),
+    ]
+
+    highest_ready_gate = None
+    for gate_name in ("trading_room", "full_validation", "preliminary_research"):
+        gate = next(item for item in gates if item["gate"] == gate_name)
+        if gate["state"] == "ready":
+            highest_ready_gate = gate_name
+            break
+
+    version = assessment_version or 1
+    return _clean_optional({
+        "spec_version": "1.0",
+        "assessment_id": f"ready_{_safe_card_id(session['workshop_id'], version)}",
+        "workshop_id": session["workshop_id"],
+        "strategy_id": strategy_id,
+        "workshop_version_id": workshop_version_id,
+        "strategy_spec_registry_id": registry_id,
+        "assessment_version": version,
+        "gates": gates,
+        "highest_ready_gate": highest_ready_gate,
+        "staleness_reasons": [] if has_state else ["strategy_completeness_snapshot_missing"],
+        "assessed_at": assessed_at,
+        "evidence_refs": _build_evidence_refs(events, snapshot),
+    })
+
+
+def _card_sequence_base(events: List[Dict[str, Any]]) -> int:
+    return max((int(event.get("sequence_no", 0)) for event in events), default=0)
+
+
+def _event_card(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if event.get("event_type") != "message":
+        return None
+    event_id = event.get("event_id") or f"seq-{event.get('sequence_no')}"
+    return {
+        "spec_version": "1.0",
+        "card_id": f"card_{_safe_card_id('event', event_id)}",
+        "card_type": "user_strategy_description",
+        "workshop_id": event["workshop_id"],
+        "sequence_no": int(event.get("sequence_no") or 1),
+        "source_event_ids": [event_id],
+        "status": "informational",
+        "title": "Strategy description captured",
+        "summary": event.get("redacted_summary") or "Owner-private workshop message captured in the private content store.",
+        "payload": {
+            "owner_visible_content": event.get("redacted_summary") or "Owner-private workshop message captured.",
+            "message_event_id": event_id,
+            "created_at": event.get("created_at") or _ws_utc_now(),
+        },
+        "created_at": event.get("created_at") or _ws_utc_now(),
+    }
+
+
+def _completeness_card(
+    *,
+    session: Dict[str, Any],
+    snapshot: Dict[str, Any],
+    readiness: Dict[str, Any],
+    sequence_no: int,
+) -> Dict[str, Any]:
+    _assess_blocking_items, _assess_readiness, compute_overall_grade = _readiness_helpers()
+    state_map = _state_map_from_snapshot(snapshot)
+    dimension_updates = [
+        {
+            "dimension": field,
+            "prior_grade": "unknown",
+            "current_grade": state,
+            "gaps": [] if state in {"confirmed", "complete", "satisfied"} else [f"{field} is {state}"],
+            "required_actions": [],
+        }
+        for field, state in state_map.items()
+    ] or [
+        {
+            "dimension": "strategy_completeness",
+            "prior_grade": "unknown",
+            "current_grade": "missing",
+            "gaps": ["No completeness state map is available"],
+            "required_actions": ["Capture or recompute StrategyCompleteness before promotion"],
+        }
+    ]
+    ready_gates = [
+        gate["gate"]
+        for gate in readiness.get("gates", [])
+        if gate.get("state") == "ready"
+    ]
+    return {
+        "spec_version": "1.0",
+        "card_id": f"card_{_safe_card_id('completeness', snapshot.get('snapshot_id') or session['workshop_id'])}",
+        "card_type": "completeness_update",
+        "workshop_id": session["workshop_id"],
+        "sequence_no": sequence_no,
+        "source_event_ids": [],
+        "workshop_version_id": snapshot.get("strategy_version_id"),
+        "strategy_spec_registry_id": session.get("active_strategy_spec_registry_id") or session.get("strategy_id"),
+        "status": "completed",
+        "title": "Strategy completeness updated",
+        "summary": "Latest StrategyCompleteness snapshot from scoped workshop store.",
+        "payload": {
+            "overall_grade": compute_overall_grade(state_map) if state_map else "incomplete",
+            "dimension_updates": dimension_updates,
+            "blockers": _explicit_blockers(snapshot),
+            "research_ready": "preliminary_research" in ready_gates,
+            "readiness_gates": ready_gates,
+            "change_since_previous": "latest_snapshot",
+        },
+        "created_at": snapshot.get("created_at") or readiness.get("assessed_at") or _ws_utc_now(),
+    }
+
+
+def _next_question_card(
+    *,
+    session: Dict[str, Any],
+    snapshot: Dict[str, Any],
+    sequence_no: int,
+) -> Optional[Dict[str, Any]]:
+    raw = snapshot.get("next_question_json")
+    if not isinstance(raw, dict) or not raw:
+        return None
+    question_id = str(raw.get("question_id") or raw.get("id") or f"q_{snapshot.get('snapshot_id') or sequence_no}")
+    question_text = str(raw.get("question") or raw.get("text") or raw.get("prompt") or "Clarify the next strategy decision.")
+    return {
+        "spec_version": "1.0",
+        "card_id": f"card_{_safe_card_id('next', question_id)}",
+        "card_type": "next_question",
+        "workshop_id": session["workshop_id"],
+        "sequence_no": sequence_no,
+        "status": "action_required",
+        "title": "Next workshop question",
+        "summary": question_text,
+        "payload": {
+            "question_id": question_id,
+            "question": question_text,
+            "why_now": str(raw.get("why_now") or raw.get("reason") or "This answer improves downstream readiness."),
+            "score_total": float(raw.get("score_total") or raw.get("score") or 0),
+            "answer_options": raw.get("answer_options") or raw.get("options") or [],
+            "freeform_allowed": bool(raw.get("freeform_allowed", True)),
+            "defer_allowed": bool(raw.get("defer_allowed", True)),
+        },
+        "created_at": snapshot.get("created_at") or _ws_utc_now(),
+    }
+
+
+def _readiness_card(
+    *,
+    session: Dict[str, Any],
+    readiness: Dict[str, Any],
+    sequence_no: int,
+) -> Dict[str, Any]:
+    hard_blockers: List[str] = []
+    for gate in readiness.get("gates", []):
+        for req in gate.get("requirements", []):
+            if req.get("hardness") == "hard" and req.get("state") in {"missing", "partial", "stale"}:
+                hard_blockers.append(str(req.get("title")))
+    return {
+        "spec_version": "1.0",
+        "card_id": f"card_{_safe_card_id('readiness', readiness.get('assessment_id') or session['workshop_id'])}",
+        "card_type": "readiness_gate",
+        "workshop_id": session["workshop_id"],
+        "sequence_no": sequence_no,
+        "workshop_version_id": readiness.get("workshop_version_id"),
+        "strategy_spec_registry_id": readiness.get("strategy_spec_registry_id"),
+        "status": "completed" if readiness.get("highest_ready_gate") else "action_required",
+        "title": "Strategy readiness gates",
+        "summary": f"Highest ready gate: {readiness.get('highest_ready_gate') or 'none'}",
+        "payload": _clean_optional({
+            "gates": readiness.get("gates", []),
+            "hard_blockers": hard_blockers,
+            "temporary_assumptions": [],
+            "staleness_reasons": readiness.get("staleness_reasons", []),
+            "highest_ready_gate": readiness.get("highest_ready_gate"),
+            "assessed_at": readiness.get("assessed_at"),
+            "valid_until": readiness.get("valid_until"),
+        }),
+        "evidence_refs": readiness.get("evidence_refs", []),
+        "allowed_actions": {"reassess_readiness": True},
+        "created_at": readiness.get("assessed_at") or _ws_utc_now(),
+    }
+
+
+def _build_workshop_cards(
+    *,
+    session: Dict[str, Any],
+    events: List[Dict[str, Any]],
+    snapshot: Optional[Dict[str, Any]],
+    readiness: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    cards = [card for card in (_event_card(event) for event in events) if card is not None]
+    next_seq = _card_sequence_base(events) + 1
+    if snapshot:
+        cards.append(_completeness_card(
+            session=session,
+            snapshot=snapshot,
+            readiness=readiness,
+            sequence_no=next_seq,
+        ))
+        next_seq += 1
+        next_question = _next_question_card(session=session, snapshot=snapshot, sequence_no=next_seq)
+        if next_question:
+            cards.append(next_question)
+            next_seq += 1
+    cards.append(_readiness_card(session=session, readiness=readiness, sequence_no=next_seq))
+    return sorted((_clean_optional(card) for card in cards), key=lambda card: int(card.get("sequence_no", 0)))
+
+
+def _merge_cards(*card_lists: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    for cards in card_lists:
+        for card in cards:
+            merged[str(card.get("card_id"))] = _clean_optional(dict(card))
+    return sorted(merged.values(), key=lambda card: int(card.get("sequence_no", 0)))
+
+
 # --------------------------------------------------------------------------- #
 # Request / response models
 # --------------------------------------------------------------------------- #
@@ -192,6 +728,12 @@ class WorkshopMessageRequest(BaseModel):
 
     content: str = Field(min_length=1)
     attachment_refs: List[str] = Field(default_factory=list)
+
+
+class WorkshopReadinessReassessRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    force: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -219,7 +761,7 @@ def create_strategy_workshop_router(
         from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
         from ..models import AgoraErrorCode
 
-        identity = extract_identity(authorization)
+        identity = _identity_for_scope(extract_identity(authorization))
         require_read_role(identity)
         try:
             return resolve_agora_user_scope(
@@ -246,6 +788,37 @@ def create_strategy_workshop_router(
             ErrorCode.NOT_IMPLEMENTED,
             f"{route} is not yet implemented",
             "stub: see later AG-BE-SW-* tasks",
+        )
+
+    def _scoped_session(workshop_id: str, scope: Any) -> Dict[str, Any]:
+        session = store.get_session(workshop_id)
+        if session is None:
+            from models import ErrorCode
+            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
+        if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="strategy_workshop",
+                resource_id=workshop_id,
+            )
+        return session
+
+    def _readiness_from_store_or_state(session: Dict[str, Any]) -> Dict[str, Any]:
+        latest = (
+            store.get_latest_readiness_assessment(session["workshop_id"])
+            if hasattr(store, "get_latest_readiness_assessment")
+            else None
+        )
+        if latest is not None:
+            return latest
+        events = store.list_events(session["workshop_id"])
+        snapshot = store.get_latest_completeness_snapshot(session["workshop_id"])
+        return _build_readiness_assessment(
+            session=session,
+            events=events,
+            snapshot=snapshot,
+            assessed_at=utc_now(),
+            assessment_version=1,
         )
 
     # ------------------------------------------------------------------ #
@@ -532,6 +1105,172 @@ def create_strategy_workshop_router(
                 "snapshot_at": utc_now(),
                 "capability": "agora.workshop.v1",
                 "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+            },
+        }
+
+    # ------------------------------------------------------------------ #
+    # GET /bff/agora/workshops/{workshop_id}/cards — typed live cards
+    # ------------------------------------------------------------------ #
+    @router.get("/bff/agora/workshops/{workshop_id}/cards")
+    def list_workshop_cards(
+        workshop_id: str,
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        after_sequence: Optional[int] = Query(default=None, ge=0),
+    ) -> Dict[str, Any]:
+        scope = _scope(authorization, x_tenant_id)
+        session = _scoped_session(workshop_id, scope)
+        events = store.list_events(workshop_id)
+        snapshot = store.get_latest_completeness_snapshot(workshop_id)
+        readiness = _readiness_from_store_or_state(session)
+        projected_cards = _build_workshop_cards(
+            session=session,
+            events=events,
+            snapshot=snapshot,
+            readiness=readiness,
+        )
+        stored_cards = (
+            store.list_workshop_cards(workshop_id)
+            if hasattr(store, "list_workshop_cards")
+            else []
+        )
+        cards = _merge_cards(stored_cards, projected_cards)
+        if after_sequence is not None:
+            cards = [card for card in cards if int(card.get("sequence_no", 0)) > after_sequence]
+        return {
+            "data": cards,
+            "meta": {
+                "snapshot_at": utc_now(),
+                "capability": "agora.workshop.v1",
+                "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "total": len(cards),
+            },
+        }
+
+    # ------------------------------------------------------------------ #
+    # GET /bff/agora/workshops/{workshop_id}/readiness — latest readiness
+    # ------------------------------------------------------------------ #
+    @router.get("/bff/agora/workshops/{workshop_id}/readiness")
+    def get_workshop_readiness(
+        workshop_id: str,
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    ) -> Dict[str, Any]:
+        scope = _scope(authorization, x_tenant_id)
+        session = _scoped_session(workshop_id, scope)
+        readiness = _readiness_from_store_or_state(session)
+        return {
+            "data": readiness,
+            "meta": {
+                "snapshot_at": utc_now(),
+                "capability": "agora.workshop.v1",
+                "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+            },
+        }
+
+    # ------------------------------------------------------------------ #
+    # POST /bff/agora/workshops/{workshop_id}/readiness/reassess
+    # ------------------------------------------------------------------ #
+    @router.post("/bff/agora/workshops/{workshop_id}/readiness/reassess", status_code=202)
+    def reassess_workshop_readiness(
+        workshop_id: str,
+        response: Response,
+        body: Optional[WorkshopReadinessReassessRequest] = Body(default=None),
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        del body
+        scope = _scope(authorization, x_tenant_id)
+        session = _scoped_session(workshop_id, scope)
+        if if_match is None:
+            from models import ErrorCode
+            raise bff_error(
+                428,
+                ErrorCode.PRECONDITION_FAILED,
+                "If-Match header is required for workshop readiness reassessment",
+                "missing_if_match",
+                suggestion="GET the workshop first and supply the returned ETag in If-Match",
+            )
+        if idempotency_key is None:
+            from models import ErrorCode
+            raise bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "Idempotency-Key header is required",
+                "missing_idempotency_key",
+                suggestion="Supply a UUID v4 in the Idempotency-Key request header",
+            )
+        expected_version = _parse_etag_lock_version(if_match, workshop_id)
+        current_version = int(session.get("lock_version", 1))
+        if expected_version != current_version:
+            from models import ErrorCode
+            current_etag = f'W/"workshop:{workshop_id}:v{current_version}"'
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent modification: ETag mismatch",
+                f"If-Match {if_match!r} does not match current ETag {current_etag!r}",
+                details_extra={
+                    "current_etag": current_etag,
+                    "latest_href": f"/bff/agora/workshops/{workshop_id}",
+                },
+            )
+        if hasattr(store, "check_and_record_idempotency_key"):
+            idem_scope = (
+                f"{scope.user_id}:{scope.tenant_id}:{workshop_id}"
+                f":POST:/bff/agora/workshops/readiness/reassess"
+            )
+            if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
+                from models import ErrorCode
+                raise bff_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Duplicate Idempotency-Key",
+                    idempotency_key,
+                )
+
+        events = store.list_events(workshop_id)
+        snapshot = store.get_latest_completeness_snapshot(workshop_id)
+        latest = (
+            store.get_latest_readiness_assessment(workshop_id)
+            if hasattr(store, "get_latest_readiness_assessment")
+            else None
+        )
+        next_assessment_version = int((latest or {}).get("assessment_version", 0)) + 1
+        assessment = _build_readiness_assessment(
+            session=session,
+            events=events,
+            snapshot=snapshot,
+            assessed_at=utc_now(),
+            assessment_version=next_assessment_version,
+        )
+        stored_assessment = (
+            store.create_readiness_assessment(assessment)
+            if hasattr(store, "create_readiness_assessment")
+            else assessment
+        )
+        new_lock_version = store.update_session_lock_version(workshop_id)
+        new_etag = f'W/"workshop:{workshop_id}:v{new_lock_version}"'
+        response.headers["ETag"] = new_etag
+        _ws_publish(
+            workshop_id,
+            "workshop.readiness.updated",
+            {
+                "assessment_id": stored_assessment["assessment_id"],
+                "assessment_version": stored_assessment["assessment_version"],
+                "highest_ready_gate": stored_assessment.get("highest_ready_gate"),
+            },
+            utc_now_fn=utc_now,
+        )
+        return {
+            "data": stored_assessment,
+            "meta": {
+                "snapshot_at": utc_now(),
+                "capability": "agora.workshop.v1",
+                "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "etag": new_etag,
             },
         }
 

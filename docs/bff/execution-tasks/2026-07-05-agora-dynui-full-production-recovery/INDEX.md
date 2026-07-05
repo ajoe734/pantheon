@@ -23,6 +23,10 @@ Wave 0 owner artifact:
 
 - `AG-DYNUI-FULL-001-source-truth-and-parity-matrix.md`
 
+Wave 1 owner artifact:
+
+- `AG-DYNUI-FULL-002-live-workshop-readiness-bff.md`
+
 Dispatch command:
 
 ```sh
