@@ -330,6 +330,16 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 body = resp.json()
                 assert "data" in body or "items" in body
                 assert "meta" in body
+
+            stored = bff_main.read_store.get_persona(persona_id)
+            reconcile = stored["metadata"]["openclaw_agent_reconcile"]
+            assert reconcile["status"] == "pending"
+            assert reconcile["reason"] == "persona_created"
+            assert reconcile["agent_id"] == persona_id
+            assert reconcile["model_id"] == f"openclaw/{persona_id}"
+            assert reconcile["workspace_ref"].endswith(f"/{persona_id}")
+            assert reconcile["model_routing"]["status"] == "ready"
+            assert reconcile["consumer"] == "scripts/openclaw-sync-persona-agents.py"
         finally:
             bff_main.read_store = original
 
@@ -457,6 +467,15 @@ def test_bff_personas_patch_persists_without_snapshot_fallback() -> None:
             assert detail.json()["data"]["name"] == "Persistent Persona"
             assert detail.json()["data"]["risk"] == "high"
             assert detail.json()["meta"]["surfaces"]["persona_detail"]["source"] == "bff_local_dev_store"
+
+            stored = bff_main.read_store.get_persona(persona_id)
+            reconcile = stored["metadata"]["openclaw_agent_reconcile"]
+            assert reconcile["status"] == "pending"
+            assert reconcile["reason"] == "persona_updated"
+            assert reconcile["agent_id"] == persona_id
+            assert reconcile["model_id"] == f"openclaw/{persona_id}"
+            assert reconcile["workspace_ref"].endswith(f"/{persona_id}")
+            assert reconcile["model_routing"]["status"] == "ready"
         finally:
             bff_main.read_store = original
 
