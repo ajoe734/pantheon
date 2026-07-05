@@ -25177,6 +25177,46 @@ def _project_persona_dto(
         or raw.get("mandate")
         or "generalist"
     )
+    capital_mode = str(
+        metadata.get("capital_mode")
+        or metadata.get("capitalMode")
+        or metadata.get("deployment_stage")
+        or metadata.get("deploymentStage")
+        or ""
+    ).strip().lower()
+    if capital_mode not in {"paper", "canary", "live"}:
+        capital_mode = ""
+    metadata_paper_ledger = (
+        metadata.get("paper_ledger")
+        if isinstance(metadata.get("paper_ledger"), dict)
+        else {}
+    )
+    paper_ledger_id = (
+        str(
+            metadata.get("paper_ledger_id")
+            or metadata.get("paperLedgerId")
+            or metadata_paper_ledger.get("id")
+            or ""
+        ).strip()
+        or (f"paper-ledger-{persona_id}" if capital_mode == "paper" and persona_id else None)
+    )
+    paper_ledger = None
+    if paper_ledger_id:
+        paper_ledger = dict(metadata_paper_ledger)
+        paper_ledger.update({
+            "id": paper_ledger_id,
+            "mode": paper_ledger.get("mode") or "paper",
+            "persona_id": paper_ledger.get("persona_id") or persona_id,
+            "is_isolated": bool(paper_ledger.get("is_isolated", True)),
+            "isolated": bool(paper_ledger.get("isolated", True)),
+        })
+    legacy_paper_capital_pool_id = None
+    if capital_mode == "paper":
+        legacy_paper_capital_pool_id = (
+            metadata.get("legacy_paper_capital_pool_id")
+            or metadata.get("capital_pool_id")
+        )
+    capital_pool_id = None if capital_mode == "paper" else metadata.get("capital_pool_id")
     dto: Dict[str, Any] = {
         "id": persona_id,
         "name": raw.get("name") or persona_id,
@@ -25191,8 +25231,11 @@ def _project_persona_dto(
         "lifecycleStatus": str(raw.get("lifecycle_state") or ""),
         "marketScope": list(metadata.get("market_scope") or []),
         "assetClasses": list(metadata.get("asset_classes") or []),
-        "capitalPoolId": metadata.get("capital_pool_id"),
-        "capitalMode": metadata.get("capital_mode"),
+        "paperLedgerId": paper_ledger_id,
+        "paperLedger": paper_ledger,
+        "legacyPaperCapitalPoolId": legacy_paper_capital_pool_id,
+        "capitalPoolId": capital_pool_id,
+        "capitalMode": metadata.get("capital_mode") or capital_mode or None,
         "runtimeId": metadata.get("runtime_id") or metadata.get("runtime_binding_id"),
         "runtimeBindingId": metadata.get("runtime_binding_id"),
         "deploymentPlanId": metadata.get("deployment_plan_id"),
@@ -25208,6 +25251,13 @@ def _project_persona_dto(
         "strategyFamily": raw.get("strategy_family") or "",
         "traits": metadata.get("traits") if isinstance(metadata.get("traits"), dict) else {},
     }
+    if dto.get("capitalPoolId") is None:
+        dto.pop("capitalPoolId", None)
+    if not dto.get("paperLedgerId"):
+        dto.pop("paperLedgerId", None)
+        dto.pop("paperLedger", None)
+    if not dto.get("legacyPaperCapitalPoolId"):
+        dto.pop("legacyPaperCapitalPoolId", None)
     required_data_sources = (
         raw.get("required_data_sources")
         if isinstance(raw.get("required_data_sources"), list)
@@ -38538,12 +38588,21 @@ def _persona_create_validate_paper_only(payload: Dict[str, Any]) -> str:
 
 
 def _persona_create_paper_refs(persona_id: str, payload: Dict[str, Any]) -> Dict[str, str]:
-    pool_id = str(
-        payload.get("paperCapitalPoolId")
+    paper_ledger_id = str(
+        payload.get("paperLedgerId")
+        or payload.get("paper_ledger_id")
+        or payload.get("paperAccountId")
+        or payload.get("paper_account_id")
+        or f"paper-ledger-{persona_id}"
+    ).strip()
+    legacy_capital_ref_id = str(
+        payload.get("legacyPaperCapitalPoolId")
+        or payload.get("legacy_paper_capital_pool_id")
+        or payload.get("paperCapitalPoolId")
         or payload.get("paper_capital_pool_id")
         or payload.get("capitalPoolId")
         or payload.get("capital_pool_id")
-        or f"paper-pool-{persona_id}"
+        or paper_ledger_id
     ).strip()
     binding_id = str(
         payload.get("paperBindingId")
@@ -38572,7 +38631,8 @@ def _persona_create_paper_refs(persona_id: str, payload: Dict[str, Any]) -> Dict
         or f"paper-artifact-{persona_id}"
     ).strip()
     return {
-        "capital_pool_id": pool_id,
+        "paper_ledger_id": paper_ledger_id,
+        "capital_pool_id": legacy_capital_ref_id,
         "binding_id": binding_id,
         "deployment_plan_id": plan_id,
         "runtime_id": runtime_id,
@@ -38668,7 +38728,15 @@ async def bff_create_persona(
         "execution_mode": payload.get("executionMode") or payload.get("initialMode"),
         "success_rate": float(payload.get("successRate") or 0.0),
         "capital_mode": capital_mode,
-        "capital_pool_id": refs["capital_pool_id"],
+        "paper_ledger_id": refs["paper_ledger_id"],
+        "paper_ledger": {
+            "id": refs["paper_ledger_id"],
+            "mode": "paper",
+            "persona_id": persona_id,
+            "is_isolated": True,
+            "benchmark_budget": payload.get("paperBudget") or payload.get("paper_budget"),
+        },
+        "legacy_paper_capital_pool_id": refs["capital_pool_id"],
         "persona_capital_binding_id": refs["binding_id"],
         "binding_id": refs["binding_id"],
         "runtime_id": refs["runtime_id"],
@@ -38697,7 +38765,7 @@ async def bff_create_persona(
         },
         "evidence_refs": [
             f"evidence://persona-create/{persona_id}/request",
-            f"evidence://persona-create/{persona_id}/paper-capital-binding",
+            f"evidence://persona-create/{persona_id}/paper-ledger-binding",
             f"evidence://persona-create/{persona_id}/paper-runtime-binding",
         ],
     }
@@ -38752,21 +38820,6 @@ async def bff_create_persona(
             traits=traits,
             metadata=persona_metadata,
         )
-        read_store.create_capital_pool(
-            pool_id=refs["capital_pool_id"],
-            name=f"{name} paper capital pool",
-            actor_id=owner,
-            created_at=snapshot_at,
-            risk_policy_ref=f"risk-policy:{risk}:paper",
-            params={
-                "capital_mode": "paper",
-                "persona_id": persona_id,
-                "paper_budget": payload.get("paperBudget") or payload.get("paper_budget"),
-                "live_capital_enabled": False,
-                "capital_side_effects_allowed": False,
-            },
-            status="active",
-        )
         read_store.create_persona_binding(
             binding_id=refs["binding_id"],
             persona_id=persona_id,
@@ -38777,6 +38830,8 @@ async def bff_create_persona(
             validity="active",
             metadata={
                 "capital_mode": "paper",
+                "paper_ledger_id": refs["paper_ledger_id"],
+                "legacy_paper_capital_pool_id": refs["capital_pool_id"],
                 "live_capital_enabled": False,
                 "created_via": "POST /bff/personas",
             },
@@ -38792,6 +38847,7 @@ async def bff_create_persona(
             params={
                 "persona_id": persona_id,
                 "capital_mode": "paper",
+                "paper_ledger_id": refs["paper_ledger_id"],
                 "human_review_required_for_live": True,
             },
             locked=True,
@@ -38809,6 +38865,7 @@ async def bff_create_persona(
             params={
                 "capital_pool_id": refs["capital_pool_id"],
                 "capital_mode": "paper",
+                "paper_ledger_id": refs["paper_ledger_id"],
                 "live_write_enabled": False,
                 "order_side_effects_allowed": False,
             },
@@ -38820,7 +38877,9 @@ async def bff_create_persona(
             "routedStrategies": int(payload.get("routedStrategies") or 0),
             "successRate": float(payload.get("successRate") or 0.0),
             "capitalMode": "paper",
-            "capitalPoolId": refs["capital_pool_id"],
+            "paperLedgerId": refs["paper_ledger_id"],
+            "paperLedger": persona_metadata["paper_ledger"],
+            "legacyPaperCapitalPoolId": refs["capital_pool_id"],
             "runtimeId": refs["runtime_id"],
             "runtimeBindingId": refs["binding_id"],
             "deploymentPlanId": refs["deployment_plan_id"],
@@ -38856,7 +38915,8 @@ async def bff_create_persona(
             "snapshot_at": snapshot_at,
             "create_flow": "one_shot_paper_running",
             "capital_mode": "paper",
-            "capital_pool_id": refs["capital_pool_id"],
+            "paper_ledger_id": refs["paper_ledger_id"],
+            "legacy_paper_capital_pool_id": refs["capital_pool_id"],
             "runtime_binding_id": refs["binding_id"],
             "runtime_id": refs["runtime_id"],
             "deployment_plan_id": refs["deployment_plan_id"],
@@ -52990,6 +53050,12 @@ _PERSONA_FLEET_CONTEXT_METADATA_KEYS = (
     "deployment_stage",
     "capital_mode",
     "capital_pool_id",
+    "target_capital_pool_id",
+    "live_capital_pool_id",
+    "paper_ledger_id",
+    "paper_ledger",
+    "paper_budget",
+    "paper_benchmark_budget",
     "runtime_id",
     "runtime_binding_id",
     "league_rank",
@@ -53171,6 +53237,37 @@ def _build_persona_health_items(
             or context_metadata.get("deployment_stage")
             or "none"
         )
+        capital_mode = _persona_fleet_capital_mode(
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            binding=binding,
+            runtime=runtime,
+            deployment_stage=deployment_stage,
+        )
+        live_pool_id = _persona_fleet_live_capital_pool_id(
+            capital_mode=capital_mode,
+            pool_id=pool_id,
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            context_metadata=context_metadata,
+            binding=binding,
+        )
+        paper_ledger_id = _persona_fleet_paper_ledger_id(
+            persona_id=persona_id,
+            capital_mode=capital_mode,
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            context_metadata=context_metadata,
+            binding=binding,
+            runtime=runtime,
+        )
+        paper_ledger = _persona_fleet_paper_ledger(
+            paper_ledger_id=paper_ledger_id,
+            persona_id=persona_id,
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            context_metadata=context_metadata,
+        )
         market_scope = list(
             league_entry.get("market_scope")
             or context_metadata.get("market_scope")
@@ -53295,8 +53392,16 @@ def _build_persona_health_items(
             "marketScope": market_scope,
             "asset_classes": asset_classes,
             "assetClasses": asset_classes,
-            "capital_pool_id": pool_id,
-            "capitalPoolId": pool_id,
+            "capital_mode": capital_mode,
+            "capitalMode": capital_mode,
+            "paper_ledger_id": paper_ledger_id,
+            "paperLedgerId": paper_ledger_id,
+            "paper_ledger": paper_ledger,
+            "paperLedger": paper_ledger,
+            "legacy_paper_capital_pool_id": pool_id if capital_mode == "paper" else None,
+            "legacyPaperCapitalPoolId": pool_id if capital_mode == "paper" else None,
+            "capital_pool_id": live_pool_id,
+            "capitalPoolId": live_pool_id,
             "runtime_id": runtime_id,
             "runtimeId": runtime_id,
             "deployment_stage": deployment_stage,
@@ -53581,6 +53686,124 @@ def _persona_fleet_capital_mode(
     return "none"
 
 
+def _persona_fleet_live_capital_pool_id(
+    *,
+    capital_mode: str,
+    pool_id: Any,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    context_metadata: Dict[str, Any],
+    binding: Dict[str, Any],
+) -> Optional[str]:
+    if capital_mode != "paper":
+        clean = str(pool_id or "").strip()
+        return clean or None
+    for value in (
+        league_entry.get("target_capital_pool_id"),
+        league_entry.get("targetCapitalPoolId"),
+        raw_metadata.get("target_capital_pool_id"),
+        raw_metadata.get("targetCapitalPoolId"),
+        context_metadata.get("target_capital_pool_id"),
+        context_metadata.get("targetCapitalPoolId"),
+        league_entry.get("live_capital_pool_id"),
+        raw_metadata.get("live_capital_pool_id"),
+        context_metadata.get("live_capital_pool_id"),
+        _persona_fleet_record_value(binding, "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id"),
+    ):
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return None
+
+
+def _persona_fleet_paper_ledger_id(
+    *,
+    persona_id: str,
+    capital_mode: str,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    context_metadata: Dict[str, Any],
+    binding: Dict[str, Any],
+    runtime: Dict[str, Any],
+) -> Optional[str]:
+    if capital_mode != "paper":
+        return None
+    paper_ledger = context_metadata.get("paper_ledger") if isinstance(context_metadata.get("paper_ledger"), dict) else {}
+    raw_paper_ledger = raw_metadata.get("paper_ledger") if isinstance(raw_metadata.get("paper_ledger"), dict) else {}
+    for value in (
+        league_entry.get("paper_ledger_id"),
+        league_entry.get("paperLedgerId"),
+        raw_metadata.get("paper_ledger_id"),
+        raw_metadata.get("paperLedgerId"),
+        context_metadata.get("paper_ledger_id"),
+        context_metadata.get("paperLedgerId"),
+        paper_ledger.get("id"),
+        raw_paper_ledger.get("id"),
+        _persona_fleet_record_value(binding, "paper_ledger_id", "paperLedgerId"),
+        _persona_fleet_record_value(runtime, "paper_ledger_id", "paperLedgerId"),
+    ):
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return f"paper-ledger-{persona_id}"
+
+
+def _persona_fleet_paper_budget(
+    *,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    context_metadata: Dict[str, Any],
+) -> Optional[float]:
+    paper_ledger = context_metadata.get("paper_ledger") if isinstance(context_metadata.get("paper_ledger"), dict) else {}
+    for value in (
+        league_entry.get("paper_benchmark_budget"),
+        league_entry.get("paperBenchmarkBudget"),
+        raw_metadata.get("paper_benchmark_budget"),
+        raw_metadata.get("paperBenchmarkBudget"),
+        context_metadata.get("paper_benchmark_budget"),
+        context_metadata.get("paperBenchmarkBudget"),
+        paper_ledger.get("benchmark_budget"),
+        paper_ledger.get("benchmarkBudget"),
+        raw_metadata.get("paper_budget"),
+        context_metadata.get("paper_budget"),
+    ):
+        if value in (None, "") or isinstance(value, bool):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _persona_fleet_paper_ledger(
+    *,
+    paper_ledger_id: Optional[str],
+    persona_id: str,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    context_metadata: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    if not paper_ledger_id:
+        return None
+    out: Dict[str, Any] = {
+        "id": paper_ledger_id,
+        "mode": "paper",
+        "persona_id": persona_id,
+        "is_isolated": True,
+        "isolated": True,
+    }
+    budget = _persona_fleet_paper_budget(
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata=context_metadata,
+    )
+    if budget is not None:
+        out["benchmark_budget"] = budget
+        out["benchmarkBudget"] = budget
+    return out
+
+
 def _persona_fleet_runtime_binding_id(
     *,
     runtime_id: Any,
@@ -53773,6 +53996,30 @@ def _project_persona_fleet_list_row(
         runtime=runtime,
         deployment_stage=deployment_stage,
     )
+    live_pool_id = _persona_fleet_live_capital_pool_id(
+        capital_mode=capital_mode,
+        pool_id=pool_id,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata=context_metadata,
+        binding=binding,
+    )
+    paper_ledger_id = _persona_fleet_paper_ledger_id(
+        persona_id=persona_id,
+        capital_mode=capital_mode,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata=context_metadata,
+        binding=binding,
+        runtime=runtime,
+    )
+    paper_ledger = _persona_fleet_paper_ledger(
+        paper_ledger_id=paper_ledger_id,
+        persona_id=persona_id,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata=context_metadata,
+    )
     market_scope = list(league_entry.get("market_scope") or context_metadata.get("market_scope") or [])
     risk_flags = list(league_entry.get("risk_flags") or context_metadata.get("risk_flags") or [])
     lifecycle_state = str(persona.get("lifecycle_state") or persona.get("status") or "unknown")
@@ -53928,12 +54175,32 @@ def _project_persona_fleet_list_row(
         "market_scope": market_scope,
         "asset_classes": list(context_metadata.get("asset_classes") or []),
         "capital_mode": capital_mode,
-        "capital_pool_id": pool_id,
-        "capital_pool": {
-            "id": pool_id,
-            "mode": capital_mode,
-            "live_capital_enabled": capital_mode == "live",
-        },
+        "paper_ledger_id": paper_ledger_id,
+        "paperLedgerId": paper_ledger_id,
+        "paper_ledger": paper_ledger,
+        "paperLedger": paper_ledger,
+        "legacy_paper_capital_pool_id": pool_id if capital_mode == "paper" else None,
+        "legacyPaperCapitalPoolId": pool_id if capital_mode == "paper" else None,
+        "capital_pool_id": live_pool_id,
+        "capitalPoolId": live_pool_id,
+        "capital_pool": (
+            {
+                "id": live_pool_id,
+                "mode": capital_mode,
+                "live_capital_enabled": capital_mode == "live",
+            }
+            if live_pool_id
+            else None
+        ),
+        "capitalPool": (
+            {
+                "id": live_pool_id,
+                "mode": capital_mode,
+                "liveCapitalEnabled": capital_mode == "live",
+            }
+            if live_pool_id
+            else None
+        ),
         "runtime_id": runtime_id,
         "runtime_binding_id": runtime_binding_id,
         "runtime_binding": {

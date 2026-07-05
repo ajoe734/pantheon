@@ -80,3 +80,7 @@ The recommendation engine ranks all paper, canary, and live personas together,
 but stage gates decide what an action means. Paper can only request canary.
 Canary can request live. Live can request capital rank changes, demotion, freeze,
 suspend, or retirement.
+
+Paper personas compete with canary/live personas by normalized metrics only.
+They use isolated `paper_ledger_id` ledgers; shared/real `capital_pool_id`
+references are allowed only for canary/live targets or legacy migration trace.

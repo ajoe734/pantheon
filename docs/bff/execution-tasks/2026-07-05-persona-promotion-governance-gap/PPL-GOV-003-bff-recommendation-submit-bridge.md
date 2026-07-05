@@ -18,6 +18,9 @@ local-only frontend inbox id.
 - Reuse `QuarterlyRankingRecommendationSubmit` command semantics where possible.
 - Create or return a promotion-review / human-inbox item.
 - Return links for review detail and decision endpoint.
+- Preserve the source paper ledger separately from the target real capital
+  sleeve: `paper_ledger_id` identifies paper evidence; `capital_pool_id` is
+  only a canary/live target when human review is requested.
 - Preserve `liveCapitalMutation=false`.
 
 ## Acceptance
@@ -31,6 +34,8 @@ local-only frontend inbox id.
   `paper_running -> canary_candidate`,
   `canary_running -> live_candidate`,
   `live_running -> live_rebalance_review`.
+- Paper recommendation submit never converts a shared legacy paper pool into a
+  real capital target.
 - Tests prove the route does not change live capital, stage, or broker state.
 
 ## Validation

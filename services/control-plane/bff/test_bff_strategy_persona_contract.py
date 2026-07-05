@@ -293,10 +293,12 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             assert created["state"] == "paper_running"
             assert created["capitalMode"] == "paper"
             assert created["deploymentStage"] == "paper"
-            assert created["capitalPoolId"].startswith("paper-pool-")
+            assert created["paperLedgerId"].startswith("paper-ledger-")
+            assert "capitalPoolId" not in created
             assert created["runtimeId"].startswith("runtime-")
             assert created["runtimeBindingId"].endswith("-paper")
             assert create_body["meta"]["create_flow"] == "one_shot_paper_running"
+            assert create_body["meta"]["paper_ledger_id"] == created["paperLedgerId"]
             assert create_body["meta"]["live_capital_side_effects"] is False
             assert create_body["meta"]["human_review_required_for_live"] is True
 
@@ -318,7 +320,9 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             row = rows[persona_id]
             assert row["state"] == "paper_running"
             assert row["capital_mode"] == "paper"
-            assert row["capital_pool_id"] == created["capitalPoolId"]
+            assert row["paper_ledger_id"] == created["paperLedgerId"]
+            assert row["paper_ledger"]["is_isolated"] is True
+            assert row["capital_pool_id"] is None
             assert row["runtime_id"] == created["runtimeId"]
             assert row["runtime_binding_id"] == created["runtimeBindingId"]
             assert row["runtime_binding"]["state"] == "running"
