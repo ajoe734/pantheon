@@ -252,3 +252,75 @@ on 2026-07-04 at merge commit
 `467d930957bf109405fa50a5bc252ff66ec3a7ee` after the integration gate passed.
 The remaining gap is hosted dev FE proof for gap (a), which belongs to
 `AG-DYNUI-PROD-006`'s hosted E2E/publish gate rather than local-dev evidence.
+
+## Hosted shell proof and dependency-cycle closeout (Codex supervisor, 2026-07-04)
+
+The hosted shell proof gap above has since been closed by the merged
+`AG-DYNUI-PROD-003` evidence packet:
+
+- `ajoe734/execute-plans` PR #173 merged into `dev` at
+  `691f2ec56af9bbc592814563558c001860d8bc7f`, and the hosted dev FE
+  `/deployment.json` reported that exact commit after the
+  `Pantheon Dev FE Deploy` workflow completed successfully.
+- Pantheon PR #2955 merged the hosted evidence into
+  `docs/deployment/evidence/ag-dynui-prod-003/20260704T123434Z/`.
+- The genuine live default-route capture in that evidence navigates to
+  `/agora/trading-room` without network mocking and shows the hosted app no
+  longer lands on the old inert Management/Trading Desk empty shell. It shows
+  the new Agora dynamic entry, live BFF 200 data for the tenant scope, and no
+  old `Position Actions` / `Decision Event Queue` / `No strategies in the
+  Trading Room` shell markers.
+- The same evidence packet records a route-mocked ready-strategy capture
+  against the already deployed hosted build, solely because the live dev tenant
+  had zero strategies and writes disabled. That ready-strategy capture is
+  useful for `AG-DYNUI-PROD-003`; the no-mock default-route capture is the
+  relevant `AG-DYNUI-PROD-002` shell proof.
+
+Therefore `AG-DYNUI-PROD-002` no longer needs to wait on
+`AG-DYNUI-PROD-006` for shell screenshot closeout. Keeping that wait creates a
+dependency cycle:
+
+- `AG-DYNUI-PROD-005` depends on `AG-DYNUI-PROD-002`, `AG-DYNUI-PROD-003`,
+  and `AG-DYNUI-PROD-004` all being `done`.
+- `AG-DYNUI-PROD-006` depends on `AG-DYNUI-PROD-005`.
+- If `AG-DYNUI-PROD-002` waits for `AG-DYNUI-PROD-006`, then 005 cannot
+  dispatch and 006 cannot become possible.
+
+Closeout guidance: the owner should cite PR #171, PR #173, and pantheon PR
+#2955, then finalize `AG-DYNUI-PROD-002` to `done` through the normal
+merged-delivery gate. `AG-DYNUI-PROD-006` remains responsible for the full
+hosted V10-to-V11 E2E workflow, including proposal, accept, grid edit, widget
+revision, version history, rollback, and final desktop/mobile evidence; it is
+not the remaining shell-architecture gate for this task.
+
+## Direct hosted shell proof (Claude, owner, 2026-07-04T13:08Z)
+
+Captured task-specific hosted evidence directly against
+`https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/trading-room`
+(`pantheon-dev` tenant) at desktop (1440x900) and mobile (390x844)
+viewports, saved under
+`/tmp/agora-dynui-prod-002-hosted-proof-20260704T1308Z/` (JSON + PNG per
+viewport, local evidence files, not checked into the repo, same convention
+as prior evidence captures in this doc):
+
+- BFF requests all `200`: `/bff/events/stream`, `/bff/agora/trading-room`,
+  `/bff/agora/trading-room/decision-events` (mobile capture also shows the
+  SSE stream reconnect via `lastEventId` succeeding after a transient
+  `net::ERR_NETWORK_CHANGED` on the long-lived stream connection — not a
+  shell regression).
+- Shell checks: `hasDynamicEntry`, `hasStrategyWorkshopNextStep`,
+  `hasOpenStrategyWorkshop`, `oldDecisionQueueAbsent`,
+  `oldPositionActionsAbsent`, `oldNoStrategiesAbsent`, and
+  `failedTradingRoomAbsent` all true on both viewports — no old embedded
+  Management/Trading-Desk empty-shell markers, no `Failed to load Trading
+  Room` state.
+- Screenshots confirm the standalone Agora shell: top bar shows only
+  `AGORA` branding + `Servant` drawer trigger (no Management `TopBar` /
+  `NotificationCenter` chrome), `Dynamic Entry` / "Strategy Workshop is the
+  next step" copy renders from live BFF data, and the mobile viewport wraps
+  the tab bar responsively instead of clipping.
+
+This closes the remaining hosted-proof acceptance gap directly for this
+task, in addition to the PR #171 / PR #173 / pantheon PR #2955 evidence
+already cited above. `AG-DYNUI-PROD-002` is finalized to `done` citing all
+of the above.

@@ -25,6 +25,7 @@ STRICT_LIVE_SSE_MIN_HEARTBEATS = 2
 ALLOWED_LIVE_EVIDENCE_ENVIRONMENTS = {"dev", "staging-live"}
 ALLOWED_DEV_REFS = {"dev", "refs/heads/dev"}
 GIT_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z", re.IGNORECASE)
+BEARER_HASH_RE = re.compile(r"\A[0-9a-f]{12}\Z", re.IGNORECASE)
 REQUIRED_STRICT_RUN_KEYS = ("github_environment", "github_run_id", "github_run_attempt", "ref", "sha")
 OPTIONAL_STRICT_RUN_KEYS = ("github_workflow", "github_job", "repository")
 SECRET_LEAK_PATTERNS = (
@@ -506,6 +507,29 @@ def preflight_bearer_shape_failures(payload: dict[str, Any], missing: list[Any],
     return failures
 
 
+def preflight_bearer_hash_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
+    hashes = payload.get("bearer_source_hashes")
+    if not isinstance(hashes, dict):
+        return ["missing"] if not missing and not invalid else []
+
+    failures: list[str] = []
+    expected_sources = list(BEARER_SHAPE_REQUIRED_SOURCES)
+    expected_source_set = set(expected_sources)
+    for source, digest in hashes.items():
+        if not isinstance(source, str) or source not in expected_source_set:
+            failures.append(f"unknown_source:{source}")
+            continue
+        if not isinstance(digest, str) or not BEARER_HASH_RE.fullmatch(digest):
+            failures.append(f"hash:{source}")
+
+    ready = not missing and not invalid
+    if ready:
+        present_sources = [source for source in expected_sources if source in hashes]
+        if present_sources != expected_sources:
+            failures.append(f"sources:{len(present_sources)}/{len(expected_sources)}")
+    return failures
+
+
 def preflight_item(root: Path) -> dict[str, str]:
     file_path = find_file(root, PREFLIGHT_JSON_NAME)
     if not file_path:
@@ -579,6 +603,14 @@ def preflight_item(root: Path) -> dict[str, str]:
             evidence=rel(file_path, root),
             note="bearer_shape:" + ",".join(bearer_shape_failures[:8]),
         )
+    bearer_hash_failures = preflight_bearer_hash_failures(payload, missing, invalid)
+    if bearer_hash_failures:
+        return status_item(
+            "fail",
+            "Strict preflight bearer source hashes are valid",
+            evidence=rel(file_path, root),
+            note="bearer_source_hashes:" + ",".join(bearer_hash_failures[:8]),
+        )
     if missing or invalid:
         missing_text = ",".join(str(item) for item in missing)
         invalid_text = ",".join(str(item.get("name") or item) for item in invalid)
@@ -635,6 +667,33 @@ def preflight_payload(root: Path) -> dict[str, Any] | None:
 
 def normalized_url(value: Any) -> str:
     return str(value or "").strip().rstrip("/")
+
+
+def preflight_bearer_source_hashes(root: Path) -> dict[str, str]:
+    preflight = preflight_payload(root)
+    hashes = preflight.get("bearer_source_hashes") if isinstance(preflight, dict) else None
+    if not isinstance(hashes, dict):
+        return {}
+    expected_sources = set(BEARER_SHAPE_REQUIRED_SOURCES)
+    return {
+        source: digest
+        for source, digest in hashes.items()
+        if isinstance(source, str)
+        and source in expected_sources
+        and isinstance(digest, str)
+        and BEARER_HASH_RE.fullmatch(digest)
+    }
+
+
+def auth_source_preflight_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
+    source = payload.get("auth_source") if isinstance(payload.get("auth_source"), dict) else {}
+    kind = str(source.get("kind") or "")
+    digest = str(source.get("sha256_12") or "")
+    expected = preflight_bearer_source_hashes(root).get("smoke")
+    digest_ok = bool(BEARER_HASH_RE.fullmatch(digest))
+    preflight_link = bool(expected and digest == expected)
+    ok = kind == "provided_bearer" and digest_ok and preflight_link
+    return ok, f"authSource:{kind or 'missing'} smokeHash:{digest_ok} preflightSmokeLink:{preflight_link}"
 
 
 def strict_run_provenance_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
@@ -988,7 +1047,12 @@ def rbac_source_hashes(payload: dict[str, Any]) -> tuple[dict[str, str], bool, s
     return hashes, distinct_ok, cases_note
 
 
-def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: dict[str, Any]) -> tuple[bool, str]:
+def rbac_detail_check(
+    payload: dict[str, Any],
+    rbac_matrix: list[Any],
+    summary: dict[str, Any],
+    preflight_hashes: dict[str, str],
+) -> tuple[bool, str]:
     expected_keys = rbac_expected_keys()
     not_found_codes = {"RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND"}
     source_hashes, source_ok, source_note = rbac_source_hashes(payload)
@@ -997,6 +1061,7 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
     detail_links = 0
     request_links = 0
     bearer_links = 0
+    preflight_bearer_links = 0
     allowed_read_statuses = 0
     allowed_write_statuses = 0
     write_items = 0
@@ -1032,10 +1097,15 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
             if item.get("auth_case_kind") != "anonymous" or item.get("request_bearer_sha256_12"):
                 failures.append(f"{index}:anonymous-auth-link")
         elif label in source_hashes:
-            if item.get("auth_case_kind") == "provided_bearer" and item.get("request_bearer_sha256_12") == source_hashes[label]:
+            source_hash = source_hashes[label]
+            if item.get("auth_case_kind") == "provided_bearer" and item.get("request_bearer_sha256_12") == source_hash:
                 bearer_links += 1
             else:
                 failures.append(f"{index}:bearer-link")
+            if preflight_hashes.get(f"rbac:{label}") == source_hash:
+                preflight_bearer_links += 1
+            else:
+                failures.append(f"{index}:preflight-bearer-link")
 
         error_code = str(item.get("error_code") or "")
         if operation == "read":
@@ -1149,6 +1219,7 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
         and request_links == len(expected_keys)
         and source_ok
         and bearer_links == expected_non_anonymous
+        and preflight_bearer_links == expected_non_anonymous
         and allowed_read_statuses == expected_allowed_reads
         and allowed_write_statuses == expected_allowed_writes
         and read_denials == expected_read_denials
@@ -1163,7 +1234,8 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
     note = (
         f"rbac:{ok_count}/{len(expected_keys)} matrixCoverage:{matrix_coverage}/{len(expected_keys)} "
         f"detailLinks:{detail_links}/{len(expected_keys)} requestLinks:{request_links}/{len(expected_keys)} {source_note} "
-        f"bearerLinks:{bearer_links}/{expected_non_anonymous} readAllowed:{allowed_read_statuses}/{expected_allowed_reads} "
+        f"bearerLinks:{bearer_links}/{expected_non_anonymous} preflightBearerLinks:{preflight_bearer_links}/{expected_non_anonymous} "
+        f"readAllowed:{allowed_read_statuses}/{expected_allowed_reads} "
         f"writeAllowed:{allowed_write_statuses}/{expected_allowed_writes} readDenials:{read_denials}/{expected_read_denials} "
         f"writeSideEffectProofs:{write_side_effect_proofs}/{expected_write_items} "
         f"writeReadbackProofs:{write_readback_proofs}/{expected_write_readbacks} "
@@ -1263,7 +1335,7 @@ def race_concurrency_detail(race: dict[str, Any], results: list[Any]) -> tuple[b
     return not failures, note, failures
 
 
-def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
+def approval_race_detail_check(race: dict[str, Any], preflight_hashes: dict[str, str]) -> tuple[bool, str]:
     source_hashes, source_ok, source_note = race_token_hashes(race)
     results = as_list(race.get("results"))
     target_hash = str(race.get("target_id_sha256_12") or "")
@@ -1275,6 +1347,7 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
     idempotency_hashes: list[str] = []
     target_links = 0
     bearer_links = 0
+    preflight_bearer_links = 0
     accepted_count = 0
     safe_error_count = 0
     transport_failures = 0
@@ -1303,6 +1376,10 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
             bearer_links += 1
         else:
             failures.append(f"{index}:bearer-link")
+        if actor in source_hashes and preflight_hashes.get(f"approval_race:{actor}") == source_hashes[actor]:
+            preflight_bearer_links += 1
+        else:
+            failures.append(f"{index}:preflight-bearer-link")
         idempotency_hash = str(item.get("request_idempotency_key_sha256_12") or "")
         if idempotency_hash:
             idempotency_hashes.append(idempotency_hash)
@@ -1343,6 +1420,7 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
         and actor_labels == {"a", "b"}
         and target_links == 2
         and bearer_links == 2
+        and preflight_bearer_links == 2
         and accepted_count == 1
         and safe_error_count == 1
         and transport_failures == 0
@@ -1355,7 +1433,8 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
     note = (
         f"approvalResults:{len(results)}/2 actors:{len(actor_labels)}/2 targetLinks:{target_links}/2 "
-        f"bearerLinks:{bearer_links}/2 accepted:{accepted_count}/1 safeErrors:{safe_error_count}/1 "
+        f"bearerLinks:{bearer_links}/2 preflightBearerLinks:{preflight_bearer_links}/2 "
+        f"accepted:{accepted_count}/1 safeErrors:{safe_error_count}/1 "
         f"transportFailures:{transport_failures}/0 duplicateWinners:{race.get('duplicate_winners')} "
         f"idempotencyDistinct:{idempotency_distinct} topCounts:{top_counts_ok} "
         f"{timing_note} family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
@@ -1363,7 +1442,7 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
     return detail_ok, note
 
 
-def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
+def two_man_race_detail_check(race: dict[str, Any], preflight_hashes: dict[str, str]) -> tuple[bool, str]:
     source_hashes, source_ok, source_note = race_token_hashes(race)
     results = as_list(race.get("results"))
     target_hash = str(race.get("target_id_sha256_12") or "")
@@ -1377,6 +1456,7 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
     command_ids: list[str] = []
     target_links = 0
     bearer_links = 0
+    preflight_bearer_links = 0
     accepted_count = 0
     replayed_count = 0
     replay_proofs = 0
@@ -1404,6 +1484,10 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
             bearer_links += 1
         else:
             failures.append(f"{index}:bearer-link")
+        if actor in source_hashes and preflight_hashes.get(f"approval_race:{actor}") == source_hashes[actor]:
+            preflight_bearer_links += 1
+        else:
+            failures.append(f"{index}:preflight-bearer-link")
         idempotency_hash = str(item.get("request_idempotency_key_sha256_12") or "")
         if idempotency_hash:
             idempotency_hashes.append(idempotency_hash)
@@ -1456,6 +1540,7 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
         and actor_labels == {"a", "b"}
         and target_links == 2
         and bearer_links == 2
+        and preflight_bearer_links == 2
         and accepted_count == 2
         and replayed_count == 0
         and replay_proofs == 2
@@ -1470,7 +1555,8 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
     note = (
         f"twoManResults:{len(results)}/2 actors:{len(actor_labels)}/2 targetLinks:{target_links}/2 "
-        f"bearerLinks:{bearer_links}/2 accepted:{accepted_count}/2 replayed:{replayed_count}/0 "
+        f"bearerLinks:{bearer_links}/2 preflightBearerLinks:{preflight_bearer_links}/2 "
+        f"accepted:{accepted_count}/2 replayed:{replayed_count}/0 "
         f"replayProofs:{replay_proofs}/2 sharedIdempotency:{shared_idempotency} "
         f"distinctSignatures:{len(signature_hashes)}/2 distinctCommands:{len(set(command_ids))}/2 "
         f"transportFailures:{transport_failures}/0 topCounts:{top_counts_ok} "
@@ -1504,28 +1590,30 @@ def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
     dry_run_count = int(summary.get("dry_run_probes") or len(dry_run))
     approval_count = int(summary.get("approval_race_probes") or int(bool(approval_race)))
     two_man_count = int(summary.get("two_man_race_probes") or int(bool(two_man_race)))
-    rbac_detail_ok, rbac_detail_note = rbac_detail_check(payload, rbac_matrix, summary)
+    preflight_hashes = preflight_bearer_source_hashes(root)
+    rbac_detail_ok, rbac_detail_note = rbac_detail_check(payload, rbac_matrix, summary, preflight_hashes)
     dry_run_detail_ok, dry_run_detail_note = dry_run_detail_check(dry_run)
-    approval_detail_ok, approval_detail_note = approval_race_detail_check(approval_race)
-    two_man_detail_ok, two_man_detail_note = two_man_race_detail_check(two_man_race)
+    approval_detail_ok, approval_detail_note = approval_race_detail_check(approval_race, preflight_hashes)
+    two_man_detail_ok, two_man_detail_note = two_man_race_detail_check(two_man_race, preflight_hashes)
     provenance_ok, provenance_note = strict_run_provenance_check(root, payload)
-    base = strict and includes and provenance_ok
+    auth_source_ok, auth_source_note = auth_source_preflight_check(root, payload)
+    base = strict and includes and provenance_ok and auth_source_ok
     return payload, {
         "rbac_matrix": (
             base and rbac_detail_ok,
-            f"strict:{strict} includes:{includes} {provenance_note} {rbac_detail_note}",
+            f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} {rbac_detail_note}",
         ),
         "dry_run_no_side_effects": (
             base and dry_run_count >= 7 and dry_run_detail_ok and summary.get("live_capital_side_effects") is False,
-            f"strict:{strict} includes:{includes} {provenance_note} dryRun:{dry_run_count}/7 {dry_run_detail_note} sideEffects:{summary.get('live_capital_side_effects')}",
+            f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} dryRun:{dry_run_count}/7 {dry_run_detail_note} sideEffects:{summary.get('live_capital_side_effects')}",
         ),
         "approval_race": (
             base and approval_count == 1 and summary.get("approval_race_bounded") is True and approval_detail_ok,
-            f"strict:{strict} includes:{includes} {provenance_note} approvalRace:{approval_count}/1 bounded:{summary.get('approval_race_bounded') is True} {approval_detail_note}",
+            f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} approvalRace:{approval_count}/1 bounded:{summary.get('approval_race_bounded') is True} {approval_detail_note}",
         ),
         "two_man_race": (
             base and two_man_count == 1 and summary.get("two_man_race_operator_scoped") is True and two_man_detail_ok,
-            f"strict:{strict} includes:{includes} {provenance_note} twoManRace:{two_man_count}/1 operatorScoped:{summary.get('two_man_race_operator_scoped') is True} {two_man_detail_note}",
+            f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} twoManRace:{two_man_count}/1 operatorScoped:{summary.get('two_man_race_operator_scoped') is True} {two_man_detail_note}",
         ),
     }
 
@@ -1548,13 +1636,14 @@ def as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
-def sse_auth_source_check(payload: dict[str, Any]) -> tuple[bool, str, bool]:
+def sse_auth_source_check(payload: dict[str, Any], preflight_hashes: dict[str, str]) -> tuple[bool, str, bool]:
     source = payload.get("auth_source") if isinstance(payload.get("auth_source"), dict) else {}
     kind = str(source.get("kind") or "")
     token_hash = str(source.get("token_sha256_12") or "")
-    token_hash_ok = bool(re.fullmatch(r"[0-9a-f]{12}", token_hash, re.IGNORECASE))
-    ok = kind == "provided_bearer" and token_hash_ok
-    return ok, f"authSource:{kind or 'missing'} tokenHash:{token_hash_ok}", token_hash_ok
+    token_hash_ok = bool(BEARER_HASH_RE.fullmatch(token_hash))
+    preflight_link = bool(token_hash_ok and preflight_hashes.get("smoke") == token_hash)
+    ok = kind == "provided_bearer" and token_hash_ok and preflight_link
+    return ok, f"authSource:{kind or 'missing'} tokenHash:{token_hash_ok} preflightSmokeLink:{preflight_link}", token_hash_ok
 
 
 def sse_request_used_bearer_auth(item: Any) -> bool:
@@ -1746,7 +1835,8 @@ def sse_detail_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
     missing_replay = sum(detail["missing_replay"] for detail in mode_details.values())
     soak_ok = all(detail["soak_ok"] for detail in mode_details.values())
     reconnect_ok = all(detail["reconnect_ok"] for detail in mode_details.values())
-    auth_source_ok, auth_source_note, _token_hash_ok = sse_auth_source_check(payload)
+    preflight_hashes = preflight_bearer_source_hashes(root)
+    auth_source_ok, auth_source_note, _token_hash_ok = sse_auth_source_check(payload, preflight_hashes)
     provenance_ok, provenance_note = strict_run_provenance_check(root, payload)
 
     detail_ok = (

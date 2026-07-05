@@ -27,32 +27,57 @@ CRON_ENDPOINT="${BASE_URL}/api/openclaw-adapter/gateway/cron"
 echo "Adapter base URL: ${BASE_URL}"
 echo "Probe job name:   ${JOB_NAME}"
 
+# Gateway rejects schedule.at more than 10 years out; pick a fixed +5y offset
+# from now so this never fires (job stays enabled:false) without drifting
+# into the rejection window as calendar time passes.
+PROBE_AT="$(date -u -d "+5 years" +%Y-%m-%dT%H:%M:%SZ)"
+
 cleanup() {
-  if [ -n "${JOB_ID:-}" ]; then
+  local job_id="${JOB_ID:-}"
+  if [ -z "${job_id}" ]; then
+    # cron.add may have succeeded server-side even if the client-side curl
+    # call above timed out (or otherwise failed) before JOB_ID was captured.
+    # Look the probe job up by name so it doesn't leak into the shared
+    # Gateway cron store.
     echo ""
-    echo "=== cleanup: cron.remove ${JOB_ID} ==="
-    curl -sS -m 20 -X POST "${CRON_ENDPOINT}" \
+    echo "=== cleanup: JOB_ID unknown, looking up probe job by name ==="
+    local lookup
+    lookup=$(curl -sS -m 60 -X POST "${CRON_ENDPOINT}" \
       -H "Content-Type: application/json" \
-      -d "$(jq -nc --arg id "$JOB_ID" '{method:"cron.remove", params:{id:$id}}')" | jq . || true
+      -d '{"method":"cron.list","params":{"limit":200,"includeDisabled":true}}' 2>/dev/null || true)
+    if [ -n "${lookup}" ]; then
+      job_id=$(echo "${lookup}" | jq -r --arg name "$JOB_NAME" \
+        '[.data.jobs[]? | select(.name == $name)][0].id // empty' 2>/dev/null || true)
+    fi
+  fi
+  if [ -n "${job_id}" ]; then
+    echo ""
+    echo "=== cleanup: cron.remove ${job_id} ==="
+    curl -sS -m 60 -X POST "${CRON_ENDPOINT}" \
+      -H "Content-Type: application/json" \
+      -d "$(jq -nc --arg id "$job_id" '{method:"cron.remove", params:{id:$id}}')" | jq . || true
+  else
+    echo ""
+    echo "=== cleanup: no probe job found to remove ==="
   fi
 }
 trap cleanup EXIT
 
 echo ""
 echo "=== 1/3 cron.add (a disabled, far-future one-shot probe job) ==="
-ADD_PAYLOAD=$(jq -nc --arg name "$JOB_NAME" '{
+ADD_PAYLOAD=$(jq -nc --arg name "$JOB_NAME" --arg at "$PROBE_AT" '{
   method: "cron.add",
   params: {
     name: $name,
     enabled: false,
     deleteAfterRun: true,
-    schedule: {kind: "cron", expr: "0 0 31 2 *"},
+    schedule: {kind: "at", at: $at},
     sessionTarget: "main",
     wakeMode: "next-heartbeat",
     payload: {kind: "systemEvent", text: "{\"kind\":\"pantheon.cron_write_scope_smoke\"}"}
   }
 }')
-ADD_RESPONSE=$(curl -sS -m 30 -w "\n%{http_code}" -X POST "${CRON_ENDPOINT}" \
+ADD_RESPONSE=$(curl -sS -m 120 -w "\n%{http_code}" -X POST "${CRON_ENDPOINT}" \
   -H "Content-Type: application/json" -d "${ADD_PAYLOAD}")
 ADD_HTTP_STATUS=$(printf '%s\n' "${ADD_RESPONSE}" | tail -n1)
 ADD_BODY=$(printf '%s\n' "${ADD_RESPONSE}" | sed '$d')
@@ -79,9 +104,9 @@ echo "OK: cron.add -> id=${JOB_ID}"
 
 echo ""
 echo "=== 2/3 cron.list shows the new job (not dry_run) ==="
-LIST_BODY=$(curl -sS -m 20 -X POST "${CRON_ENDPOINT}" \
+LIST_BODY=$(curl -sS -m 60 -X POST "${CRON_ENDPOINT}" \
   -H "Content-Type: application/json" \
-  -d '{"method":"cron.list","params":{"limit":500}}')
+  -d '{"method":"cron.list","params":{"limit":200,"includeDisabled":true}}')
 FOUND=$(echo "${LIST_BODY}" | jq -r --arg id "$JOB_ID" '[.data.jobs[]? | select(.id == $id)] | length')
 if [ "${FOUND}" != "1" ]; then
   echo "FAIL: job ${JOB_ID} not found in cron.list."

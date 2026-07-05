@@ -789,11 +789,33 @@ def _pack_d_direct_error_response(
     )
 
 
+def _with_cors_actual_response_headers(request: Request, headers: Dict[str, str]) -> Dict[str, str]:
+    response_headers = dict(headers)
+    origin = request.headers.get("origin")
+    if not origin or not _cors_origin_allowed(origin):
+        return response_headers
+
+    response_headers.setdefault("Access-Control-Allow-Origin", _normalized_origin(origin))
+    response_headers.setdefault("Access-Control-Allow-Credentials", "true")
+    response_headers.setdefault("Access-Control-Expose-Headers", ", ".join(_CORS_EXPOSE_HEADERS))
+
+    vary_value = response_headers.get("Vary") or response_headers.get("vary") or ""
+    vary_parts = [part.strip() for part in vary_value.split(",") if part.strip()]
+    if "Origin" not in {part.title() for part in vary_parts}:
+        vary_parts.append("Origin")
+    if vary_parts:
+        response_headers["Vary"] = ", ".join(vary_parts)
+    return response_headers
+
+
 def _pack_d_http_exception_response(
     request: Request,
     exc: StarletteHTTPException,
 ) -> JSONResponse:
-    headers = dict(getattr(exc, "headers", None) or {})
+    headers = _with_cors_actual_response_headers(
+        request,
+        dict(getattr(exc, "headers", None) or {}),
+    )
     correlation_id = _error_response_correlation_id(request, headers)
     detail = exc.detail
     source = detail
@@ -9190,6 +9212,9 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     operator_remediation = item.get("operator_remediation")
     if isinstance(operator_remediation, dict):
         public_item["operator_remediation"] = _management_json_clone(operator_remediation)
+    release_gate_summary = item.get("release_gate_summary")
+    if isinstance(release_gate_summary, dict):
+        public_item["release_gate_summary"] = _management_json_clone(release_gate_summary)
     if "overall" in item:
         public_item["overall"] = item.get("overall")
     return public_item
@@ -9289,6 +9314,52 @@ def _management_live_evidence_preflight_remediation(artifact_dir: Path) -> Optio
     return safe_remediation
 
 
+def _management_live_evidence_release_gate_summary(artifact_dir: Path) -> Optional[Dict[str, Any]]:
+    summary_path = artifact_dir / "release-gate-summary.json"
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    checks: List[Dict[str, Any]] = []
+    gates = payload.get("gates")
+    if isinstance(gates, dict):
+        for gate, gate_checks in sorted(gates.items(), key=lambda item: str(item[0])):
+            if not isinstance(gate_checks, list):
+                continue
+            for index, check in enumerate(gate_checks):
+                if not isinstance(check, dict):
+                    continue
+                status = _management_optional_text(check.get("status")) or "missing"
+                label = _management_optional_text(check.get("label"))
+                if not label and not status:
+                    continue
+                checks.append(
+                    {
+                        "gate": str(gate),
+                        "index": index,
+                        "label": label,
+                        "status": status,
+                        "note": _management_optional_text(check.get("note")),
+                        "owner": _management_optional_text(check.get("owner")),
+                        "evidence": _management_optional_text(check.get("evidence")),
+                        "blocking": status != "pass",
+                    }
+                )
+
+    return {
+        "overall": _management_optional_text(payload.get("overall")),
+        "generated_at": _management_optional_text(payload.get("generatedAt") or payload.get("generated_at")),
+        "audit_dir": _management_optional_text(payload.get("auditDir") or payload.get("audit_dir")),
+        "run_url": _management_optional_text(payload.get("runUrl") or payload.get("run_url")),
+        "checklist_out": _management_optional_text(payload.get("checklistOut") or payload.get("checklist_out")),
+        "open_check_count": sum(1 for check in checks if bool(check.get("blocking"))),
+        "checks": checks,
+    }
+
+
 def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
     for candidate in _management_live_evidence_verify_candidates():
         try:
@@ -9316,6 +9387,7 @@ def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
         artifact_dir_path = Path(str(payload.get("artifact_dir") or candidate.parent))
         artifact_dir = str(artifact_dir_path)
         operator_remediation = _management_live_evidence_preflight_remediation(artifact_dir_path)
+        release_gate_summary = _management_live_evidence_release_gate_summary(artifact_dir_path)
         evidence_ref = {
             "ref_id": _BFF_LIVE_EVIDENCE_REF_ID,
             "evidence_type": "live_evidence_artifact",
@@ -9346,6 +9418,8 @@ def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
         }
         if operator_remediation is not None:
             evidence_ref["operator_remediation"] = operator_remediation
+        if release_gate_summary is not None:
+            evidence_ref["release_gate_summary"] = release_gate_summary
         return [evidence_ref]
     return []
 
@@ -38217,6 +38291,33 @@ def _try_register_persona_cron(persona_id: str) -> Optional[Dict[str, Any]]:
     persona creation is never blocked by gateway unavailability.
     """
     try:
+        if "persona_cron_registrar" not in sys.modules:
+            # persona_cron_registrar.py does bare `from models import utc_now`
+            # / `from workflows import WORKFLOW_CATALOG`. Both names collide
+            # with same-named, unrelated modules elsewhere on sys.path — this
+            # file's own top-level `from models import (...)` above already
+            # cached sys.modules["models"] as services/control-plane/bff's
+            # models.py before this function ever runs, and Python checks
+            # sys.modules by name before ever consulting sys.path, so bumping
+            # sys.path priority alone can't force a re-resolve. Evict the
+            # colliding names, import fresh (which re-populates them from
+            # services/control-plane/cron), then restore this module's own
+            # "models" binding so nothing else in this process breaks.
+            # persona_cron_registrar keeps direct references to what it
+            # imported, so swapping sys.modules back afterward is safe.
+            _saved_modules = {
+                name: sys.modules.pop(name)
+                for name in ("models", "workflows")
+                if name in sys.modules
+            }
+            sys.path.insert(0, _CRON_SERVICE_DIR)
+            try:
+                import persona_cron_registrar  # noqa: F401
+            finally:
+                sys.path.remove(_CRON_SERVICE_DIR)
+                for name in ("models", "workflows"):
+                    sys.modules.pop(name, None)
+                sys.modules.update(_saved_modules)
         from persona_cron_registrar import PersonaCronRegistrar  # type: ignore[import]
         registrar = PersonaCronRegistrar()
         result = registrar.register_for_persona(persona_id)

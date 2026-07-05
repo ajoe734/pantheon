@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -22,6 +23,26 @@ CROSS_SECRET_REQUIRED_SOURCES = (
     "approval_race:a",
     "approval_race:b",
 )
+
+
+def sha256_12(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def bearer_hashes(
+    *,
+    smoke: str = "",
+    rbac: dict[str, str] | None = None,
+    race_a: str = "",
+    race_b: str = "",
+) -> dict[str, str]:
+    values = {
+        "smoke": smoke,
+        **{f"rbac:{label}": token for label, token in (rbac or {}).items()},
+        "approval_race:a": race_a,
+        "approval_race:b": race_b,
+    }
+    return {source: sha256_12(value) for source, value in values.items() if value}
 
 
 def run_preflight(
@@ -140,6 +161,7 @@ def test_preflight_writes_missing_inputs_without_secret_values(tmp_path: Path) -
         "min_length": MIN_BEARER_TOKEN_LENGTH,
         "placeholder_values_rejected": True,
     }
+    assert payload["bearer_source_hashes"] == {}
     remediation = payload["operator_remediation"]
     assert payload["github_environment"] == "dev"
     assert remediation["github_environment"] == "dev"
@@ -220,6 +242,12 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
         "min_length": MIN_BEARER_TOKEN_LENGTH,
         "placeholder_values_rejected": True,
     }
+    assert payload["bearer_source_hashes"] == bearer_hashes(
+        smoke="smoke-secret",
+        rbac=rbac_tokens,
+        race_a="race-secret-a",
+        race_b="race-secret-b",
+    )
     remediation = payload["operator_remediation"]
     assert payload["github_environment"] == "staging-live"
     assert remediation["repository"] == "example/pantheon"
