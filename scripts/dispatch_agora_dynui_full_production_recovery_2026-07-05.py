@@ -20,7 +20,9 @@ SOURCE_REF = {
     "packet": PACKET,
     "prior_packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
     "prior_hosted_gate": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-006-hosted-e2e-publish-gate.md",
-    "live_bff_deploy_sha": "341924e2c29ee185c925b8f4291485beb08e851e",
+    "live_bff_deploy_sha": "96d6a7288061047ceca7b911843555d6296d8425",
+    "runtime_lane_repair_sha": "aab5c301f7ba5e5872e9f0f5b195832be34acbeb",
+    "codex_adapter_fix_sha": "532332a949a15e770285055c013b1f19adf767f7",
 }
 PROGRESS_FIELDS = {
     "status",
@@ -120,8 +122,8 @@ TASKS = [
             "/bff/agora/trading-room aggregate；live strategies 不能再是空陣列。"
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 2 ready strategy projection",
-        "owner": "Codex2",
-        "reviewer": "Codex",
+        "owner": "Codex",
+        "reviewer": "Codex2",
         "depends_on": ["AG-DYNUI-FULL-002"],
         "artifacts": [
             "services/control-plane/bff/agora/strategy_workshop/",
@@ -138,7 +140,7 @@ TASKS = [
             "readiness state, evidence refs, strategy version, and dashboard recipe/workspace refs are durable enough for the E2E",
             "post-deploy live curl proof shows non-empty strategies from a real created/restored workflow",
         ],
-        "next": "Wire ready strategy projection after AG-DYNUI-FULL-002 exposes readiness.",
+        "next": "Close backend projection evidence review; keep public workflow proof in AG-DYNUI-FULL-005.",
         "metadata": {"wave": 2, "fleet_lane": "agora-ready-strategy-projection"},
     },
     {
@@ -149,8 +151,8 @@ TASKS = [
             "進 /agora/trading-room/:strategyId，不可只 navigate('/agora/trading-room')。"
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 2 frontend handoff",
-        "owner": "Codex2",
-        "reviewer": "Codex",
+        "owner": "Codex",
+        "reviewer": "Codex2",
         "depends_on": ["AG-DYNUI-FULL-002"],
         "artifacts": [
             "execute-plans/src/routes/agora.tsx",
@@ -179,8 +181,8 @@ TASKS = [
             "widget revision、version history、rollback；禁止用 page.route fixture 當通過證明。"
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 3 live dynamic workflow",
-        "owner": "Copilot",
-        "reviewer": "Codex",
+        "owner": "Codex",
+        "reviewer": "Codex2",
         "depends_on": ["AG-DYNUI-FULL-003", "AG-DYNUI-FULL-004"],
         "artifacts": [
             "services/control-plane/bff/agora/trading_room/router.py",
@@ -212,8 +214,8 @@ TASKS = [
             "FE-BFF Integration Gate failure，desktop/mobile screenshots 必須來自 live flow。"
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 4 no-fixture hosted gate",
-        "owner": "Codex2",
-        "reviewer": "Codex",
+        "owner": "Codex",
+        "reviewer": "Codex2",
         "depends_on": ["AG-DYNUI-FULL-005"],
         "artifacts": [
             "execute-plans/e2e/agora-winner-branch-hosted.spec.ts",
