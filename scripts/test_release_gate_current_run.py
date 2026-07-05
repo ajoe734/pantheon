@@ -224,6 +224,45 @@ def _strict_sse_reconnect_bearer(**kwargs):
 def _strict_sse_reconnect_cookie(**kwargs):
     return _strict_sse_reconnect_mode("cookie_session", **kwargs)
 
+
+def _strict_sse_soak_mode(
+    mode: str,
+    *,
+    duration_ms: int = 76000,
+    heartbeat_count: int = 2,
+    duplicate_event_ids: list[str] | None = None,
+    missing_expected_event_ids: list[str] | None = None,
+):
+    auth_headers = (
+        {"Authorization": "present", "Cookie": "absent"}
+        if mode == "bearer_polyfill"
+        else {"Authorization": "absent", "Cookie": "present"}
+    )
+    return {
+        "ok": True,
+        "duration_ms": duration_ms,
+        "timeline": {
+            "requested_seconds": 75.0,
+            "observed_duration_ms": duration_ms,
+            "observed_duration_seconds": duration_ms / 1000,
+        },
+        "request_headers": auth_headers,
+        "missing_expected_event_ids": list(missing_expected_event_ids or []),
+        "blocks": {
+            "heartbeat_count": heartbeat_count,
+            "duplicate_event_ids": list(duplicate_event_ids or []),
+        },
+    }
+
+
+def _strict_sse_soak_bearer(**kwargs):
+    return _strict_sse_soak_mode("bearer_polyfill", **kwargs)
+
+
+def _strict_sse_soak_cookie(**kwargs):
+    return _strict_sse_soak_mode("cookie_session", **kwargs)
+
+
 def _strict_rbac_matrix_items(
     *,
     with_write_side_effect_checks: bool = True,
@@ -335,6 +374,98 @@ def _strict_rbac_matrix_items(
             items.append(item)
     return items
 
+
+def _strict_rbac_cases() -> dict[str, dict[str, str]]:
+    labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    cases: dict[str, dict[str, str]] = {"anonymous": {"kind": "anonymous"}}
+    cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in labels})
+    return cases
+
+
+def _strict_preflight_bearer_source_hashes(
+    *,
+    smoke_hash: str = "smoke-token-hash",
+    rbac_overrides: dict[str, str] | None = None,
+) -> dict[str, str]:
+    hashes = {"smoke": smoke_hash}
+    for label in ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]:
+        hashes[f"rbac:{label}"] = f"rbac-{label}-hash"
+    hashes.update(rbac_overrides or {})
+    return hashes
+
+
+def _write_strict_live_preflight(
+    current_run: Path,
+    *,
+    smoke_hash: str = "smoke-token-hash",
+    rbac_overrides: dict[str, str] | None = None,
+) -> None:
+    (current_run / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
+                "strict_live_evidence_preflight": True,
+                "github_environment": "dev",
+                "missing": [],
+                "invalid": [],
+                "bearer_source_hashes": _strict_preflight_bearer_source_hashes(
+                    smoke_hash=smoke_hash,
+                    rbac_overrides=rbac_overrides,
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_strict_authenticated_live_json(
+    current_run: Path,
+    *,
+    auth_source: dict[str, str] | None = None,
+    rbac_cases: dict[str, dict[str, str]] | None = None,
+    rbac_matrix: list[dict[str, object]] | None = None,
+) -> None:
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": auth_source or {"kind": "provided_bearer", "sha256_12": "smoke-token-hash"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases or _strict_rbac_cases(),
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": rbac_matrix or _strict_rbac_matrix_items(),
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(),
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _provided_bearer_pair_source(*, distinct: bool = True):
@@ -941,24 +1072,8 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "cookie_session": _strict_sse_reconnect_cookie(),
@@ -1005,7 +1120,78 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "pass"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+
+
+def test_release_gate_rejects_strict_sse_soak_when_observed_duration_is_short(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-CONSOL-011",
+                "channel": "approval",
+                "strict_live_evidence": True,
+                "strict_live_evidence_requirements": {"min_reconnect_attempts": 5},
+                "summary": {"passed": True},
+                "soak": {
+                    "enabled": True,
+                    "seconds": 75.0,
+                    "min_heartbeats": 2,
+                    "cookie_session": _strict_sse_soak_cookie(duration_ms=1000),
+                    "bearer_polyfill": _strict_sse_soak_bearer(duration_ms=1000),
+                },
+                "reconnect_sequence": {
+                    "cookie_session": _strict_sse_reconnect_cookie(),
+                    "bearer_polyfill": _strict_sse_reconnect_bearer(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    sse_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
+    )
+    assert sse_check["status"] == "fail"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:1/75 heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_cookie_browser_path(tmp_path: Path) -> None:
@@ -1028,15 +1214,7 @@ def test_release_gate_rejects_strict_sse_soak_without_cookie_browser_path(tmp_pa
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "bearer_polyfill": _strict_sse_reconnect_bearer(),
@@ -1082,7 +1260,7 @@ def test_release_gate_rejects_strict_sse_soak_without_cookie_browser_path(tmp_pa
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:0/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:0/75 heartbeat:0/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp_path: Path) -> None:
@@ -1105,24 +1283,8 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "cookie_session": _strict_sse_reconnect_cookie(),
@@ -1169,7 +1331,7 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:2/5 attemptDetails:false attemptLineage:false observed:2/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:2/5 attemptDetails:false attemptLineage:false observed:2/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp_path: Path) -> None:
@@ -1192,24 +1354,8 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "cookie_session": _strict_sse_reconnect_cookie(),
@@ -1259,7 +1405,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:false attemptLineage:false observed:5/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:5/5 attemptDetails:false attemptLineage:false observed:5/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_lineage(tmp_path: Path) -> None:
@@ -1282,24 +1428,8 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "cookie_session": _strict_sse_reconnect_cookie(),
@@ -1346,7 +1476,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tmp_path: Path) -> None:
@@ -1369,24 +1499,8 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
                 "reconnect_sequence": {
                     "cookie_session": _strict_sse_reconnect_cookie(),
@@ -1433,7 +1547,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_path: Path) -> None:
@@ -1456,24 +1570,8 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
                     "enabled": True,
                     "seconds": 75.0,
                     "min_heartbeats": 2,
-                    "cookie_session": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "absent", "Cookie": "present"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
-                    "bearer_polyfill": {
-                        "ok": True,
-                        "request_headers": {"Authorization": "present", "Cookie": "absent"},
-                        "missing_expected_event_ids": [],
-                        "blocks": {
-                            "heartbeat_count": 2,
-                            "duplicate_event_ids": [],
-                        },
-                    },
+                    "cookie_session": _strict_sse_soak_cookie(),
+                    "bearer_polyfill": _strict_sse_soak_bearer(),
                 },
             }
         ),
@@ -1516,7 +1614,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> None:
@@ -1732,6 +1830,123 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:1/1 results:2/2 targetLinks:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
     assert two_man_check["status"] == "pass"
     assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 detailAccepted:2/2 detailReplayed:0/0 detailCommandIds:2/2 results:2/2 targetLinks:2/2 signatureLinks:2/2 tokenPair:true tokenPairDistinct:true"
+
+
+def test_release_gate_rejects_strict_auth_when_smoke_preflight_hash_mismatches(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    _write_strict_live_preflight(current_run, smoke_hash="other-smoke-hash")
+    _write_strict_authenticated_live_json(current_run)
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads((current_run / "release-gate-summary.json").read_text(encoding="utf-8"))
+    gate3 = summary["gates"]["3"]
+    rbac_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    dry_run_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
+    )
+
+    assert rbac_check["status"] == "fail"
+    assert dry_run_check["status"] == "fail"
+    assert "bearerPreflight:false" in rbac_check["note"]
+    assert "preflightBearerLinks:49/49" in rbac_check["note"]
+
+
+def test_release_gate_rejects_strict_rbac_when_preflight_inventory_hash_mismatches(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    _write_strict_live_preflight(
+        current_run,
+        rbac_overrides={"rbac:viewer": "wrong-viewer-hash"},
+    )
+    _write_strict_authenticated_live_json(current_run)
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads((current_run / "release-gate-summary.json").read_text(encoding="utf-8"))
+    gate3 = summary["gates"]["3"]
+    rbac_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    dry_run_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
+    )
+
+    assert rbac_check["status"] == "fail"
+    assert dry_run_check["status"] == "pass"
+    assert "bearerPreflight:true" in rbac_check["note"]
+    assert "preflightBearerLinks:42/49" in rbac_check["note"]
 
 
 def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_path: Path) -> None:

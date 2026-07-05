@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from common import (
@@ -43,10 +44,20 @@ class CodexAdapter(BaseAdapter):
         codex_settings = provider.get("codex", {})
         return provider, codex_settings
 
+    def _resolve_cli(self, codex_settings: dict) -> str | None:
+        configured_cli = str(codex_settings.get("cli") or "codex").strip() or "codex"
+        resolved = command_exists(configured_cli) or command_exists("codex")
+        if not resolved:
+            return None
+        if os.path.isabs(resolved):
+            return resolved
+        if os.sep in resolved or (os.altsep and os.altsep in resolved):
+            return str(Path(resolved).resolve())
+        return resolved
+
     def capability(self, agent_id: str) -> DeliveryCapability:
         _provider, codex_settings = self._provider_settings(agent_id)
-        configured_cli = codex_settings.get("cli") or "codex"
-        cli = command_exists(configured_cli) or command_exists("codex")
+        cli = self._resolve_cli(codex_settings)
         supported = bool(cli)
         return DeliveryCapability(
             adapter=self.name,
@@ -77,7 +88,7 @@ class CodexAdapter(BaseAdapter):
         _provider, codex_settings = self._provider_settings(request.agent_id)
         agent_cfg = agent_config_for(self.config, request.agent_id)
         display_name = str(agent_cfg.get("display_name") or request.agent_id)
-        cli = codex_settings.get("cli") or "codex"
+        cli = self._resolve_cli(codex_settings) or "codex"
         workspace_root = delivery_workspace_root(self.config, request.metadata)
         command = [
             cli,

@@ -1668,6 +1668,21 @@ def sse_request_used_mode_auth(item: Any, mode: str) -> bool:
     return False
 
 
+def sse_soak_observed_seconds(item: Any) -> float:
+    if not isinstance(item, dict):
+        return 0.0
+    timeline = item.get("timeline") if isinstance(item.get("timeline"), dict) else {}
+    observed_ms_source = (
+        timeline.get("observed_duration_ms")
+        if "observed_duration_ms" in timeline
+        else item.get("duration_ms")
+    )
+    observed_ms = safe_float(observed_ms_source)
+    if observed_ms > 0:
+        return observed_ms / 1000.0
+    return safe_float(timeline.get("observed_duration_seconds"))
+
+
 def sse_attempt_url_matches_channel(url_path: Any, expected_channel: str) -> bool:
     text = str(url_path or "")
     if not text:
@@ -1736,6 +1751,7 @@ def sse_mode_detail(
     channel: str,
     min_heartbeats: int,
     min_reconnect_attempts: int,
+    min_soak_seconds: float,
 ) -> dict[str, Any]:
     mode_soak = soak.get(mode) if isinstance(soak.get(mode), dict) else {}
     blocks = mode_soak.get("blocks") if isinstance(mode_soak.get("blocks"), dict) else {}
@@ -1749,6 +1765,7 @@ def sse_mode_detail(
     soak_missing = as_list(mode_soak.get("missing_expected_event_ids"))
     reconnect_missing = as_list(mode_reconnect.get("missing_expected_event_ids"))
     heartbeat_count = safe_int(blocks.get("heartbeat_count"))
+    soak_duration_seconds = sse_soak_observed_seconds(mode_soak)
     attempt_count = safe_int(mode_reconnect.get("attempt_count") or len(attempts))
     attempt_details_ok = attempt_count >= min_reconnect_attempts and len(attempts) >= min_reconnect_attempts
     attempt_lineage_ok = sse_attempts_have_lineage(
@@ -1773,6 +1790,8 @@ def sse_mode_detail(
         "soak_ok": mode_soak.get("ok") is True,
         "soak_auth_ok": sse_request_used_mode_auth(mode_soak, mode),
         "heartbeat_count": heartbeat_count,
+        "soak_duration_seconds": soak_duration_seconds,
+        "soak_duration_ok": soak_duration_seconds >= min_soak_seconds,
         "duplicates": len(soak_duplicates) + len(reconnect_duplicates),
         "missing_replay": len(soak_missing) + len(reconnect_missing),
         "reconnect_ok": mode_reconnect.get("ok") is True,
@@ -1818,6 +1837,7 @@ def sse_detail_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
             channel=channel,
             min_heartbeats=min_heartbeats,
             min_reconnect_attempts=min_reconnect_attempts,
+            min_soak_seconds=min_soak_seconds,
         )
         for mode in ("cookie_session", "bearer_polyfill")
     }
@@ -1825,6 +1845,8 @@ def sse_detail_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
     bearer_detail = mode_details["bearer_polyfill"]
 
     heartbeat_count = min(detail["heartbeat_count"] for detail in mode_details.values())
+    soak_duration_seconds = min(detail["soak_duration_seconds"] for detail in mode_details.values())
+    soak_duration_ok = all(detail["soak_duration_ok"] for detail in mode_details.values())
     attempt_count = min(detail["attempt_count"] for detail in mode_details.values())
     attempt_details_ok = all(detail["attempt_details_ok"] for detail in mode_details.values())
     attempt_lineage_ok = all(detail["attempt_lineage_ok"] for detail in mode_details.values())
@@ -1844,6 +1866,7 @@ def sse_detail_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
         and provenance_ok
         and auth_source_ok
         and seconds >= min_soak_seconds
+        and soak_duration_ok
         and soak_ok
         and cookie_detail["soak_auth_ok"]
         and bearer_detail["soak_auth_ok"]
@@ -1861,6 +1884,7 @@ def sse_detail_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
     )
     note = (
         f"strict:{strict} {provenance_note} {auth_source_note} soak:{seconds:g}/{min_soak_seconds:g} "
+        f"soakDuration:{soak_duration_seconds:g}/{min_soak_seconds:g} "
         f"soakCookieAuth:{cookie_detail['soak_auth_ok']} soakBearerAuth:{bearer_detail['soak_auth_ok']} "
         f"heartbeat:{heartbeat_count}/{min_heartbeats} reconnect:{attempt_count}/{min_reconnect_attempts} "
         f"attemptDetails:{attempt_details_ok} "

@@ -81,6 +81,9 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 1)
         self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity"], 1)
         self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity2"], 1)
+        self.assertEqual(ready_dispatcher["disabled_agents"], ["Claude", "Claude2"])
+        self.assertIn("Antigravity", config["worker_reassignment"]["owner_fallbacks"]["Codex2"])
+        self.assertIn("Antigravity2", config["worker_reassignment"]["owner_fallbacks"]["Codex2"])
 
 
 class DetectWorkerFailureTests(unittest.TestCase):
@@ -694,6 +697,167 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertNotIn("codex1_1", pauses)
         self.assertEqual(pauses["codex1"]["trigger_provider"], "codex1_1")
         self.assertIs(supervisor.current_provider_dispatch_pause(state, "codex1-2", config), pauses["codex1"])
+
+    def test_claude_account_group_pause_crosses_profiles_with_same_auth_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_report_path = Path(tmpdir) / "provider_capabilities.json"
+            provider_report_path.write_text(
+                json.dumps(
+                    {
+                        "providers": {
+                            "claude": {"account_group": "claude_account_shared", "auth_ready": True},
+                            "claude2": {"account_group": "claude_account_shared", "auth_ready": True},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
+                "paths": {
+                    "activity_log": "/tmp/test-activity-log.jsonl",
+                    "provider_capabilities": str(provider_report_path),
+                },
+                "agents": {
+                    "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                    "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                },
+                "providers": {
+                    "claude": {"delivery_mode": "claude_cli", "quota_group": "claude"},
+                    "claude2": {"delivery_mode": "claude_cli", "quota_group": "claude2"},
+                    "claude-1": {"delivery_mode": "claude_cli", "quota_group": "claude"},
+                    "claude2-1": {"delivery_mode": "claude_cli", "quota_group": "claude2"},
+                },
+            }
+            state: dict = {}
+
+            with mock.patch.object(supervisor, "write_activity_log"):
+                supervisor.mark_provider_dispatch_paused(
+                    config,
+                    state,
+                    "claude-1",
+                    "rate_limit: You've hit your weekly limit",
+                    failure_kind="quota_terminal",
+                    pause_kind="quota_terminal",
+                )
+
+            pauses = state["provider_guardrails"]["dispatch_pauses"]
+            self.assertIn("claude_account_shared", pauses)
+            self.assertNotIn("claude", pauses)
+            self.assertIs(
+                supervisor.current_provider_dispatch_pause(state, "claude2-1", config),
+                pauses["claude_account_shared"],
+            )
+            self.assertTrue(supervisor.agent_dispatch_paused(config, state, "claude2"))
+
+    def test_claude_account_group_keeps_profiles_separate_when_auth_identity_differs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_report_path = Path(tmpdir) / "provider_capabilities.json"
+            provider_report_path.write_text(
+                json.dumps(
+                    {
+                        "providers": {
+                            "claude": {"account_group": "claude_account_primary", "auth_ready": True},
+                            "claude2": {"account_group": "claude_account_secondary", "auth_ready": True},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
+                "paths": {
+                    "activity_log": "/tmp/test-activity-log.jsonl",
+                    "provider_capabilities": str(provider_report_path),
+                },
+                "providers": {
+                    "claude": {"delivery_mode": "claude_cli", "quota_group": "claude"},
+                    "claude2": {"delivery_mode": "claude_cli", "quota_group": "claude2"},
+                },
+            }
+            state: dict = {}
+
+            with mock.patch.object(supervisor, "write_activity_log"):
+                supervisor.mark_provider_dispatch_paused(
+                    config,
+                    state,
+                    "claude",
+                    "rate_limit: You've hit your weekly limit",
+                    failure_kind="quota_terminal",
+                    pause_kind="quota_terminal",
+                )
+
+            self.assertIsNotNone(supervisor.current_provider_dispatch_pause(state, "claude", config))
+            self.assertIsNone(supervisor.current_provider_dispatch_pause(state, "claude2", config))
+
+    def test_claude_account_group_still_honors_legacy_provider_pause_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_report_path = Path(tmpdir) / "provider_capabilities.json"
+            provider_report_path.write_text(
+                json.dumps(
+                    {
+                        "providers": {
+                            "claude": {"account_group": "claude_account_shared", "auth_ready": True},
+                            "claude2": {"account_group": "claude_account_shared", "auth_ready": True},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "paths": {"provider_capabilities": str(provider_report_path)},
+                "providers": {
+                    "claude": {"delivery_mode": "claude_cli", "quota_group": "claude"},
+                    "claude2": {"delivery_mode": "claude_cli", "quota_group": "claude2"},
+                    "claude2-1": {"delivery_mode": "claude_cli", "quota_group": "claude2"},
+                },
+            }
+            state = {
+                "provider_guardrails": {
+                    "dispatch_pauses": {
+                        "claude": {
+                            "provider": "claude",
+                            "blocked_until": "9999-12-31T23:59:59Z",
+                            "pause_kind": "quota_terminal",
+                        }
+                    }
+                }
+            }
+
+            self.assertIs(
+                supervisor.current_provider_dispatch_pause(state, "claude2-1", config),
+                state["provider_guardrails"]["dispatch_pauses"]["claude"],
+            )
+
+    def test_slot_provider_inherits_configured_account_group_from_quota_parent(self) -> None:
+        config = {
+            "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2-1"},
+            },
+            "providers": {
+                "claude": {"delivery_mode": "claude_cli", "account_group": "claude_account_manual"},
+                "claude2": {"delivery_mode": "claude_cli", "account_group": "claude_account_manual"},
+                "claude-1": {"delivery_mode": "claude_cli", "quota_group": "claude"},
+                "claude2-1": {"delivery_mode": "claude_cli", "quota_group": "claude2"},
+            },
+        }
+        state: dict = {}
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            supervisor.mark_provider_dispatch_paused(
+                config,
+                state,
+                "claude-1",
+                "rate_limit: You've hit your weekly limit",
+                failure_kind="quota_terminal",
+                pause_kind="quota_terminal",
+            )
+
+        pauses = state["provider_guardrails"]["dispatch_pauses"]
+        self.assertIn("claude_account_manual", pauses)
+        self.assertTrue(supervisor.agent_dispatch_paused(config, state, "claude2"))
 
     def test_expire_provider_dispatch_pauses_removes_expired_entry(self) -> None:
         config = {
@@ -3247,6 +3411,112 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(kwargs["task_id"], "MPOS-P1-TEL-001")
         self.assertEqual(kwargs["new_owner"], "Codex")  # first viable default candidate (Claude is reviewer-excluded)
 
+    def test_normalize_skips_dispatch_paused_fallback_owner(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "worker_reassignment": {
+                "eligible_statuses": ["todo"],
+                "owner_fallbacks": {"Gemini2": ["Claude", "Codex"]},
+                "reviewer_fallbacks": {},
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+            },
+            "providers": {"claude": {"quota_group": "claude"}},
+        }
+        report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "claude": {"auth_ready": True},
+                "copilot": {"auth_ready": True},
+            }
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "claude": {
+                        "provider": "claude",
+                        "blocked_until": "9999-12-31T23:59:59Z",
+                        "pause_kind": "quota_terminal",
+                    }
+                }
+            }
+        }
+        task = {"id": "AG-DYNUI-FULL-002", "status": "todo", "owner": "Gemini2", "reviewer": "Copilot", "depends_on": []}
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task, state=state)
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "AG-DYNUI-FULL-002")
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Copilot")
+
+    def test_normalize_routes_to_antigravity_when_codex_paused_and_claude_disabled(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "ready_dispatcher": {"disabled_agents": ["Claude", "Claude2"]},
+            "worker_reassignment": {
+                "eligible_statuses": ["todo"],
+                "owner_fallbacks": {"Codex2": ["Codex", "Claude", "Claude2", "Antigravity", "Antigravity2"]},
+                "reviewer_fallbacks": {"Codex2": ["Codex", "Claude", "Claude2", "Antigravity", "Antigravity2"]},
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "antigravity": {"id": "antigravity", "display_name": "Antigravity", "provider": "antigravity"},
+                "antigravity2": {"id": "antigravity2", "display_name": "Antigravity2", "provider": "antigravity2"},
+            },
+            "providers": {},
+        }
+        report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "codex2": {"auth_ready": True},
+                "claude": {"auth_ready": True},
+                "claude2": {"auth_ready": True},
+                "antigravity": {"auth_ready": True},
+                "antigravity2": {"auth_ready": True},
+            }
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "blocked_until": "9999-12-31T23:59:59Z",
+                        "pause_kind": "quota_terminal",
+                    },
+                    "codex2": {
+                        "provider": "codex2",
+                        "blocked_until": "9999-12-31T23:59:59Z",
+                        "pause_kind": "quota_terminal",
+                    },
+                }
+            }
+        }
+        task = {"id": "AG-DYNUI-FULL-003", "status": "todo", "owner": "Codex2", "reviewer": "Claude", "depends_on": []}
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task, state=state)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "AG-DYNUI-FULL-003")
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Antigravity2")
+
     def test_dispatcher_reassigns_mainline_qwen_reviewer_before_dispatch(self) -> None:
         config = {
             "schema": {
@@ -4792,6 +5062,38 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
                 "gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"},
             },
         }
+
+    def test_excluded_agents_are_not_eligible_for_sidecars(self) -> None:
+        self.config["underutilization_dispatch"]["excluded_agents"] = ["Claude", "Claude2"]
+        self.config["agents"]["claude2"] = {
+            "id": "claude2",
+            "display_name": "Claude2",
+            "provider": "claude2",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "APP-001",
+                    "phase": "Phase 5: Persona and Application Surfaces",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Gemini",
+                    "depends_on": [],
+                    "title": "Define BFF query surfaces",
+                    "artifacts": ["services/control-plane/bff/"],
+                }
+            ]
+        }
+
+        agents = supervisor.eligible_idle_agents_for_sidecars(
+            self.config,
+            {"queue": {"events": {}}, "workers": {}},
+            status,
+            max_active_sidecars_per_agent=1,
+            provider_report={"providers": {}},
+        )
+
+        self.assertEqual(agents, ["Gemini"])
 
     def test_waits_full_window_before_creating_sidecars(self) -> None:
         state = {"queue": {"events": {}}, "workers": {}, "underutilization": {}}
@@ -8453,6 +8755,50 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
 
         self.assertIsNotNone(reason)
         self.assertIn("quota group codex1", reason or "")
+
+    def test_account_group_uses_legacy_quota_cap_and_counts_legacy_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_report_path = Path(tmpdir) / "provider_capabilities.json"
+            provider_report_path.write_text(
+                json.dumps(
+                    {
+                        "providers": {
+                            "claude": {"account_group": "claude_account_shared", "auth_ready": True},
+                            "claude2": {"account_group": "claude_account_shared", "auth_ready": True},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "ready_dispatcher": {"max_concurrent_per_quota_group": {"claude": 1}},
+                "paths": {"provider_capabilities": str(provider_report_path)},
+                "agents": {
+                    "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                    "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                },
+                "providers": {
+                    "claude": {"delivery_mode": "claude_cli", "quota_group": "claude"},
+                    "claude2": {"delivery_mode": "claude_cli", "quota_group": "claude2"},
+                    "claude-1": {"delivery_mode": "claude_cli", "quota_group": "claude"},
+                },
+            }
+            state = {
+                "workers": {
+                    "run-1": {
+                        "run_id": "run-1",
+                        "status": "running",
+                        "agent_id": "claude",
+                        "provider": "claude-1",
+                        "quota_group": "claude",
+                    }
+                }
+            }
+
+            reason = supervisor.agent_auto_dispatch_block_reason(config, state, "claude2", provider_report={})
+
+        self.assertIsNotNone(reason)
+        self.assertIn("quota group claude_account_shared", reason or "")
 
 
 class MaxConcurrentWorkersCapTests(unittest.TestCase):

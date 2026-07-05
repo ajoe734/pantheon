@@ -44,6 +44,15 @@ def _new_id() -> str:
     return str(uuid.uuid4())
 
 
+def _safe_id_fragment(value: Any) -> str:
+    raw = str(value or "").strip() or uuid.uuid4().hex
+    return "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in raw)
+
+
+def _new_readiness_id(workshop_id: str, assessment_version: int) -> str:
+    return f"ready_{_safe_id_fragment(workshop_id)}_{assessment_version}"
+
+
 def _decode_json(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return value
@@ -84,6 +93,17 @@ _SNAPSHOT_COLS = [
     "snapshot_id", "workshop_id", "strategy_version_id",
     "state_map_json", "blocking_items_json", "next_question_json", "created_at",
 ]
+_READINESS_COLS = [
+    "assessment_id", "workshop_id", "strategy_id", "workshop_version_id",
+    "strategy_spec_registry_id", "assessment_version", "assessment_json",
+    "assessed_at", "created_at",
+]
+_CARD_COLS = [
+    "card_id", "workshop_id", "sequence_no", "card_type", "status", "title",
+    "summary", "payload_json", "source_event_ids_json", "workshop_version_id",
+    "strategy_spec_registry_id", "evidence_refs_json", "allowed_actions_json",
+    "created_at", "updated_at",
+]
 
 
 class MemoryWorkshopStore:
@@ -93,6 +113,8 @@ class MemoryWorkshopStore:
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._events: Dict[str, List[Dict[str, Any]]] = {}
         self._snapshots: Dict[str, List[Dict[str, Any]]] = {}
+        self._readiness: Dict[str, List[Dict[str, Any]]] = {}
+        self._cards: Dict[str, List[Dict[str, Any]]] = {}
         self._idempotency_keys: Dict[str, bool] = {}
         self._lock = threading.Lock()
 
@@ -269,6 +291,87 @@ class MemoryWorkshopStore:
             snaps = self._snapshots.get(workshop_id, [])
             return dict(snaps[-1]) if snaps else None
 
+    # --- readiness assessment ---
+
+    def create_readiness_assessment(self, assessment: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            wid = assessment["workshop_id"]
+            bucket = self._readiness.setdefault(wid, [])
+            version = int(assessment.get("assessment_version") or (len(bucket) + 1))
+            now = assessment.get("assessed_at", _utc_now())
+            row: Dict[str, Any] = {
+                "spec_version": assessment.get("spec_version", "1.0"),
+                "assessment_id": assessment.get("assessment_id") or _new_readiness_id(wid, version),
+                "workshop_id": wid,
+                "strategy_id": assessment["strategy_id"],
+                "workshop_version_id": assessment["workshop_version_id"],
+                "strategy_spec_registry_id": assessment["strategy_spec_registry_id"],
+                "assessment_version": version,
+                "gates": assessment.get("gates", []),
+                "highest_ready_gate": assessment.get("highest_ready_gate"),
+                "staleness_reasons": assessment.get("staleness_reasons", []),
+                "assessed_at": now,
+                "evidence_refs": assessment.get("evidence_refs", []),
+            }
+            if assessment.get("valid_until") is not None:
+                row["valid_until"] = assessment["valid_until"]
+            bucket.append(row)
+            return dict(row)
+
+    def get_latest_readiness_assessment(self, workshop_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            assessments = self._readiness.get(workshop_id, [])
+            return dict(assessments[-1]) if assessments else None
+
+    # --- typed workshop cards ---
+
+    def record_workshop_card(self, card: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            wid = card["workshop_id"]
+            bucket = self._cards.setdefault(wid, [])
+            existing_idx = next(
+                (idx for idx, item in enumerate(bucket) if item.get("card_id") == card.get("card_id")),
+                None,
+            )
+            sequence_no = int(card.get("sequence_no") or (len(bucket) + 1))
+            now = card.get("created_at", _utc_now())
+            row: Dict[str, Any] = {
+                "spec_version": card.get("spec_version", "1.0"),
+                "card_id": card.get("card_id") or f"card_{_safe_id_fragment(wid)}_{sequence_no}",
+                "card_type": card["card_type"],
+                "workshop_id": wid,
+                "sequence_no": sequence_no,
+                "source_event_ids": list(card.get("source_event_ids") or []),
+                "workshop_version_id": card.get("workshop_version_id"),
+                "strategy_spec_registry_id": card.get("strategy_spec_registry_id"),
+                "status": card.get("status", "informational"),
+                "title": card["title"],
+                "summary": card.get("summary"),
+                "payload": card.get("payload", {}),
+                "evidence_refs": list(card.get("evidence_refs") or []),
+                "allowed_actions": dict(card.get("allowed_actions") or {}),
+                "created_at": now,
+                "updated_at": card.get("updated_at"),
+            }
+            if existing_idx is None:
+                bucket.append(row)
+            else:
+                bucket[existing_idx] = row
+            return dict(row)
+
+    def list_workshop_cards(
+        self,
+        workshop_id: str,
+        *,
+        after_sequence: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        with self._lock:
+            cards = list(self._cards.get(workshop_id, []))
+            if after_sequence is not None:
+                cards = [c for c in cards if int(c.get("sequence_no", 0)) > after_sequence]
+            cards.sort(key=lambda c: int(c.get("sequence_no", 0)))
+            return [dict(c) for c in cards]
+
 
 # --------------------------------------------------------------------------- #
 # PostgresWorkshopStore — production Postgres backend
@@ -291,6 +394,8 @@ class PostgresWorkshopStore:
         self._st = f'{q}."strategy_workshop_session"'
         self._et = f'{q}."strategy_workshop_event"'
         self._cst = f'{q}."strategy_completeness_snapshot"'
+        self._rat = f'{q}."strategy_readiness_assessment"'
+        self._wct = f'{q}."strategy_workshop_card"'
         self._ikt = f'{q}."workshop_idempotency_key"'
         self._bootstrap()
 
@@ -406,6 +511,52 @@ class PostgresWorkshopStore:
                     raise
                 if hasattr(conn, "rollback"):
                     conn.rollback()
+
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._rat} (
+                    assessment_id            TEXT PRIMARY KEY,
+                    workshop_id              TEXT NOT NULL
+                        REFERENCES {self._st}(workshop_id),
+                    strategy_id              TEXT NOT NULL,
+                    workshop_version_id      TEXT NOT NULL,
+                    strategy_spec_registry_id TEXT NOT NULL,
+                    assessment_version       INTEGER NOT NULL,
+                    assessment_json          JSONB NOT NULL,
+                    assessed_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT uq_ws_readiness_version UNIQUE (workshop_id, assessment_version)
+                )
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_ws_readiness_latest
+                    ON {self._rat} (workshop_id, assessment_version DESC, created_at DESC)
+            """)
+
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._wct} (
+                    card_id                   TEXT PRIMARY KEY,
+                    workshop_id               TEXT NOT NULL
+                        REFERENCES {self._st}(workshop_id),
+                    sequence_no               INTEGER NOT NULL,
+                    card_type                 TEXT NOT NULL,
+                    status                    TEXT NOT NULL,
+                    title                     TEXT NOT NULL,
+                    summary                   TEXT,
+                    payload_json              JSONB NOT NULL,
+                    source_event_ids_json     JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    workshop_version_id       TEXT,
+                    strategy_spec_registry_id TEXT,
+                    evidence_refs_json        JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    allowed_actions_json      JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at                TIMESTAMPTZ,
+                    CONSTRAINT uq_ws_card_seq UNIQUE (workshop_id, sequence_no)
+                )
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_ws_card_workshop_sequence
+                    ON {self._wct} (workshop_id, sequence_no)
+            """)
 
             conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self._ikt} (
@@ -758,6 +909,193 @@ class PostgresWorkshopStore:
         r["blocking_items_json"] = _decode_json(r.get("blocking_items_json"))
         r["next_question_json"] = _decode_json(r.get("next_question_json"))
         return r
+
+    # --- readiness assessment ---
+
+    def create_readiness_assessment(self, assessment: Dict[str, Any]) -> Dict[str, Any]:
+        workshop_id = assessment["workshop_id"]
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT COALESCE(MAX(assessment_version), 0) + 1
+                FROM {self._rat}
+                WHERE workshop_id = %s
+                """,
+                (workshop_id,),
+            )
+            next_row = cur.fetchone()
+            version = int(assessment.get("assessment_version") or (next_row[0] if next_row else 1))
+            now = assessment.get("assessed_at", _utc_now())
+            row: Dict[str, Any] = {
+                "spec_version": assessment.get("spec_version", "1.0"),
+                "assessment_id": assessment.get("assessment_id") or _new_readiness_id(workshop_id, version),
+                "workshop_id": workshop_id,
+                "strategy_id": assessment["strategy_id"],
+                "workshop_version_id": assessment["workshop_version_id"],
+                "strategy_spec_registry_id": assessment["strategy_spec_registry_id"],
+                "assessment_version": version,
+                "gates": assessment.get("gates", []),
+                "highest_ready_gate": assessment.get("highest_ready_gate"),
+                "staleness_reasons": assessment.get("staleness_reasons", []),
+                "assessed_at": now,
+                "evidence_refs": assessment.get("evidence_refs", []),
+            }
+            if assessment.get("valid_until") is not None:
+                row["valid_until"] = assessment["valid_until"]
+            conn.execute(
+                f"""
+                INSERT INTO {self._rat}
+                    (assessment_id, workshop_id, strategy_id, workshop_version_id,
+                     strategy_spec_registry_id, assessment_version, assessment_json,
+                     assessed_at, created_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,now())
+                """,
+                (
+                    row["assessment_id"], row["workshop_id"], row["strategy_id"],
+                    row["workshop_version_id"], row["strategy_spec_registry_id"],
+                    row["assessment_version"], _json_dumps(row), row["assessed_at"],
+                ),
+            )
+        return row
+
+    def get_latest_readiness_assessment(self, workshop_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT assessment_json::text
+                FROM {self._rat}
+                WHERE workshop_id = %s
+                ORDER BY assessment_version DESC, created_at DESC
+                LIMIT 1
+                """,
+                (workshop_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        decoded = _decode_json(row[0])
+        return decoded if isinstance(decoded, dict) else None
+
+    # --- typed workshop cards ---
+
+    def record_workshop_card(self, card: Dict[str, Any]) -> Dict[str, Any]:
+        workshop_id = card["workshop_id"]
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"SELECT COALESCE(MAX(sequence_no), 0) + 1 FROM {self._wct} WHERE workshop_id = %s",
+                (workshop_id,),
+            )
+            next_row = cur.fetchone()
+            sequence_no = int(card.get("sequence_no") or (next_row[0] if next_row else 1))
+            now = card.get("created_at", _utc_now())
+            row: Dict[str, Any] = {
+                "spec_version": card.get("spec_version", "1.0"),
+                "card_id": card.get("card_id") or f"card_{_safe_id_fragment(workshop_id)}_{sequence_no}",
+                "card_type": card["card_type"],
+                "workshop_id": workshop_id,
+                "sequence_no": sequence_no,
+                "source_event_ids": list(card.get("source_event_ids") or []),
+                "workshop_version_id": card.get("workshop_version_id"),
+                "strategy_spec_registry_id": card.get("strategy_spec_registry_id"),
+                "status": card.get("status", "informational"),
+                "title": card["title"],
+                "summary": card.get("summary"),
+                "payload": card.get("payload", {}),
+                "evidence_refs": list(card.get("evidence_refs") or []),
+                "allowed_actions": dict(card.get("allowed_actions") or {}),
+                "created_at": now,
+                "updated_at": card.get("updated_at"),
+            }
+            conn.execute(
+                f"""
+                INSERT INTO {self._wct}
+                    (card_id, workshop_id, sequence_no, card_type, status, title, summary,
+                     payload_json, source_event_ids_json, workshop_version_id,
+                     strategy_spec_registry_id, evidence_refs_json, allowed_actions_json,
+                     created_at, updated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s::jsonb,%s::jsonb,%s,%s)
+                ON CONFLICT (card_id) DO UPDATE SET
+                    sequence_no = EXCLUDED.sequence_no,
+                    card_type = EXCLUDED.card_type,
+                    status = EXCLUDED.status,
+                    title = EXCLUDED.title,
+                    summary = EXCLUDED.summary,
+                    payload_json = EXCLUDED.payload_json,
+                    source_event_ids_json = EXCLUDED.source_event_ids_json,
+                    workshop_version_id = EXCLUDED.workshop_version_id,
+                    strategy_spec_registry_id = EXCLUDED.strategy_spec_registry_id,
+                    evidence_refs_json = EXCLUDED.evidence_refs_json,
+                    allowed_actions_json = EXCLUDED.allowed_actions_json,
+                    updated_at = COALESCE(EXCLUDED.updated_at, now())
+                """,
+                (
+                    row["card_id"], row["workshop_id"], row["sequence_no"],
+                    row["card_type"], row["status"], row["title"], row["summary"],
+                    _json_dumps(row["payload"]),
+                    _json_dumps(row["source_event_ids"]),
+                    row["workshop_version_id"],
+                    row["strategy_spec_registry_id"],
+                    _json_dumps(row["evidence_refs"]),
+                    _json_dumps(row["allowed_actions"]),
+                    row["created_at"], row["updated_at"],
+                ),
+            )
+        return row
+
+    def list_workshop_cards(
+        self,
+        workshop_id: str,
+        *,
+        after_sequence: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        params: List[Any] = [workshop_id]
+        where = "workshop_id = %s"
+        if after_sequence is not None:
+            where += " AND sequence_no > %s"
+            params.append(after_sequence)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT card_id, workshop_id, sequence_no, card_type, status, title,
+                       summary, payload_json::text, source_event_ids_json::text,
+                       workshop_version_id, strategy_spec_registry_id,
+                       evidence_refs_json::text, allowed_actions_json::text,
+                       created_at::text, updated_at::text
+                FROM {self._wct}
+                WHERE {where}
+                ORDER BY sequence_no ASC
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+        result = []
+        for row in rows:
+            r = _row_to_dict(row, _CARD_COLS)
+            card: Dict[str, Any] = {
+                "spec_version": "1.0",
+                "card_id": r["card_id"],
+                "card_type": r["card_type"],
+                "workshop_id": r["workshop_id"],
+                "sequence_no": r["sequence_no"],
+                "status": r["status"],
+                "title": r["title"],
+                "payload": _decode_json(r.get("payload_json")) or {},
+                "created_at": r["created_at"],
+            }
+            optional_map = {
+                "summary": r.get("summary"),
+                "source_event_ids": _decode_json(r.get("source_event_ids_json")),
+                "workshop_version_id": r.get("workshop_version_id"),
+                "strategy_spec_registry_id": r.get("strategy_spec_registry_id"),
+                "evidence_refs": _decode_json(r.get("evidence_refs_json")),
+                "allowed_actions": _decode_json(r.get("allowed_actions_json")),
+                "updated_at": r.get("updated_at"),
+            }
+            for key, value in optional_map.items():
+                if value not in (None, [], {}):
+                    card[key] = value
+            result.append(card)
+        return result
 
 
 # --------------------------------------------------------------------------- #

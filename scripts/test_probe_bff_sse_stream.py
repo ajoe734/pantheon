@@ -171,6 +171,9 @@ def test_stream_soak_counts_heartbeat_and_expected_replay_event(monkeypatch) -> 
     assert result["blocks"]["heartbeat_count"] == 1
     assert result["blocks"]["duplicate_event_ids"] == []
     assert result["missing_expected_event_ids"] == []
+    assert result["duration_ms"] >= 0
+    assert result["timeline"]["requested_seconds"] == 1.0
+    assert result["timeline"]["observed_duration_ms"] == result["duration_ms"]
 
 
 def test_stream_soak_fails_duplicate_replay_ids(monkeypatch) -> None:

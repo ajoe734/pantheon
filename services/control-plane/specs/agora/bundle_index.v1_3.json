@@ -6,7 +6,7 @@
     "bundle_index_sha256": "4ba5fc1a0858f3ca7370a2a54c11affe98ee0e11cfd3eb99c4ade734b52c75e3"
   },
   "files": {
-    "specs/agora/v4/capability_manifest_v1_3.json": "88bc4268a438b04c455428dcd49ba5918f62728bcbca5e58c1682352295d1401",
+    "specs/agora/v4/capability_manifest_v1_3.json": "d21ac91558f9205732d6cffffe1fca86efad59bf1824e8dabe95fb4b585ca041",
     "specs/agora/v4/governed_intent_handoff.schema.json": "d16723d9de8c469905859e62d9904561ce96c51ebce9992cd8927a35e79092db",
     "specs/agora/v4/research_plan_execution.schema.json": "cc97bc9e119473c4ae9d2656f9629843645e73d09ab7ba2fa46bbd190c1cbe4c",
     "specs/agora/v4/research_run_projection.schema.json": "cafd98509779818f62d4972693e50a6c749153293528de651f213713e0b1ed97",

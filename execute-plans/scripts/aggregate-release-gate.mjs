@@ -536,6 +536,13 @@ function analyzeLiveEvidencePreflight() {
       }))
       .filter((item) => item.name || item.reason)
     : [];
+  const bearerSourceHashes = json?.bearer_source_hashes && typeof json.bearer_source_hashes === "object"
+    ? Object.fromEntries(
+      Object.entries(json.bearer_source_hashes)
+        .map(([source, digest]) => [String(source || "").trim(), String(digest || "").trim()])
+        .filter(([source, digest]) => source && digest),
+    )
+    : {};
   const environment = String(json?.github_environment || remediation?.github_environment || process.env.PANTHEON_LIVE_EVIDENCE_ENVIRONMENT || "").trim();
   const workflow = String(remediation?.workflow_dispatch?.recommended_workflow || "Pantheon Stage 0 CI").trim();
   const commandCount = listStringValues(remediation?.secret_set_commands).length;
@@ -555,6 +562,7 @@ function analyzeLiveEvidencePreflight() {
     missingSecrets,
     missingInputs,
     invalid,
+    bearerSourceHashes,
     environment,
     workflow,
     hasIssues,
@@ -686,7 +694,7 @@ function analyzeAuthSmoke(stepOutcomes) {
   };
 }
 
-function analyzeStrictAuthEvidence(stepOutcomes) {
+function analyzeStrictAuthEvidence(stepOutcomes, preflight = {}) {
   const step = stepInfo(stepOutcomes, "auth_smoke", ".lovable/audits/bff-authenticated-live-smoke.log");
   const stepEvidence = evidencePath(step.evidence);
   const file = latestAuditFile([
@@ -701,6 +709,10 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const approvalRace = json?.approval_race && typeof json.approval_race === "object" ? json.approval_race : null;
   const twoManRace = json?.two_man_race && typeof json.two_man_race === "object" ? json.two_man_race : null;
   const authSource = json?.auth_source && typeof json.auth_source === "object" ? json.auth_source : {};
+  const preflightBearerSourceHashes = preflight?.bearerSourceHashes && typeof preflight.bearerSourceHashes === "object"
+    ? preflight.bearerSourceHashes
+    : {};
+  const preflightHashCheckRequired = preflight?.exists === true;
   const rbacAuthSource = json?.rbac_auth_source && typeof json.rbac_auth_source === "object" ? json.rbac_auth_source : {};
   const rbacCases = rbacAuthSource?.cases && typeof rbacAuthSource.cases === "object" ? Object.entries(rbacAuthSource.cases) : [];
   const rbacCaseInfoByLabel = new Map(rbacCases.map(([label, info]) => [String(label), info]));
@@ -718,12 +730,15 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const failed = Number(summary.failed ?? 1);
   const strict = json?.strict_live_evidence === true;
   const providedBearer = authSource?.kind === "provided_bearer";
+  const smokeBearerHash = String(authSource?.sha256_12 || "");
+  const smokePreflightLink = !preflightHashCheckRequired
+    || (Boolean(smokeBearerHash) && preflightBearerSourceHashes.smoke === smokeBearerHash);
   const includesRequired = json?.include_rbac_matrix === true
     && json?.include_dry_run === true
     && json?.include_approval_race === true
     && json?.include_two_man_race === true;
   const summaryPassed = total > 0 && failed === 0 && passed === total;
-  const baseOk = strict && providedBearer && includesRequired && summaryPassed;
+  const baseOk = strict && providedBearer && smokePreflightLink && includesRequired && summaryPassed;
   const rbacProbeCount = Number(summary.rbac_matrix_probes ?? 0);
   const rbacWriteProbeCount = Number(summary.rbac_write_probes ?? 0);
   const rbacWriteSummarySideEffectProofCount = Number(summary.rbac_write_side_effect_proofs ?? -1);
@@ -768,6 +783,18 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const duplicateRbacDetailLinkedFamilies = REQUIRED_RBAC_MATRIX_FAMILIES.filter((family) => (rbacDetailLinkedFamilyCounts.get(family) || 0) > 1);
   const rbacMatrixDetailLinkedFamilyCount = REQUIRED_RBAC_MATRIX_FAMILIES.length - missingRbacDetailLinkedFamilies.length;
   const rbacMatrixDetailLinksOk = missingRbacDetailLinkedFamilies.length === 0 && duplicateRbacDetailLinkedFamilies.length === 0;
+  const rbacPreflightBearerLinkedItems = rbacMatrix.filter((item) => {
+    const label = String(item?.rbac_label || "");
+    if (!requiredProvidedRbacLabels.includes(label)) return false;
+    const caseInfo = rbacCaseInfoByLabel.get(label);
+    const caseHash = String(caseInfo?.sha256_12 || "");
+    return item?.auth_case_kind === "provided_bearer"
+      && item?.request_bearer_sha256_12 === caseHash
+      && preflightBearerSourceHashes[`rbac:${label}`] === caseHash;
+  });
+  const expectedRbacPreflightBearerLinks = expectedProvidedCases * (REQUIRED_RBAC_READ_FAMILIES.length + REQUIRED_RBAC_WRITE_FAMILIES.length);
+  const rbacPreflightBearerLinksOk = !preflightHashCheckRequired
+    || rbacPreflightBearerLinkedItems.length === expectedRbacPreflightBearerLinks;
   const rbacRead = rbacMatrix.filter((item) => String(item?.family || "").startsWith("rbac-read-"));
   const rbacWrite = rbacMatrix.filter((item) => String(item?.family || "").startsWith("rbac-write-"));
   const rbacDeniedErrorCodes = new Set(["AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"]);
@@ -913,6 +940,10 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && twoManDetailProof.acceptedCount === twoManAcceptedCount
     && twoManDetailProof.replayedCount === twoManReplayedCount
     && twoManDetailProof.commandIdCount === twoManCommandIdCount;
+  const smokePreflightNote = preflightHashCheckRequired ? ` bearerPreflight:${smokePreflightLink}` : "";
+  const rbacPreflightNote = preflightHashCheckRequired
+    ? ` preflightBearerLinks:${rbacPreflightBearerLinkedItems.length}/${expectedRbacPreflightBearerLinks}`
+    : "";
 
   return {
     exists: Boolean(json),
@@ -921,7 +952,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     providedBearer,
     includesRequired,
     summaryPassed,
-    rbacOk: baseOk && providedRbac && rbacProbeCount > 0 && allRbacOk && rbacWriteSideEffectProofsOk,
+    rbacOk: baseOk && providedRbac && rbacPreflightBearerLinksOk && rbacProbeCount > 0 && allRbacOk && rbacWriteSideEffectProofsOk,
     dryRunOk: baseOk
       && dryRunProbeCount >= 7
       && dryRunProbeCountMatches
@@ -951,10 +982,10 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && twoManTokenPair
       && twoManTokenPairDistinct,
     note: {
-      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} detailLinks:${rbacMatrixDetailLinkedFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} readDeniedEnvelopeProofs:${rbacReadDeniedEnvelopeProofs.length}/${expectedRbacReadDeniedCount} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeReadbackProofs:${rbacWriteReadbackProofs.length}/${rbacWriteReadbackRequired.length} writeDeniedEnvelopeProofs:${rbacWriteDeniedNoPersistence.length}/${expectedRbacWriteDeniedCount} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
-      dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
-      approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 targetLinks:${approvalDetailProof.targetLinkedCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
-      twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 targetLinks:${twoManDetailProof.targetLinkedCount}/2 signatureLinks:${twoManDetailProof.signatureLinkedCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
+      rbac: `strict:${strict} bearer:${providedBearer}${smokePreflightNote} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} detailLinks:${rbacMatrixDetailLinkedFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length}${rbacPreflightNote} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} readDeniedEnvelopeProofs:${rbacReadDeniedEnvelopeProofs.length}/${expectedRbacReadDeniedCount} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeReadbackProofs:${rbacWriteReadbackProofs.length}/${rbacWriteReadbackRequired.length} writeDeniedEnvelopeProofs:${rbacWriteDeniedNoPersistence.length}/${expectedRbacWriteDeniedCount} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
+      dryRun: `strict:${strict}${smokePreflightNote} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
+      approvalRace: `strict:${strict}${smokePreflightNote} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 targetLinks:${approvalDetailProof.targetLinkedCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
+      twoManRace: `strict:${strict}${smokePreflightNote} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 targetLinks:${twoManDetailProof.targetLinkedCount}/2 signatureLinks:${twoManDetailProof.signatureLinkedCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
     },
     missingStatus: missingEvidenceStatus(step.status),
     missingNote: step.outcome
@@ -975,6 +1006,7 @@ function analyzeSseSmoke(stepOutcomes) {
   const json = readJson(file);
   const soak = json?.soak || {};
   const seconds = Number(soak?.seconds ?? 0);
+  const minSoakSeconds = Math.max(75, Number(json?.strict_live_evidence_requirements?.min_soak_seconds ?? 0));
   const minHeartbeats = Number(soak?.min_heartbeats ?? 0);
   const reconnectRequirementCandidates = [
     Number(json?.strict_live_evidence_requirements?.min_reconnect_attempts ?? 5),
@@ -989,6 +1021,11 @@ function analyzeSseSmoke(stepOutcomes) {
   const modeDetails = requiredModes.map((mode) => {
     const modeSoak = soak?.[mode] || {};
     const blocks = modeSoak?.blocks || {};
+    const timeline = modeSoak?.timeline && typeof modeSoak.timeline === "object" ? modeSoak.timeline : {};
+    const soakDurationMs = Number(timeline?.observed_duration_ms ?? modeSoak?.duration_ms ?? 0);
+    const soakDurationSeconds = Number.isFinite(soakDurationMs) && soakDurationMs > 0
+      ? soakDurationMs / 1000
+      : Number(timeline?.observed_duration_seconds ?? 0);
     const reconnect = json?.reconnect_sequence?.[mode] || {};
     const duplicateEventIds = Array.isArray(blocks?.duplicate_event_ids) ? blocks.duplicate_event_ids : [];
     const missingExpected = Array.isArray(modeSoak?.missing_expected_event_ids) ? modeSoak.missing_expected_event_ids : [];
@@ -1064,6 +1101,7 @@ function analyzeSseSmoke(stepOutcomes) {
     const soakRequestHeaders = modeSoak?.request_headers && typeof modeSoak.request_headers === "object" ? modeSoak.request_headers : {};
     const soakOk = modeSoak?.ok === true
       && requestUsesExpectedAuth(soakRequestHeaders, mode)
+      && soakDurationSeconds >= minSoakSeconds
       && heartbeatCount >= minHeartbeats
       && duplicateEventIds.length === 0
       && missingExpected.length === 0;
@@ -1079,6 +1117,7 @@ function analyzeSseSmoke(stepOutcomes) {
       mode,
       soakOk,
       heartbeatCount,
+      soakDurationSeconds,
       duplicateEventIds,
       missingExpected,
       reconnectOk,
@@ -1093,6 +1132,7 @@ function analyzeSseSmoke(stepOutcomes) {
   });
   const minOf = (values) => values.length ? Math.min(...values) : 0;
   const heartbeatCount = minOf(modeDetails.map((detail) => detail.heartbeatCount));
+  const soakDurationSeconds = minOf(modeDetails.map((detail) => detail.soakDurationSeconds));
   const duplicateEventIds = modeDetails.flatMap((detail) => detail.duplicateEventIds);
   const missingExpected = modeDetails.flatMap((detail) => detail.missingExpected);
   const reconnectAttempts = minOf(modeDetails.map((detail) => detail.reconnectAttempts));
@@ -1109,7 +1149,8 @@ function analyzeSseSmoke(stepOutcomes) {
   const strict = json?.strict_live_evidence === true;
   const summaryPassed = json?.summary?.passed === true;
   const soakOk = soak?.enabled === true
-    && seconds >= 75
+    && seconds >= minSoakSeconds
+    && soakDurationSeconds >= minSoakSeconds
     && minHeartbeats >= 2
     && modeDetails.every((detail) => detail.soakOk)
     && reconnectOk;
@@ -1120,8 +1161,10 @@ function analyzeSseSmoke(stepOutcomes) {
     summaryPassed,
     soakOk,
     seconds,
+    minSoakSeconds,
     minHeartbeats,
     heartbeatCount,
+    soakDurationSeconds,
     duplicateEventIds,
     missingExpected,
     reconnectOk,
@@ -1202,7 +1245,7 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth, preflight) {
     ? sseStrictOk ? "pass" : "fail"
     : preflightBlocksStrictEvidence ? "fail" : sseSmoke.missingStatus;
   const sseNote = sseSmoke.exists
-    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/${sseSmoke.minReconnectAttempts} attemptDetails:${sseSmoke.reconnectAttemptDetailsOk} attemptLineage:${sseSmoke.reconnectAttemptLineageOk} observed:${sseSmoke.reconnectObservedEventIds.length}/${sseSmoke.minReconnectAttempts} observedSequence:${sseSmoke.reconnectObservedSequenceOk} duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
+    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s soakDuration:${sseSmoke.soakDurationSeconds}/${sseSmoke.minSoakSeconds} heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/${sseSmoke.minReconnectAttempts} attemptDetails:${sseSmoke.reconnectAttemptDetailsOk} attemptLineage:${sseSmoke.reconnectAttemptLineageOk} observed:${sseSmoke.reconnectObservedEventIds.length}/${sseSmoke.minReconnectAttempts} observedSequence:${sseSmoke.reconnectObservedSequenceOk} duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
     : preflightBlocksStrictEvidence ? preflight.note : sseSmoke.missingNote;
   const strictAuthStatus = (condition) => strictAuth.exists
     ? condition ? "pass" : "fail"
@@ -1623,11 +1666,11 @@ function autoTickChecklist(gates) {
 
 function main() {
   const stepOutcomes = getStepOutcomes();
+  const preflight = analyzeLiveEvidencePreflight();
   const routeProbe = analyzeRouteProbe(stepOutcomes);
   const authSmoke = analyzeAuthSmoke(stepOutcomes);
-  const strictAuth = analyzeStrictAuthEvidence(stepOutcomes);
+  const strictAuth = analyzeStrictAuthEvidence(stepOutcomes, preflight);
   const sseSmoke = analyzeSseSmoke(stepOutcomes);
-  const preflight = analyzeLiveEvidencePreflight();
   const hosted = analyzeHostedProbe(stepOutcomes);
   const playwright = analyzePlaywright();
 
