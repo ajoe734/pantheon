@@ -25,9 +25,11 @@ from typing import Any, Dict, List, Mapping, Optional
 
 try:
     from integrations.openclaw.persona_agent_sync import build_persona_soul as _shared_build_soul
+    from integrations.openclaw.persona_memory_bridge import materialize_persona_memory_from_api as _shared_materialize_memory
     from services.persona.runtime_profile import build_persona_runtime_profile as _shared_runtime_profile
 except Exception:  # noqa: BLE001 - script must stay self-contained in the gateway container
     _shared_build_soul = None
+    _shared_materialize_memory = None
     _shared_runtime_profile = None
 
 PERSONA_WORKSPACE_ROOT = "/home/node/.openclaw/workspaces"
@@ -219,8 +221,51 @@ def write_soul(workspace: str, soul: str) -> None:
         fh.write(soul)
 
 
+def memory_api_url() -> str:
+    return (os.getenv("PANTHEON_MEMORY_API_URL") or os.getenv("PANTHEON_MEMORY_SERVICE_URL") or "").strip()
+
+
+def memory_actor_roles() -> List[str]:
+    raw = os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "operator")
+    roles = [part.strip() for part in raw.split(",") if part.strip()]
+    return roles or ["operator"]
+
+
+def materialize_memory_if_configured(pid: str, workspace: str) -> Optional[Dict[str, Any]]:
+    url = memory_api_url()
+    if not url:
+        return None
+    if _shared_materialize_memory is None:
+        raise RuntimeError("memory_bridge_module_unavailable")
+    result = _shared_materialize_memory(
+        memory_api_url=url,
+        persona_id=pid,
+        workspace=workspace,
+        actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "openclaw-persona-sync"),
+        actor_roles=memory_actor_roles(),
+        session_id=os.getenv("PANTHEON_MEMORY_SESSION_ID") or f"openclaw-memory-sync-{pid}",
+        query=os.getenv(
+            "PANTHEON_OPENCLAW_MEMORY_QUERY",
+            "recent lessons, preferences, risks, and institutional context for this persona",
+        ),
+        limit=int(os.getenv("PANTHEON_OPENCLAW_MEMORY_LIMIT", "8")),
+        auth_token=os.getenv("PANTHEON_MEMORY_AUTH_TOKEN") or None,
+    )
+    return result.to_dict()
+
+
+def record_memory_materialization(report: Dict[str, Any], pid: str, workspace: str) -> None:
+    try:
+        result = materialize_memory_if_configured(pid, workspace)
+    except Exception as exc:  # noqa: BLE001
+        report["failed"].append({"persona_id": pid, "error": f"memory_materialization_failed: {exc}"[:300]})
+        return
+    if result is not None:
+        report["memory_materialized"].append(pid)
+
+
 def reconcile(personas: List[Mapping[str, Any]]) -> Dict[str, Any]:
-    report: Dict[str, Any] = {"created": [], "updated": [], "failed": []}
+    report: Dict[str, Any] = {"created": [], "updated": [], "memory_materialized": [], "failed": []}
     existing = existing_agents()
     for p in personas:
         pid = persona_id(p)
@@ -250,6 +295,7 @@ def reconcile(personas: List[Mapping[str, Any]]) -> Dict[str, Any]:
                     continue
                 write_soul(ws, build_soul(p))
                 report["updated"].append(pid)
+                record_memory_materialization(report, pid, ws)
             else:
                 proc = subprocess.run(
                     ["openclaw", "agents", "add", pid, "--workspace", ws, "--model", model,
@@ -261,6 +307,7 @@ def reconcile(personas: List[Mapping[str, Any]]) -> Dict[str, Any]:
                     continue
                 write_soul(ws, build_soul(p))
                 report["created"].append(pid)
+                record_memory_materialization(report, pid, ws)
         except Exception as exc:  # noqa: BLE001
             report["failed"].append({"persona_id": pid, "error": str(exc)[:300]})
     report["counts"] = {k: len(v) for k, v in report.items() if isinstance(v, list)}

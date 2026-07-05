@@ -45,6 +45,7 @@ class SyncReport:
     created: List[str] = field(default_factory=list)
     updated: List[str] = field(default_factory=list)
     unchanged: List[str] = field(default_factory=list)
+    memory_materialized: List[str] = field(default_factory=list)
     failed: List[Dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -52,11 +53,13 @@ class SyncReport:
             "created": self.created,
             "updated": self.updated,
             "unchanged": self.unchanged,
+            "memory_materialized": self.memory_materialized,
             "failed": self.failed,
             "counts": {
                 "created": len(self.created),
                 "updated": len(self.updated),
                 "unchanged": len(self.unchanged),
+                "memory_materialized": len(self.memory_materialized),
                 "failed": len(self.failed),
             },
         }
@@ -201,6 +204,7 @@ def desired_agent_spec(
 
 CliRunner = Callable[[List[str]], "subprocess.CompletedProcess[str]"]
 SoulWriter = Callable[[str, str], None]  # (workspace_dir, soul_text)
+MemoryMaterializer = Callable[[str, Mapping[str, Any], PersonaAgentSpec], Any]
 
 
 def _default_runner(args: List[str]) -> "subprocess.CompletedProcess[str]":
@@ -268,6 +272,7 @@ def sync_persona_agents(
     *,
     runner: Optional[CliRunner] = None,
     soul_writer: Optional[SoulWriter] = None,
+    memory_materializer: Optional[MemoryMaterializer] = None,
     skip_persona: Optional[Callable[[Mapping[str, Any]], bool]] = None,
     route_policy_resolver: Optional[Callable[[Mapping[str, Any]], Optional[Mapping[str, Any]]]] = None,
 ) -> SyncReport:
@@ -315,6 +320,7 @@ def sync_persona_agents(
                     continue
                 write_soul(spec.workspace, spec.soul)
                 report.updated.append(spec.persona_id)
+                _try_materialize_memory(report, memory_materializer, spec, persona)
             else:
                 proc = run([
                     "openclaw", "agents", "add", spec.persona_id,
@@ -330,6 +336,26 @@ def sync_persona_agents(
                     continue
                 write_soul(spec.workspace, spec.soul)
                 report.created.append(spec.persona_id)
+                _try_materialize_memory(report, memory_materializer, spec, persona)
         except Exception as exc:  # noqa: BLE001
             report.failed.append({"persona_id": _persona_id(persona) or "?", "error": str(exc)[:300]})
     return report
+
+
+def _try_materialize_memory(
+    report: SyncReport,
+    memory_materializer: Optional[MemoryMaterializer],
+    spec: PersonaAgentSpec,
+    persona: Mapping[str, Any],
+) -> None:
+    if memory_materializer is None:
+        return
+    try:
+        memory_materializer(spec.workspace, persona, spec)
+    except Exception as exc:  # noqa: BLE001
+        report.failed.append({
+            "persona_id": spec.persona_id,
+            "error": f"memory_materialization_failed: {exc}"[:300],
+        })
+        return
+    report.memory_materialized.append(spec.persona_id)
