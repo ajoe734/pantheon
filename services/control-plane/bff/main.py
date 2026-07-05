@@ -53411,6 +53411,179 @@ def _pplg_cohort_id(market_scope: List[Any], strategy_family: Any) -> str:
     return f"cohort-{market}-{strategy}"
 
 
+_PPLG_MARKET_PERSONA_IDS = {
+    "CRYPTO": "persona-crypto",
+    "TW": "persona-tw-equity",
+    "US": "persona-us-equity",
+}
+
+_PPLG_MARKET_SUMMARY_METADATA_FIELDS = {
+    "market_scope",
+    "asset_classes",
+    "timezone",
+    "broker_adapter",
+    "persona_status",
+    "current_work",
+    "ooda_stage",
+    "league_score",
+    "league_rank",
+    "recommended_governance_action",
+    "governance_required",
+    "risk_flags",
+    "success_rate",
+    "risk_level",
+    "performance",
+    "data_source_status",
+    "data_sources",
+    "data_source_refs",
+    "research_status",
+    "research_refs",
+    "current_research_projects",
+    "deployment_stage",
+}
+
+_PPLG_MARKET_SUMMARY_LEAGUE_FIELDS = {
+    "market_scope",
+    "risk_flags",
+    "league_score",
+    "league_rank",
+    "rank",
+    "recommendation",
+    "governance_required",
+    "status",
+    "ooda_stage",
+    "cohort_id",
+    "competition_track",
+    "capital_scope",
+    "challenger_delta_score",
+}
+
+
+def _pplg_declared_summary_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "none", "nan", "not_declared", "not declared"}
+    return True
+
+
+def _pplg_normalized_market(value: Any) -> Optional[str]:
+    token = str(value or "").strip().upper()
+    if token in {"CRYPTO", "TW", "US"}:
+        return token
+    if token in {"TAIWAN", "TAIPEI", "TWSE", "TPEX"}:
+        return "TW"
+    if token in {"USA", "U.S.", "UNITED STATES"}:
+        return "US"
+    return None
+
+
+def _pplg_market_from_summary_sources(
+    *,
+    persona: Dict[str, Any],
+    metadata: Dict[str, Any],
+    league_entry: Dict[str, Any],
+) -> Optional[str]:
+    for source in (league_entry, metadata, persona):
+        scopes = source.get("market_scope")
+        if not isinstance(scopes, list):
+            scopes = [scopes] if scopes else []
+        for scope in scopes:
+            market = _pplg_normalized_market(scope)
+            if market:
+                return market
+
+    name = str(persona.get("name") or persona.get("persona_name") or "").upper()
+    persona_id = str(persona.get("persona_id") or persona.get("id") or "").upper()
+    strategy_family = str(persona.get("strategy_family") or metadata.get("strategy_family") or "").upper()
+    tokens = {
+        token
+        for token in re.split(r"[^A-Z0-9]+", f"{name} {persona_id} {strategy_family}")
+        if token
+    }
+    ordered_tokens = [token for token in re.split(r"[^A-Z0-9]+", name) if token]
+    first = ordered_tokens[0] if ordered_tokens else ""
+    if first == "TW" or {"TAIWAN", "TWSE", "TPEX"}.intersection(tokens):
+        return "TW"
+    if first == "US" or {"USA", "NYSE", "NASDAQ"}.intersection(tokens):
+        return "US"
+    if first == "CRYPTO" or "CRYPTO" in tokens or {"BTC", "ETH", "KRAKEN"}.intersection(tokens):
+        return "CRYPTO"
+    return None
+
+
+def _pplg_market_summary_defaults(
+    personas: List[Dict[str, Any]],
+    league_by_persona: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    defaults: Dict[str, Dict[str, Any]] = {}
+    by_id = {
+        str(persona.get("persona_id") or persona.get("id") or ""): persona
+        for persona in personas
+    }
+    for market, persona_id in _PPLG_MARKET_PERSONA_IDS.items():
+        persona = by_id.get(persona_id) or read_store.get_persona(persona_id)
+        if not isinstance(persona, dict):
+            continue
+        metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        defaults[market] = {
+            "persona_id": persona_id,
+            "metadata": metadata,
+            "league_entry": league_by_persona.get(persona_id, {}),
+        }
+    return defaults
+
+
+def _pplg_apply_market_summary_defaults(
+    *,
+    persona_id: str,
+    persona: Dict[str, Any],
+    metadata: Dict[str, Any],
+    league_entry: Dict[str, Any],
+    defaults_by_market: Dict[str, Dict[str, Any]],
+) -> Tuple[Dict[str, Any], Dict[str, Any], Optional[str]]:
+    market = _pplg_market_from_summary_sources(
+        persona=persona,
+        metadata=metadata,
+        league_entry=league_entry,
+    )
+    if not market:
+        return metadata, league_entry, None
+
+    market_default = defaults_by_market.get(market)
+    if not market_default or persona_id == market_default.get("persona_id"):
+        return metadata, league_entry, None
+
+    default_metadata = (
+        market_default.get("metadata")
+        if isinstance(market_default.get("metadata"), dict)
+        else {}
+    )
+    default_league = (
+        market_default.get("league_entry")
+        if isinstance(market_default.get("league_entry"), dict)
+        else {}
+    )
+    enriched_metadata = dict(metadata)
+    enriched_league = dict(league_entry)
+
+    for field in _PPLG_MARKET_SUMMARY_METADATA_FIELDS:
+        if not _pplg_declared_summary_value(enriched_metadata.get(field)) and field in default_metadata:
+            enriched_metadata[field] = json.loads(json.dumps(default_metadata[field]))
+
+    for field in _PPLG_MARKET_SUMMARY_LEAGUE_FIELDS:
+        if not _pplg_declared_summary_value(enriched_league.get(field)) and field in default_league:
+            enriched_league[field] = json.loads(json.dumps(default_league[field]))
+
+    enriched_metadata.setdefault("summary_enriched_from_persona_id", market_default.get("persona_id"))
+    enriched_metadata.setdefault("summary_enriched_market", market)
+    return enriched_metadata, enriched_league, market
+
+
 def _build_persona_health_items(
     snapshot_at: str,
     *,
@@ -53428,15 +53601,26 @@ def _build_persona_health_items(
             include_market_persona_defaults=include_market_persona_defaults,
         )
     }
+    personas = list(
+        read_store.list_personas(
+            include_market_persona_defaults=include_market_persona_defaults,
+        )
+    )
+    market_defaults = _pplg_market_summary_defaults(personas, league_by_persona)
     items: List[Dict[str, Any]] = []
-    for persona in read_store.list_personas(
-        include_market_persona_defaults=include_market_persona_defaults,
-    ):
+    for persona in personas:
         persona_id = _persona_id(persona)
         if not persona_id:
             continue
         metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
         league_entry = league_by_persona.get(persona_id, {})
+        metadata, league_entry, _summary_market = _pplg_apply_market_summary_defaults(
+            persona_id=persona_id,
+            persona=persona,
+            metadata=metadata,
+            league_entry=league_entry,
+            defaults_by_market=market_defaults,
+        )
         league_metrics = (
             league_entry.get("metrics")
             if isinstance(league_entry.get("metrics"), dict)

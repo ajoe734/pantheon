@@ -251,6 +251,70 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     }
 
 
+def test_management_persona_fleet_enriches_formal_market_rows_from_summary_defaults() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        store._data["personas"] = {
+            "persona-20260528-ba7de5a4": {
+                "id": "persona-20260528-ba7de5a4",
+                "persona_id": "persona-20260528-ba7de5a4",
+                "name": "TW-BlueChip-Guard",
+                "lifecycle_state": "active",
+                "status": "active",
+                "created_at": "2026-05-28T00:00:00Z",
+                "updated_at": "2026-06-03T00:00:00Z",
+                "metadata": {"owner": "pantheon-dev-browser"},
+                "canonicalWriteAuthority": "persona_registry_service",
+                "persistenceMode": "bff_local_dev_store",
+            }
+        }
+        store.get_source_connector_registry = lambda: {
+            "source": "service_client",
+            "connectors": [
+                {"provider_key": key, "provider": key, "status": "active", "health": "ok"}
+                for key in ("shioaji", "twse", "tpex", "mops", "tej")
+            ],
+            "provider_examples": [],
+            "policy_registry": None,
+            "financial_data_source_catalog": None,
+            "active_universe_policy": None,
+        }
+
+        with _client_with_store(store) as client:
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    rows = {item["persona_id"]: item for item in response.json()["items"]}
+    row = rows["persona-20260528-ba7de5a4"]
+
+    assert row["personaId"] == "persona-20260528-ba7de5a4"
+    assert row["personaName"] == "TW-BlueChip-Guard"
+    assert row["owner"] == "pantheon-dev-browser"
+    assert row["marketScope"] == ["TW"]
+    assert row["ooda"] == "Decide"
+    assert row["perfDelta"] == 0.095
+    assert row["currentWork"] == "TW corporate-action and session-boundary evidence review"
+    assert row["dataSourceStatus"]["state"] == "partial_readback"
+    assert [source["provider_key"] for source in row["dataSources"]] == [
+        "shioaji",
+        "twse",
+        "tpex",
+        "mops",
+        "tej",
+    ]
+    assert row["currentResearchProjects"][0]["project_id"] == "MGMT-QLIB-006"
+    assert row["currentResearchProjects"][0]["experiment_id"] == "exp-mgmt-qlib-006"
+    assert row["linkTargets"]["research"]["href"] == "/management/experiments/exp-mgmt-qlib-006"
+    assert row["linkTargets"]["dataSources"]["href"] == (
+        "/management/data-sources?persona=persona-20260528-ba7de5a4&source=shioaji,twse,tpex,mops,tej"
+    )
+    assert row["linkTargets"]["performance"]["available"] is False
+    assert row["linkTargets"]["performance"]["href"] is None
+
+
 def test_persona_fleet_link_targets_mark_missing_detail_targets_unavailable() -> None:
     with tempfile.TemporaryDirectory() as td:
         store = ReadSurfaceStore(
