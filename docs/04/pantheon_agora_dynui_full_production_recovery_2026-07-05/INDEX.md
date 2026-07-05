@@ -64,11 +64,19 @@ Direct dev BFF proof on `127.0.0.1:18001`:
 
 Execute-plans frontend status:
 
-- `AG-DYNUI-FULL-004` opened execute-plans PR #185
-  (`https://github.com/ajoe734/execute-plans/pull/185`) from commit
-  `4668d52bd76c973946d8466f1d65ab1f43358cc2`.
-- Its FE-BFF `integration-gate` check is still in progress at the time of this
-  packet update. This is not a completed production gate.
+- `AG-DYNUI-FULL-004` merged execute-plans PR #185
+  (`https://github.com/ajoe734/execute-plans/pull/185`) from reviewed head
+  `722cb18fd6d5e5e33b2c4e4866c72bcdd17a8571` into merge commit
+  `4cce2d10f14abcc7af5f15638e0e0efa63885944`.
+- Its FE-BFF `integration-gate` check succeeded:
+  `https://github.com/ajoe734/execute-plans/actions/runs/28744994745/job/85234274266`
+- Its dev FE deploy succeeded:
+  `https://github.com/ajoe734/execute-plans/actions/runs/28745373659`
+- Hosted evidence is recorded at
+  `docs/deployment/evidence/ag-dynui-full-004/20260705T152800Z/`.
+- The closeout is frontend handoff partial because the live browser-scoped BFF
+  still returns `strategies: []`, and the hosted Strategy Workshop CTA remains
+  disabled until readiness reaches `trading_room`.
 
 Previous `AG-DYNUI-PROD-006` evidence also disclosed that the hosted E2E
 proposal/accept/grid/revision/version/rollback path was exercised with
@@ -94,7 +102,7 @@ readiness alone.
 | Strategy Workshop cards route | Building block proven live | Direct dev BFF `GET /bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7/cards` returns `200` for the browser user. | Must be exercised inside hosted no-fixture E2E. |
 | Strategy Workshop readiness route | Building block proven live | Direct dev BFF `GET /bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7/readiness` returns `200` for the browser user. | Need real workflow evidence that readiness reaches `trading_room` without SQL seeding. |
 | Workshop-to-Trading Room strategy materialization | Backend partial | SQL-seeded workshop `d237eb8f-44a6-4805-9b27-d5723f8c99eb` can project a ready strategy into Trading Room. | Browser-created workflow still returns empty aggregate until completeness and Strategy Registry ref are produced through live API/UI. |
-| Frontend handoff route context | In progress | execute-plans PR #185 wires handoff query context and explicit strategy route. | PR #185 needs green integration gate, merge, dev FE deploy, and hosted proof. |
+| Frontend handoff route context | Partial/building block | execute-plans PR #185 merged, integration gate passed, dev FE deploy published merge `4cce2d10f14abcc7af5f15638e0e0efa63885944`, and hosted no-fixture screenshots/readbacks are recorded under `docs/deployment/evidence/ag-dynui-full-004/20260705T152800Z/`. | Live browser-scoped BFF still has zero ready strategies, so CTA navigation cannot be exercised without fixtures; `AG-DYNUI-FULL-005` must produce ready-strategy materialization. |
 | Design parity | Blocked source-truth | Exact `/home/lupin/code/pantheon/AI%20Trading%20Desk%20Design.zip` was not found; closure packs are contract/spec archives, not visual design proof. | Recover the exact design zip or get reviewed approval that closure packs are the canonical replacement before visual closeout. |
 | Execute-plans FE-BFF Integration Gate | Not production-level | Prior execute-plans PR #177 merged and dev FE deploy succeeded, but the integration gate was not green. | Fix the gate and require success on the no-fixture production path. |
 
@@ -108,7 +116,7 @@ readiness alone.
 | Promote readiness to `trading_room` gate | Backend-only partial from SQL-seeded proof | `AG-DYNUI-FULL-005` |
 | Create or expose a ready `strategyId` / `strategyVersion` | Backend-only partial from SQL-seeded proof | `AG-DYNUI-FULL-005` |
 | Populate Trading Room aggregate with real ready strategies | Backend-only partial; browser workflow still empty | `AG-DYNUI-FULL-005` |
-| Navigate from Strategy Workshop to explicit strategy route | In progress in execute-plans PR #185 | `AG-DYNUI-FULL-004` |
+| Navigate from Strategy Workshop to explicit strategy route | Frontend code merged and deployed; live CTA remains blocked by missing ready strategy | `AG-DYNUI-FULL-005` |
 | Load real strategy workspace in hosted UI | No | `AG-DYNUI-FULL-003`, `AG-DYNUI-FULL-004` |
 | Generate workspace proposal live | Not proven live | `AG-DYNUI-FULL-005` |
 | Accept proposal and persist workspace live | Not proven live | `AG-DYNUI-FULL-005` |
