@@ -30530,9 +30530,113 @@ def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str
     )
 
 
+def _submitted_promotion_review_records(
+    identity: OperatorIdentity,
+    *,
+    snapshot_at: str,
+) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for command in command_store._get_all_commands():
+        if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+            continue
+        params = command.get("params") if isinstance(command.get("params"), dict) else {}
+        recommendation_id = str(
+            params.get("recommendation_id")
+            or params.get("recommendationId")
+            or (command.get("target") or {}).get("id")
+            or ""
+        ).strip()
+        if not recommendation_id or recommendation_id in seen:
+            continue
+        review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
+            identity,
+            recommendation_id,
+            snapshot_at=snapshot_at,
+            quarter=str(params.get("quarter") or "").strip() or None,
+        )
+        if review is None or not bool(review.get("submitted")):
+            continue
+        seen.add(recommendation_id)
+        records.append(review)
+    return records
+
+
+def _human_inbox_promotion_review_item(review: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    review_id = str(review.get("review_id") or review.get("promotion_review_id") or "").strip()
+    if not review_id:
+        return None
+    decision_status = str(review.get("decision_status") or "pending").strip().lower() or "pending"
+    status = "accepted" if decision_status == "accepted" else "pending"
+    risk_level = str(review.get("risk_level") or "high").strip().lower() or "high"
+    priority = _human_inbox_priority(review.get("priority") or risk_level, fallback="high")
+    submission = review.get("submission") if isinstance(review.get("submission"), dict) else {}
+    created_at = submission.get("submitted_at") or review.get("created_at")
+    updated_at = (review.get("decision") or {}).get("decided_at") if isinstance(review.get("decision"), dict) else None
+    updated_at = updated_at or created_at
+    inbox_id = _promotion_review_target_id(review_id)
+    route = f"/management/human-inbox/{quote(inbox_id, safe='')}"
+    action_state = "pending" if status == "pending" else "resolved"
+    stage_path = review.get("promotion_path") if isinstance(review.get("promotion_path"), dict) else {}
+    projected = {
+        "id": inbox_id,
+        "inbox_id": inbox_id,
+        "inboxType": "promotion_review",
+        "source_type": "promotion_review",
+        "source_id": review_id,
+        "review_id": review_id,
+        "promotion_review_id": review_id,
+        "recommendation_id": review.get("recommendation_id"),
+        "persona_id": review.get("persona_id"),
+        "title": f"Persona governance review: {review.get('name') or review.get('persona_id')}",
+        "summary": review.get("rationale") or "Persona ranking recommendation requires Human Gate approval.",
+        "priority": priority,
+        "risk_level": risk_level,
+        "status": status,
+        "action_state": action_state,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "submitted_by": submission.get("submitted_by"),
+        "target": {
+            "type": "persona",
+            "id": review.get("persona_id"),
+        },
+        "route": route,
+        "bff_detail_path": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
+        "decisionHref": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
+        "detailHref": route,
+        "promotion_review": _management_json_clone(review),
+        "promotion_context": {
+            "from_stage": stage_path.get("from_stage"),
+            "target_stage": stage_path.get("target_stage"),
+            "review_kind": review.get("review_kind") or stage_path.get("review_kind"),
+            "action_id": review.get("action_id"),
+            "live_capital_mutation": False,
+        },
+        "allowedActions": _management_json_clone(review.get("allowedActions") or {
+            "canApprove": action_state == "pending",
+            "canApproveWithConditions": action_state == "pending",
+            "canReject": action_state == "pending",
+        }),
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+    }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="promotion_review",
+        source_dataset="promotion_reviews",
+        risk_level=risk_level,
+        created_at=created_at,
+        updated_at=updated_at,
+        href=route,
+        source_record=review,
+    )
+
+
 def _human_inbox_all_items(
     snapshot_at: Optional[str] = None,
     *,
+    identity: Optional[OperatorIdentity] = None,
     source_types: Optional[set[str]] = None,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     snapshot_at = snapshot_at or utc_now()
@@ -30564,6 +30668,11 @@ def _human_inbox_all_items(
         if include_all or "readiness_blocker" in source_types
         else []
     )
+    promotion_review_records = (
+        _submitted_promotion_review_records(identity, snapshot_at=snapshot_at)
+        if identity is not None and (include_all or "promotion_review" in source_types)
+        else []
+    )
     items: List[Dict[str, Any]] = []
     for review in review_records:
         projected = _human_inbox_governance_review_item(review)
@@ -30585,6 +30694,10 @@ def _human_inbox_all_items(
         projected = _human_inbox_persona_readiness_item(persona, snapshot_at=snapshot_at)
         if projected is not None:
             items.append(projected)
+    for review in promotion_review_records:
+        projected = _human_inbox_promotion_review_item(review)
+        if projected is not None:
+            items.append(projected)
     items.sort(
         key=lambda item: (
             _HUMAN_INBOX_PRIORITY_RANK.get(str(item.get("priority") or "unknown"), 0),
@@ -30600,6 +30713,7 @@ def _human_inbox_all_items(
         "sentinel_available": sentinel_available,
         "sentinel_records": sentinel_records,
         "persona_rows": persona_rows,
+        "promotion_review_records": promotion_review_records,
     }
 
 
@@ -30732,6 +30846,7 @@ def _human_inbox_surfaces(
 def _human_inbox_payload(
     snapshot_at: str,
     *,
+    identity: Optional[OperatorIdentity] = None,
     source_type: Optional[str] = None,
     status: Optional[str] = None,
     priority: Optional[str] = None,
@@ -30739,7 +30854,7 @@ def _human_inbox_payload(
     page_size: Optional[int] = 20,
 ) -> Dict[str, Any]:
     source_types = _human_inbox_csv_filter(source_type)
-    items, sources = _human_inbox_all_items(snapshot_at, source_types=source_types)
+    items, sources = _human_inbox_all_items(snapshot_at, identity=identity, source_types=source_types)
     filtered = _human_inbox_filter_items(
         items,
         source_type=source_type,
@@ -32537,6 +32652,7 @@ async def bff_management_human_inbox(
 
     return _human_inbox_payload(
         utc_now(),
+        identity=identity,
         source_type=source_type,
         status=status,
         priority=priority,
@@ -32555,7 +32671,7 @@ async def bff_management_human_inbox_detail(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    items, sources = _human_inbox_all_items(snapshot_at)
+    items, sources = _human_inbox_all_items(snapshot_at, identity=identity)
     for item in items:
         if _human_inbox_detail_match(item, item_id):
             detail = json.loads(json.dumps(item))
@@ -40368,6 +40484,836 @@ def _pm12_quarterly_recommendations(
         reverse=True,
     )
     return recommendations
+
+
+_PROMOTION_REVIEW_ACTION_IDS: Set[str] = set(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)
+_PROMOTION_REVIEW_PROMOTION_ACTION_IDS: Set[str] = {"promote_to_canary_candidate"}
+_PROMOTION_REVIEW_DECISIONS: Set[str] = {"approve", "approve_with_conditions", "reject"}
+_PROMOTION_REVIEW_ID_PREFIX = "promotion-review:"
+_PROMOTION_REVIEW_TARGET_PREFIX = "promotion_review:"
+_PROMOTION_REVIEW_ID_QUARTER_RE = re.compile(r"pm12-(?P<quarter>\d{4}-q[1-4])-", re.IGNORECASE)
+
+
+def _promotion_review_clean_id(review_id: Any) -> str:
+    clean_id = str(review_id or "").strip()
+    if clean_id.startswith(_PROMOTION_REVIEW_ID_PREFIX):
+        clean_id = clean_id[len(_PROMOTION_REVIEW_ID_PREFIX):]
+    if clean_id.startswith(_PROMOTION_REVIEW_TARGET_PREFIX):
+        clean_id = clean_id[len(_PROMOTION_REVIEW_TARGET_PREFIX):]
+    return clean_id
+
+
+def _promotion_review_target_id(review_id: Any) -> str:
+    return f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}"
+
+
+def _promotion_review_quarter_from_id(review_id: Any) -> Optional[str]:
+    match = _PROMOTION_REVIEW_ID_QUARTER_RE.search(_promotion_review_clean_id(review_id))
+    if match is None:
+        return None
+    return match.group("quarter").upper()
+
+
+def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, Any]:
+    action_id = str(recommendation.get("action_id") or "").strip()
+    state = str(recommendation.get("state") or "").strip().lower()
+    if "canary" in state:
+        from_stage = "canary"
+    elif "live" in state:
+        from_stage = "live"
+    else:
+        from_stage = "paper"
+
+    if action_id in _PROMOTION_REVIEW_PROMOTION_ACTION_IDS:
+        if from_stage == "canary":
+            target_stage = "live_candidate"
+            review_kind = "canary_to_live_review"
+        elif from_stage == "live":
+            target_stage = "live_rebalance_review"
+            review_kind = "live_ranking_review"
+        else:
+            target_stage = "canary_candidate"
+            review_kind = "paper_to_canary_review"
+    elif action_id in {"reduce_capital_access", "freeze_persona", "suspend_persona", "retire_persona"}:
+        target_stage = "risk_containment_review"
+        review_kind = "risk_containment_review"
+    elif action_id in {"increase_research_budget", "grant_tool_access"}:
+        target_stage = "resource_change_review"
+        review_kind = "resource_change_review"
+    else:
+        target_stage = "governance_review"
+        review_kind = "ranking_governance_review"
+
+    return {
+        "from_stage": from_stage,
+        "target_stage": target_stage,
+        "review_kind": review_kind,
+        "eventual_live_stage": "live",
+        "live_requires_separate_human_gate": target_stage != "risk_containment_review",
+    }
+
+
+def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, Any]]:
+    clean_id = _promotion_review_clean_id(review_id)
+    for record in reversed(command_store._get_all_commands()):
+        if record.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+            continue
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        if target.get("id") == clean_id:
+            return record
+        if str(params.get("recommendation_id") or params.get("recommendationId") or "").strip() == clean_id:
+            return record
+        if str(params.get("review_id") or params.get("promotion_review_id") or "").strip() == clean_id:
+            return record
+    return None
+
+
+def _promotion_review_submission_projection(review_id: Any) -> Optional[Dict[str, Any]]:
+    record = _latest_promotion_review_submission(review_id)
+    if record is None:
+        return None
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    return {
+        "submitted": True,
+        "submit_status": record.get("status"),
+        "command_id": record.get("command_id"),
+        "commandId": record.get("command_id"),
+        "receipt_id": record.get("command_id"),
+        "submitted_at": record.get("submitted_at"),
+        "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
+        "recommendation_id": params.get("recommendation_id") or params.get("recommendationId"),
+        "recommendation_action_id": params.get("recommendation_action_id") or params.get("recommendationActionId"),
+        "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}",
+        "live_capital_mutation": False,
+        "requires_human_gate_decision": True,
+    }
+
+
+def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
+    clean_id = _promotion_review_clean_id(review_id)
+    target_id = _promotion_review_target_id(clean_id)
+    for record in reversed(command_store._get_all_commands()):
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        if target.get("type") != ObjectType.HUMAN_GATE_ITEM.value:
+            continue
+        if target.get("id") == target_id:
+            return record
+        if str(params.get("review_id") or params.get("promotion_review_id") or "").strip() == clean_id:
+            return record
+        if str(params.get("recommendation_id") or "").strip() == clean_id:
+            return record
+    return None
+
+
+def _promotion_review_decision_projection(review_id: Any) -> Optional[Dict[str, Any]]:
+    record = _latest_promotion_review_command(review_id)
+    if record is None:
+        return None
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    rationale = (
+        params.get("rationale")
+        or params.get("reason")
+        or params.get("rejection_reason")
+        or params.get("memo")
+    )
+    projection: Dict[str, Any] = {
+        "decision": params.get("decision"),
+        "decision_status": "accepted",
+        "command_id": record.get("command_id"),
+        "commandId": record.get("command_id"),
+        "receipt_id": record.get("command_id"),
+        "submitted_at": record.get("submitted_at"),
+        "decided_at": record.get("submitted_at"),
+        "decided_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
+        "command_status": record.get("status"),
+        "live_capital_mutation": False,
+        "requires_human_gate_decision": True,
+    }
+    if rationale not in (None, ""):
+        projection["rationale"] = rationale
+    if "conditions" in params:
+        projection["conditions"] = json.loads(json.dumps(params.get("conditions")))
+    return projection
+
+
+def _promotion_review_item_from_recommendation(
+    recommendation: Dict[str, Any],
+) -> Dict[str, Any]:
+    review_id = str(recommendation.get("recommendation_id") or recommendation.get("id") or "")
+    action_id = str(recommendation.get("action_id") or "")
+    submission = _promotion_review_submission_projection(review_id)
+    decision = _promotion_review_decision_projection(review_id)
+    stage_path = _promotion_review_stage_path(recommendation)
+    target_stage = str(stage_path.get("target_stage") or "governance_review")
+    status = "decision_accepted" if decision else "pending_human_gate" if submission else "recommended_not_submitted"
+    decision_status = str((decision or {}).get("decision_status") or "pending")
+    governance = {
+        "requires_human_gate_decision": True,
+        "decision_status": decision_status,
+        "live_capital_mutation": False,
+        "direct_live_capital_mutation": False,
+        "paper_to_canary_gate": stage_path.get("review_kind") == "paper_to_canary_review",
+        "canary_to_live_gate": stage_path.get("review_kind") == "canary_to_live_review",
+        "live_ranking_review": stage_path.get("review_kind") == "live_ranking_review",
+        "live_promotion_requires_separate_human_gate": bool(stage_path.get("live_requires_separate_human_gate", True)),
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+    }
+    item: Dict[str, Any] = {
+        "id": review_id,
+        "review_id": review_id,
+        "promotion_review_id": review_id,
+        "recommendation_id": recommendation.get("recommendation_id") or recommendation.get("id"),
+        "quarter": recommendation.get("quarter"),
+        "quarter_window": recommendation.get("quarter_window"),
+        "persona_id": recommendation.get("persona_id"),
+        "name": recommendation.get("name"),
+        "owner": recommendation.get("owner"),
+        "rank": recommendation.get("rank"),
+        "score": recommendation.get("score"),
+        "tier": recommendation.get("tier"),
+        "action_id": action_id,
+        "action_label": recommendation.get("action_label"),
+        "priority": recommendation.get("priority"),
+        "risk_level": recommendation.get("risk_level"),
+        "status": status,
+        "decision_status": decision_status,
+        "submitted": bool(submission),
+        "submit_status": (submission or {}).get("submit_status") if submission else "not_submitted",
+        "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{review_id}",
+        "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
+        "allowedActions": {
+            "canSubmit": not bool(submission),
+            "canApprove": bool(submission),
+            "canApproveWithConditions": bool(submission),
+            "canReject": bool(submission),
+        },
+        "promotion_path": stage_path,
+        "review_kind": stage_path.get("review_kind"),
+        "rationale": recommendation.get("rationale"),
+        "rationale_codes": list(recommendation.get("rationale_codes") or []),
+        "metrics": json.loads(json.dumps(recommendation.get("metrics") or {})),
+        "components": json.loads(json.dumps(recommendation.get("components") or {})),
+        "evidence_refs": json.loads(json.dumps(recommendation.get("evidence_refs") or [])),
+        "evidence_ref_ids": list(recommendation.get("evidence_ref_ids") or []),
+        "source_recommendation": json.loads(json.dumps(recommendation)),
+        "governance": governance,
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "direct_live_capital_mutation": False,
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        "links": {
+            "persona": f"/bff/personas/{recommendation.get('persona_id')}",
+            "recommendation": "/bff/management/quarterly-ranking/recommendations",
+            "submit": f"/bff/management/quarterly-ranking/recommendations/{quote(review_id, safe='')}/submit",
+            "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
+            "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
+            "human_inbox": f"/bff/management/human-inbox/{quote(_promotion_review_target_id(review_id), safe='')}",
+        },
+    }
+    if submission:
+        item["submission"] = submission
+    if decision:
+        item["decision"] = decision
+    return item
+
+
+def _promotion_review_items(
+    identity: OperatorIdentity,
+    *,
+    snapshot_at: str,
+    quarter: Optional[str],
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = "",
+) -> tuple[List[Dict[str, Any]], Dict[str, Any], int, bool]:
+    quarter_window = _pm12_quarter_window(quarter, snapshot_at)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    recommendations = _pm12_quarterly_recommendations(
+        ranked_items,
+        quarter_window=quarter_window,
+        evidence_refs=public_evidence_refs,
+    )
+    reviews = [
+        _promotion_review_item_from_recommendation(item)
+        for item in recommendations
+        if str(item.get("action_id") or "") in _PROMOTION_REVIEW_ACTION_IDS
+    ]
+    return reviews, quarter_window, redacted_count, evidence_dataset_available
+
+
+def _promotion_review_surfaces(
+    *,
+    snapshot_at: str,
+    evidence_dataset_available: bool,
+) -> Dict[str, Dict[str, Any]]:
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    approval_queue_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    human_gate_surface = _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at)
+    recommendations_surface = _aggregate_group_surface(
+        "quarterly_ranking_recommendations",
+        [*source_surfaces.values(), formula_surface, evidence_surface, approval_queue_surface, human_gate_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking recommendations aggregate unavailable.",
+        degraded_message="Quarterly ranking recommendations are degraded because one or more source surfaces are degraded.",
+    )
+    promotion_reviews_surface = _aggregate_group_surface(
+        "promotion_reviews",
+        [recommendations_surface, approval_queue_surface, human_gate_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Promotion review aggregate unavailable.",
+        degraded_message="Promotion review aggregate is degraded because one or more governance surfaces are degraded.",
+    )
+    return {
+        "promotion_reviews": promotion_reviews_surface,
+        "quarterly_ranking_recommendations": recommendations_surface,
+        "formula": formula_surface,
+        "evidence_refs": evidence_surface,
+        "knowledge_evidence": evidence_surface,
+        "human_inbox": _composed_surface_status(snapshot_at=snapshot_at),
+        "governance_queue": approval_queue_surface,
+        "human_gate_decision": human_gate_surface,
+        **source_surfaces,
+    }
+
+
+def _promotion_review_find(
+    identity: OperatorIdentity,
+    review_id: str,
+    *,
+    snapshot_at: str,
+    quarter: Optional[str] = None,
+) -> tuple[Optional[Dict[str, Any]], Dict[str, Any], int, bool]:
+    clean_id = _promotion_review_clean_id(review_id)
+    resolved_quarter = quarter or _promotion_review_quarter_from_id(clean_id)
+    reviews, quarter_window, redacted_count, evidence_dataset_available = _promotion_review_items(
+        identity,
+        snapshot_at=snapshot_at,
+        quarter=resolved_quarter,
+    )
+    for item in reviews:
+        identifiers = {
+            str(item.get("id") or ""),
+            str(item.get("review_id") or ""),
+            str(item.get("promotion_review_id") or ""),
+            str(item.get("recommendation_id") or ""),
+        }
+        if clean_id in identifiers:
+            return item, quarter_window, redacted_count, evidence_dataset_available
+    return None, quarter_window, redacted_count, evidence_dataset_available
+
+
+def _promotion_review_rationale(payload: Dict[str, Any]) -> str:
+    return str(
+        payload.get("rationale")
+        or payload.get("reason")
+        or payload.get("memo")
+        or payload.get("rejection_reason")
+        or ""
+    ).strip()
+
+
+def _raise_if_promotion_review_direct_mutation_requested(payload: Dict[str, Any]) -> None:
+    mutation_fields = (
+        "live_capital_mutation",
+        "liveCapitalMutation",
+        "liveCapitalSideEffects",
+        "runtime_mutation",
+        "runtimeMutation",
+    )
+    for field in mutation_fields:
+        if bool(payload.get(field)):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Promotion review decisions cannot request direct live/runtime mutation",
+                f"{field} must be false or omitted; promotion requires a human-gated command receipt only.",
+                precondition_failed=field,
+                suggestion="Submit the promotion review decision without live/runtime mutation flags.",
+            )
+
+
+def _promotion_review_decision_payload(
+    *,
+    payload: Dict[str, Any],
+    review: Dict[str, Any],
+    decision: str,
+    rationale: str,
+    identity: OperatorIdentity,
+) -> Dict[str, Any]:
+    command_payload = {
+        **payload,
+        "decision": decision,
+        "review_id": review["review_id"],
+        "promotion_review_id": review["promotion_review_id"],
+        "recommendation_id": review["recommendation_id"],
+        "persona_id": review.get("persona_id"),
+        "action_id": review.get("action_id"),
+        "promotion_stage_from": "paper",
+        "promotion_stage_to": (review.get("promotion_path") or {}).get("target_stage"),
+        "eventual_live_stage": "live",
+        "live_promotion_requires_separate_human_gate": True,
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "liveCapitalMutation": False,
+        "liveCapitalSideEffects": False,
+        "direct_live_capital_mutation": False,
+        "runtime_mutation": False,
+        "audit_event": f"promotion_review.{decision}",
+        "actor_id": identity.operator_id,
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+    }
+    if rationale:
+        command_payload["rationale"] = rationale
+    if decision == "reject":
+        command_payload["rejection_reason"] = rationale
+    if "conditions" in payload:
+        command_payload["conditions"] = json.loads(json.dumps(payload.get("conditions")))
+    return command_payload
+
+
+def _promotion_review_decision_response(
+    command_response: JSONResponse,
+    *,
+    review: Dict[str, Any],
+    decision: str,
+    command_payload: Dict[str, Any],
+) -> JSONResponse:
+    content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
+    data = content.setdefault("data", {})
+    data.update(
+        {
+            "review_id": review["review_id"],
+            "promotion_review_id": review["promotion_review_id"],
+            "recommendation_id": review["recommendation_id"],
+            "persona_id": review.get("persona_id"),
+            "action_id": review.get("action_id"),
+            "decision": decision,
+            "decision_status": "accepted",
+            "requires_human_gate_decision": True,
+            "live_capital_mutation": False,
+            "liveCapitalMutation": False,
+            "liveCapitalSideEffects": False,
+            "direct_live_capital_mutation": False,
+            "runtime_mutation": False,
+            "promotion_stage_from": "paper",
+            "promotion_stage_to": command_payload.get("promotion_stage_to"),
+            "eventual_live_stage": "live",
+        }
+    )
+    if command_payload.get("rationale"):
+        data["rationale"] = command_payload.get("rationale")
+    if "conditions" in command_payload:
+        data["conditions"] = json.loads(json.dumps(command_payload.get("conditions")))
+    meta = content.setdefault("meta", {})
+    meta.update(
+        {
+            "live_capital_mutation": False,
+            "liveCapitalMutation": False,
+            "liveCapitalSideEffects": False,
+            "direct_live_capital_mutation": False,
+            "runtime_mutation": False,
+            "requires_human_gate_decision": True,
+            "decision_status": "accepted",
+            "decision": decision,
+            "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
+        }
+    )
+    return JSONResponse(status_code=command_response.status_code, content=jsonable_encoder(content))
+
+
+def _promotion_review_submit_response(
+    command_response: JSONResponse,
+    *,
+    review: Dict[str, Any],
+) -> JSONResponse:
+    content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
+    refreshed = _promotion_review_item_from_recommendation(review["source_recommendation"])
+    data = content.setdefault("data", {})
+    data.update(
+        {
+            "review_id": refreshed["review_id"],
+            "promotion_review_id": refreshed["promotion_review_id"],
+            "recommendation_id": refreshed["recommendation_id"],
+            "persona_id": refreshed.get("persona_id"),
+            "action_id": refreshed.get("action_id"),
+            "status": refreshed.get("status"),
+            "submitted": True,
+            "human_inbox_id": refreshed.get("human_inbox_id"),
+            "requires_human_gate_decision": True,
+            "live_capital_mutation": False,
+            "liveCapitalMutation": False,
+            "direct_live_capital_mutation": False,
+            "runtime_mutation": False,
+            "review": refreshed,
+            "links": refreshed.get("links") or {},
+        }
+    )
+    meta = content.setdefault("meta", {})
+    meta.update(
+        {
+            "live_capital_mutation": False,
+            "liveCapitalMutation": False,
+            "direct_live_capital_mutation": False,
+            "runtime_mutation": False,
+            "requires_human_gate_decision": True,
+            "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
+        }
+    )
+    return JSONResponse(status_code=command_response.status_code, content=jsonable_encoder(content))
+
+
+@app.post("/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit", status_code=202)
+async def bff_management_quarterly_ranking_recommendation_submit(
+    recommendation_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: submit a PM-12 recommendation into Human Gate review without live mutation."""
+    identity = _extract_identity(authorization)
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Quarterly ranking recommendation submission requires operator-level role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, approver, or admin role",
+        )
+    _reject_body_idempotency_key(payload)
+    _raise_if_promotion_review_direct_mutation_requested(payload)
+
+    snapshot_at = utc_now()
+    review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
+        identity,
+        recommendation_id,
+        snapshot_at=snapshot_at,
+        quarter=str(payload.get("quarter") or "").strip() or None,
+    )
+    if review is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Quarterly ranking recommendation not found",
+            f"Recommendation {recommendation_id} does not exist",
+            precondition_failed="recommendation_id",
+        )
+
+    existing_submission = _promotion_review_submission_projection(review["review_id"])
+    if existing_submission:
+        already = _promotion_review_item_from_recommendation(review["source_recommendation"])
+        return JSONResponse(
+            status_code=200,
+            content=jsonable_encoder(
+                {
+                    "data": {
+                        "command_id": existing_submission.get("command_id"),
+                        "review_id": already["review_id"],
+                        "promotion_review_id": already["promotion_review_id"],
+                        "recommendation_id": already["recommendation_id"],
+                        "persona_id": already.get("persona_id"),
+                        "action_id": already.get("action_id"),
+                        "status": already.get("status"),
+                        "submitted": True,
+                        "human_inbox_id": already.get("human_inbox_id"),
+                        "requires_human_gate_decision": True,
+                        "live_capital_mutation": False,
+                        "review": already,
+                        "links": already.get("links") or {},
+                    },
+                    "meta": {
+                        **_snapshot_meta(snapshot_at),
+                        "idempotency": {"replayed": True, "source": "existing_submission"},
+                        "live_capital_mutation": False,
+                        "direct_live_capital_mutation": False,
+                        "requires_human_gate_decision": True,
+                        "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
+                    },
+                }
+            ),
+        )
+
+    command_payload = {
+        **payload,
+        "quarter": review.get("quarter"),
+        "review_id": review["review_id"],
+        "promotion_review_id": review["promotion_review_id"],
+        "recommendation_id": review["recommendation_id"],
+        "recommendationId": review["recommendation_id"],
+        "recommendation_action_id": review.get("action_id"),
+        "recommendationActionId": review.get("action_id"),
+        "persona_id": review.get("persona_id"),
+        "stage_from": (review.get("promotion_path") or {}).get("from_stage"),
+        "stage_to": (review.get("promotion_path") or {}).get("target_stage"),
+        "review_kind": review.get("review_kind"),
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "liveCapitalMutation": False,
+        "direct_live_capital_mutation": False,
+        "runtime_mutation": False,
+        "source_type": "quarterly_ranking_recommendation",
+        "source_record_id": review["recommendation_id"],
+        "audit_event": "quarterly_ranking.recommendation_submitted",
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+    }
+    _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
+    command_response = _sem_command_response(
+        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        target_type=ObjectType.RANKING,
+        target_id=review["recommendation_id"],
+        payload=command_payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+    return _promotion_review_submit_response(command_response, review=review)
+
+
+@app.get("/bff/management/promotion-reviews")
+async def bff_management_promotion_reviews(
+    quarter: Optional[str] = Query(default=None),
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    action_id: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: promotion review queue derived from PM-12 recommendations."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    reviews, quarter_window, redacted_count, evidence_dataset_available = _promotion_review_items(
+        identity,
+        snapshot_at=snapshot_at,
+        quarter=quarter,
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
+    if action_id:
+        clean_action = str(action_id or "").strip()
+        if clean_action not in _PROMOTION_REVIEW_ACTION_IDS:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "action_id is not a promotion review action",
+                f"action_id must be one of {sorted(_PROMOTION_REVIEW_ACTION_IDS)}",
+                precondition_failed="action_id",
+            )
+        reviews = [item for item in reviews if item.get("action_id") == clean_action]
+    if status:
+        requested_statuses = {value.strip() for value in str(status).split(",") if value.strip()}
+        reviews = [item for item in reviews if str(item.get("status") or "") in requested_statuses]
+
+    total = len(reviews)
+    page_items, next_page_token = _page_slice(reviews, page_token, page_size)
+    surfaces = _promotion_review_surfaces(
+        snapshot_at=snapshot_at,
+        evidence_dataset_available=evidence_dataset_available,
+    )
+    summary = {
+        "quarter": quarter_window["quarter"],
+        "review_count": total,
+        "returned_count": len(page_items),
+        "pending_count": len([item for item in reviews if item.get("decision_status") == "pending"]),
+        "decision_accepted_count": len([item for item in reviews if item.get("decision_status") == "accepted"]),
+        "live_capital_mutation_count": 0,
+        "requires_human_gate_decision": True,
+        "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+    }
+    return {
+        "data": {
+            "id": f"promotion-reviews-{quarter_window['quarter'].lower()}",
+            "quarter": quarter_window["quarter"],
+            "quarter_window": quarter_window,
+            "items": page_items,
+            "summary": summary,
+        },
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": surfaces,
+            "composition_sources": [
+                "GET /bff/management/quarterly-ranking/recommendations",
+                "GET /bff/management/human-inbox",
+                "GET /api/v1/operator/governance/approval-queue",
+            ],
+            "redacted_evidence_count": redacted_count,
+            "requires_human_gate_decision": True,
+            "live_capital_mutation": False,
+            "direct_live_capital_mutation": False,
+            "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
+            "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        },
+    }
+
+
+@app.get("/bff/management/promotion-reviews/{review_id}")
+async def bff_management_promotion_review_detail(
+    review_id: str,
+    quarter: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: promotion review detail by review id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    review, quarter_window, redacted_count, evidence_dataset_available = _promotion_review_find(
+        identity,
+        review_id,
+        snapshot_at=snapshot_at,
+        quarter=quarter,
+    )
+    if review is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Promotion review not found",
+            f"Promotion review {review_id} does not exist",
+            precondition_failed="review_id",
+        )
+    return {
+        "data": review,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "quarter": quarter_window["quarter"],
+            "surfaces": _promotion_review_surfaces(
+                snapshot_at=snapshot_at,
+                evidence_dataset_available=evidence_dataset_available,
+            ),
+            "redacted_evidence_count": redacted_count,
+            "requires_human_gate_decision": True,
+            "live_capital_mutation": False,
+            "direct_live_capital_mutation": False,
+            "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        },
+    }
+
+
+@app.post("/bff/management/promotion-reviews/{review_id}/decisions", status_code=202)
+async def bff_management_promotion_review_decision(
+    review_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: accept a human-gated promotion review decision without live mutation."""
+    identity = _extract_identity(authorization)
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Promotion review decision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+    _reject_body_idempotency_key(payload)
+    _raise_if_promotion_review_direct_mutation_requested(payload)
+
+    raw_decision = str(payload.get("decision") or "").strip().lower()
+    if raw_decision not in _PROMOTION_REVIEW_DECISIONS:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "decision is invalid",
+            f"decision must be one of {sorted(_PROMOTION_REVIEW_DECISIONS)}",
+            precondition_failed="decision",
+        )
+    rationale = _promotion_review_rationale(payload)
+    if raw_decision == "reject" and not rationale:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "reject decision requires a non-empty rationale",
+            "rationale must be a non-empty string when decision=reject",
+            precondition_failed="rationale",
+        )
+
+    snapshot_at = utc_now()
+    review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
+        identity,
+        review_id,
+        snapshot_at=snapshot_at,
+        quarter=str(payload.get("quarter") or "").strip() or None,
+    )
+    if review is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Promotion review not found",
+            f"Promotion review {review_id} does not exist",
+            precondition_failed="review_id",
+        )
+    if not bool(review.get("submitted")):
+        raise _bff_error(
+            409,
+            ErrorCode.HUMAN_GATE_PENDING,
+            "Promotion review has not been submitted",
+            "Submit the quarterly ranking recommendation before recording a Human Gate decision.",
+            precondition_failed="recommendation_submission",
+            suggestion="POST the recommendation submit route and then retry the decision.",
+            details_extra={
+                "recommendationId": review.get("recommendation_id"),
+                "submitHref": (review.get("links") or {}).get("submit"),
+            },
+        )
+
+    command_type = (
+        CommandType.HUMAN_GATE_REJECT
+        if raw_decision == "reject"
+        else CommandType.HUMAN_GATE_APPROVE
+    )
+    command_payload = _promotion_review_decision_payload(
+        payload=payload,
+        review=review,
+        decision=raw_decision,
+        rationale=rationale,
+        identity=identity,
+    )
+    command_response = _sem_command_response(
+        command_type=command_type,
+        target_type=ObjectType.HUMAN_GATE_ITEM,
+        target_id=_promotion_review_target_id(review["review_id"]),
+        payload=command_payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+    return _promotion_review_decision_response(
+        command_response,
+        review=review,
+        decision=raw_decision,
+        command_payload=command_payload,
+    )
 
 
 def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
