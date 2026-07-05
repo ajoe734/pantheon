@@ -38363,6 +38363,44 @@ def _persona_create_paper_refs(persona_id: str, payload: Dict[str, Any]) -> Dict
     }
 
 
+def _openclaw_agent_reconcile_request(
+    persona: Dict[str, Any],
+    *,
+    reason: str,
+    route_policy: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+    request: Dict[str, Any] = {
+        "status": "pending",
+        "reason": reason,
+        "agent_id": persona_id,
+        "model_id": f"openclaw/{persona_id}" if persona_id else "",
+        "consumer": "scripts/openclaw-sync-persona-agents.py",
+    }
+    try:
+        profile = build_persona_runtime_profile(persona, route_policy=route_policy).to_dict()
+    except ValueError as exc:
+        request.update({
+            "status": "blocked",
+            "blocked_reason": str(exc),
+            "repair_action": "fix_persona_runtime_profile",
+        })
+        return request
+    routing = dict(profile.get("model_routing") or {})
+    if routing.get("status") != "ready":
+        request.update({
+            "status": "blocked",
+            "blocked_reason": routing.get("blocked_reason") or routing.get("reason") or "model_routing_degraded",
+            "repair_action": "fix_persona_route_policy_or_provider_pool",
+        })
+    request.update({
+        "workspace_ref": profile.get("workspace_ref"),
+        "sync_generation": profile.get("sync_generation"),
+        "model_routing": routing,
+    })
+    return request
+
+
 @app.post("/bff/personas", status_code=201)
 async def bff_create_persona(
     payload: Dict[str, Any] = Body(...),
@@ -38446,6 +38484,24 @@ async def bff_create_persona(
             f"evidence://persona-create/{persona_id}/paper-runtime-binding",
         ],
     }
+    persona_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
+        {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": name,
+            "mandate": mandate or archetype,
+            "strategy_family": strategy_family or archetype,
+            "lifecycle_state": lifecycle_state,
+            "metadata": {
+                **persona_metadata,
+                "owner": owner,
+                "archetype": archetype,
+                "risk_level": risk,
+                **({"traits": traits} if traits else {}),
+            },
+        },
+        reason="persona_created",
+    )
     if dry_run:
         persona_record = {
             "id": persona_id,
@@ -38670,6 +38726,28 @@ async def bff_patch_persona(
         base["risk"] = _normalize_risk_level(payload["risk"])
     base["updatedAt"] = snapshot_at
     base["id"] = persona_id
+    existing_metadata = dict(raw.get("metadata") if isinstance(raw, dict) and isinstance(raw.get("metadata"), dict) else {})
+    update_metadata: Dict[str, Any] = {
+        "success_rate": float(base.get("successRate") or 0.0),
+    }
+    update_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
+        {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": str(base.get("name") or persona_id),
+            "mandate": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
+            "strategy_family": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
+            "lifecycle_state": str(base.get("state") or "draft"),
+            "metadata": {
+                **existing_metadata,
+                **update_metadata,
+                "owner": str(base.get("owner") or identity.operator_id),
+                "archetype": str(base.get("archetype") or "generalist"),
+                "risk_level": str(base.get("risk") or "low"),
+            },
+        },
+        reason="persona_updated",
+    )
     persona_record = read_store.update_persona(
         persona_id,
         name=str(base.get("name") or persona_id),
@@ -38678,9 +38756,7 @@ async def bff_patch_persona(
         archetype=str(base.get("archetype") or "generalist"),
         lifecycle_state=str(base.get("state") or "draft"),
         risk_level=str(base.get("risk") or "low"),
-        metadata={
-            "success_rate": float(base.get("successRate") or 0.0),
-        },
+        metadata=update_metadata,
     )
     if persona_record is not None:
         routed = _routed_strategies_for_persona(persona_id)
