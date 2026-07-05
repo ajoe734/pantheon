@@ -67,6 +67,12 @@ created -> paper_running -> canary_candidate -> canary_running -> live_candidate
                          \-> frozen / suspended / retired
 ```
 
+Paper trading uses a persona-isolated virtual ledger, not a shared real capital
+pool. Each `paper_running` persona must expose a `paper_ledger_id` and may carry
+a benchmark budget for normalized comparison; `capital_pool_id` is reserved for
+an explicit target/live pool or sleeve after human-reviewed canary/live
+promotion. Legacy paper pool ids may be retained only as migration trace.
+
 There is no direct paper-to-full-live path.
 
 `paper_running`, `canary_running`, and `live_running` compete in the same
@@ -196,6 +202,9 @@ Decision invariants:
 
 BFF:
 
+- Persona list/detail/fleet rows must expose `paper_ledger_id` for paper
+  personas and keep `capital_pool_id` empty unless a real target/live pool is
+  explicitly under review.
 - `POST /bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit`
   or equivalent BFF adapter to submit the recommendation into governance.
 - `GET /bff/management/promotion-reviews`

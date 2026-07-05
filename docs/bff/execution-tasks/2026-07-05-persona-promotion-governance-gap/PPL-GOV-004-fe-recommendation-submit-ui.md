@@ -18,12 +18,16 @@ governance instead of pretending a local deterministic inbox id is enough.
 - Update Persona League recommendation buttons.
 - Update Quarterly Ranking recommendation buttons.
 - Navigate or deep-link to the returned promotion review / human inbox item.
+- In Persona Fleet and review links, label paper references as paper ledgers and
+  reserve capital pool labels for explicit canary/live targets.
 - Surface failure and disabled-write states honestly.
 
 ## Acceptance
 
 - Button text/state reflects submitting, submitted, failed, and write-disabled.
 - Successful BFF submit shows a review link or navigates to Human Inbox detail.
+- Paper rows show isolated `paper_ledger_id` and do not display legacy paper
+  pool ids as shared capital pools.
 - Local-only fallback is visibly disabled/local and cannot be mistaken for a
   real approval queue write.
 - Tests cover Persona League and Quarterly Ranking submit flows.

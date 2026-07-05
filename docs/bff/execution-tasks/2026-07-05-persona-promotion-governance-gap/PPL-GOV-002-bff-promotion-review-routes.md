@@ -20,6 +20,9 @@ paper-to-canary, canary-to-live, and live ranking recommendations.
 - Require reject rationale.
 - Preserve idempotency for decision writes.
 - Return audit/receipt fields that frontend can display.
+- Keep paper ledgers and real capital targets separate: paper review payloads
+  carry `paper_ledger_id`; `capital_pool_id` appears only for explicit
+  canary/live target pools or sleeves.
 - Do not place orders or mutate live capital from these routes.
 
 ## Acceptance
@@ -33,6 +36,8 @@ paper-to-canary, canary-to-live, and live ranking recommendations.
 - Response includes review id, persona id, from stage, target stage,
   recommendation id, decision status, audit event, and live capital mutation
   false.
+- Paper-to-canary responses do not present legacy paper pool ids as real
+  capital pools.
 
 ## Validation
 
