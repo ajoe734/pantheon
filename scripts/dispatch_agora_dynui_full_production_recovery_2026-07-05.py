@@ -119,7 +119,7 @@ TASKS = [
             "/bff/agora/trading-room aggregate；live strategies 不能再是空陣列。"
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 2 ready strategy projection",
-        "owner": "Gemini",
+        "owner": "Claude2",
         "reviewer": "Codex2",
         "depends_on": ["AG-DYNUI-FULL-002"],
         "artifacts": [
@@ -211,7 +211,7 @@ TASKS = [
             "FE-BFF Integration Gate failure，desktop/mobile screenshots 必須來自 live flow。"
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 4 no-fixture hosted gate",
-        "owner": "Gemini",
+        "owner": "Codex2",
         "reviewer": "Codex",
         "depends_on": ["AG-DYNUI-FULL-005"],
         "artifacts": [
