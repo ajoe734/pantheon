@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+import uuid
+from contextlib import contextmanager
+from typing import Iterator
+
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+import main as bff_main
+from command_queue import CommandStore
+from models import ObjectType
+from read_store import ReadSurfaceStore
+
+
+OPERATOR_HEADERS = {"Authorization": "Bearer op-promo:operator"}
+APPROVER_HEADERS = {"Authorization": "Bearer op-promo-approver:approver"}
+ADMIN_HEADERS = {"Authorization": "Bearer op-promo-admin:admin"}
+
+
+@contextmanager
+def _isolated_client() -> Iterator[TestClient]:
+    with tempfile.TemporaryDirectory() as td:
+        original_read_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        original_final_idem = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+        try:
+            yield TestClient(bff_main.app, raise_server_exceptions=False)
+        finally:
+            bff_main.read_store = original_read_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idem)
+
+
+def _idem() -> str:
+    return f"promo-review-{uuid.uuid4().hex[:12]}"
+
+
+def _first_review(client: TestClient) -> dict:
+    response = client.get(
+        "/bff/management/promotion-reviews",
+        headers=OPERATOR_HEADERS,
+        params={"quarter": "2026-Q1", "page_size": 5},
+    )
+    assert response.status_code == 200, response.text
+    items = response.json()["data"]["items"]
+    assert items
+    return items[0]
+
+
+def _post_decision(
+    client: TestClient,
+    review_id: str,
+    payload: dict,
+    *,
+    headers: dict,
+    idem: str | None = None,
+):
+    request_headers = dict(headers)
+    if idem is not None:
+        request_headers["Idempotency-Key"] = idem
+    return client.post(
+        f"/bff/management/promotion-reviews/{review_id}/decisions",
+        headers=request_headers,
+        json=payload,
+    )
+
+
+def test_promotion_reviews_list_and_detail_are_readable_by_operator() -> None:
+    with _isolated_client() as client:
+        list_response = client.get(
+            "/bff/management/promotion-reviews",
+            headers=OPERATOR_HEADERS,
+            params={"quarter": "2026-Q1", "page_size": 5},
+        )
+        assert list_response.status_code == 200, list_response.text
+        list_body = list_response.json()
+        assert list_body["meta"]["live_capital_mutation"] is False
+        assert list_body["meta"]["requires_human_gate_decision"] is True
+        review = list_body["data"]["items"][0]
+        assert review["requires_human_gate_decision"] is True
+        assert review["live_capital_mutation"] is False
+        assert review["promotion_path"]["from_stage"] == "paper"
+        assert review["promotion_path"]["target_stage"] == "canary"
+        assert review["links"]["decisions"].endswith("/decisions")
+
+        detail_response = client.get(
+            f"/bff/management/promotion-reviews/{review['review_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert detail_response.status_code == 200, detail_response.text
+        detail_body = detail_response.json()
+        assert detail_body["data"]["review_id"] == review["review_id"]
+        assert detail_body["meta"]["live_capital_mutation"] is False
+
+
+def test_promotion_review_approve_submits_human_gate_command() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        response = _post_decision(
+            client,
+            review["review_id"],
+            {"decision": "approve", "rationale": "Paper evidence supports canary admission."},
+            headers=APPROVER_HEADERS,
+            idem=_idem(),
+        )
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["data"]["decision"] == "approve"
+        assert body["data"]["decision_status"] == "accepted"
+        assert body["meta"]["live_capital_mutation"] is False
+        assert body["meta"]["requires_human_gate_decision"] is True
+
+        records = bff_main.command_store._get_all_commands()
+        assert len(records) == 1
+        record = records[0]
+        assert record["type"] == "HumanGateApprove"
+        assert record["target"]["type"] == ObjectType.HUMAN_GATE_ITEM.value
+        assert record["params"]["review_id"] == review["review_id"]
+        assert record["params"]["live_capital_mutation"] is False
+        assert record["audit"]["live_capital_side_effects"] is False
+
+
+def test_promotion_review_approve_with_conditions_preserves_conditions_and_rationale() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        conditions = [
+            "Run canary with paper-sized notional for one full market week.",
+            {"metric": "slippage_bps", "max": 8},
+        ]
+        rationale = "Canary is acceptable only with explicit execution drift guardrails."
+        response = _post_decision(
+            client,
+            review["review_id"],
+            {
+                "decision": "approve_with_conditions",
+                "conditions": conditions,
+                "rationale": rationale,
+            },
+            headers=ADMIN_HEADERS,
+            idem=_idem(),
+        )
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["data"]["decision"] == "approve_with_conditions"
+        assert body["data"]["conditions"] == conditions
+        assert body["data"]["rationale"] == rationale
+
+        record = bff_main.command_store._get_all_commands()[0]
+        assert record["type"] == "HumanGateApprove"
+        assert record["params"]["decision"] == "approve_with_conditions"
+        assert record["params"]["conditions"] == conditions
+        assert record["params"]["rationale"] == rationale
+
+
+def test_promotion_review_reject_requires_non_empty_rationale() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        response = _post_decision(
+            client,
+            review["review_id"],
+            {"decision": "reject", "rationale": "  "},
+            headers=APPROVER_HEADERS,
+            idem=_idem(),
+        )
+        assert response.status_code == 422, response.text
+        error = response.json()["error"]
+        assert error["code"] == "VALIDATION_FAILED"
+        assert error["details"]["precondition_failed"] == "rationale"
+        assert bff_main.command_store._get_all_commands() == []
+
+
+def test_promotion_review_decision_requires_approver_or_admin_role() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        response = _post_decision(
+            client,
+            review["review_id"],
+            {"decision": "approve", "rationale": "Operator can read but cannot approve."},
+            headers=OPERATOR_HEADERS,
+            idem=_idem(),
+        )
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "FORBIDDEN"
+        assert bff_main.command_store._get_all_commands() == []
+
+
+def test_promotion_review_idempotency_replay_has_no_direct_live_mutation() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        idem_key = _idem()
+        payload = {"decision": "approve", "rationale": "Replay should return the same receipt."}
+        first = _post_decision(
+            client,
+            review["review_id"],
+            payload,
+            headers=APPROVER_HEADERS,
+            idem=idem_key,
+        )
+        second = _post_decision(
+            client,
+            review["review_id"],
+            payload,
+            headers=APPROVER_HEADERS,
+            idem=idem_key,
+        )
+        assert first.status_code == 202, first.text
+        assert second.status_code == 202, second.text
+        first_body = first.json()
+        second_body = second.json()
+        assert first_body["data"]["command_id"] == second_body["data"]["command_id"]
+        assert second_body["meta"]["idempotency"]["replayed"] is True
+        assert second_body["meta"]["live_capital_mutation"] is False
+        assert second_body["data"]["live_capital_mutation"] is False
+
+        records = bff_main.command_store._get_all_commands()
+        assert len(records) == 1
+        assert records[0]["target"]["type"] != ObjectType.RUNTIME.value
+        assert records[0]["params"]["live_capital_mutation"] is False
+        assert records[0]["params"]["runtime_mutation"] is False
