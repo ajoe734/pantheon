@@ -1,0 +1,149 @@
+{
+  "auth_actor": "pantheon-dev-browser",
+  "bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "card_types": [
+    "user_strategy_description",
+    "completeness_update",
+    "readiness_gate"
+  ],
+  "evidence_screenshots": [
+    "/tmp/ag-dynui-full-006-01-live-ready-workshop-mobile.png",
+    "/tmp/ag-dynui-full-006-02-live-workspace-proposal-mobile.png",
+    "/tmp/ag-dynui-full-006-03-live-workspace-accepted-mobile.png",
+    "/tmp/ag-dynui-full-006-04-live-grid-unsaved-mobile.png",
+    "/tmp/ag-dynui-full-006-05-live-grid-saved-v2-mobile.png",
+    "/tmp/ag-dynui-full-006-06-live-widget-revision-preview-mobile.png",
+    "/tmp/ag-dynui-full-006-07-live-widget-revision-v3-mobile.png",
+    "/tmp/ag-dynui-full-006-08-live-version-history-mobile.png",
+    "/tmp/ag-dynui-full-006-09-live-rollback-applied-mobile.png"
+  ],
+  "fe_base_url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "readiness_highest_gate": "trading_room",
+  "request_paths": [
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/0bb956f7-0f2a-4318-9cb3-c6feae58306d",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/0bb956f7-0f2a-4318-9cb3-c6feae58306d",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/0bb956f7-0f2a-4318-9cb3-c6feae58306d/completeness",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/0bb956f7-0f2a-4318-9cb3-c6feae58306d/readiness",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/0bb956f7-0f2a-4318-9cb3-c6feae58306d/cards",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/0bb956f7-0f2a-4318-9cb3-c6feae58306d/stream",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals/trp_5a8704a3f936/accept",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_80117ccd9582/versions",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/trw_80117ccd9582/layout",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_80117ccd9582/versions",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_80117ccd9582/versions",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/trw_80117ccd9582/widgets/overview_candidate_funnel/revision-proposals",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/widget-revision-proposals/wrp_f688ea6abe98/accept",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_80117ccd9582/versions",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_80117ccd9582/versions",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/trw_80117ccd9582/versions/trdv_trw_80117ccd9582_v1/rollback",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_80117ccd9582/versions",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_80117ccd9582/versions",
+      "status": 200
+    }
+  ],
+  "strategy_id": "full003-live-1783268175-13279b",
+  "strategy_version": "full003-live-1783268175-13279b",
+  "task_id": "AG-DYNUI-FULL-006",
+  "tenant_id": "pantheon-dev",
+  "workflow": [
+    "live workshop readiness/cards",
+    "Strategy Workshop Add to Trading Room handoff",
+    "workspace proposal",
+    "proposal accept",
+    "grid edit save",
+    "widget revision keep-copy",
+    "version history",
+    "rollback"
+  ],
+  "workshop_id": "0bb956f7-0f2a-4318-9cb3-c6feae58306d"
+}
