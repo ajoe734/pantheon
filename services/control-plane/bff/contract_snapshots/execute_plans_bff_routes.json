@@ -11,7 +11,7 @@
       "execute-plans/src/**",
       "execute-plans/README.md"
     ],
-    "audited_active_endpoint_references": 178,
+    "audited_active_endpoint_references": 179,
     "status_values": [
       "implemented",
       "implemented_by_alias",
@@ -1327,6 +1327,14 @@
       "family": "execute-plans-cutover-smoke",
       "status": "deferred_with_task",
       "task_id": "BFF-LUV-GAP-012"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/shell-summary",
+      "family": "management-console",
+      "status": "implemented",
+      "task_id": "MGMT-LOAD-002",
+      "proof": "test_shell_summary_returns_frontend_contract_shape"
     },
     {
       "method": "POST",

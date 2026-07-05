@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-07-03",
+    "snapshot_date": "2026-07-05",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 584,
+    "total_routes": 585,
     "status_values": [
       "implemented",
       "alias",
@@ -2196,6 +2196,12 @@
     {
       "method": "GET",
       "path": "/bff/management/promotion-reviews/{param}",
+      "family": "management-console",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/shell-summary",
       "family": "management-console",
       "status": "implemented"
     },
