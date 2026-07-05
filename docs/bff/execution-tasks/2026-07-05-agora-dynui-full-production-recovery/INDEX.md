@@ -30,10 +30,10 @@ pairs for fleet execution.
 |---|---|---|---|---|
 | 0 | `AG-DYNUI-FULL-001` | Codex | Claude | Recover design/source truth and create a screen/state parity matrix. |
 | 1 | `AG-DYNUI-FULL-002` | Claude2 | Codex | Implement live Strategy Workshop cards/readiness BFF routes and tests. |
-| 2 | `AG-DYNUI-FULL-003` | Gemini | Codex2 | Materialize ready strategies into the live Trading Room aggregate. |
+| 2 | `AG-DYNUI-FULL-003` | Claude2 | Codex2 | Materialize ready strategies into the live Trading Room aggregate. |
 | 2 | `AG-DYNUI-FULL-004` | Codex2 | Claude | Wire frontend workshop handoff and explicit strategy route behavior. |
 | 3 | `AG-DYNUI-FULL-005` | Copilot | Claude2 | Prove live proposal/accept/workspace/grid/revision/version/rollback without fixtures. |
-| 4 | `AG-DYNUI-FULL-006` | Gemini | Codex | Replace hosted E2E fixture gate with no-fixture production gate and fix CI gate failures. |
+| 4 | `AG-DYNUI-FULL-006` | Codex2 | Codex | Replace hosted E2E fixture gate with no-fixture production gate and fix CI gate failures. |
 | 5 | `AG-DYNUI-FULL-007` | Codex | Claude2 | Final production closeout, deploy evidence, and residual-risk audit. |
 
 ## Global Rules
