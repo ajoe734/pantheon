@@ -27,6 +27,7 @@ from .identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 from .identity.router import create_identity_router
 from .servant.router import create_servant_router
 from .strategy_workshop.router import create_strategy_workshop_router
+from .strategy_workshop.store import make_workshop_store
 from .research.router import create_research_router
 from .trading_room.router import create_trading_room_router
 from .dashboard.router import create_dashboard_router
@@ -78,6 +79,7 @@ def create_agora_router(
     Mount with:  app.include_router(create_agora_router(...))
     """
     router = APIRouter(tags=["agora"])
+    workshop_store = make_workshop_store()
 
     # ------------------------------------------------------------------ #
     # GET /bff/agora/me  — operator identity and capability scope (§18 envelope)
@@ -170,9 +172,9 @@ def create_agora_router(
         get_read_store=get_read_store,
         sync_servant_agent=sync_servant_agent,
     ))
-    router.include_router(create_strategy_workshop_router(**_kw))
+    router.include_router(create_strategy_workshop_router(**_kw, workshop_store=workshop_store))
     router.include_router(create_research_router(**_kw))
-    router.include_router(create_trading_room_router(**_kw))
+    router.include_router(create_trading_room_router(**_kw, workshop_store=workshop_store))
     router.include_router(create_dashboard_router(**_kw))
     router.include_router(create_shadow_router(**_kw))
     router.include_router(create_personalization_router(**_kw))

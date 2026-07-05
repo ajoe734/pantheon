@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from bff.agora.trading_room.store import TradingRoomStore, make_trading_room_store
+from bff.agora.strategy_workshop import MemoryWorkshopStore
 from bff.agora.trading_room.router import (
     TradingDecisionEvent,
     TradingRoomAggregate,
@@ -173,7 +174,13 @@ def _write_headers(idempotency_key: str = "idem-001") -> dict:
     }
 
 
-def _client(store: TradingRoomStore, *, user_id: str = "user-001", tenant_id: str = "tenant-001") -> TestClient:
+def _client(
+    store: TradingRoomStore,
+    *,
+    user_id: str = "user-001",
+    tenant_id: str = "tenant-001",
+    workshop_store: MemoryWorkshopStore | None = None,
+) -> TestClient:
     def _bff_error(status_code: int, code: object, message: str, reason: str, **kw) -> HTTPException:
         code_value = getattr(code, "value", code)
         return HTTPException(
@@ -200,9 +207,53 @@ def _client(store: TradingRoomStore, *, user_id: str = "user-001", tenant_id: st
             bff_error=_bff_error,
             utc_now=_utc_now,
             trading_room_store=store,
+            workshop_store=workshop_store,
         )
     )
     return TestClient(app)
+
+
+def _ready_workshop_store(
+    *,
+    user_id: str = "user-001",
+    tenant_id: str = "tenant-001",
+    workshop_id: str = "ws-ready-001",
+    strategy_id: str = "strat-ready-001",
+    strategy_version: str = "wv-ready-001",
+) -> MemoryWorkshopStore:
+    workshop_store = MemoryWorkshopStore()
+    workshop_store.create_session({
+        "workshop_id": workshop_id,
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "strategy_id": strategy_id,
+        "active_strategy_spec_registry_id": strategy_id,
+        "selected_version_id": strategy_version,
+        "status": "open",
+    })
+    workshop_store.create_readiness_assessment({
+        "assessment_id": f"ready-{workshop_id}",
+        "workshop_id": workshop_id,
+        "strategy_id": strategy_id,
+        "workshop_version_id": strategy_version,
+        "strategy_spec_registry_id": strategy_id,
+        "assessment_version": 1,
+        "highest_ready_gate": "trading_room",
+        "gates": [
+            {"gate": "preliminary_research", "state": "ready", "requirements": []},
+            {"gate": "full_validation", "state": "ready", "requirements": []},
+            {"gate": "trading_room", "state": "ready", "requirements": []},
+        ],
+        "evidence_refs": [
+            {
+                "ref_type": "evidence_bundle",
+                "ref_id": f"ev-{workshop_id}",
+                "summary": "Ready workshop proof",
+            }
+        ],
+        "assessed_at": "2026-06-22T09:59:00Z",
+    })
+    return workshop_store
 
 
 # ---------------------------------------------------------------------------
@@ -1211,6 +1262,92 @@ def test_get_trading_room_accepts_cookie_session_without_authorization_header():
     print("✅ router: GET /bff/agora/trading-room accepts cookie session without Authorization header")
 
 
+def test_get_trading_room_projects_ready_workshop_strategy():
+    store = make_trading_room_store()
+    store.upsert_decision_event(_make_event(event_id="evt-ready-projection", strategy_id="strat-ready-001"))
+    workshop_store = _ready_workshop_store()
+    client = _client(store, workshop_store=workshop_store)
+
+    resp = client.get("/bff/agora/trading-room", headers={"Authorization": "Bearer test"})
+
+    assert resp.status_code == 200, resp.text
+    strategies = resp.json()["strategies"]
+    assert len(strategies) == 1
+    strategy = strategies[0]
+    assert strategy["strategy_id"] == "strat-ready-001"
+    assert strategy["strategy_spec_registry_id"] == "strat-ready-001"
+    assert strategy["readiness_state"] == "ready"
+    assert strategy["dashboard_recipe_id"] == "agora-trading-strat-ready-001-wv-ready-001"
+    assert strategy["pending_event_counts"]["entry"] == 1
+    print("✅ router: ready workshop readiness projects into Trading Room aggregate")
+
+
+def test_get_trading_room_does_not_project_blocked_workshop_strategy():
+    store = make_trading_room_store()
+    workshop_store = _ready_workshop_store()
+    blocked = workshop_store.create_readiness_assessment({
+        "assessment_id": "ready-ws-ready-001-blocked",
+        "workshop_id": "ws-ready-001",
+        "strategy_id": "strat-ready-001",
+        "workshop_version_id": "wv-ready-002",
+        "strategy_spec_registry_id": "strat-ready-001",
+        "assessment_version": 2,
+        "highest_ready_gate": "full_validation",
+        "gates": [
+            {"gate": "preliminary_research", "state": "ready", "requirements": []},
+            {"gate": "full_validation", "state": "ready", "requirements": []},
+            {"gate": "trading_room", "state": "blocked", "requirements": []},
+        ],
+        "evidence_refs": [],
+        "assessed_at": "2026-06-22T10:00:00Z",
+    })
+    assert blocked["highest_ready_gate"] == "full_validation"
+    client = _client(store, workshop_store=workshop_store)
+
+    resp = client.get("/bff/agora/trading-room", headers={"Authorization": "Bearer test"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["strategies"] == []
+    print("✅ router: blocked workshop readiness is not fabricated as a ready Trading Room strategy")
+
+
+def test_get_trading_room_strategy_returns_ready_projection_detail():
+    store = make_trading_room_store()
+    workshop_store = _ready_workshop_store()
+    client = _client(store, workshop_store=workshop_store)
+
+    resp = client.get(
+        "/bff/agora/trading-room/strategies/strat-ready-001",
+        headers={"Authorization": "Bearer test"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["strategy_id"] == "strat-ready-001"
+    assert data["strategy_version"] == "wv-ready-001"
+    assert data["workshop_id"] == "ws-ready-001"
+    assert data["highest_ready_gate"] == "trading_room"
+    assert data["evidence_refs"][0]["ref_id"] == "ev-ws-ready-001"
+    print("✅ router: strategy detail exposes readiness, version, and evidence projection")
+
+
+def test_ready_workshop_projection_is_user_scoped():
+    store = make_trading_room_store()
+    workshop_store = _ready_workshop_store(user_id="user-owner", tenant_id="tenant-001")
+    client = _client(store, user_id="user-other", tenant_id="tenant-001", workshop_store=workshop_store)
+
+    aggregate = client.get("/bff/agora/trading-room", headers={"Authorization": "Bearer test"})
+    detail = client.get(
+        "/bff/agora/trading-room/strategies/strat-ready-001",
+        headers={"Authorization": "Bearer test"},
+    )
+
+    assert aggregate.status_code == 200, aggregate.text
+    assert aggregate.json()["strategies"] == []
+    assert detail.status_code == 404, detail.text
+    print("✅ router: ready strategy projection does not leak across users")
+
+
 def test_list_decision_events_accepts_cookie_session_without_authorization_header():
     store = make_trading_room_store()
     store.upsert_decision_event(_make_event(event_id="evt-cookie-001"))
@@ -1360,6 +1497,11 @@ if __name__ == "__main__":
     test_store_pagination_no_repeat_on_second_page()
     test_store_pagination_full_coverage_no_overlap()
     test_router_creation_smoke()
+    test_get_trading_room_accepts_cookie_session_without_authorization_header()
+    test_get_trading_room_projects_ready_workshop_strategy()
+    test_get_trading_room_does_not_project_blocked_workshop_strategy()
+    test_get_trading_room_strategy_returns_ready_projection_detail()
+    test_ready_workshop_projection_is_user_scoped()
     test_get_trading_room_returns_200_for_object_identity_not_just_dict()
     test_decide_trading_event_returns_201_for_object_identity_not_just_dict()
     print("\n✅ All trading room tests passed.")
