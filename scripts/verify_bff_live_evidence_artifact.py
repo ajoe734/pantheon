@@ -852,6 +852,11 @@ def secret_leak_item(root: Path) -> dict[str, str]:
     return status_item("pass", "Current-run artifact does not contain raw secret material")
 
 
+def dry_run_request_header_ok(item: dict[str, Any]) -> bool:
+    headers = item.get("request_headers") if isinstance(item.get("request_headers"), dict) else {}
+    return item.get("method") == "POST" and headers.get("X-Dry-Run") == "1"
+
+
 def canonical_error_envelope_shape_ok(item: Any) -> bool:
     if not isinstance(item, dict) or item.get("error_envelope") is not True:
         return False
@@ -881,6 +886,7 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
     seen_meta: dict[str, dict[str, Any]] = {}
     seen_readbacks: dict[str, dict[str, Any]] = {}
     seen_validations: set[str] = set()
+    dry_run_request_links = 0
     failures: list[str] = []
 
     for index, item in enumerate(dry_run):
@@ -922,6 +928,10 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
                 failures.append(f"{index}:durable")
             if check.get("liveCapitalSideEffects") is not False:
                 failures.append(f"{index}:liveCapitalSideEffects")
+            if dry_run_request_header_ok(item):
+                dry_run_request_links += 1
+            else:
+                failures.append(f"{index}:dry-run-request-header")
             if spec and spec["readback_family"] and not check.get("target_id_sha256_12"):
                 failures.append(f"{index}:meta-target-hash")
         elif kind == "readback_not_persisted":
@@ -961,6 +971,10 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
                 failures.append(f"{index}:validation-error-shape")
             if error_code != "VALIDATION_FAILED":
                 failures.append(f"{index}:validation-error-code")
+            if dry_run_request_header_ok(item):
+                dry_run_request_links += 1
+            else:
+                failures.append(f"{index}:dry-run-request-header")
 
     for family, spec in DRY_RUN_META_EXPECTATIONS.items():
         if family not in seen_meta:
@@ -992,14 +1006,17 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
     meta_ok = set(seen_meta) == set(DRY_RUN_META_EXPECTATIONS)
     readback_ok = set(seen_readbacks) == set(DRY_RUN_READBACK_FAMILIES.values())
     validation_ok = seen_validations == set(DRY_RUN_VALIDATION_EXPECTATIONS)
-    detail_ok = count_ok and kinds_ok and meta_ok and readback_ok and validation_ok and not failures
+    expected_dry_run_requests = len(DRY_RUN_META_EXPECTATIONS) + len(DRY_RUN_VALIDATION_EXPECTATIONS)
+    request_ok = dry_run_request_links == expected_dry_run_requests
+    detail_ok = count_ok and kinds_ok and meta_ok and readback_ok and validation_ok and request_ok and not failures
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
     return (
         detail_ok,
         f"dryRunDetails:{len(dry_run)}/7 kinds:{kind_note} "
         f"metaLinks:{len(seen_meta)}/{len(DRY_RUN_META_EXPECTATIONS)} "
         f"readbackLinks:{len(seen_readbacks)}/{len(DRY_RUN_READBACK_FAMILIES)} "
-        f"validationLinks:{len(seen_validations)}/{len(DRY_RUN_VALIDATION_EXPECTATIONS)}"
+        f"validationLinks:{len(seen_validations)}/{len(DRY_RUN_VALIDATION_EXPECTATIONS)} "
+        f"dryRunRequests:{dry_run_request_links}/{expected_dry_run_requests}"
         f"{failure_note}",
     )
 

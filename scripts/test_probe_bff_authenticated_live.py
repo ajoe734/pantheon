@@ -86,6 +86,11 @@ def test_request_json_validates_required_values_and_extracts_body_paths(monkeypa
 
     assert result["ok"] is True
     assert result["extracted"] == {"data.id": "strategy-dry-run-001"}
+    assert result["request_headers"]["Authorization"] == "present"
+    assert result["request_headers"]["X-Dry-Run"] == "1"
+    assert result["request_headers"]["Idempotency-Key"] == "present"
+    assert result["request_headers"]["Idempotency-Key-Sha256-12"] == probe.sha256_12("idem-test-dry-run-strategy")
+    assert "token-123" not in json.dumps(result["request_headers"])
     assert result["response_headers"] == {"X-Correlation-Id": "cid-test"}
 
 

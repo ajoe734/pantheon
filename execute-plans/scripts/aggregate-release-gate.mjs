@@ -755,6 +755,13 @@ function analyzeStrictAuthEvidence(stepOutcomes, preflight = {}) {
       && !family.endsWith("-readback-not-persisted");
   });
   const dryRunSideEffectProofs = dryRun.filter((item) => item?.side_effect_check?.ok === true);
+  const dryRunRequestRequired = [...successDryRuns, ...invalidDryRuns];
+  const dryRunRequestProofs = dryRunRequestRequired.filter((item) =>
+    item?.method === "POST"
+    && item?.request_headers
+    && typeof item.request_headers === "object"
+    && item.request_headers["X-Dry-Run"] === "1"
+  );
   const dryRunFamilyCounts = new Map();
   for (const item of dryRun) {
     const family = String(item?.family || "");
@@ -890,6 +897,7 @@ function analyzeStrictAuthEvidence(stepOutcomes, preflight = {}) {
   const dryRunProbeCountMatches = dryRunProbeCount === dryRun.length;
   const dryRunSideEffectProofCount = dryRunSideEffectProofs.length;
   const allDryRunSideEffectProofs = dryRun.length >= 7 && dryRunSideEffectProofCount === dryRun.length;
+  const dryRunRequestProofsOk = dryRunRequestProofs.length === dryRunRequestRequired.length && dryRunRequestRequired.length === 5;
   const rbacWriteSideEffectProofCount = rbacWriteSideEffectProofs.length;
   const rbacWriteSideEffectProofsOk = rbacWrite.length >= 32
     && rbacWriteProbeCount === rbacWrite.length
@@ -960,6 +968,7 @@ function analyzeStrictAuthEvidence(stepOutcomes, preflight = {}) {
       && allDryRunOk
       && invalidDryRunsEnvelope
       && invalidDryRunsNoPersistence
+      && dryRunRequestProofsOk
       && successDryRunMetaProofs
       && readbackNoPersistence
       && allDryRunSideEffectProofs
@@ -983,7 +992,7 @@ function analyzeStrictAuthEvidence(stepOutcomes, preflight = {}) {
       && twoManTokenPairDistinct,
     note: {
       rbac: `strict:${strict} bearer:${providedBearer}${smokePreflightNote} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} detailLinks:${rbacMatrixDetailLinkedFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length}${rbacPreflightNote} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} readDeniedEnvelopeProofs:${rbacReadDeniedEnvelopeProofs.length}/${expectedRbacReadDeniedCount} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeReadbackProofs:${rbacWriteReadbackProofs.length}/${rbacWriteReadbackRequired.length} writeDeniedEnvelopeProofs:${rbacWriteDeniedNoPersistence.length}/${expectedRbacWriteDeniedCount} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
-      dryRun: `strict:${strict}${smokePreflightNote} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
+      dryRun: `strict:${strict}${smokePreflightNote} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} dryRunRequests:${dryRunRequestProofs.length}/${dryRunRequestRequired.length} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict}${smokePreflightNote} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 targetLinks:${approvalDetailProof.targetLinkedCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
       twoManRace: `strict:${strict}${smokePreflightNote} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 targetLinks:${twoManDetailProof.targetLinkedCount}/2 signatureLinks:${twoManDetailProof.signatureLinkedCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
     },

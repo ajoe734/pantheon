@@ -166,6 +166,11 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
             "error_envelope": True,
             "error_envelope_shape": canonical_error_shape(),
             "error_code": "VALIDATION_FAILED",
+            "request_headers": {
+                "Authorization": "present",
+                "X-Dry-Run": "1",
+                "Idempotency-Key": "present",
+            },
             "side_effect_check": {
                 "kind": "validation_rejected_before_persistence",
                 "ok": True,
@@ -177,6 +182,11 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
         {
             "family": "dry-run-strategy-create",
             "method": "POST",
+            "request_headers": {
+                "Authorization": "present",
+                "X-Dry-Run": "1",
+                "Idempotency-Key": "present",
+            },
             "path": "/bff/strategies",
             "status": 200,
             "ok": True,
@@ -187,6 +197,11 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
         {
             "family": "dry-run-ranking-formula-create",
             "method": "POST",
+            "request_headers": {
+                "Authorization": "present",
+                "X-Dry-Run": "1",
+                "Idempotency-Key": "present",
+            },
             "path": "/bff/ranking-formulas",
             "status": 200,
             "ok": True,
@@ -197,6 +212,11 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
         {
             "family": "dry-run-v5-intervention-claim",
             "method": "POST",
+            "request_headers": {
+                "Authorization": "present",
+                "X-Dry-Run": "1",
+                "Idempotency-Key": "present",
+            },
             "path": "/bff/v5/interventions/int-live-dry-run/claim",
             "status": 200,
             "ok": True,
@@ -1239,6 +1259,24 @@ def test_verifier_rejects_dry_run_request_path_swap(tmp_path: Path) -> None:
     item = payload["criteria"]["dry_run_no_side_effects"]
     assert item["status"] == "fail"
     assert "meta-request-link" in item["note"]
+
+
+def test_verifier_rejects_dry_run_without_x_dry_run_request_header(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    invalid = next(item for item in auth["dry_run"] if item["family"] == "dry-run-invalid-strategy")
+    invalid.pop("request_headers")
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["dry_run_no_side_effects"]
+    assert item["status"] == "fail"
+    assert "dryRunRequests:4/5" in item["note"]
+    assert "dry-run-request-header" in item["note"]
 
 
 def test_verifier_fails_when_preflight_rbac_matrix_is_missing(tmp_path: Path) -> None:
