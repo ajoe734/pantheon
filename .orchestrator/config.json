@@ -210,17 +210,23 @@
       ],
       "Codex": [
         "Codex2",
+        "Antigravity",
+        "Antigravity2",
         "Claude",
         "Claude2"
       ],
       "Codex2": [
         "Codex",
+        "Antigravity",
+        "Antigravity2",
         "Claude",
         "Claude2"
       ],
       "Copilot": [
         "Codex",
         "Codex2",
+        "Antigravity",
+        "Antigravity2",
         "Claude"
       ]
     },
@@ -246,17 +252,23 @@
       ],
       "Codex": [
         "Codex2",
+        "Antigravity",
+        "Antigravity2",
         "Claude",
         "Claude2"
       ],
       "Codex2": [
         "Codex",
+        "Antigravity",
+        "Antigravity2",
         "Claude",
         "Claude2"
       ],
       "Copilot": [
         "Codex",
         "Codex2",
+        "Antigravity",
+        "Antigravity2",
         "Claude"
       ]
     }
@@ -888,7 +900,8 @@
     ],
     "sidecar_only_agents": [],
     "disabled_agents": [
-      "antigravity"
+      "Claude",
+      "Claude2"
     ],
     "dependency_done_statuses": [
       "done"
