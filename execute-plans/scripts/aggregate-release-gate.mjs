@@ -975,6 +975,7 @@ function analyzeSseSmoke(stepOutcomes) {
   const json = readJson(file);
   const soak = json?.soak || {};
   const seconds = Number(soak?.seconds ?? 0);
+  const minSoakSeconds = Math.max(75, Number(json?.strict_live_evidence_requirements?.min_soak_seconds ?? 0));
   const minHeartbeats = Number(soak?.min_heartbeats ?? 0);
   const reconnectRequirementCandidates = [
     Number(json?.strict_live_evidence_requirements?.min_reconnect_attempts ?? 5),
@@ -989,6 +990,11 @@ function analyzeSseSmoke(stepOutcomes) {
   const modeDetails = requiredModes.map((mode) => {
     const modeSoak = soak?.[mode] || {};
     const blocks = modeSoak?.blocks || {};
+    const timeline = modeSoak?.timeline && typeof modeSoak.timeline === "object" ? modeSoak.timeline : {};
+    const soakDurationMs = Number(timeline?.observed_duration_ms ?? modeSoak?.duration_ms ?? 0);
+    const soakDurationSeconds = Number.isFinite(soakDurationMs) && soakDurationMs > 0
+      ? soakDurationMs / 1000
+      : Number(timeline?.observed_duration_seconds ?? 0);
     const reconnect = json?.reconnect_sequence?.[mode] || {};
     const duplicateEventIds = Array.isArray(blocks?.duplicate_event_ids) ? blocks.duplicate_event_ids : [];
     const missingExpected = Array.isArray(modeSoak?.missing_expected_event_ids) ? modeSoak.missing_expected_event_ids : [];
@@ -1064,6 +1070,7 @@ function analyzeSseSmoke(stepOutcomes) {
     const soakRequestHeaders = modeSoak?.request_headers && typeof modeSoak.request_headers === "object" ? modeSoak.request_headers : {};
     const soakOk = modeSoak?.ok === true
       && requestUsesExpectedAuth(soakRequestHeaders, mode)
+      && soakDurationSeconds >= minSoakSeconds
       && heartbeatCount >= minHeartbeats
       && duplicateEventIds.length === 0
       && missingExpected.length === 0;
@@ -1079,6 +1086,7 @@ function analyzeSseSmoke(stepOutcomes) {
       mode,
       soakOk,
       heartbeatCount,
+      soakDurationSeconds,
       duplicateEventIds,
       missingExpected,
       reconnectOk,
@@ -1093,6 +1101,7 @@ function analyzeSseSmoke(stepOutcomes) {
   });
   const minOf = (values) => values.length ? Math.min(...values) : 0;
   const heartbeatCount = minOf(modeDetails.map((detail) => detail.heartbeatCount));
+  const soakDurationSeconds = minOf(modeDetails.map((detail) => detail.soakDurationSeconds));
   const duplicateEventIds = modeDetails.flatMap((detail) => detail.duplicateEventIds);
   const missingExpected = modeDetails.flatMap((detail) => detail.missingExpected);
   const reconnectAttempts = minOf(modeDetails.map((detail) => detail.reconnectAttempts));
@@ -1109,7 +1118,8 @@ function analyzeSseSmoke(stepOutcomes) {
   const strict = json?.strict_live_evidence === true;
   const summaryPassed = json?.summary?.passed === true;
   const soakOk = soak?.enabled === true
-    && seconds >= 75
+    && seconds >= minSoakSeconds
+    && soakDurationSeconds >= minSoakSeconds
     && minHeartbeats >= 2
     && modeDetails.every((detail) => detail.soakOk)
     && reconnectOk;
@@ -1120,8 +1130,10 @@ function analyzeSseSmoke(stepOutcomes) {
     summaryPassed,
     soakOk,
     seconds,
+    minSoakSeconds,
     minHeartbeats,
     heartbeatCount,
+    soakDurationSeconds,
     duplicateEventIds,
     missingExpected,
     reconnectOk,
@@ -1202,7 +1214,7 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth, preflight) {
     ? sseStrictOk ? "pass" : "fail"
     : preflightBlocksStrictEvidence ? "fail" : sseSmoke.missingStatus;
   const sseNote = sseSmoke.exists
-    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/${sseSmoke.minReconnectAttempts} attemptDetails:${sseSmoke.reconnectAttemptDetailsOk} attemptLineage:${sseSmoke.reconnectAttemptLineageOk} observed:${sseSmoke.reconnectObservedEventIds.length}/${sseSmoke.minReconnectAttempts} observedSequence:${sseSmoke.reconnectObservedSequenceOk} duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
+    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s soakDuration:${sseSmoke.soakDurationSeconds}/${sseSmoke.minSoakSeconds} heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/${sseSmoke.minReconnectAttempts} attemptDetails:${sseSmoke.reconnectAttemptDetailsOk} attemptLineage:${sseSmoke.reconnectAttemptLineageOk} observed:${sseSmoke.reconnectObservedEventIds.length}/${sseSmoke.minReconnectAttempts} observedSequence:${sseSmoke.reconnectObservedSequenceOk} duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
     : preflightBlocksStrictEvidence ? preflight.note : sseSmoke.missingNote;
   const strictAuthStatus = (condition) => strictAuth.exists
     ? condition ? "pass" : "fail"

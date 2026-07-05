@@ -575,6 +575,12 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
                     "min_heartbeats": 2,
                     "cookie_session": {
                         "ok": True,
+                        "duration_ms": 76000,
+                        "timeline": {
+                            "requested_seconds": 75.0,
+                            "observed_duration_ms": 76000,
+                            "observed_duration_seconds": 76.0,
+                        },
                         "request_headers": {
                             "Authorization": "absent",
                             "Cookie": "present",
@@ -588,6 +594,12 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
                     },
                     "bearer_polyfill": {
                         "ok": True,
+                        "duration_ms": 76000,
+                        "timeline": {
+                            "requested_seconds": 75.0,
+                            "observed_duration_ms": 76000,
+                            "observed_duration_seconds": 76.0,
+                        },
                         "request_headers": {
                             "Authorization": "present",
                             "Cookie": "absent",
@@ -771,6 +783,29 @@ def test_verifier_rejects_auth_json_from_stale_sha_even_when_summary_passes(tmp_
         item = payload["criteria"][key]
         assert item["status"] == "fail"
         assert "runProvenance:sha" in item["note"]
+
+
+def test_verifier_rejects_strict_sse_when_observed_soak_duration_is_short(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    for mode in ("cookie_session", "bearer_polyfill"):
+        sse["soak"][mode]["duration_ms"] = 76000
+        sse["soak"][mode]["timeline"] = {
+            "requested_seconds": 75.0,
+            "observed_duration_ms": 1000,
+            "observed_duration_seconds": 1.0,
+        }
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "soak:75/75" in item["note"]
+    assert "soakDuration:1/75" in item["note"]
 
 
 def test_verifier_rejects_strict_sse_with_single_heartbeat_even_when_artifact_min_is_one(tmp_path: Path) -> None:
