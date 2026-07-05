@@ -5310,6 +5310,32 @@ def disabled_dispatch_agent_keys(config: dict[str, Any]) -> set[str]:
     return keys
 
 
+def sidecar_excluded_agent_keys(config: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    agents = config.get("agents", {}) or {}
+    for raw_value in underutilization_settings(config).get("excluded_agents", []) or []:
+        raw = str(raw_value or "").strip()
+        if not raw:
+            continue
+        keys.add(raw.casefold())
+        normalized = normalize_agent_id(raw)
+        if normalized:
+            keys.add(normalized.casefold())
+        agent = agents.get(normalized) if normalized else None
+        if not isinstance(agent, dict):
+            continue
+        display = str(agent.get("display_name") or agent.get("name") or normalized).strip()
+        provider = str(agent.get("provider") or "").strip()
+        if display:
+            keys.add(display.casefold())
+        if provider:
+            keys.add(provider.casefold())
+            provider_id = normalize_agent_id(provider)
+            if provider_id:
+                keys.add(provider_id.casefold())
+    return keys
+
+
 def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> bool:
     name = str(agent_name or "").strip()
     if not name:
@@ -8038,6 +8064,7 @@ def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:
         "productive_worker_statuses",
         ["running", "waiting_approval", "suspended_approval", "retry_backoff"],
     )
+    settings.setdefault("excluded_agents", [])
     return settings
 
 
@@ -8441,6 +8468,7 @@ def eligible_idle_agents_for_sidecars(
     task_map = task_index_from_status(config, status)
     task_resolver = task_resolver_for_config(config, task_map)
     owner_field = config.get("schema", {}).get("assignee_field", "owner")
+    excluded_agent_keys = sidecar_excluded_agent_keys(config)
     agents: list[str] = []
     for agent_id, agent in (config.get("agents", {}) or {}).items():
         if agent_is_dispatch_slot(agent):
@@ -8449,6 +8477,13 @@ def eligible_idle_agents_for_sidecars(
         if "legacy alias" in display_name.lower():
             continue
         normalized = normalize_agent_id(agent_id)
+        provider = str(agent.get("provider") or "").strip()
+        provider_id = normalize_agent_id(provider)
+        if any(
+            key and key.casefold() in excluded_agent_keys
+            for key in (display_name, normalized, provider, provider_id)
+        ):
+            continue
         if agent_auto_dispatch_block_reason(config, state, normalized, provider_report):
             continue
         if normalized in active_agents or normalized in pending_agents:

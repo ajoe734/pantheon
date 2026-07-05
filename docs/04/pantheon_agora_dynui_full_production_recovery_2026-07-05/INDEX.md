@@ -12,6 +12,21 @@ current hosted/live evidence contradicts a production-complete reading.
 This packet reopens the remaining work as new follow-up execution tasks instead
 of reusing archived task IDs.
 
+## Routing Repair
+
+Updated on 2026-07-05 after live task-board inspection:
+
+- `AG-DYNUI-FULL-001` is done and archived as the source-truth/parity-matrix
+  task; redispatch tooling must skip it instead of re-creating it.
+- Claude and Claude2 are exhausted/unavailable for the remaining mainline
+  recovery path.
+- Gemini and Gemini2 are rejected by the supervisor mainline guard for this
+  wave as disabled, sidecar-only, or auth-down.
+- Underutilization sidecar dispatch is also configured to exclude Claude and
+  Claude2, so support slices do not consume exhausted lanes.
+- Remaining executable lanes are therefore routed through Codex, Codex2, and
+  Copilot, with Codex/Codex2 review separation where code changes are involved.
+
 ## Current Live Evidence
 
 Captured on 2026-07-05 after redeploying dev BFF to

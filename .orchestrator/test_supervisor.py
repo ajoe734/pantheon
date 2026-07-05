@@ -4793,6 +4793,38 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
             },
         }
 
+    def test_excluded_agents_are_not_eligible_for_sidecars(self) -> None:
+        self.config["underutilization_dispatch"]["excluded_agents"] = ["Claude", "Claude2"]
+        self.config["agents"]["claude2"] = {
+            "id": "claude2",
+            "display_name": "Claude2",
+            "provider": "claude2",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "APP-001",
+                    "phase": "Phase 5: Persona and Application Surfaces",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Gemini",
+                    "depends_on": [],
+                    "title": "Define BFF query surfaces",
+                    "artifacts": ["services/control-plane/bff/"],
+                }
+            ]
+        }
+
+        agents = supervisor.eligible_idle_agents_for_sidecars(
+            self.config,
+            {"queue": {"events": {}}, "workers": {}},
+            status,
+            max_active_sidecars_per_agent=1,
+            provider_report={"providers": {}},
+        )
+
+        self.assertEqual(agents, ["Gemini"])
+
     def test_waits_full_window_before_creating_sidecars(self) -> None:
         state = {"queue": {"events": {}}, "workers": {}, "underutilization": {}}
 

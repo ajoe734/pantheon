@@ -861,6 +861,10 @@
     "cooldown_seconds": 0,
     "max_new_sidecars_per_wave": 2,
     "max_active_sidecars_per_agent": 1,
+    "excluded_agents": [
+      "Claude",
+      "Claude2"
+    ],
     "productive_worker_statuses": [
       "running",
       "waiting_approval",

@@ -11,6 +11,7 @@ DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT", str(DEFAULT_REPO_ROOT))).resolve()
 STATUS_PATH = REPO_ROOT / "ai-status.json"
 LOG_PATH = REPO_ROOT / "ai-activity-log.jsonl"
+ARCHIVE_TASKS_PATH = REPO_ROOT / "ai-task-archive" / "tasks"
 AUTO_BY = "dispatch_agora_dynui_full_production_recovery_2026-07-05"
 ARCHIVE = "docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md"
 PACKET = "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md"
@@ -89,8 +90,8 @@ TASKS = [
             "資料必須來自 scoped workshop state/store，不能由前端 fixture 或假資料代替。"
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 1 workshop BFF",
-        "owner": "Claude2",
-        "reviewer": "Codex",
+        "owner": "Codex",
+        "reviewer": "Codex2",
         "depends_on": ["AG-DYNUI-FULL-001"],
         "artifacts": [
             "services/control-plane/bff/agora/strategy_workshop/router.py",
@@ -119,8 +120,8 @@ TASKS = [
             "/bff/agora/trading-room aggregate；live strategies 不能再是空陣列。"
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 2 ready strategy projection",
-        "owner": "Claude2",
-        "reviewer": "Codex2",
+        "owner": "Codex2",
+        "reviewer": "Codex",
         "depends_on": ["AG-DYNUI-FULL-002"],
         "artifacts": [
             "services/control-plane/bff/agora/strategy_workshop/",
@@ -179,7 +180,7 @@ TASKS = [
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 3 live dynamic workflow",
         "owner": "Copilot",
-        "reviewer": "Claude2",
+        "reviewer": "Codex",
         "depends_on": ["AG-DYNUI-FULL-003", "AG-DYNUI-FULL-004"],
         "artifacts": [
             "services/control-plane/bff/agora/trading_room/router.py",
@@ -241,7 +242,7 @@ TASKS = [
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 5 closeout",
         "owner": "Codex",
-        "reviewer": "Claude2",
+        "reviewer": "Codex2",
         "depends_on": ["AG-DYNUI-FULL-006"],
         "artifacts": [
             ARCHIVE,
@@ -291,6 +292,23 @@ def find_task(state: dict, task_id: str) -> dict | None:
     return None
 
 
+def archived_terminal_task(task_id: str) -> bool:
+    archive_path = ARCHIVE_TASKS_PATH / f"{task_id}.json"
+    if not archive_path.exists():
+        return False
+    try:
+        snapshot = json.loads(archive_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    terminal_status = str(
+        snapshot.get("terminal_status")
+        or snapshot.get("status")
+        or snapshot.get("outcome")
+        or ""
+    ).strip().lower()
+    return terminal_status in TERMINAL_STATUSES
+
+
 def upsert_task(state: dict, task: dict) -> tuple[bool, str]:
     tasks = state.setdefault("tasks", [])
     for index, existing in enumerate(tasks):
@@ -332,6 +350,10 @@ def main() -> int:
     timestamp = iso_now()
     task_ids = [task["id"] for task in TASKS]
     for spec in TASKS:
+        if find_task(state, spec["id"]) is None and archived_terminal_task(spec["id"]):
+            remove_terminal_task_from_agents(state, spec["id"])
+            print(f"SKIP   {spec['id']:18} archived terminal task")
+            continue
         task = {
             "id": spec["id"],
             "title": spec["title"],
