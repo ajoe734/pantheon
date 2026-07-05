@@ -128,6 +128,7 @@ def test_cors_exposes_bff_client_response_headers(monkeypatch) -> None:
         for header in response.headers["access-control-expose-headers"].split(",")
     }
     assert exposed == set(bff_main._CORS_EXPOSE_HEADERS)
+    assert "ETag" in exposed
 
 
 def test_pack_d_http_exception_response_preserves_cors_for_allowed_origin(monkeypatch) -> None:

@@ -394,6 +394,7 @@ _CORS_ALLOW_HEADERS = [
     "X-Trace-Id",
 ]
 _CORS_EXPOSE_HEADERS = [
+    "ETag",
     "X-BFF-Api-Version",
     "X-Correlation-Id",
     "X-Request-Id",
