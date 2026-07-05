@@ -360,6 +360,40 @@ def test_management_evidence_projects_current_run_verifier_when_store_missing(tm
         encoding="utf-8",
     )
 
+    verifier_path.parent.joinpath("release-gate-summary.json").write_text(
+        json.dumps(
+            {
+                "generatedAt": "2026-07-04T13:30:00Z",
+                "overall": "fail",
+                "auditDir": ".lovable/audits/current-run",
+                "runUrl": "https://github.com/ajoe734/pantheon/actions/runs/123456789",
+                "checklistOut": ".lovable/audits/current-run/Release_Gate_Checklist.md",
+                "gates": {
+                    "3": [
+                        {
+                            "label": "Authenticated: strict bearer RBAC matrix evidence passed.",
+                            "status": "fail",
+                            "owner": "Codex",
+                            "evidence": "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json",
+                            "note": "preflight bearer hash inventory mismatch",
+                        },
+                    ],
+                    "7": [
+                        {
+                            "label": "Evidence written to `.lovable/audits/current-run`.",
+                            "status": "pass",
+                            "owner": "",
+                            "evidence": ".lovable/audits/current-run",
+                            "note": "4 audit file(s) found",
+                        },
+                    ],
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
     with _current_run_evidence_client(verifier_path) as client:
         response = client.get(
             "/bff/management/evidence?ref_id=BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY",
@@ -385,6 +419,35 @@ def test_management_evidence_projects_current_run_verifier_when_store_missing(tm
     assert item["criteria"]["rbac_matrix"]["status"] == "fail"
     assert item["criteria"]["rbac_matrix"]["note"] == "missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON"
     assert item["criteria"]["current_run_only"]["status"] == "pass"
+    release_gate_summary = item["release_gate_summary"]
+    assert release_gate_summary["overall"] == "fail"
+    assert release_gate_summary["generated_at"] == "2026-07-04T13:30:00Z"
+    assert release_gate_summary["audit_dir"] == ".lovable/audits/current-run"
+    assert release_gate_summary["run_url"] == "https://github.com/ajoe734/pantheon/actions/runs/123456789"
+    assert release_gate_summary["open_check_count"] == 1
+    assert release_gate_summary["checks"] == [
+        {
+            "gate": "3",
+            "index": 0,
+            "label": "Authenticated: strict bearer RBAC matrix evidence passed.",
+            "status": "fail",
+            "note": "preflight bearer hash inventory mismatch",
+            "owner": "Codex",
+            "evidence": "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json",
+            "blocking": True,
+        },
+        {
+            "gate": "7",
+            "index": 0,
+            "label": "Evidence written to `.lovable/audits/current-run`.",
+            "status": "pass",
+            "note": "4 audit file(s) found",
+            "owner": None,
+            "evidence": ".lovable/audits/current-run",
+            "blocking": False,
+        },
+    ]
+    assert "runUrl" not in release_gate_summary
     remediation = item["operator_remediation"]
     assert remediation["github_environment"] == "dev"
     assert remediation["repository"] == "ajoe734/pantheon"

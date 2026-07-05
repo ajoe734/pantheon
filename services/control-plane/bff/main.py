@@ -9212,6 +9212,9 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     operator_remediation = item.get("operator_remediation")
     if isinstance(operator_remediation, dict):
         public_item["operator_remediation"] = _management_json_clone(operator_remediation)
+    release_gate_summary = item.get("release_gate_summary")
+    if isinstance(release_gate_summary, dict):
+        public_item["release_gate_summary"] = _management_json_clone(release_gate_summary)
     if "overall" in item:
         public_item["overall"] = item.get("overall")
     return public_item
@@ -9311,6 +9314,52 @@ def _management_live_evidence_preflight_remediation(artifact_dir: Path) -> Optio
     return safe_remediation
 
 
+def _management_live_evidence_release_gate_summary(artifact_dir: Path) -> Optional[Dict[str, Any]]:
+    summary_path = artifact_dir / "release-gate-summary.json"
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    checks: List[Dict[str, Any]] = []
+    gates = payload.get("gates")
+    if isinstance(gates, dict):
+        for gate, gate_checks in sorted(gates.items(), key=lambda item: str(item[0])):
+            if not isinstance(gate_checks, list):
+                continue
+            for index, check in enumerate(gate_checks):
+                if not isinstance(check, dict):
+                    continue
+                status = _management_optional_text(check.get("status")) or "missing"
+                label = _management_optional_text(check.get("label"))
+                if not label and not status:
+                    continue
+                checks.append(
+                    {
+                        "gate": str(gate),
+                        "index": index,
+                        "label": label,
+                        "status": status,
+                        "note": _management_optional_text(check.get("note")),
+                        "owner": _management_optional_text(check.get("owner")),
+                        "evidence": _management_optional_text(check.get("evidence")),
+                        "blocking": status != "pass",
+                    }
+                )
+
+    return {
+        "overall": _management_optional_text(payload.get("overall")),
+        "generated_at": _management_optional_text(payload.get("generatedAt") or payload.get("generated_at")),
+        "audit_dir": _management_optional_text(payload.get("auditDir") or payload.get("audit_dir")),
+        "run_url": _management_optional_text(payload.get("runUrl") or payload.get("run_url")),
+        "checklist_out": _management_optional_text(payload.get("checklistOut") or payload.get("checklist_out")),
+        "open_check_count": sum(1 for check in checks if bool(check.get("blocking"))),
+        "checks": checks,
+    }
+
+
 def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
     for candidate in _management_live_evidence_verify_candidates():
         try:
@@ -9338,6 +9387,7 @@ def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
         artifact_dir_path = Path(str(payload.get("artifact_dir") or candidate.parent))
         artifact_dir = str(artifact_dir_path)
         operator_remediation = _management_live_evidence_preflight_remediation(artifact_dir_path)
+        release_gate_summary = _management_live_evidence_release_gate_summary(artifact_dir_path)
         evidence_ref = {
             "ref_id": _BFF_LIVE_EVIDENCE_REF_ID,
             "evidence_type": "live_evidence_artifact",
@@ -9368,6 +9418,8 @@ def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
         }
         if operator_remediation is not None:
             evidence_ref["operator_remediation"] = operator_remediation
+        if release_gate_summary is not None:
+            evidence_ref["release_gate_summary"] = release_gate_summary
         return [evidence_ref]
     return []
 
