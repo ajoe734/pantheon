@@ -127,6 +127,7 @@ FAMILY_RULES: list[tuple[str, str]] = [
     ("/bff/management/consult-rules", "governance-sub-rules"),
     ("/bff/route-policies", "governance-sub-rules"),
     # ── management console registry ────────────────────────────────────────
+    ("/bff/management/shell-summary", "management-console"),
     ("/bff/management/personas", "management-console"),
     ("/bff/management/promotion-reviews", "management-console"),
     ("/bff/management/data-sources", "management-console"),
