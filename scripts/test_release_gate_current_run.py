@@ -375,6 +375,98 @@ def _strict_rbac_matrix_items(
     return items
 
 
+def _strict_rbac_cases() -> dict[str, dict[str, str]]:
+    labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    cases: dict[str, dict[str, str]] = {"anonymous": {"kind": "anonymous"}}
+    cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in labels})
+    return cases
+
+
+def _strict_preflight_bearer_source_hashes(
+    *,
+    smoke_hash: str = "smoke-token-hash",
+    rbac_overrides: dict[str, str] | None = None,
+) -> dict[str, str]:
+    hashes = {"smoke": smoke_hash}
+    for label in ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]:
+        hashes[f"rbac:{label}"] = f"rbac-{label}-hash"
+    hashes.update(rbac_overrides or {})
+    return hashes
+
+
+def _write_strict_live_preflight(
+    current_run: Path,
+    *,
+    smoke_hash: str = "smoke-token-hash",
+    rbac_overrides: dict[str, str] | None = None,
+) -> None:
+    (current_run / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
+                "strict_live_evidence_preflight": True,
+                "github_environment": "dev",
+                "missing": [],
+                "invalid": [],
+                "bearer_source_hashes": _strict_preflight_bearer_source_hashes(
+                    smoke_hash=smoke_hash,
+                    rbac_overrides=rbac_overrides,
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_strict_authenticated_live_json(
+    current_run: Path,
+    *,
+    auth_source: dict[str, str] | None = None,
+    rbac_cases: dict[str, dict[str, str]] | None = None,
+    rbac_matrix: list[dict[str, object]] | None = None,
+) -> None:
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": auth_source or {"kind": "provided_bearer", "sha256_12": "smoke-token-hash"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases or _strict_rbac_cases(),
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": rbac_matrix or _strict_rbac_matrix_items(),
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(),
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
 
 def _provided_bearer_pair_source(*, distinct: bool = True):
     return {
@@ -1738,6 +1830,123 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:1/1 results:2/2 targetLinks:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
     assert two_man_check["status"] == "pass"
     assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 detailAccepted:2/2 detailReplayed:0/0 detailCommandIds:2/2 results:2/2 targetLinks:2/2 signatureLinks:2/2 tokenPair:true tokenPairDistinct:true"
+
+
+def test_release_gate_rejects_strict_auth_when_smoke_preflight_hash_mismatches(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    _write_strict_live_preflight(current_run, smoke_hash="other-smoke-hash")
+    _write_strict_authenticated_live_json(current_run)
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads((current_run / "release-gate-summary.json").read_text(encoding="utf-8"))
+    gate3 = summary["gates"]["3"]
+    rbac_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    dry_run_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
+    )
+
+    assert rbac_check["status"] == "fail"
+    assert dry_run_check["status"] == "fail"
+    assert "bearerPreflight:false" in rbac_check["note"]
+    assert "preflightBearerLinks:49/49" in rbac_check["note"]
+
+
+def test_release_gate_rejects_strict_rbac_when_preflight_inventory_hash_mismatches(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    _write_strict_live_preflight(
+        current_run,
+        rbac_overrides={"rbac:viewer": "wrong-viewer-hash"},
+    )
+    _write_strict_authenticated_live_json(current_run)
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads((current_run / "release-gate-summary.json").read_text(encoding="utf-8"))
+    gate3 = summary["gates"]["3"]
+    rbac_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    dry_run_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
+    )
+
+    assert rbac_check["status"] == "fail"
+    assert dry_run_check["status"] == "pass"
+    assert "bearerPreflight:true" in rbac_check["note"]
+    assert "preflightBearerLinks:42/49" in rbac_check["note"]
 
 
 def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_path: Path) -> None:
