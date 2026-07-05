@@ -870,6 +870,19 @@ def test_workspace_layout_requires_etag_and_supports_remove_restore():
     assert restore.status_code == 200, restore.text
     restored_widget = next(w for v in restore.json()["data"]["views"] for w in v["widgets"] if w["id"] == widget_id)
     assert restored_widget["visible"] is True
+
+    added_widget_spec = dict(restored_widget)
+    added_widget_spec["id"] = "overview_candidate_funnel_layout_copy"
+    added_widget_spec["title"] = "Candidate Funnel copy"
+    add_widget = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/layout",
+        headers={"Authorization": "Bearer test", "If-Match": restore.headers["etag"], "Idempotency-Key": "idem-layout-add-widget"},
+        json={"operations": [{"kind": "add_registered_widget", "payload": {"viewId": "strategy_overview", "widgetSpec": added_widget_spec}}]},
+    )
+    assert add_widget.status_code == 200, add_widget.text
+    overview = next(v for v in add_widget.json()["data"]["views"] if v["id"] == "strategy_overview")
+    assert overview["widgetCount"] == len(overview["widgets"])
+    assert any(w["id"] == "overview_candidate_funnel_layout_copy" for w in overview["widgets"])
     print("✅ workspace layout: ETag, stale-write, remove, and restore semantics")
 
 

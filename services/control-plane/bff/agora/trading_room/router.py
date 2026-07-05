@@ -1416,6 +1416,9 @@ def _apply_workspace_layout_ops(
     if errors:
         return None, errors
 
+    for view in updated.get("views") or []:
+        view["widgetCount"] = len(view.get("widgets") or [])
+
     validation_errors: List[str] = []
     for view_index, view in enumerate(updated.get("views") or []):
         validation_errors.extend(_validate_view(view, now=now, path=f"views[{view_index}]"))
