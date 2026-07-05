@@ -1,8 +1,10 @@
 """Unit tests for persona → OpenClaw agent sync (no live gateway)."""
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
+from pathlib import Path
 from typing import Any, Dict, List
 
 import persona_agent_sync as sync
@@ -73,11 +75,38 @@ def test_desired_spec_routes_and_models():
     assert spec.persona_id == "persona-crypto"
     assert spec.workspace.endswith("/persona-crypto")
     assert spec.model == sync.DEFAULT_PERSONA_MODEL  # no preferred_model => default
-    # preferred_model honored only if in the known pool
+    assert spec.sync_generation == 1
+    # preferred_model honored only if in the runtime profile provider pool
     spec2 = sync.desired_agent_spec({**PERSONA_CRYPTO, "preferred_model": "openai/gpt-5.5"})
     assert spec2.model == "openai/gpt-5.5"
-    spec3 = sync.desired_agent_spec({**PERSONA_CRYPTO, "preferred_model": "bogus/model"})
-    assert spec3.model == sync.DEFAULT_PERSONA_MODEL
+    try:
+        sync.desired_agent_spec({**PERSONA_CRYPTO, "preferred_model": "bogus/model"})
+        assert False, "invalid model ref must fail closed"
+    except ValueError as exc:
+        assert "unknown_model_ref" in str(exc)
+
+
+def test_desired_spec_accepts_route_policy_hard_pin():
+    spec = sync.desired_agent_spec(
+        PERSONA_CRYPTO,
+        route_policy={"model_routing": {"mode": "hard_pin", "model": "openai/gpt-5.5"}},
+    )
+    assert spec.model == "openai/gpt-5.5"
+
+
+def _load_deploy_script():
+    script_path = Path(__file__).resolve().parents[2] / "scripts" / "openclaw-sync-persona-agents.py"
+    spec = importlib.util.spec_from_file_location("openclaw_sync_persona_agents_script", script_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_deploy_script_soul_matches_shared_renderer():
+    deploy_script = _load_deploy_script()
+    assert deploy_script.build_soul(PERSONA_CRYPTO) == sync.build_persona_soul(PERSONA_CRYPTO)
+    assert "## Memory" in deploy_script.build_soul(PERSONA_CRYPTO)
 
 
 def test_sync_creates_missing_agent_and_writes_soul():
@@ -102,6 +131,61 @@ def test_sync_creates_missing_agent_and_writes_soul():
     # SOUL written to the agent's workspace.
     assert any(ws.endswith("/persona-crypto") for ws in souls)
     assert "Crypto Persona" in next(iter(souls.values()))
+
+
+def test_sync_uses_route_policy_resolver_for_new_agent_model():
+    calls: List[List[str]] = []
+
+    def runner(args: List[str]):
+        calls.append(args)
+        if args[:3] == ["openclaw", "agents", "list"]:
+            return _cp(json.dumps({"agents": [{"id": "main"}]}))
+        return _cp("{}")
+
+    report = sync.sync_persona_agents(
+        [PERSONA_CRYPTO],
+        runner=runner,
+        soul_writer=lambda ws, s: None,
+        route_policy_resolver=lambda persona: {
+            "model_routing": {"mode": "hard_pin", "model": "openai/gpt-5.5"}
+        },
+    )
+
+    assert report.created == ["persona-crypto"]
+    add = next(c for c in calls if c[:3] == ["openclaw", "agents", "add"])
+    assert add[add.index("--model") + 1] == "openai/gpt-5.5"
+
+
+def test_sync_blocks_existing_agent_model_drift_without_set_model_support():
+    calls: List[List[str]] = []
+    souls: Dict[str, str] = {}
+
+    def runner(args: List[str]):
+        calls.append(args)
+        if args[:3] == ["openclaw", "agents", "list"]:
+            return _cp(json.dumps({"agents": [{"id": "persona-crypto", "model": "openai/gpt-5.5"}]}))
+        return _cp("{}")
+
+    report = sync.sync_persona_agents([PERSONA_CRYPTO], runner=runner, soul_writer=lambda ws, s: souls.setdefault(ws, s))
+
+    assert report.failed and report.failed[0]["persona_id"] == "persona-crypto"
+    assert report.failed[0]["error"] == "model_drift_update_unavailable"
+    assert report.failed[0]["desired_model"] == sync.DEFAULT_PERSONA_MODEL
+    assert not any(c[:3] == ["openclaw", "agents", "set-identity"] for c in calls)
+    assert souls == {}
+
+
+def test_sync_records_existing_agent_set_identity_failure():
+    def runner(args: List[str]):
+        if args[:3] == ["openclaw", "agents", "list"]:
+            return _cp(json.dumps({"agents": [{"id": "persona-crypto", "model": sync.DEFAULT_PERSONA_MODEL}]}))
+        return _cp("", returncode=1, stderr="cannot set identity")
+
+    report = sync.sync_persona_agents([PERSONA_CRYPTO], runner=runner, soul_writer=lambda ws, s: None)
+
+    assert report.updated == []
+    assert report.failed and report.failed[0]["persona_id"] == "persona-crypto"
+    assert "cannot set identity" in report.failed[0]["error"]
 
 
 def test_sync_updates_existing_agent_idempotently():

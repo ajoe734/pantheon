@@ -1,116 +1,98 @@
 # Agora DYNUI Full Production Recovery Execution Packet - 2026-07-05
 
-Status: task-scoped recovery packet for `AG-DYNUI-FULL-001`
+Status: dispatchable production-recovery tasks.
 
-Primary archive:
+Source audit:
 
 - `docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md`
 
-This packet restores the actionable source truth and gap matrix for the Agora
-dynamic UI production recovery lane. It does not certify the hosted route as
-fully production-complete.
+Dispatch command:
 
-## Current Source Truth
+```sh
+AI_NAME=Codex python3 scripts/dispatch_agora_dynui_full_production_recovery_2026-07-05.py
+```
 
-Use this source order for all downstream Agora DYNUI work:
+Live task-board dispatch from a clean worktree:
 
-1. `docs/04/agora_design_pack_dynui_2026-06-28/source-map-and-gap-map.md`
-2. `docs/04/agora_design_pack_dynui_2026-06-28/README.md`
-3. `docs/04/agora_design_pack_dynui_2026-06-28/closeout.md`
-4. Readable local extraction `/tmp/ai-trading-desk-design/` as inspection aid
-   only.
-5. Closure packs only as supporting contract/design closure context:
-   - `/home/lupin/code/pantheon/Pantheon_Agora_Design_Closure_Pack_2026-06-20.zip`
-   - `/home/lupin/code/pantheon-live-root-cleanup-archive-20260627T124239Z/Pantheon_Agora_Design_Closure_Round2_v1_3_2026-06-21.zip`
+```sh
+PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
+  AI_NAME=Codex \
+  python3 scripts/dispatch_agora_dynui_full_production_recovery_2026-07-05.py
+```
 
-Do not treat the closure zips as the canonical raw V10/V11 visual design
-archive. The raw archive is still missing at both expected durable paths:
+The dispatch script is idempotent. It creates or refreshes the task set below,
+preserves progress fields for tasks already started, and assigns owner/reviewer
+pairs for fleet execution.
 
-- `/home/lupin/code/pantheon/AI Trading Desk Design.zip`
-- `/home/lupin/code/pantheon/AI%20Trading%20Desk%20Design.zip`
+## Execution Order
 
-## Current Delivery Truth
+| Wave | Task | Owner | Reviewer | Summary |
+|---|---|---|---|---|
+| 0 | `AG-DYNUI-FULL-001` | Codex | Claude | Recover design/source truth and create a screen/state parity matrix. |
+| 1 | `AG-DYNUI-FULL-002` | Claude2 | Codex | Implement live Strategy Workshop cards/readiness BFF routes and tests. |
+| 2 | `AG-DYNUI-FULL-003` | Gemini | Codex2 | Materialize ready strategies into the live Trading Room aggregate. |
+| 2 | `AG-DYNUI-FULL-004` | Codex2 | Claude | Wire frontend workshop handoff and explicit strategy route behavior. |
+| 3 | `AG-DYNUI-FULL-005` | Copilot | Claude2 | Prove live proposal/accept/workspace/grid/revision/version/rollback without fixtures. |
+| 4 | `AG-DYNUI-FULL-006` | Gemini | Codex | Replace hosted E2E fixture gate with no-fixture production gate and fix CI gate failures. |
+| 5 | `AG-DYNUI-FULL-007` | Codex | Claude2 | Final production closeout, deploy evidence, and residual-risk audit. |
 
-- Active hosted dev FE is `ajoe734/execute-plans` branch `dev`, deployed at
-  commit `f0600b89f5b6ad2aa028e8e2705b7dd1d1dc4828`.
-- Hosted FE manifest reports `VITE_BFF_MODE=live`,
-  `VITE_BFF_FALLBACK=strict`, and `VITE_BFF_REAL_WRITES=false`.
-- Hosted BFF root health endpoints `/healthz`, `/livez`, and `/readyz` return
-  HTTP 200.
-- Hosted BFF `/openapi.json` exposes the Trading Room proposal, workspace,
-  layout, widget revision, version, and rollback route family.
-- Direct unauthenticated Agora BFF reads return HTTP 401 `AUTH_REQUIRED`; use
-  authenticated browser-session evidence for live data claims.
-- `/home/lupin/code/execute-plans` is dirty and ahead/behind; create clean
-  task worktrees for edits.
-- `/home/lupin/code/pantheon/.fe-ep` and the pantheon vendored `execute-plans/`
-  mirror are not deployment sources.
+## Global Rules
 
-## Continue / Blocker Matrix
+- Do not reuse archived `AG-DYNUI-PROD-*` IDs.
+- Do not close from `AG-DYNUI-PROD-006` fixture-backed evidence.
+- Do not use `page.route()` or mocked BFF responses in production-gate E2E.
+- Do not fabricate design details if the design zip remains missing.
+- Do not remove strict BFF auth, tenant scoping, idempotency, optimistic
+  concurrency, or WidgetSpec allowlist validation to make tests pass.
+- If a task needs execute-plans changes, it must include execute-plans PR,
+  checks, merge SHA, dev FE deploy evidence, and hosted proof.
+- If a task needs Pantheon BFF changes, it must include Pantheon PR, Branch CI,
+  merge SHA, deploy evidence, and live BFF curl proof.
 
-| Work item | Decision | Reason |
-| --- | --- | --- |
-| Continue standalone Agora shell work | Continue | `execute-plans` PR #171 merged and `origin/dev` routes `/agora` through `AgoraLayoutRoute` outside Management `PlatformShell`. |
-| Continue default Trading Room entry work | Continue with caveat | PR #173 merged and live zero-strategy hosted evidence exists. Ready-strategy evidence still uses a disclosed route fixture because the live tenant has no ready strategy. |
-| Continue BFF contract/runtime work | Continue | Live OpenAPI exposes V11 route family; backend tests in PROD-005 cover idempotency, ETag, scope isolation, widget allowlist, revision apply/keep-copy, versions, and rollback. |
-| Continue dynamic workflow FE work | Continue | PR #176 merged and hosted BFF-wiring probe shows browser requests hit the intended live BFF host. |
-| Use 6/20 and 6/21 closure zips | Continue as support only | They are readable and useful for contract context, but they are not the raw visual design archive. |
-| Claim raw design archive restored | Blocker | `AI Trading Desk Design.zip` is missing from both expected durable paths. |
-| Claim generic error diagnostics are closed | Blocker | Standalone `execute-plans` `origin/dev` still has a root branch rendering only `Failed to load Trading Room.` in `TradingRoomPage.tsx`; BFF provides structured errors but the page does not surface them there. |
-| Claim all visible release gates green | Blocker | `execute-plans` PR #177 and current tip PR #179 show `integration-gate` FAILURE in GitHub rollup despite successful deploy evidence. |
-| Claim fully live V10-to-V11 E2E | Blocker | PROD-006 summaries disclose steps 1-3 live and steps 4-10 BFF-shaped fixtures because no live strategy reaches `trading_room` readiness yet. |
-| Treat unauthenticated 401 as BFF outage | Do not block | Direct curl without browser auth correctly returns `AUTH_REQUIRED`; authenticated browser evidence is the right proof surface. |
+## Required Live Proofs
 
-## Required Follow-Up Tasks
+At packet closeout, these probes must pass against the hosted dev environment:
 
-This packet does not materialize new task IDs. It should be used to route or
-reopen the existing Agora DYNUI production lanes:
+```sh
+curl -fsS \
+  -H 'Authorization: Bearer pantheon-dev-browser:operator,reviewer,approver:mfa' \
+  -H 'X-Tenant-Id: pantheon-dev' \
+  https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room
+```
 
-1. **Raw design archive restoration**
-   - Owner lane: source/task truth.
-   - Required result: restore `AI Trading Desk Design.zip` to a durable path,
-     or record a permanent blocker explaining why only the committed 6/28 pack
-     can be used.
-2. **PROD-004 standalone diagnostics repair**
-   - Owner lane: error diagnostics and stale-bundle recovery.
-   - Required result: port or re-verify structured Trading Room error state in
-     `ajoe734/execute-plans`, with tests and hosted proof that the root state is
-     not generic-only.
-3. **CI gate reconciliation**
-   - Owner lane: hosted publish gate.
-   - Required result: explain, waive with evidence, or repair the failed
-     `integration-gate` runs on #177 and #179 before any final "all gates green"
-     production statement.
-4. **Fully live readiness pipeline**
-   - Owner lane: upstream servant/persona/readiness pipeline, then hosted E2E.
-   - Required result: a real live strategy reaches `trading_room` readiness and
-     exercises proposal, accept, grid edit, widget revision, version history,
-     and rollback without route fixtures.
+Expected: `strategies.length > 0` after the E2E creates or restores a ready
+strategy.
 
-## Downstream Guardrails
+```sh
+curl -fsS \
+  -H 'Authorization: Bearer pantheon-dev-browser:operator,reviewer,approver:mfa' \
+  -H 'X-Tenant-Id: pantheon-dev' \
+  https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/<workshop_id>/readiness
+```
 
-- Do not rebuild Agora from imagination, screenshots alone, or static mocks.
-- Do not use `.fe-ep`, the pantheon vendored `execute-plans/` mirror, or a
-  dirty `/home/lupin/code/execute-plans` checkout as source evidence.
-- Do not relax BFF auth to make probes pass.
-- Do not claim full production closeout from a deploy manifest alone.
-- Do not hide route fixtures. If a proof uses `page.route()` or any mock, state
-  exactly which steps are live and which are fixture-backed.
-- Keep write paths governed: current hosted FE has `VITE_BFF_REAL_WRITES=false`
-  unless an operator explicitly enables real write-path testing.
+Expected: `highest_ready_gate` is present and can reach `trading_room`.
 
-## Verification Summary
+```sh
+curl -fsS \
+  -H 'Authorization: Bearer pantheon-dev-browser:operator,reviewer,approver:mfa' \
+  -H 'X-Tenant-Id: pantheon-dev' \
+  https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/<workshop_id>/cards
+```
 
-Commands and external probes used by `AG-DYNUI-FULL-001` are recorded in the
-primary archive. The high-signal results were:
+Expected: live cards are returned from scoped workshop state.
 
-- raw archive tests: missing
-- closure zip listing: readable
-- `/tmp/ai-trading-desk-design/`: readable
-- hosted FE route and deployment manifest: HTTP 200
-- hosted BFF health/readiness: HTTP 200
-- hosted BFF OpenAPI: HTTP 200 with Trading Room dynamic route family
-- unauthenticated Agora BFF reads: HTTP 401 `AUTH_REQUIRED`
-- `execute-plans` PRs #171, #173, #176, #177: merged
-- `execute-plans` PRs #177 and #179: visible `integration-gate` failure
-- PROD-006 E2E summaries: present, with disclosed live/fixture split
+The hosted browser E2E must prove the visible flow:
+
+1. Strategy Workshop opens from hosted FE.
+2. A real workshop is created or restored.
+3. Cards and readiness update from live BFF.
+4. Readiness reaches Trading Room gate.
+5. "Add to Trading Room" navigates with real strategy/version context.
+6. Trading Room shows the strategy workspace.
+7. Proposal generation returns a live BFF proposal.
+8. Accept creates a live workspace.
+9. Grid edit persists through live layout PATCH.
+10. Widget revision proposal and accept persist through live BFF routes.
+11. Version history lists live versions.
+12. Rollback creates a live version and visible UI update.
+13. Desktop and mobile screenshots show the production UI, not a fixture shell.
