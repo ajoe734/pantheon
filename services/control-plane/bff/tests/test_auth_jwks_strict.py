@@ -205,6 +205,7 @@ def test_lovable_cors_preflight_accepts_bff_client_headers(monkeypatch) -> None:
             "Access-Control-Request-Method": "GET",
             "Access-Control-Request-Headers": (
                 "Authorization, Accept, Accept-Language, Content-Type, "
+                "If-Match, "
                 "X-BFF-Api-Version, X-Correlation-Id, X-Request-Id, "
                 "X-Idempotency-Key, Idempotency-Key, X-Confirm-Token, "
                 "X-Locale, X-MFA-Token, X-Tenant-Id, Last-Event-ID"
