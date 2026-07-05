@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -18,6 +19,7 @@ from common import (
     config_path,
     load_config,
     load_json,
+    normalize_agent_id,
     run_command,
     to_bool,
     utc_now,
@@ -566,8 +568,15 @@ def _claude_auth_probe(config: dict[str, Any], provider_id: str, binary: str | N
     previous = _previous_provider_auth_probe(config, provider_id)
     if previous and not _auth_probe_due(config, provider_id, previous):
         return _reuse_auth_probe(provider_id, "claude", previous, method="claude_auth_status_refresh")
+    status_payload = _claude_auth_status_payload(config, provider_id, binary, env)
+    account_identity = _claude_account_identity(status_payload)
+    account_group = _claude_account_group(account_identity)
+    if account_identity:
+        metadata["account_identity"] = account_identity
+    if account_group:
+        metadata["account_group"] = account_group
     ready = claude_auth_ready(binary, env=env, refresh_if_needed=True)
-    return _auth_probe_record(
+    record = _auth_probe_record(
         provider_id,
         "claude",
         ready=ready,
@@ -576,6 +585,79 @@ def _claude_auth_probe(config: dict[str, Any], provider_id: str, binary: str | N
         status="ready" if ready else "auth_not_ready",
         metadata=metadata,
     )
+    if account_identity:
+        record["account_identity"] = account_identity
+    if account_group:
+        record["account_group"] = account_group
+    return record
+
+
+def _claude_auth_status_payload(
+    config: dict[str, Any],
+    provider_id: str,
+    binary: str,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    settings = _auth_probe_settings(config, provider_id)
+    timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
+    try:
+        result = run_command([binary, "auth", "status"], timeout=timeout, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0 or not result.stdout:
+        return {}
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _first_nested_value(payload: dict[str, Any], *keys: str) -> str | None:
+    queue: list[dict[str, Any]] = [payload]
+    seen: set[int] = set()
+    while queue:
+        current = queue.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        for key in keys:
+            value = current.get(key)
+            if value not in (None, "", [], {}):
+                return str(value).strip()
+        for value in current.values():
+            if isinstance(value, dict):
+                queue.append(value)
+    return None
+
+
+def _claude_account_identity(payload: dict[str, Any]) -> dict[str, Any]:
+    if not payload or payload.get("loggedIn") is False:
+        return {}
+    identity = {
+        "provider": "claude",
+        "email": _first_nested_value(payload, "email", "userEmail", "accountEmail", "username"),
+        "org_id": _first_nested_value(
+            payload,
+            "orgId",
+            "organizationId",
+            "organizationUUID",
+            "organizationUuid",
+            "orgUUID",
+            "orgUuid",
+        ),
+        "org_name": _first_nested_value(payload, "orgName", "organizationName"),
+        "subscription_type": _first_nested_value(payload, "subscriptionType", "subscription", "plan", "tier"),
+    }
+    return {key: value for key, value in identity.items() if value}
+
+
+def _claude_account_group(identity: dict[str, Any]) -> str | None:
+    account_key = str(identity.get("org_id") or identity.get("email") or "").strip().lower()
+    if not account_key:
+        return None
+    digest = hashlib.sha256(f"claude:{account_key}".encode("utf-8")).hexdigest()[:16]
+    return normalize_agent_id(f"claude_account_{digest}")
 
 
 def _antigravity_auth_metadata(config: dict[str, Any], provider_id: str, env: dict[str, str]) -> dict[str, Any]:
@@ -1073,7 +1155,7 @@ def _claude_provider_report(
     ]
     if provider_id != "claude":
         notes.append(f"Provider `{provider_id}` uses its own Claude runtime HOME/profile when configured.")
-    return {
+    report = {
         "installed": installed,
         "host_layer": "CLI + VS Code extension" if provider_binary and claude_path else ("CLI" if provider_binary else "VS Code extension"),
         "delivery_mode": provider_settings.get("delivery_mode", "claude_cli"),
@@ -1122,6 +1204,11 @@ def _claude_provider_report(
         },
         "notes": notes,
     }
+    if auth_probe.get("account_group"):
+        report["account_group"] = auth_probe.get("account_group")
+    if auth_probe.get("account_identity"):
+        report["account_identity"] = auth_probe.get("account_identity")
+    return report
 
 
 def _gemini_provider_report(

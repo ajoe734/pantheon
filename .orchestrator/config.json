@@ -509,6 +509,7 @@
   "providers": {
     "claude": {
       "delivery_mode": "claude_cli",
+      "account_group": "claude_account_shared_max_1",
       "allow_inbox_fallback": false,
       "file_inbox": {
         "path": ".llm-inbox/claude.md",
@@ -548,6 +549,7 @@
     },
     "claude2": {
       "delivery_mode": "claude_cli",
+      "account_group": "claude_account_shared_max_1",
       "allow_inbox_fallback": false,
       "file_inbox": {
         "path": ".llm-inbox/claude2.md",
