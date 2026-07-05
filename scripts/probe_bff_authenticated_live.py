@@ -251,6 +251,19 @@ def sha256_12(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
+def redacted_request_headers(headers: dict[str, str]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "Authorization": "present" if headers.get("Authorization") else "absent",
+        "X-Dry-Run": headers.get("X-Dry-Run", "absent"),
+        "Idempotency-Key": "present" if headers.get("Idempotency-Key") else "absent",
+    }
+    if headers.get("Idempotency-Key"):
+        summary["Idempotency-Key-Sha256-12"] = sha256_12(headers["Idempotency-Key"])
+    if headers.get("Content-Type"):
+        summary["Content-Type"] = headers["Content-Type"]
+    return summary
+
+
 def role_list(value: str) -> list[str]:
     return [role.strip() for role in value.split(",") if role.strip()]
 
@@ -838,6 +851,7 @@ def request_json(
         "duration_ms": round((time.time() - started) * 1000),
         "expected_status": sorted(probe.expect_status),
         "missing_required_paths": missing_paths,
+        "request_headers": redacted_request_headers(headers),
         "response_headers": {
             key: response_headers.get(key)
             for key in ("X-BFF-Api-Version", "X-Request-Id", "X-Correlation-Id")
