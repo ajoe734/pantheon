@@ -12,8 +12,16 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  acceptWidgetRevisionProposal,
+  acceptWorkspaceProposal,
+  createWidgetRevisionProposal,
+  createWorkspaceProposal,
   decideOnEvent,
+  getTradingRoomWorkspace,
   listDecisionEvents,
+  listTradingRoomWorkspaceVersions,
+  patchTradingRoomWorkspaceLayout,
+  rollbackTradingRoomWorkspaceVersion,
   getTradingRoom,
   getTradingRoomStrategy,
   getDecisionEvent,
@@ -387,6 +395,195 @@ describe("shared BFF auth headers", () => {
     expect(headers.Authorization).toBeUndefined();
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     expect(init.credentials).toBe("include");
+  });
+});
+
+// ── Live dynamic workspace flow ─────────────────────────────────────────────
+
+describe("live Trading Room workspace flow", () => {
+  const workspace = {
+    id: "trw-001",
+    userId: "operator-1",
+    strategyId: "strat-001",
+    strategyVersion: "v1",
+    dashboardVersion: 1,
+    activeViewId: "strategy_overview",
+    views: [],
+    status: "active",
+    generatedBy: "trading_servant",
+    createdAt: "2026-07-05T00:00:00Z",
+    updatedAt: "2026-07-05T00:00:00Z",
+  };
+  const version = {
+    id: "trwv-001",
+    workspaceId: "trw-001",
+    dashboardVersion: 1,
+    strategyId: "strat-001",
+    strategyVersion: "v1",
+    views: [],
+  };
+  const proposal = {
+    proposalId: "trp-001",
+    strategyId: "strat-001",
+    strategyVersion: "v1",
+    generatedAt: "2026-07-05T00:00:00Z",
+    status: "preview",
+    views: [],
+  };
+  const revision = {
+    id: "wrp-001",
+    workspaceId: "trw-001",
+    viewId: "strategy_overview",
+    widgetId: "widget-001",
+    instruction: "revise",
+    beforeSpec: { id: "widget-001", widgetType: "candidate_funnel", title: "Widget" },
+    proposedSpec: { id: "widget-001", widgetType: "candidate_funnel", title: "Widget Revised" },
+    rationale: "rationale",
+    warnings: [],
+    dataAvailability: "partial",
+    status: "preview",
+  };
+
+  it("creates workspace proposals with idempotency and auth headers", async () => {
+    setAuthProvider(() => ({ bearerToken: "test-bearer-token", tenantId: "tenant-001" }));
+    const fetchMock = vi.fn().mockResolvedValue(ok({ data: proposal }, 201, { ETag: '"tr-proposal:trp-001"' }));
+    globalThis.fetch = fetchMock;
+
+    const result = await createWorkspaceProposal(
+      "strat-001",
+      { strategyVersion: "v1", tradingRoomReady: true, evidenceRefs: ["ev-001"] },
+      { idempotencyKey: "idem-proposal", requestId: "req-proposal" },
+      BASE,
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/bff/agora/strategies/strat-001/trading-room/proposals`);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(init.method).toBe("POST");
+    expect(headers.Authorization).toBe("Bearer test-bearer-token");
+    expect(headers["X-Tenant-Id"]).toBe("tenant-001");
+    expect(headers["Idempotency-Key"]).toBe("idem-proposal");
+    expect(headers["X-Request-Id"]).toBe("req-proposal");
+    expect(result.proposal.proposalId).toBe("trp-001");
+    expect(result.etag).toBe('"tr-proposal:trp-001"');
+  });
+
+  it("accepts a workspace proposal and returns workspace etag", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      ok({ data: { workspaceId: "trw-001", workspace, version } }, 200, { ETag: '"tr-workspace:trw-001:v1"' }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const result = await acceptWorkspaceProposal(
+      "strat-001",
+      "trp-001",
+      { idempotencyKey: "idem-accept", requestId: "req-accept" },
+      BASE,
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/bff/agora/strategies/strat-001/trading-room/proposals/trp-001/accept`);
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers["Idempotency-Key"]).toBe("idem-accept");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ expectedStatus: "preview" });
+    expect(result.workspace.id).toBe("trw-001");
+    expect(result.version.id).toBe("trwv-001");
+    expect(result.etag).toBe('"tr-workspace:trw-001:v1"');
+  });
+
+  it("loads workspace snapshots and captures response etag", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok({ data: workspace }, 200, { ETag: '"tr-workspace:trw-001:v1"' }));
+    globalThis.fetch = fetchMock;
+
+    const result = await getTradingRoomWorkspace("trw-001", BASE);
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/bff/agora/trading-room/workspaces/trw-001`);
+    expect(result?.workspace.id).toBe("trw-001");
+    expect(result?.etag).toBe('"tr-workspace:trw-001:v1"');
+  });
+
+  it("patches workspace layout with If-Match and idempotency headers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok({ data: { ...workspace, dashboardVersion: 2 } }, 200, { ETag: '"tr-workspace:trw-001:v2"' }));
+    globalThis.fetch = fetchMock;
+
+    const result = await patchTradingRoomWorkspaceLayout(
+      "trw-001",
+      [{ kind: "move_widget", widgetId: "widget-001", payload: { x: 1, y: 2 } }],
+      { ifMatch: '"tr-workspace:trw-001:v1"', idempotencyKey: "idem-layout", requestId: "req-layout" },
+      BASE,
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/bff/agora/trading-room/workspaces/trw-001/layout`);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(init.method).toBe("PATCH");
+    expect(headers["If-Match"]).toBe('"tr-workspace:trw-001:v1"');
+    expect(headers["Idempotency-Key"]).toBe("idem-layout");
+    expect(JSON.parse(String(init.body))).toEqual({
+      operations: [{ kind: "move_widget", widgetId: "widget-001", payload: { x: 1, y: 2 } }],
+    });
+    expect(result.workspace.dashboardVersion).toBe(2);
+  });
+
+  it("creates and accepts widget revision proposals", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(ok({ data: revision }, 201, { ETag: '"tr-widget-revision:wrp-001:preview"' }))
+      .mockResolvedValueOnce(
+        ok(
+          { data: { proposal: { ...revision, status: "accepted" }, workspace: { ...workspace, dashboardVersion: 2 }, version: { ...version, id: "trwv-002", dashboardVersion: 2 }, appliedAction: "apply" } },
+          200,
+          { ETag: '"tr-workspace:trw-001:v2"' },
+        ),
+      );
+    globalThis.fetch = fetchMock;
+
+    const created = await createWidgetRevisionProposal(
+      "trw-001",
+      "widget-001",
+      {
+        instruction: "revise",
+        proposedSpec: revision.proposedSpec,
+        rationale: "rationale",
+        dataAvailability: "partial",
+      },
+      { idempotencyKey: "idem-rev-create" },
+      BASE,
+    );
+    const accepted = await acceptWidgetRevisionProposal(
+      "wrp-001",
+      { ifMatch: '"tr-workspace:trw-001:v1"', acceptanceAction: "apply", idempotencyKey: "idem-rev-accept" },
+      BASE,
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/bff/agora/trading-room/workspaces/trw-001/widgets/widget-001/revision-proposals`);
+    expect(created.proposal.id).toBe("wrp-001");
+    expect(fetchMock.mock.calls[1][0]).toBe(`${BASE}/bff/agora/trading-room/widget-revision-proposals/wrp-001/accept`);
+    expect((fetchMock.mock.calls[1][1].headers as Record<string, string>)["If-Match"]).toBe('"tr-workspace:trw-001:v1"');
+    expect(accepted.workspace.dashboardVersion).toBe(2);
+  });
+
+  it("lists workspace versions and rolls back with If-Match", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(ok({ data: [version] }))
+      .mockResolvedValueOnce(
+        ok({ data: { workspace: { ...workspace, dashboardVersion: 2 }, version: { ...version, id: "trwv-002", dashboardVersion: 2 }, rollbackOfVersion: version } }, 200, { ETag: '"tr-workspace:trw-001:v2"' }),
+      );
+    globalThis.fetch = fetchMock;
+
+    const versions = await listTradingRoomWorkspaceVersions("trw-001", BASE);
+    const rollback = await rollbackTradingRoomWorkspaceVersion(
+      "trw-001",
+      "trwv-001",
+      { ifMatch: '"tr-workspace:trw-001:v1"', reason: "restore", idempotencyKey: "idem-rollback" },
+      BASE,
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/bff/agora/trading-room/workspaces/trw-001/versions`);
+    expect(versions).toHaveLength(1);
+    expect(fetchMock.mock.calls[1][0]).toBe(`${BASE}/bff/agora/trading-room/workspaces/trw-001/versions/trwv-001/rollback`);
+    expect((fetchMock.mock.calls[1][1].headers as Record<string, string>)["If-Match"]).toBe('"tr-workspace:trw-001:v1"');
+    expect(rollback.rollbackOfVersion.id).toBe("trwv-001");
   });
 });
 

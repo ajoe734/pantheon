@@ -3,18 +3,22 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/bff-v1/agora/tradingRoom", () => ({
+  acceptWidgetRevisionProposal: vi.fn(),
+  acceptWorkspaceProposal: vi.fn(),
+  createWidgetRevisionProposal: vi.fn(),
+  createWorkspaceProposal: vi.fn(),
   getTradingRoom: vi.fn(),
+  getTradingRoomStrategy: vi.fn(),
+  getTradingRoomWorkspace: vi.fn(),
+  listTradingRoomWorkspaceVersions: vi.fn(),
   listDecisionEvents: vi.fn(),
+  patchTradingRoomWorkspaceLayout: vi.fn(),
+  rollbackTradingRoomWorkspaceVersion: vi.fn(),
   decideOnEvent: vi.fn(),
-}));
-
-vi.mock("@/lib/bff-v1/agora/dashboard", () => ({
-  getDashboardRecipeById: vi.fn(),
 }));
 
 import { TradingRoomPage } from "./TradingRoomPage";
 import * as tradingRoomModule from "@/lib/bff-v1/agora/tradingRoom";
-import * as dashboardModule from "@/lib/bff-v1/agora/dashboard";
 
 const MOCK_AGGREGATE = {
   spec_version: "1.0" as const,
@@ -98,42 +102,102 @@ const MOCK_DECISION_EVENT = {
   no_order_route_proof: "agora_decision_support_only" as const,
 };
 
-const MOCK_RECIPE: import("@/lib/bff-v1/agora/types").DashboardRecipeV2 = {
-  recipe_id: "recipe-001",
-  spec_version: "2.0",
-  tenant_id: "tenant-001",
-  user_id: "user-001",
-  strategy_id: "strat-001",
-  strategy_version_id: "v1",
-  workspace: "trading_room",
-  phase: "monitoring",
-  generated_by: "system_default",
-  change_reason: "initial",
-  version: 1,
+const MOCK_WORKSPACE: tradingRoomModule.TradingRoomWorkspace = {
+  id: "trw-001",
+  userId: "user-001",
+  strategyId: "strat-001",
+  strategyVersion: "v1",
+  dashboardVersion: 1,
+  activeViewId: "strategy_overview",
   status: "active",
-  created_at: "2026-06-22T00:00:00Z",
-  updated_at: "2026-06-22T00:00:00Z",
+  generatedBy: "trading_servant",
+  createdAt: "2026-06-22T00:00:00Z",
+  updatedAt: "2026-06-22T00:00:00Z",
   views: [
     {
-      view_id: "view-001",
-      title: "Monitoring",
+      id: "strategy_overview",
+      title: "Strategy Overview",
       purpose: "Trading room monitoring view",
-      layout_template_id: "default",
-      breakpoints: {},
-      placements: [],
-      widgets: [],
+      widgetCount: 1,
+      widgets: [
+        {
+          id: "overview_candidate_funnel",
+          widgetType: "candidate_funnel",
+          title: "Candidate Funnel",
+          purpose: "Compare candidate states.",
+          whyIncluded: "Shows candidate conversion.",
+          dataSource: "agora.candidate.members",
+          query: { filters: {}, sort: {}, limit: 250, window: "20d" },
+          chartSpec: {
+            spec_version: "1.0",
+            kind: "bar",
+            encodings: {
+              x: { field: "label", type: "nominal" },
+              y: { field: "value", type: "quantitative" },
+            },
+          },
+          interactions: [{ kind: "request_widget_revision" }],
+          placement: { x: 0, y: 0, width: 4, height: 4, minWidth: 2, minHeight: 2 },
+          minSize: { width: 2, height: 2 },
+          maxSize: { width: 8, height: 8 },
+          sensitivity: "user_private",
+          visible: true,
+        },
+      ],
     },
     {
-      view_id: "view-002",
+      id: "winner_branch_intelligence",
       title: "Performance",
       purpose: "Performance review view",
-      layout_template_id: "default",
-      breakpoints: {},
-      placements: [],
+      widgetCount: 0,
       widgets: [],
     },
   ],
 };
+
+const MOCK_VERSION: tradingRoomModule.TradingRoomWorkspaceVersion = {
+  id: "trwv-001",
+  workspaceId: "trw-001",
+  dashboardVersion: 1,
+  strategyId: "strat-001",
+  strategyVersion: "v1",
+  views: MOCK_WORKSPACE.views,
+  changeSummary: "v1 - trading servant initial workspace proposal",
+};
+
+const MOCK_PROPOSAL: tradingRoomModule.TradingRoomWorkspaceProposal = {
+  strategyId: "strat-001",
+  strategyVersion: "v1",
+  proposalId: "trp-001",
+  generatedAt: "2026-06-22T00:00:00Z",
+  status: "preview",
+  views: MOCK_WORKSPACE.views,
+};
+
+const MOCK_REVISION_PROPOSAL: tradingRoomModule.TradingRoomWidgetRevisionProposal = {
+  id: "wrp-001",
+  workspaceId: "trw-001",
+  viewId: "strategy_overview",
+  widgetId: "overview_candidate_funnel",
+  instruction: "Convert the widget to a faster comparison view.",
+  beforeSpec: MOCK_WORKSPACE.views[0].widgets[0],
+  proposedSpec: {
+    ...MOCK_WORKSPACE.views[0].widgets[0],
+    title: "Candidate Funnel Live Revision",
+  },
+  rationale: "Live revision.",
+  warnings: [],
+  dataAvailability: "partial",
+  status: "preview",
+};
+
+function workspaceWithVersion(version: number): tradingRoomModule.TradingRoomWorkspace {
+  return {
+    ...MOCK_WORKSPACE,
+    dashboardVersion: version,
+    updatedAt: `2026-06-22T00:0${version}:00Z`,
+  };
+}
 
 function diagnosticError(status: number, code: string, message = "diagnostic failure"): Error {
   return Object.assign(new Error(message), {
@@ -154,12 +218,52 @@ afterEach(cleanup);
 
 describe("TradingRoomPage", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.mocked(tradingRoomModule.getTradingRoom).mockResolvedValue(MOCK_AGGREGATE);
+    vi.mocked(tradingRoomModule.getTradingRoomStrategy).mockResolvedValue({
+      strategy_id: "strat-001",
+      strategy_version: "v1",
+      evidence_refs: [{ ref_id: "ev-001" }],
+      highest_ready_gate: "trading_room",
+    });
+    vi.mocked(tradingRoomModule.getTradingRoomWorkspace).mockResolvedValue(null);
+    vi.mocked(tradingRoomModule.createWorkspaceProposal).mockResolvedValue({
+      proposal: MOCK_PROPOSAL,
+      etag: '"tr-proposal:trp-001"',
+    });
+    vi.mocked(tradingRoomModule.acceptWorkspaceProposal).mockResolvedValue({
+      workspaceId: "trw-001",
+      workspace: MOCK_WORKSPACE,
+      version: MOCK_VERSION,
+      etag: '"tr-workspace:trw-001:v1"',
+    });
+    vi.mocked(tradingRoomModule.listTradingRoomWorkspaceVersions).mockResolvedValue([MOCK_VERSION]);
+    vi.mocked(tradingRoomModule.patchTradingRoomWorkspaceLayout).mockResolvedValue({
+      workspace: workspaceWithVersion(2),
+      etag: '"tr-workspace:trw-001:v2"',
+      versionId: "trwv-002",
+    });
+    vi.mocked(tradingRoomModule.createWidgetRevisionProposal).mockResolvedValue({
+      proposal: MOCK_REVISION_PROPOSAL,
+      etag: '"tr-widget-revision:wrp-001:preview"',
+    });
+    vi.mocked(tradingRoomModule.acceptWidgetRevisionProposal).mockResolvedValue({
+      proposal: { ...MOCK_REVISION_PROPOSAL, status: "accepted" },
+      workspace: workspaceWithVersion(2),
+      version: { ...MOCK_VERSION, id: "trwv-002", dashboardVersion: 2 },
+      appliedAction: "apply",
+      etag: '"tr-workspace:trw-001:v2"',
+    });
+    vi.mocked(tradingRoomModule.rollbackTradingRoomWorkspaceVersion).mockResolvedValue({
+      workspace: workspaceWithVersion(3),
+      version: { ...MOCK_VERSION, id: "trwv-003", dashboardVersion: 3 },
+      rollbackOfVersion: MOCK_VERSION,
+      etag: '"tr-workspace:trw-001:v3"',
+    });
     vi.mocked(tradingRoomModule.listDecisionEvents).mockResolvedValue({
       items: [MOCK_DECISION_EVENT],
       etag: '"events-etag-v1"',
     });
-    vi.mocked(dashboardModule.getDashboardRecipeById).mockResolvedValue(MOCK_RECIPE);
     vi.mocked(tradingRoomModule.decideOnEvent).mockResolvedValue({});
   });
 
@@ -198,8 +302,17 @@ describe("TradingRoomPage", () => {
   it("enters the highest-value ready strategy workspace by default", async () => {
     render(<TradingRoomPage />);
     await screen.findByTestId("strategy-workspace-strat-001");
-    await screen.findByTestId("strategy-recipe-workspace");
-    expect(dashboardModule.getDashboardRecipeById).toHaveBeenCalledWith("recipe-001");
+    await screen.findByTestId("live-dynamic-workspace");
+    expect(tradingRoomModule.createWorkspaceProposal).toHaveBeenCalledWith(
+      "strat-001",
+      expect.objectContaining({ strategyVersion: "v1", tradingRoomReady: true }),
+      expect.objectContaining({ idempotencyKey: expect.any(String), requestId: expect.any(String) }),
+    );
+    expect(tradingRoomModule.acceptWorkspaceProposal).toHaveBeenCalledWith(
+      "strat-001",
+      "trp-001",
+      expect.objectContaining({ idempotencyKey: expect.any(String), requestId: expect.any(String) }),
+    );
     expect(screen.queryByTestId("trading-room-aggregate-view")).toBeNull();
     expect(screen.getByTestId("strategy-lens-strat-001").getAttribute("aria-selected")).toBe("true");
   });
@@ -431,52 +544,121 @@ describe("TradingRoomPage", () => {
     expect(banner.getAttribute("data-risk-state")).toBe("warning");
   });
 
-  // ── Strategy Recipe Workspace ──────────────────────────────────────────────
+  // ── Live Dynamic Workspace ────────────────────────────────────────────────
 
-  it("calls getDashboardRecipeById with the strategy's dashboard_recipe_id", async () => {
+  it("creates and accepts a live workspace for the selected ready strategy", async () => {
     render(<TradingRoomPage strategyId="strat-001" />);
     await screen.findByTestId("strategy-workspace-strat-001");
-    expect(dashboardModule.getDashboardRecipeById).toHaveBeenCalledWith("recipe-001");
+    await screen.findByTestId("live-dynamic-workspace");
+    expect(tradingRoomModule.getTradingRoomStrategy).toHaveBeenCalledWith("strat-001");
+    expect(tradingRoomModule.createWorkspaceProposal).toHaveBeenCalledWith(
+      "strat-001",
+      expect.objectContaining({
+        strategyVersion: "v1",
+        evidenceRefs: ["ev-001"],
+        tradingRoomReady: true,
+      }),
+      expect.any(Object),
+    );
+    expect(tradingRoomModule.acceptWorkspaceProposal).toHaveBeenCalledWith("strat-001", "trp-001", expect.any(Object));
   });
 
-  it("renders the strategy recipe workspace when recipe is available", async () => {
+  it("renders the live workspace when proposal acceptance returns a workspace", async () => {
     render(<TradingRoomPage strategyId="strat-001" />);
-    await screen.findByTestId("strategy-recipe-workspace");
+    await screen.findByTestId("live-dynamic-workspace");
+    expect(screen.getByTestId("live-workspace-version").textContent).toContain("Workspace 1");
   });
 
-  it("renders recipe view tabs when multiple views are present", async () => {
+  it("renders live workspace view tabs when multiple views are present", async () => {
     render(<TradingRoomPage strategyId="strat-001" />);
-    await screen.findByTestId("recipe-view-tabs");
-    expect(screen.getByTestId("recipe-view-tab-view-001")).toBeDefined();
-    expect(screen.getByTestId("recipe-view-tab-view-002")).toBeDefined();
+    await screen.findByTestId("live-workspace-view-tabs");
+    expect(screen.getByTestId("live-workspace-view-tab-strategy_overview")).toBeDefined();
+    expect(screen.getByTestId("live-workspace-view-tab-winner_branch_intelligence")).toBeDefined();
   });
 
-  it("does not render view tabs when only one view is present", async () => {
-    vi.mocked(dashboardModule.getDashboardRecipeById).mockResolvedValue({
-      ...MOCK_RECIPE,
-      views: [MOCK_RECIPE.views[0]],
+  it("loads a stored live workspace instead of creating a new proposal", async () => {
+    window.localStorage.setItem("pantheon.agora.tradingRoom.workspace.strat-001.v1", "trw-001");
+    vi.mocked(tradingRoomModule.getTradingRoomWorkspace).mockResolvedValue({
+      workspace: MOCK_WORKSPACE,
+      etag: '"tr-workspace:trw-001:v1"',
     });
     render(<TradingRoomPage strategyId="strat-001" />);
-    await screen.findByTestId("strategy-recipe-workspace");
-    expect(screen.queryByTestId("recipe-view-tabs")).toBeNull();
+    await screen.findByTestId("live-dynamic-workspace");
+    expect(tradingRoomModule.getTradingRoomWorkspace).toHaveBeenCalledWith("trw-001");
+    expect(tradingRoomModule.createWorkspaceProposal).not.toHaveBeenCalled();
   });
 
-  it("shows recipe unavailable placeholder when strategy has no dashboard_recipe_id", async () => {
+  it("blocks live workspace generation when the selected strategy is not ready", async () => {
     render(<TradingRoomPage strategyId="strat-002" />);
-    await screen.findByTestId("strategy-recipe-unavailable");
+    await screen.findByTestId("live-workspace-blocked");
+    expect(tradingRoomModule.createWorkspaceProposal).not.toHaveBeenCalled();
   });
 
-  it("shows recipe unavailable placeholder when getDashboardRecipeById returns null", async () => {
-    vi.mocked(dashboardModule.getDashboardRecipeById).mockResolvedValue(null);
+  it("shows live workspace error state when proposal creation fails", async () => {
+    vi.mocked(tradingRoomModule.createWorkspaceProposal).mockRejectedValue(new Error("proposal failed"));
     render(<TradingRoomPage strategyId="strat-001" />);
-    await screen.findByTestId("strategy-recipe-unavailable");
+    await screen.findByTestId("live-workspace-error");
+    expect(screen.getByTestId("live-workspace-error").textContent).toContain("proposal failed");
   });
 
-  it("shows loading state while recipe is being fetched", async () => {
-    vi.mocked(dashboardModule.getDashboardRecipeById).mockReturnValue(new Promise(() => {}));
+  it("shows loading state while the live workspace is being created", async () => {
+    vi.mocked(tradingRoomModule.createWorkspaceProposal).mockReturnValue(new Promise(() => {}));
     render(<TradingRoomPage strategyId="strat-001" />);
     await screen.findByTestId("strategy-workspace-strat-001");
-    expect(screen.getByTestId("strategy-recipe-loading")).toBeDefined();
+    expect(screen.getByTestId("live-workspace-loading")).toBeDefined();
+  });
+
+  it("patches layout through the live BFF workspace route with If-Match", async () => {
+    render(<TradingRoomPage strategyId="strat-001" />);
+    await screen.findByTestId("live-layout-patch");
+    fireEvent.click(screen.getByTestId("live-layout-patch"));
+    await waitFor(() =>
+      expect(tradingRoomModule.patchTradingRoomWorkspaceLayout).toHaveBeenCalledWith(
+        "trw-001",
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "move_widget", widgetId: "overview_candidate_funnel" }),
+        ]),
+        expect.objectContaining({ ifMatch: '"tr-workspace:trw-001:v1"' }),
+      ),
+    );
+  });
+
+  it("requests and accepts a live widget revision", async () => {
+    render(<TradingRoomPage strategyId="strat-001" />);
+    await screen.findByTestId("live-widget-revision-request");
+    fireEvent.click(screen.getByTestId("live-widget-revision-request"));
+    await waitFor(() =>
+      expect(tradingRoomModule.createWidgetRevisionProposal).toHaveBeenCalledWith(
+        "trw-001",
+        "overview_candidate_funnel",
+        expect.objectContaining({ dataAvailability: "partial" }),
+        expect.any(Object),
+      ),
+    );
+    fireEvent.click(screen.getByTestId("live-widget-revision-accept"));
+    await waitFor(() =>
+      expect(tradingRoomModule.acceptWidgetRevisionProposal).toHaveBeenCalledWith(
+        "wrp-001",
+        expect.objectContaining({ ifMatch: '"tr-workspace:trw-001:v1"', acceptanceAction: "apply" }),
+      ),
+    );
+  });
+
+  it("lists versions and rolls back through the live BFF route", async () => {
+    vi.mocked(tradingRoomModule.listTradingRoomWorkspaceVersions).mockResolvedValue([
+      MOCK_VERSION,
+      { ...MOCK_VERSION, id: "trwv-002", dashboardVersion: 2 },
+    ]);
+    render(<TradingRoomPage strategyId="strat-001" />);
+    await screen.findByTestId("live-workspace-version-trwv-002");
+    fireEvent.click(screen.getByTestId("live-workspace-rollback"));
+    await waitFor(() =>
+      expect(tradingRoomModule.rollbackTradingRoomWorkspaceVersion).toHaveBeenCalledWith(
+        "trw-001",
+        "trwv-001",
+        expect.objectContaining({ ifMatch: '"tr-workspace:trw-001:v1"' }),
+      ),
+    );
   });
 
   // ── Decision Event Detail ──────────────────────────────────────────────────
