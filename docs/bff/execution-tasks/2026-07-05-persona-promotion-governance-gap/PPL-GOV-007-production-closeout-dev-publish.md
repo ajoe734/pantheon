@@ -5,6 +5,10 @@ Reviewer: Claude
 Depends on: PPL-GOV-002, PPL-GOV-003, PPL-GOV-004, PPL-GOV-005, PPL-GOV-006
 Type: production closeout task
 
+Closeout evidence:
+
+- `docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md`
+
 ## Purpose
 
 Hold the line until the promotion-governance loop is actually shippable: merged
