@@ -61,7 +61,7 @@ TASKS = [
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 0 source truth",
         "owner": "Codex",
-        "reviewer": "Claude",
+        "reviewer": "Claude2",
         "depends_on": [],
         "artifacts": [
             ARCHIVE,
@@ -149,7 +149,7 @@ TASKS = [
         ),
         "phase": "Agora DYNUI Full Production Recovery / Wave 2 frontend handoff",
         "owner": "Codex2",
-        "reviewer": "Claude",
+        "reviewer": "Codex",
         "depends_on": ["AG-DYNUI-FULL-002"],
         "artifacts": [
             "execute-plans/src/routes/agora.tsx",
