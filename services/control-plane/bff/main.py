@@ -379,6 +379,7 @@ _CORS_ALLOW_HEADERS = [
     "Authorization",
     "Cache-Control",
     "Content-Type",
+    "If-Match",
     "X-BFF-Api-Version",
     "X-Confirm-Token",
     "Idempotency-Key",
