@@ -81,6 +81,9 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 1)
         self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity"], 1)
         self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity2"], 1)
+        self.assertEqual(ready_dispatcher["disabled_agents"], ["Claude", "Claude2"])
+        self.assertIn("Antigravity", config["worker_reassignment"]["owner_fallbacks"]["Codex2"])
+        self.assertIn("Antigravity2", config["worker_reassignment"]["owner_fallbacks"]["Codex2"])
 
 
 class DetectWorkerFailureTests(unittest.TestCase):
@@ -3453,6 +3456,66 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(kwargs["task_id"], "AG-DYNUI-FULL-002")
         self.assertEqual(kwargs["new_owner"], "Codex")
         self.assertEqual(kwargs["new_reviewer"], "Copilot")
+
+    def test_normalize_routes_to_antigravity_when_codex_paused_and_claude_disabled(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "ready_dispatcher": {"disabled_agents": ["Claude", "Claude2"]},
+            "worker_reassignment": {
+                "eligible_statuses": ["todo"],
+                "owner_fallbacks": {"Codex2": ["Codex", "Claude", "Claude2", "Antigravity", "Antigravity2"]},
+                "reviewer_fallbacks": {"Codex2": ["Codex", "Claude", "Claude2", "Antigravity", "Antigravity2"]},
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "antigravity": {"id": "antigravity", "display_name": "Antigravity", "provider": "antigravity"},
+                "antigravity2": {"id": "antigravity2", "display_name": "Antigravity2", "provider": "antigravity2"},
+            },
+            "providers": {},
+        }
+        report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "codex2": {"auth_ready": True},
+                "claude": {"auth_ready": True},
+                "claude2": {"auth_ready": True},
+                "antigravity": {"auth_ready": True},
+                "antigravity2": {"auth_ready": True},
+            }
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "blocked_until": "9999-12-31T23:59:59Z",
+                        "pause_kind": "quota_terminal",
+                    },
+                    "codex2": {
+                        "provider": "codex2",
+                        "blocked_until": "9999-12-31T23:59:59Z",
+                        "pause_kind": "quota_terminal",
+                    },
+                }
+            }
+        }
+        task = {"id": "AG-DYNUI-FULL-003", "status": "todo", "owner": "Codex2", "reviewer": "Claude", "depends_on": []}
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task, state=state)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "AG-DYNUI-FULL-003")
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Antigravity2")
 
     def test_dispatcher_reassigns_mainline_qwen_reviewer_before_dispatch(self) -> None:
         config = {

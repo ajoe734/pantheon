@@ -5343,14 +5343,14 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
                 default_eligible_statuses.append(normalized)
     settings.setdefault("eligible_statuses", default_eligible_statuses or ["todo", "in_progress", "review", "review_approved"])
     default_fallbacks = {
-        "Claude": ["Codex", "Codex2"],
-        "Claude2": ["Codex", "Codex2", "Claude"],
-        "Gemini": ["Codex", "Codex2", "Claude"],
-        "Gemini2": ["Codex", "Codex2", "Claude"],
-        "Codex": ["Codex2", "Claude", "Claude2"],
-        "Codex2": ["Codex", "Claude", "Claude2"],
-        "Copilot": ["Codex", "Codex2", "Claude"],
-        "Grok": ["Codex", "Codex2", "Claude"],
+        "Claude": ["Codex", "Codex2", "Antigravity", "Antigravity2"],
+        "Claude2": ["Codex", "Codex2", "Antigravity", "Antigravity2", "Claude"],
+        "Gemini": ["Codex", "Codex2", "Antigravity", "Antigravity2", "Claude"],
+        "Gemini2": ["Codex", "Codex2", "Antigravity", "Antigravity2", "Claude"],
+        "Codex": ["Codex2", "Antigravity", "Antigravity2", "Claude", "Claude2"],
+        "Codex2": ["Codex", "Antigravity", "Antigravity2", "Claude", "Claude2"],
+        "Copilot": ["Codex", "Codex2", "Antigravity", "Antigravity2", "Claude"],
+        "Grok": ["Codex", "Codex2", "Antigravity", "Antigravity2", "Claude"],
     }
     settings.setdefault("owner_fallbacks", default_fallbacks)
     settings.setdefault("reviewer_fallbacks", default_fallbacks)
