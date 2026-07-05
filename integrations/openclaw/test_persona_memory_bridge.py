@@ -151,4 +151,3 @@ def test_writeback_candidate_does_not_mutate_canonical_store(tmp_path):
 
     reopened = PersonaMemoryStore(path=store_path)
     assert [entry.memory_id for entry in reopened.list(persona_id=PERSONA_ID)] == ["pm-existing"]
-

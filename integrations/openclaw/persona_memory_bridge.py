@@ -366,4 +366,3 @@ def _string_list(value: Any) -> List[str]:
 
 def _compact_timestamp(value: str) -> str:
     return "".join(ch for ch in value if ch.isalnum())
-
