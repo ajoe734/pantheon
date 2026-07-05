@@ -157,6 +157,45 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(status_root))
         self.assertEqual(env["ORCH_WORKSPACE_PATH"], str(workspace))
 
+    def test_codex_resolves_relative_configured_cli_before_spawning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "worktree"
+            workspace.mkdir()
+            cli = root / ".orchestrator" / "bin" / "codex"
+            cli.parent.mkdir(parents=True)
+            cli.write_text("#!/usr/bin/env bash\nexit 0\n")
+            cli.chmod(0o755)
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex", "adapter": "codex"}},
+                "providers": {"codex": {"codex": {"cli": ".orchestrator/bin/codex"}}},
+            }
+            request = DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                metadata={"workspace_path": str(workspace)},
+            )
+            adapter = CodexAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+            previous_cwd = Path.cwd()
+
+            try:
+                os.chdir(root)
+                with mock.patch(
+                    "adapters.codex.spawn_background_process",
+                    return_value=(fake_process, root / "codex.log"),
+                ):
+                    result = adapter.deliver(request)
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.command[0], str(cli))
+        self.assertEqual(result.command[result.command.index("-C") + 1], str(workspace))
+
     def test_claude_can_disable_inbox_fallback(self) -> None:
         config = {
             "providers": {
