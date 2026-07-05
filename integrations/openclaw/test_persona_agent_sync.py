@@ -109,6 +109,31 @@ def test_deploy_script_soul_matches_shared_renderer():
     assert "## Memory" in deploy_script.build_soul(PERSONA_CRYPTO)
 
 
+def test_deploy_script_materializes_memory_when_configured(monkeypatch, tmp_path):
+    deploy_script = _load_deploy_script()
+    called: Dict[str, Any] = {}
+
+    class Result:
+        def to_dict(self):
+            return {"hit_count": 1}
+
+    def fake_materialize(**kwargs):
+        called.update(kwargs)
+        return Result()
+
+    deploy_script._shared_materialize_memory = fake_materialize
+    monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory-service")
+    report = {"created": [], "updated": [], "memory_materialized": [], "failed": []}
+
+    deploy_script.record_memory_materialization(report, "persona-crypto", str(tmp_path / "workspace"))
+
+    assert report["memory_materialized"] == ["persona-crypto"]
+    assert report["failed"] == []
+    assert called["memory_api_url"] == "http://memory-service"
+    assert called["persona_id"] == "persona-crypto"
+    assert called["workspace"].endswith("workspace")
+
+
 def test_sync_creates_missing_agent_and_writes_soul():
     calls: List[List[str]] = []
     souls: Dict[str, str] = {}
@@ -154,6 +179,31 @@ def test_sync_uses_route_policy_resolver_for_new_agent_model():
     assert report.created == ["persona-crypto"]
     add = next(c for c in calls if c[:3] == ["openclaw", "agents", "add"])
     assert add[add.index("--model") + 1] == "openai/gpt-5.5"
+
+
+def test_sync_materializes_memory_after_agent_create():
+    calls: List[List[str]] = []
+    materialized: List[tuple[str, str, str]] = []
+
+    def runner(args: List[str]):
+        calls.append(args)
+        if args[:3] == ["openclaw", "agents", "list"]:
+            return _cp(json.dumps({"agents": [{"id": "main"}]}))
+        return _cp("{}")
+
+    def materializer(workspace: str, persona: Dict[str, Any], spec: sync.PersonaAgentSpec):
+        materialized.append((workspace, persona["id"], spec.persona_id))
+
+    report = sync.sync_persona_agents(
+        [PERSONA_CRYPTO],
+        runner=runner,
+        soul_writer=lambda ws, s: None,
+        memory_materializer=materializer,
+    )
+
+    assert report.created == ["persona-crypto"]
+    assert report.memory_materialized == ["persona-crypto"]
+    assert materialized == [(sync.PERSONA_WORKSPACE_ROOT + "/persona-crypto", "persona-crypto", "persona-crypto")]
 
 
 def test_sync_blocks_existing_agent_model_drift_without_set_model_support():
