@@ -2,6 +2,19 @@
 
 Status: dispatchable production-recovery tasks.
 
+Routing repair, 2026-07-05:
+
+- `AG-DYNUI-FULL-001` is closed as the source-truth/parity-matrix task and
+  must not be re-created by a later dispatch.
+- Claude and Claude2 are unavailable for the remaining mainline work because
+  their quota is exhausted.
+- Gemini and Gemini2 are not valid mainline owners for this wave because the
+  supervisor guard marks them disabled/sidecar-only/auth-down and auto-routes
+  them away.
+- Underutilization sidecar dispatch is configured to exclude Claude and
+  Claude2 for the same quota reason.
+- The remaining task owners/reviewers below are the current executable lanes.
+
 Source audit:
 
 - `docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md`
@@ -32,17 +45,21 @@ pairs for fleet execution.
 
 | Wave | Task | Owner | Reviewer | Summary |
 |---|---|---|---|---|
-| 0 | `AG-DYNUI-FULL-001` | Codex | Claude2 | Recover design/source truth and create a screen/state parity matrix. |
-| 1 | `AG-DYNUI-FULL-002` | Claude2 | Codex | Implement live Strategy Workshop cards/readiness BFF routes and tests. |
-| 2 | `AG-DYNUI-FULL-003` | Claude2 | Codex2 | Materialize ready strategies into the live Trading Room aggregate. |
+| 0 | `AG-DYNUI-FULL-001` | Codex | Claude2 | Closed source-truth/parity matrix; historical reviewer only. |
+| 1 | `AG-DYNUI-FULL-002` | Codex | Codex2 | Implement live Strategy Workshop cards/readiness BFF routes and tests. |
+| 2 | `AG-DYNUI-FULL-003` | Codex2 | Codex | Materialize ready strategies into the live Trading Room aggregate. |
 | 2 | `AG-DYNUI-FULL-004` | Codex2 | Codex | Wire frontend workshop handoff and explicit strategy route behavior. |
-| 3 | `AG-DYNUI-FULL-005` | Copilot | Claude2 | Prove live proposal/accept/workspace/grid/revision/version/rollback without fixtures. |
+| 3 | `AG-DYNUI-FULL-005` | Copilot | Codex | Prove live proposal/accept/workspace/grid/revision/version/rollback without fixtures. |
 | 4 | `AG-DYNUI-FULL-006` | Codex2 | Codex | Replace hosted E2E fixture gate with no-fixture production gate and fix CI gate failures. |
-| 5 | `AG-DYNUI-FULL-007` | Codex | Claude2 | Final production closeout, deploy evidence, and residual-risk audit. |
+| 5 | `AG-DYNUI-FULL-007` | Codex | Codex2 | Final production closeout, deploy evidence, and residual-risk audit. |
 
 ## Global Rules
 
 - Do not reuse archived `AG-DYNUI-PROD-*` IDs.
+- Do not re-create archived terminal `AG-DYNUI-FULL-*` IDs on dispatch.
+- Do not assign remaining `AG-DYNUI-FULL-*` mainline work to Claude,
+  Claude2, Gemini, or Gemini2 while the live quota/guardrail state marks those
+  lanes unavailable.
 - Do not close from `AG-DYNUI-PROD-006` fixture-backed evidence.
 - Do not use `page.route()` or mocked BFF responses in production-gate E2E.
 - Do not fabricate design details if the design zip remains missing.
