@@ -51,7 +51,11 @@ def _first_review(client: TestClient) -> dict:
     response = client.get(
         "/bff/management/promotion-reviews",
         headers=OPERATOR_HEADERS,
-        params={"quarter": "2026-Q1", "page_size": 5},
+        params={
+            "quarter": "2026-Q1",
+            "page_size": 5,
+            "action_id": "promote_to_canary_candidate",
+        },
     )
     assert response.status_code == 200, response.text
     items = response.json()["data"]["items"]
@@ -77,12 +81,33 @@ def _post_decision(
     )
 
 
+def _submit_review(
+    client: TestClient,
+    review_id: str,
+    *,
+    headers: dict = OPERATOR_HEADERS,
+    idem: str | None = None,
+):
+    request_headers = dict(headers)
+    if idem is not None:
+        request_headers["Idempotency-Key"] = idem
+    return client.post(
+        f"/bff/management/quarterly-ranking/recommendations/{review_id}/submit",
+        headers=request_headers,
+        json={"quarter": "2026-Q1"},
+    )
+
+
 def test_promotion_reviews_list_and_detail_are_readable_by_operator() -> None:
     with _isolated_client() as client:
         list_response = client.get(
             "/bff/management/promotion-reviews",
             headers=OPERATOR_HEADERS,
-            params={"quarter": "2026-Q1", "page_size": 5},
+            params={
+                "quarter": "2026-Q1",
+                "page_size": 5,
+                "action_id": "promote_to_canary_candidate",
+            },
         )
         assert list_response.status_code == 200, list_response.text
         list_body = list_response.json()
@@ -91,9 +116,14 @@ def test_promotion_reviews_list_and_detail_are_readable_by_operator() -> None:
         review = list_body["data"]["items"][0]
         assert review["requires_human_gate_decision"] is True
         assert review["live_capital_mutation"] is False
+        assert review["status"] == "recommended_not_submitted"
+        assert review["submitted"] is False
+        assert review["allowedActions"]["canSubmit"] is True
+        assert review["allowedActions"]["canApprove"] is False
         assert review["promotion_path"]["from_stage"] == "paper"
-        assert review["promotion_path"]["target_stage"] == "canary"
+        assert review["promotion_path"]["target_stage"] == "canary_candidate"
         assert review["links"]["decisions"].endswith("/decisions")
+        assert review["links"]["submit"].endswith("/submit")
 
         detail_response = client.get(
             f"/bff/management/promotion-reviews/{review['review_id']}",
@@ -105,9 +135,71 @@ def test_promotion_reviews_list_and_detail_are_readable_by_operator() -> None:
         assert detail_body["meta"]["live_capital_mutation"] is False
 
 
+def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        submit = _submit_review(client, review["review_id"], idem=_idem())
+        assert submit.status_code == 202, submit.text
+        body = submit.json()
+        assert body["data"]["submitted"] is True
+        assert body["data"]["review_id"] == review["review_id"]
+        assert body["data"]["human_inbox_id"].startswith("promotion_review:")
+        assert body["data"]["live_capital_mutation"] is False
+
+        records = bff_main.command_store._get_all_commands()
+        assert len(records) == 1
+        assert records[0]["type"] == "QuarterlyRankingRecommendationSubmit"
+        assert records[0]["target"]["type"] == ObjectType.RANKING.value
+        assert records[0]["params"]["recommendation_id"] == review["recommendation_id"]
+        assert records[0]["params"]["live_capital_mutation"] is False
+
+        detail = client.get(
+            f"/bff/management/promotion-reviews/{review['review_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert detail.status_code == 200, detail.text
+        detail_data = detail.json()["data"]
+        assert detail_data["submitted"] is True
+        assert detail_data["status"] == "pending_human_gate"
+        assert detail_data["allowedActions"]["canApprove"] is True
+
+        inbox = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+        assert inbox.status_code == 200, inbox.text
+        inbox_items = inbox.json()["data"]["items"]
+        assert any(item["promotion_review_id"] == review["review_id"] for item in inbox_items)
+
+        inbox_detail = client.get(
+            f"/bff/management/human-inbox/{detail_data['human_inbox_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert inbox_detail.status_code == 200, inbox_detail.text
+        assert inbox_detail.json()["data"]["source_type"] == "promotion_review"
+
+
+def test_promotion_review_decision_requires_prior_submit() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        response = _post_decision(
+            client,
+            review["review_id"],
+            {"decision": "approve", "rationale": "Cannot approve before submit."},
+            headers=APPROVER_HEADERS,
+            idem=_idem(),
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["code"] == "HUMAN_GATE_PENDING"
+        assert bff_main.command_store._get_all_commands() == []
+
+
 def test_promotion_review_approve_submits_human_gate_command() -> None:
     with _isolated_client() as client:
         review = _first_review(client)
+        submit = _submit_review(client, review["review_id"], idem=_idem())
+        assert submit.status_code == 202, submit.text
         response = _post_decision(
             client,
             review["review_id"],
@@ -123,8 +215,8 @@ def test_promotion_review_approve_submits_human_gate_command() -> None:
         assert body["meta"]["requires_human_gate_decision"] is True
 
         records = bff_main.command_store._get_all_commands()
-        assert len(records) == 1
-        record = records[0]
+        assert len(records) == 2
+        record = records[1]
         assert record["type"] == "HumanGateApprove"
         assert record["target"]["type"] == ObjectType.HUMAN_GATE_ITEM.value
         assert record["params"]["review_id"] == review["review_id"]
@@ -135,6 +227,8 @@ def test_promotion_review_approve_submits_human_gate_command() -> None:
 def test_promotion_review_approve_with_conditions_preserves_conditions_and_rationale() -> None:
     with _isolated_client() as client:
         review = _first_review(client)
+        submit = _submit_review(client, review["review_id"], idem=_idem())
+        assert submit.status_code == 202, submit.text
         conditions = [
             "Run canary with paper-sized notional for one full market week.",
             {"metric": "slippage_bps", "max": 8},
@@ -157,7 +251,7 @@ def test_promotion_review_approve_with_conditions_preserves_conditions_and_ratio
         assert body["data"]["conditions"] == conditions
         assert body["data"]["rationale"] == rationale
 
-        record = bff_main.command_store._get_all_commands()[0]
+        record = bff_main.command_store._get_all_commands()[1]
         assert record["type"] == "HumanGateApprove"
         assert record["params"]["decision"] == "approve_with_conditions"
         assert record["params"]["conditions"] == conditions
@@ -167,6 +261,8 @@ def test_promotion_review_approve_with_conditions_preserves_conditions_and_ratio
 def test_promotion_review_reject_requires_non_empty_rationale() -> None:
     with _isolated_client() as client:
         review = _first_review(client)
+        submit = _submit_review(client, review["review_id"], idem=_idem())
+        assert submit.status_code == 202, submit.text
         response = _post_decision(
             client,
             review["review_id"],
@@ -178,12 +274,16 @@ def test_promotion_review_reject_requires_non_empty_rationale() -> None:
         error = response.json()["error"]
         assert error["code"] == "VALIDATION_FAILED"
         assert error["details"]["precondition_failed"] == "rationale"
-        assert bff_main.command_store._get_all_commands() == []
+        assert [record["type"] for record in bff_main.command_store._get_all_commands()] == [
+            "QuarterlyRankingRecommendationSubmit"
+        ]
 
 
 def test_promotion_review_decision_requires_approver_or_admin_role() -> None:
     with _isolated_client() as client:
         review = _first_review(client)
+        submit = _submit_review(client, review["review_id"], idem=_idem())
+        assert submit.status_code == 202, submit.text
         response = _post_decision(
             client,
             review["review_id"],
@@ -193,12 +293,16 @@ def test_promotion_review_decision_requires_approver_or_admin_role() -> None:
         )
         assert response.status_code == 403, response.text
         assert response.json()["error"]["code"] == "FORBIDDEN"
-        assert bff_main.command_store._get_all_commands() == []
+        assert [record["type"] for record in bff_main.command_store._get_all_commands()] == [
+            "QuarterlyRankingRecommendationSubmit"
+        ]
 
 
 def test_promotion_review_idempotency_replay_has_no_direct_live_mutation() -> None:
     with _isolated_client() as client:
         review = _first_review(client)
+        submit = _submit_review(client, review["review_id"], idem=_idem())
+        assert submit.status_code == 202, submit.text
         idem_key = _idem()
         payload = {"decision": "approve", "rationale": "Replay should return the same receipt."}
         first = _post_decision(
@@ -225,7 +329,7 @@ def test_promotion_review_idempotency_replay_has_no_direct_live_mutation() -> No
         assert second_body["data"]["live_capital_mutation"] is False
 
         records = bff_main.command_store._get_all_commands()
-        assert len(records) == 1
-        assert records[0]["target"]["type"] != ObjectType.RUNTIME.value
-        assert records[0]["params"]["live_capital_mutation"] is False
-        assert records[0]["params"]["runtime_mutation"] is False
+        assert len(records) == 2
+        assert records[1]["target"]["type"] != ObjectType.RUNTIME.value
+        assert records[1]["params"]["live_capital_mutation"] is False
+        assert records[1]["params"]["runtime_mutation"] is False
