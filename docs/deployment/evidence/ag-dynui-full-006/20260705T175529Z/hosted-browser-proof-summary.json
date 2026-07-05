@@ -1,0 +1,16 @@
+{
+  "task_id": "AG-DYNUI-FULL-006",
+  "generated_at": "2026-07-05T17:55:29Z",
+  "fe_base_url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "auth_subject": "pantheon-dev-browser",
+  "tenant": "pantheon-dev",
+  "deployment_commit": "37f8e320ac9a3fed621bfe3d36d34138f2b7c73d",
+  "has_agora_shell": true,
+  "has_ready_strategy": true,
+  "has_failed_to_load": false,
+  "agora_bff_response_count": 3,
+  "agora_bff_bad_responses": [],
+  "representative_screenshot": "hosted-trading-room-final.png",
+  "conclusion": "Hosted Agora Trading Room rendered the AGORA dark UI with ready strategies and proposal state; no Failed to load Trading Room message was present."
+}
