@@ -6,6 +6,10 @@ Source audit:
 
 - `docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md`
 
+Wave 0 owner artifact:
+
+- `AG-DYNUI-FULL-001-source-truth-and-parity-matrix.md`
+
 Dispatch command:
 
 ```sh

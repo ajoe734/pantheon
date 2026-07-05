@@ -142,3 +142,7 @@ Fleet tasks are materialized in:
 
 - `docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md`
 - `scripts/dispatch_agora_dynui_full_production_recovery_2026-07-05.py`
+
+Wave 0 source-truth and parity matrix:
+
+- `docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/AG-DYNUI-FULL-001-source-truth-and-parity-matrix.md`
