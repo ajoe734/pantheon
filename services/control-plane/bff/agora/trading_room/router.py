@@ -616,6 +616,7 @@ def _list_ready_strategy_projections(
     workshop_store: Any,
     scope: Dict[str, str],
     events: List[Dict[str, Any]],
+    assessed_at: str,
 ) -> List[Dict[str, Any]]:
     if workshop_store is None or not hasattr(workshop_store, "list_sessions"):
         return []
@@ -628,9 +629,26 @@ def _list_ready_strategy_projections(
     projections: List[Dict[str, Any]] = []
     for session in sessions:
         workshop_id = str(session.get("workshop_id") or "")
-        if not workshop_id or not hasattr(workshop_store, "get_latest_readiness_assessment"):
+        if not workshop_id:
             continue
-        readiness = workshop_store.get_latest_readiness_assessment(workshop_id)
+        readiness = (
+            workshop_store.get_latest_readiness_assessment(workshop_id)
+            if hasattr(workshop_store, "get_latest_readiness_assessment")
+            else None
+        )
+        if not isinstance(readiness, dict) and (
+            hasattr(workshop_store, "list_events")
+            and hasattr(workshop_store, "get_latest_completeness_snapshot")
+        ):
+            from ..strategy_workshop.router import _build_readiness_assessment
+
+            readiness = _build_readiness_assessment(
+                session=session,
+                events=workshop_store.list_events(workshop_id),
+                snapshot=workshop_store.get_latest_completeness_snapshot(workshop_id),
+                assessed_at=assessed_at,
+                assessment_version=1,
+            )
         if not isinstance(readiness, dict):
             continue
         projection = _ready_strategy_projection(
@@ -1808,6 +1826,7 @@ def create_trading_room_router(
             workshop_store=workshop_store,
             scope=scope,
             events=all_events,
+            assessed_at=now,
         )
         aggregate = TradingRoomAggregate(
             spec_version="1.0",
@@ -1853,6 +1872,7 @@ def create_trading_room_router(
                     workshop_store=workshop_store,
                     scope=scope,
                     events=all_events,
+                    assessed_at=utc_now(),
                 )
                 if item["summary"].get("strategy_id") == strategy_id
             ),

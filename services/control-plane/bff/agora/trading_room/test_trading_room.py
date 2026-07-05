@@ -256,6 +256,49 @@ def _ready_workshop_store(
     return workshop_store
 
 
+def _computed_ready_workshop_store(
+    *,
+    user_id: str = "user-001",
+    tenant_id: str = "tenant-001",
+    workshop_id: str = "ws-computed-ready-001",
+    strategy_id: str = "strat-computed-ready-001",
+    strategy_version: str = "wv-computed-ready-001",
+) -> MemoryWorkshopStore:
+    workshop_store = MemoryWorkshopStore()
+    workshop_store.create_session({
+        "workshop_id": workshop_id,
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "strategy_id": strategy_id,
+        "active_strategy_spec_registry_id": strategy_id,
+        "selected_version_id": strategy_version,
+        "status": "open",
+    })
+    workshop_store.create_event({
+        "workshop_id": workshop_id,
+        "actor_type": "operator",
+        "event_type": "message",
+        "private_content_ref": "priv://computed-ready/event-1",
+        "redacted_summary": "Winner branch strategy evidence captured.",
+    })
+    workshop_store.create_completeness_snapshot({
+        "workshop_id": workshop_id,
+        "strategy_version_id": strategy_version,
+        "state_map_json": {
+            "data_pit": "confirmed",
+            "exit_invalidation": "confirmed",
+            "entry_signal": "confirmed",
+            "risk_constraints": "confirmed",
+            "position_sizing": "confirmed",
+            "universe_rule": "confirmed",
+            "liquidity": "confirmed",
+        },
+        "blocking_items_json": [],
+        "next_question_json": {},
+    })
+    return workshop_store
+
+
 # ---------------------------------------------------------------------------
 # Store tests
 # ---------------------------------------------------------------------------
@@ -1280,6 +1323,30 @@ def test_get_trading_room_projects_ready_workshop_strategy():
     assert strategy["dashboard_recipe_id"] == "agora-trading-strat-ready-001-wv-ready-001"
     assert strategy["pending_event_counts"]["entry"] == 1
     print("✅ router: ready workshop readiness projects into Trading Room aggregate")
+
+
+def test_get_trading_room_projects_computed_ready_workshop_strategy():
+    store = make_trading_room_store()
+    workshop_store = _computed_ready_workshop_store()
+    client = _client(store, workshop_store=workshop_store)
+
+    aggregate_resp = client.get("/bff/agora/trading-room", headers={"Authorization": "Bearer test"})
+    detail_resp = client.get(
+        "/bff/agora/trading-room/strategies/strat-computed-ready-001",
+        headers={"Authorization": "Bearer test"},
+    )
+
+    assert aggregate_resp.status_code == 200, aggregate_resp.text
+    strategies = aggregate_resp.json()["strategies"]
+    assert len(strategies) == 1
+    assert strategies[0]["strategy_id"] == "strat-computed-ready-001"
+    assert strategies[0]["dashboard_recipe_id"] == "agora-trading-strat-computed-ready-001-wv-computed-ready-001"
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail = detail_resp.json()["data"]
+    assert detail["strategy_version"] == "wv-computed-ready-001"
+    assert detail["highest_ready_gate"] == "trading_room"
+    assert detail["evidence_refs"][0]["ref_type"] == "evidence_item"
+    print("✅ router: computed readiness from workshop state projects into Trading Room")
 
 
 def test_get_trading_room_does_not_project_blocked_workshop_strategy():

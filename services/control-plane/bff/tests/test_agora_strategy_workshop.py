@@ -379,6 +379,18 @@ def _create_workshop(client, idem_key: str, *, strategy_ref: str | None = None) 
     return resp.json()["data"]["workshop_id"]
 
 
+def _ready_state_map() -> dict:
+    return {
+        "data_pit": "confirmed",
+        "exit_invalidation": "confirmed",
+        "entry_signal": "confirmed",
+        "risk_constraints": "confirmed",
+        "position_sizing": "confirmed",
+        "universe_rule": "confirmed",
+        "liquidity": "confirmed",
+    }
+
+
 def _validate_schema(schema_name: str, payload: dict) -> None:
     jsonschema = pytest.importorskip("jsonschema")
     schema = json.loads((_AGORA_SCHEMA_ROOT / schema_name).read_text(encoding="utf-8"))
@@ -581,6 +593,104 @@ class TestWorkshopRouterEndpoints:
         )
         assert comp_resp.status_code == 200, comp_resp.text
         assert comp_resp.json()["data"] is None
+
+    def test_post_completeness_persists_readiness_cards_and_trading_room_strategy(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(
+            client,
+            "idem-comp-materialize-create-001",
+            strategy_ref="strat-live-materialize-001",
+        )
+        etag_before = _get_current_etag(client, workshop_id)
+
+        create_snapshot = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-comp-materialize-post-001",
+                "If-Match": etag_before,
+                "Content-Type": "application/json",
+            },
+            json={
+                "strategy_version_id": "wv-live-materialize-001",
+                "state_map_json": _ready_state_map(),
+                "blocking_items_json": [],
+                "next_question_json": {},
+            },
+        )
+
+        assert create_snapshot.status_code == 201, create_snapshot.text
+        assert "etag" in create_snapshot.headers
+        assert create_snapshot.headers["etag"] != etag_before
+        payload = create_snapshot.json()["data"]
+        assert payload["snapshot"]["strategy_version_id"] == "wv-live-materialize-001"
+        assert payload["readiness"]["highest_ready_gate"] == "trading_room"
+
+        completeness = client.get(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        readiness = client.get(
+            f"/bff/agora/workshops/{workshop_id}/readiness",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        cards = client.get(
+            f"/bff/agora/workshops/{workshop_id}/cards",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        trading_room = client.get(
+            "/bff/agora/trading-room",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        strategy_detail = client.get(
+            "/bff/agora/trading-room/strategies/strat-live-materialize-001",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+
+        assert completeness.status_code == 200, completeness.text
+        assert completeness.json()["data"]["state_map_json"]["entry_signal"] == "confirmed"
+        assert readiness.status_code == 200, readiness.text
+        assert readiness.json()["data"]["highest_ready_gate"] == "trading_room"
+        assert cards.status_code == 200, cards.text
+        card_types = [card["card_type"] for card in cards.json()["data"]]
+        assert "completeness_update" in card_types
+        assert "readiness_gate" in card_types
+        assert trading_room.status_code == 200, trading_room.text
+        strategies = trading_room.json()["strategies"]
+        assert [item["strategy_id"] for item in strategies] == ["strat-live-materialize-001"]
+        assert strategy_detail.status_code == 200, strategy_detail.text
+        assert strategy_detail.json()["data"]["strategy_version"] == "wv-live-materialize-001"
+
+    def test_post_completeness_requires_if_match_and_idempotency_key(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(
+            client,
+            "idem-comp-requires-create-001",
+            strategy_ref="strat-live-materialize-002",
+        )
+        etag = _get_current_etag(client, workshop_id)
+
+        missing_if_match = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-comp-missing-if",
+                "Content-Type": "application/json",
+            },
+            json={"state_map_json": _ready_state_map()},
+        )
+        missing_idem = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "If-Match": etag,
+                "Content-Type": "application/json",
+            },
+            json={"state_map_json": _ready_state_map()},
+        )
+
+        assert missing_if_match.status_code == 428, missing_if_match.text
+        assert missing_idem.status_code == 400, missing_idem.text
 
     def test_cards_returns_live_projection_for_existing_workshop(self, monkeypatch):
         client = _workshop_client(monkeypatch)

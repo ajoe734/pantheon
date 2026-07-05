@@ -11,6 +11,7 @@ Routes implemented in this module:
   POST /bff/agora/workshops/{workshop_id}/messages   — append event (private_content_ref only)
   GET  /bff/agora/workshops/{workshop_id}/events     — list events
   GET  /bff/agora/workshops/{workshop_id}/completeness — latest completeness snapshot
+  POST /bff/agora/workshops/{workshop_id}/completeness — persist completeness snapshot
   GET  /bff/agora/workshops/{workshop_id}/cards — typed live card projection
   GET  /bff/agora/workshops/{workshop_id}/readiness — latest readiness assessment
   POST /bff/agora/workshops/{workshop_id}/readiness/reassess — persist fresh readiness assessment
@@ -736,6 +737,16 @@ class WorkshopReadinessReassessRequest(BaseModel):
     force: bool = False
 
 
+class WorkshopCompletenessSnapshotRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    strategy_version_id: Optional[str] = None
+    state_map_json: Dict[str, Any] = Field(default_factory=dict)
+    blocking_items_json: List[Any] = Field(default_factory=list)
+    next_question_json: Dict[str, Any] = Field(default_factory=dict)
+    persist_readiness: bool = True
+
+
 # --------------------------------------------------------------------------- #
 # Router factory
 # --------------------------------------------------------------------------- #
@@ -1105,6 +1116,144 @@ def create_strategy_workshop_router(
                 "snapshot_at": utc_now(),
                 "capability": "agora.workshop.v1",
                 "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+            },
+        }
+
+    # ------------------------------------------------------------------ #
+    # POST /bff/agora/workshops/{workshop_id}/completeness — persist snapshot
+    # ------------------------------------------------------------------ #
+    @router.post("/bff/agora/workshops/{workshop_id}/completeness", status_code=201)
+    def create_workshop_completeness(
+        workshop_id: str,
+        response: Response,
+        body: WorkshopCompletenessSnapshotRequest,
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        scope = _scope(authorization, x_tenant_id)
+        session = _scoped_session(workshop_id, scope)
+        if if_match is None:
+            from models import ErrorCode
+            raise bff_error(
+                428,
+                ErrorCode.PRECONDITION_FAILED,
+                "If-Match header is required for workshop completeness updates",
+                "missing_if_match",
+                suggestion="GET the workshop first and supply the returned ETag in If-Match",
+            )
+        if idempotency_key is None:
+            from models import ErrorCode
+            raise bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "Idempotency-Key header is required",
+                "missing_idempotency_key",
+                suggestion="Supply a UUID v4 in the Idempotency-Key request header",
+            )
+        expected_version = _parse_etag_lock_version(if_match, workshop_id)
+        current_version = int(session.get("lock_version", 1))
+        if expected_version != current_version:
+            from models import ErrorCode
+            current_etag = f'W/"workshop:{workshop_id}:v{current_version}"'
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent modification: ETag mismatch",
+                f"If-Match {if_match!r} does not match current ETag {current_etag!r}",
+                details_extra={
+                    "current_etag": current_etag,
+                    "latest_href": f"/bff/agora/workshops/{workshop_id}",
+                },
+            )
+        if hasattr(store, "check_and_record_idempotency_key"):
+            idem_scope = (
+                f"{scope.user_id}:{scope.tenant_id}:{workshop_id}"
+                f":POST:/bff/agora/workshops/completeness"
+            )
+            if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
+                from models import ErrorCode
+                raise bff_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Duplicate Idempotency-Key",
+                    idempotency_key,
+                )
+        if not hasattr(store, "create_completeness_snapshot"):
+            from models import ErrorCode
+            raise bff_error(
+                501,
+                ErrorCode.NOT_IMPLEMENTED,
+                "Workshop store does not support completeness snapshots",
+                "completeness_store_unavailable",
+            )
+
+        strategy_version_id = (
+            body.strategy_version_id
+            or session.get("selected_version_id")
+            or session.get("active_strategy_spec_registry_id")
+            or session.get("strategy_id")
+            or workshop_id
+        )
+        snapshot = store.create_completeness_snapshot({
+            "workshop_id": workshop_id,
+            "strategy_version_id": strategy_version_id,
+            "state_map_json": body.state_map_json,
+            "blocking_items_json": body.blocking_items_json,
+            "next_question_json": body.next_question_json,
+        })
+        events = store.list_events(workshop_id)
+        latest = (
+            store.get_latest_readiness_assessment(workshop_id)
+            if hasattr(store, "get_latest_readiness_assessment")
+            else None
+        )
+        next_assessment_version = int((latest or {}).get("assessment_version", 0)) + 1
+        assessment = _build_readiness_assessment(
+            session=session,
+            events=events,
+            snapshot=snapshot,
+            assessed_at=utc_now(),
+            assessment_version=next_assessment_version,
+        )
+        stored_assessment = (
+            store.create_readiness_assessment(assessment)
+            if body.persist_readiness and hasattr(store, "create_readiness_assessment")
+            else assessment
+        )
+        new_lock_version = store.update_session_lock_version(workshop_id)
+        new_etag = f'W/"workshop:{workshop_id}:v{new_lock_version}"'
+        response.headers["ETag"] = new_etag
+        _ws_publish(
+            workshop_id,
+            "workshop.completeness.updated",
+            {
+                "snapshot_id": snapshot["snapshot_id"],
+                "strategy_version_id": snapshot.get("strategy_version_id"),
+            },
+            utc_now_fn=utc_now,
+        )
+        _ws_publish(
+            workshop_id,
+            "workshop.readiness.updated",
+            {
+                "assessment_id": stored_assessment["assessment_id"],
+                "assessment_version": stored_assessment["assessment_version"],
+                "highest_ready_gate": stored_assessment.get("highest_ready_gate"),
+            },
+            utc_now_fn=utc_now,
+        )
+        return {
+            "data": {
+                "snapshot": snapshot,
+                "readiness": stored_assessment,
+            },
+            "meta": {
+                "snapshot_at": utc_now(),
+                "capability": "agora.workshop.v1",
+                "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "etag": new_etag,
             },
         }
 
