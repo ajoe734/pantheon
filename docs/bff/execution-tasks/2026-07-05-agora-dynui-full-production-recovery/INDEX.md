@@ -65,7 +65,7 @@ pairs for fleet execution.
 | 0 | `AG-DYNUI-FULL-001` | Codex | Claude2 | Closed source-truth/parity matrix; historical reviewer only. |
 | 1 | `AG-DYNUI-FULL-002` | Codex | Codex2 | Implement live Strategy Workshop cards/readiness BFF routes and tests. |
 | 2 | `AG-DYNUI-FULL-003` | Codex | Codex2 | Materialize ready strategies into the live Trading Room aggregate; backend partial is merged, closeout review remains. |
-| 2 | `AG-DYNUI-FULL-004` | Codex | Codex2 | Wire frontend workshop handoff and explicit strategy route behavior; execute-plans PR #185 is open. |
+| 2 | `AG-DYNUI-FULL-004` | Codex | Codex2 | Frontend handoff route context merged in execute-plans PR #185, deployed as `4cce2d10f14abcc7af5f15638e0e0efa63885944`, and recorded as frontend handoff partial because the live browser-scoped BFF still has zero ready strategies. |
 | 3 | `AG-DYNUI-FULL-005` | Codex | Codex2 | Prove live proposal/accept/workspace/grid/revision/version/rollback without fixtures. |
 | 4 | `AG-DYNUI-FULL-006` | Codex | Codex2 | Replace hosted E2E fixture gate with no-fixture production gate and fix CI gate failures. |
 | 5 | `AG-DYNUI-FULL-007` | Codex | Codex2 | Final production closeout, deploy evidence, and residual-risk audit. |
