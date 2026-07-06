@@ -84,6 +84,14 @@ def test_strict_mode_missing_secret_fails_closed():
     assert e.value.code in ("AUTH_JWT_SECRET_MISSING", "AUTH_JWT_UNVERIFIED")
 
 
+def test_permissive_plain_bearer_fails_closed():
+    env = {"PANTHEON_RUNTIME_AUTH_MODE": "permissive", "PANTHEON_RUNTIME_JWT_SECRET": ""}
+    with pytest.raises(A.AuthError) as e:
+        A.validate_request_auth(authorization="Bearer definitely-invalid-no-role-token", env=env)
+    assert e.value.status_code == 403
+    assert e.value.code == "AUTH_TOKEN_FORMAT"
+
+
 def test_tampered_signature_rejected():
     t = A.encode_jwt_hs256(_claims(), secret=SECRET)
     h, p, s = t.split(".")
