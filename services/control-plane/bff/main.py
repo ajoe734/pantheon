@@ -161,6 +161,7 @@ def _bool_from_env(name: str, *, default: bool = False) -> bool:
 
 
 _BFF_AUTH_STUB_ENV = "PANTHEON_BFF_AUTH_STUB"
+_BFF_STUB_LEGACY_BARE_TOKENS_ENV = "PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS"
 _PRODUCTION_STRICT_ENVIRONMENTS = {
     "canary",
     "live",
@@ -954,6 +955,8 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 # Dev/test stub mode is available only when PANTHEON_BFF_AUTH_STUB=true and
 # PANTHEON_BFF_AUTH_MODE is not strict.
 # Stub accepts "Bearer <operator_id>:<comma_roles>[:mfa]" for local iteration.
+# Legacy bare stub tokens are accepted only when explicitly allowlisted by
+# PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS for tests/migration.
 #
 # BFF-scoped env vars (mapped to runtime_auth_inbound key names internally):
 #   PANTHEON_BFF_AUTH_MODE     - "strict" (default) or "permissive"
@@ -1172,8 +1175,25 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             reason="Token is absent or not a Bearer token",
             suggestion="Re-authenticate and include a valid Bearer token",
         )
-    token = authorization[len("Bearer "):]
+    token = authorization[len("Bearer "):].strip()
+    if not token:
+        raise _bff_error(
+            status_code=401,
+            code=ErrorCode.AUTH_REQUIRED,
+            message="Missing or invalid Authorization header",
+            reason="Token is absent or not a Bearer token",
+            suggestion="Re-authenticate and include a valid Bearer token",
+        )
     if ":" not in token:
+        allowed_bare_tokens = set(_env_csv(_BFF_STUB_LEGACY_BARE_TOKENS_ENV))
+        if token not in allowed_bare_tokens:
+            raise _bff_error(
+                status_code=403,
+                code=ErrorCode.FORBIDDEN,
+                message="Stub bearer token must include explicit roles",
+                reason="AUTH_STUB_TOKEN_NO_ROLES",
+                suggestion="Use Bearer <operator_id>:<comma_roles> for dev stub auth",
+            )
         lowered = token.lower()
         inferred_roles = ["operator"]
         if lowered.startswith("admin_"):
