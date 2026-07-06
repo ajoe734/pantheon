@@ -13,6 +13,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import runtime_auth_inbound as A
@@ -49,10 +51,11 @@ def test_legacy_two_part_token_still_works():
     assert ctx.mfa_verified is False
 
 
-def test_plain_token_defaults_role():
-    ctx = _ctx("internal-caller")
-    assert "operator" in ctx.roles
-    assert ctx.mfa_verified is False
+def test_plain_token_fails_closed():
+    with pytest.raises(A.AuthError) as exc_info:
+        _ctx("internal-caller")
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.code == "AUTH_TOKEN_FORMAT"
 
 
 def test_non_mfa_third_segment_does_not_pollute_roles():

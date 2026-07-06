@@ -7,7 +7,7 @@ surface share a single auth contract:
 * Authorization header must be ``Bearer <token>``.
 * The token may be either an HS256 JWT (signed with
   ``PANTHEON_RUNTIME_JWT_SECRET``) or, in permissive mode, a structured legacy
-  token shaped ``actor_id[:role1,role2]``. The structured form is sufficient for
+  token shaped ``actor_id:role1,role2``. The structured form is sufficient for
   internal-zone callers that already authenticate at the network boundary; the
   JWT form is required when ``PANTHEON_RUNTIME_AUTH_MODE=strict``.
 * RBAC: each protected route names the roles permitted to call it. Callers must
@@ -40,8 +40,8 @@ PANTHEON_RUNTIME_MFA_REQUIRED
     Default ``false`` keeps the legacy behaviour of validating only when
     present, which existing integration tests depend on.
 PANTHEON_RUNTIME_DEFAULT_ROLE
-    Role assigned to plain (non-structured, non-JWT) bearer tokens in
-    permissive mode. Defaults to ``operator``.
+    Role assigned to verified JWTs that omit role claims. Plain non-JWT bearer
+    tokens are rejected even in permissive mode.
 PANTHEON_RUNTIME_JWKS_URI
     Optional JWKS endpoint. When set, JWT-shaped bearer tokens are verified
     through the JWKS path instead of the HS256 shared-secret path.
@@ -488,7 +488,7 @@ def _verify_jwt_jwks(
 
 
 def _parse_structured_token(token: str, default_role: str) -> AuthContext:
-    """Parse the ``actor_id[:role1,role2[:mfa[:cap1,cap2]]]`` stub shape.
+    """Parse the ``actor_id:role1,role2[:mfa[:cap1,cap2]]`` stub shape.
 
     Splitting on only the first colon glued the ``:mfa`` (and capability)
     suffixes onto the last role, so the canonical dev token
@@ -496,13 +496,29 @@ def _parse_structured_token(token: str, default_role: str) -> AuthContext:
     and every read 403'd in permissive mode. Split all segments: actor id,
     comma-roles, an optional ``mfa`` marker, and optional capabilities.
     """
+    if ":" not in token:
+        raise AuthError(
+            "AUTH_TOKEN_FORMAT",
+            "Permissive auth requires a structured actor:role bearer token or a valid JWT",
+            403,
+        )
     parts = token.split(":")
-    actor_id = parts[0].strip() or "internal-api-operator"
+    actor_id = parts[0].strip()
+    if not actor_id:
+        raise AuthError(
+            "AUTH_TOKEN_FORMAT",
+            "Structured bearer token requires an actor id",
+            403,
+        )
     raw_roles: list[str] = []
     if len(parts) >= 2:
         raw_roles = [role.strip() for role in parts[1].split(",") if role.strip()]
     if not raw_roles:
-        raw_roles = [default_role]
+        raise AuthError(
+            "AUTH_TOKEN_NO_ROLES",
+            "Structured bearer token requires at least one role",
+            403,
+        )
     mfa_verified = len(parts) >= 3 and parts[2].strip().lower() == "mfa"
     capabilities: list[str] = []
     if len(parts) >= 4:
