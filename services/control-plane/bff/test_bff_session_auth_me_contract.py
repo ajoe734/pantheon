@@ -133,6 +133,21 @@ def test_bff_me_permissive_rejects_plain_no_role_bearer(monkeypatch) -> None:
     assert fleet_response.status_code in {401, 403}, fleet_response.text
 
 
+def test_bff_me_stub_rejects_plain_no_role_bearer(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.delenv("PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS", raising=False)
+
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    headers = {"Authorization": "Bearer definitely-invalid-no-role-token"}
+
+    me_response = client.get("/bff/me", headers=headers)
+    fleet_response = client.get("/bff/management/persona-fleet", headers=headers)
+
+    assert me_response.status_code == 403, me_response.text
+    assert fleet_response.status_code == 403, fleet_response.text
+
+
 def test_session_lifecycle_routes_require_auth_by_default(monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
 
