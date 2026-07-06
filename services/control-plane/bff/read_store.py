@@ -2558,7 +2558,21 @@ class CanonicalSnapshotAdapter:
             available, _ = self._load_dataset("capital_pools")
             return available, None
         available, records = self._load_dataset("capital_pools")
-        return available, records.get(str(pool_id))
+        if not available:
+            return available, None
+        record = records.get(str(pool_id))
+        if record is not None:
+            return True, record
+        # The dataset dict may be keyed by a value other than the pool's public id: when the
+        # canonical payload is a JSON object, `_normalize_records` keys by the object's own keys
+        # (not `pool_id`/`id`), while `list_capital_pools` exposes each pool as `pool_id or id`.
+        # Resolve by that same identity so every id the list surface returns has a working detail
+        # endpoint (previously such pools 404'd even though they appeared in the list).
+        target = str(pool_id)
+        for candidate in records.values():
+            if str(candidate.get("pool_id") or candidate.get("id") or "") == target:
+                return True, candidate
+        return True, None
 
     def binding(self, binding_id: Optional[str]) -> tuple[bool, Optional[Dict[str, Any]]]:
         if not binding_id:
