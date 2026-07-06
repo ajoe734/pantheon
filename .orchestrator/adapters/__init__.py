@@ -9,6 +9,7 @@ from adapters.copilot_local import CopilotLocalAdapter
 from adapters.codex import CodexAdapter
 from adapters.file_inbox import FileInboxAdapter
 from adapters.gemini import GeminiAdapter
+from adapters.qwen import QwenAdapter
 from adapters.vscode_chat import VSCodeChatAdapter
 from adapters.vscode_command import VSCodeCommandAdapter
 
@@ -24,6 +25,7 @@ ADAPTERS: dict[str, type[BaseAdapter]] = {
     "antigravity": AntigravityAdapter,
     "gemini": GeminiAdapter,
     "codex": CodexAdapter,
+    "qwen": QwenAdapter,
 }
 
 

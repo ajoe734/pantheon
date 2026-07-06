@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Pantheon orchestrator shim for the Qwen Code CLI.
+# Ensures Node >=22 (qwen-code fails on system Node 18) wins PATH, then execs
+# the npm-global qwen binary. Auth comes from ~/.qwen/settings.json (openai type).
+set -euo pipefail
+host_home="${PANTHEON_HOST_HOME:-/home/lupin}"
+export PATH="$host_home/.local/bin:$host_home/.npm-global/bin:$PATH"
+qwen_bin="$host_home/.npm-global/bin/qwen"
+if [[ ! -x "$qwen_bin" ]]; then
+  echo "qwen CLI not found at $qwen_bin" >&2
+  exit 1
+fi
+exec "$qwen_bin" "$@"
