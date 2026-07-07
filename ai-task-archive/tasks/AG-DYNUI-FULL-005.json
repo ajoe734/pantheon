@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-FULL-005",
+  "archived_at": "2026-07-07T15:06:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-FULL-005",
+    "title": "Connect live dynamic workspace workflow end to end",
+    "summary_zh": "用真實 ready strategy 串 proposal generation、accept、workspace load、layout patch、widget revision、version history、rollback；禁止用 page.route fixture 當通過證明。",
+    "phase": "Agora DYNUI Full Production Recovery / Wave 3 live dynamic workflow",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-FULL-003",
+      "AG-DYNUI-FULL-004"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/trading_room/router.py",
+      "services/control-plane/bff/agora/trading_room/store.py",
+      "services/control-plane/bff/agora/trading_room/test_trading_room.py",
+      "execute-plans/src/agora/trading-room/",
+      "execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx",
+      "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts",
+      "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-closeout/INDEX.md"
+    ],
+    "acceptance": [
+      "live proposal generation succeeds for a real ready strategy/version",
+      "live accept creates a workspace and returns an ETag",
+      "live workspace load returns the accepted workspace",
+      "live layout PATCH requires and honors If-Match/idempotency",
+      "live widget revision proposal and accept persist and update workspace/version state",
+      "live version history lists all generated versions",
+      "live rollback creates a new version and visible workspace state",
+      "all write routes preserve tenant/user scope and WidgetSpec allowlists",
+      "evidence includes live transcript with request ids and no page.route fixtures"
+    ],
+    "next": "Board/archive reconciliation removed the stale untouched todo row. Dynamic workspace workflow was published by Pantheon PR #3032 merge 66efc0e849f3facb33889634fe48a5947603cafb and re-proven by the hosted AG-DYNUI-FULL-006 gate and execute-plans continuity PR #198.",
+    "last_update": "2026-07-07T15:06:53Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_full_production_recovery_2026-07-05",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "reconciliation_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-closeout/AG-DYNUI-FULL-007-production-closeout.md",
+      "production_inventory": "docs/bff/execution-tasks/2026-07-06-agora-srclive-production-inventory/INDEX.md"
+    },
+    "production_recovery_children": [
+      "AG-DYNUI-FULL-001",
+      "AG-DYNUI-FULL-002",
+      "AG-DYNUI-FULL-003",
+      "AG-DYNUI-FULL-004",
+      "AG-DYNUI-FULL-005",
+      "AG-DYNUI-FULL-006",
+      "AG-DYNUI-FULL-007"
+    ],
+    "wave": 3,
+    "fleet_lane": "agora-live-dynamic-workflow",
+    "review_notes_zh": [
+      "Board row was stale relative to merged dynamic workflow evidence; no Agora runtime code changed during reconciliation.",
+      "The task is archived from the clean AG-DYNUI-FULL-007-BOARD-RECONCILE worktree because the live status root was dirty and unsafe for direct mutation."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-07T15:06:53Z",
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "commit": "66efc0e849f3facb33889634fe48a5947603cafb",
+      "commit_subject": "Merge pull request #3032 from task/AG-DYNUI-FULL-005-LIVE-DYNAMIC-WORKFLOW-20260705",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true,
+      "related_prs": [
+        "https://github.com/ajoe734/pantheon/pull/3032",
+        "https://github.com/ajoe734/execute-plans/pull/187",
+        "https://github.com/ajoe734/execute-plans/pull/198"
+      ]
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}
