@@ -1,0 +1,80 @@
+{
+  "task_id": "SRCLIVE-004-READBACK-RECONCILE",
+  "parent_task_id": "SRCLIVE-004",
+  "observed_at": "2026-07-07T15:08:42Z",
+  "bff_base": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "source_ingest_base": null,
+  "commands": [
+    {
+      "name": "default_token_check",
+      "command": "python3 scripts/verify_srclive_readback.py --json",
+      "result": "failed",
+      "http_status": 401,
+      "error_code": "AUTH_REQUIRED",
+      "reason": "SESSION_LOGGED_OUT",
+      "correlation_id": "45da8131-6d5e-479c-b3b1-6c94193ecb45"
+    },
+    {
+      "name": "authenticated_bff_readback",
+      "command": "BFF_TOKEN=<dev structured admin token> python3 scripts/verify_srclive_readback.py --json",
+      "result": "passed",
+      "token_kind": "dev structured bearer",
+      "token_actor": "pantheon-dev-browser",
+      "token_role": "admin:mfa"
+    }
+  ],
+  "bff": {
+    "persona-crypto": {
+      "provider_statuses": {
+        "coingecko": "read_ok",
+        "kraken": "datasource_smoke_ok"
+      },
+      "source_health_source": "source_ingest"
+    },
+    "persona-tw-equity": {
+      "provider_statuses": {
+        "finmind": "read_ok",
+        "mops": "read_ok",
+        "shioaji": "read_ok",
+        "tpex": "read_ok",
+        "twse": "read_ok"
+      },
+      "source_health_source": "source_ingest"
+    },
+    "persona-us-equity": {
+      "provider_statuses": {
+        "alphavantage": "credential_unavailable",
+        "finra": "read_ok",
+        "fred": "read_ok",
+        "ibkr": "read_ok",
+        "polygon": "credential_unavailable",
+        "sec_edgar": "read_ok",
+        "yahoo": "read_ok"
+      },
+      "source_health_source": "source_ingest"
+    }
+  },
+  "status_reconciliation": {
+    "active_follow_up_task": "SRCLIVE-004-READBACK-RECONCILE",
+    "duplicate_parent_row": "superseded_by_follow_up",
+    "no_duplicate_active_implementation_lane": true,
+    "historical_parent_prs": [
+      {
+        "pr": 2539,
+        "merge_commit": "87c382c779869c8920a73aa794f308c9acb8046c"
+      },
+      {
+        "pr": 2548,
+        "merge_commit": "80ae5544591dad98d2fb1a25fe45fcb9f5abbb26"
+      },
+      {
+        "pr": 2554,
+        "merge_commit": "f353139ed446d97946a7745a3aaf0a5ca8a634b6"
+      },
+      {
+        "pr": 2557,
+        "merge_commit": "4ecd5f78652fe82f0e07a4129bff9736dc4b443f"
+      }
+    ]
+  }
+}
