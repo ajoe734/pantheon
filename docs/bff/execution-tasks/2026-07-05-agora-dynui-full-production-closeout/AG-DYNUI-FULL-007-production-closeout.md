@@ -96,3 +96,27 @@ Additional evidence to record during reconciliation:
 - Final hosted probe must remain free of Failed to load Trading Room, STRICT TYPED ERROR, sse_open_failed, and seed fallback blocked.
 
 The owned work is status/archive reconciliation and current-proof recording only. If the live status checkout is dirty or unsafe to mutate, the worker must record that blocker and use a reviewed closeout PR rather than direct state edits.
+
+## 2026-07-07 Board Reconciliation Patch
+
+Direct live-root mutation was blocked: `/home/lupin/code/pantheon` was on
+`retired/watchdog-flock-liveness-local-state-20260611` with unrelated modified
+and untracked state files, including `ai-task-archive/index.json` and many
+archive/task brief artifacts. Per the production-level rule above, this task
+uses a clean reviewed patch instead of hand-editing that live checkout.
+
+Patch scope:
+
+- add terminal archive snapshots for stale board rows
+  `AG-DYNUI-FULL-003`, `AG-DYNUI-FULL-005`, `AG-DYNUI-FULL-006`, and
+  `AG-DYNUI-FULL-007`;
+- mark `AG-DYNUI-FULL-003/005/006` completed from the published PR/deploy/live
+  evidence already listed in this packet;
+- mark the stale generic `AG-DYNUI-FULL-007` row superseded by the explicit
+  `AG-DYNUI-FULL-007-BOARD-RECONCILE` task and `AG-DYNUI-FULL-008`
+  design-parity maintenance, so it cannot trigger an Agora runtime rebuild;
+- update `ai-task-archive/index.json` only for the four new terminal snapshots;
+- commit the generated task brief for the reconciliation task.
+
+No `services/`, `execute-plans/`, BFF route, UI, deployment, or runtime behavior
+is changed by this reconciliation patch.
