@@ -11279,12 +11279,22 @@ class ReadSurfaceStore:
     def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not pool_id:
             return None
+        # Cheap fast paths for the common local/canonical cases.
         local_pool = self._local_overlay_records("capital_pools").get(pool_id)
-        if local_pool is not None:
+        if isinstance(local_pool, dict):
             return local_pool
         available, raw = self._canonical.capital_pool(pool_id)
-        if available:
-            return self._project_canonical_capital_pool(raw) if raw else None
+        if available and raw:
+            return self._project_canonical_capital_pool(raw)
+        # Definitive fallback: resolve against the EXACT set list_capital_pools() surfaces, so any
+        # pool the list shows has a working detail endpoint. This covers every source the list
+        # merges — the BFF local dev write store (persona-created paper pools), market-persona
+        # default pools (pool-*-paper), and canonical — without this method having to re-enumerate
+        # (and inevitably miss) each one. Previously these 404'd even though they appear in the list.
+        target = str(pool_id)
+        for pool in self.list_capital_pools(include_market_persona_defaults=True):
+            if str(pool.get("id") or pool.get("pool_id") or "") == target:
+                return pool
         return None
 
     def create_capital_pool(
