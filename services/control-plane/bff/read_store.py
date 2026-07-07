@@ -1237,6 +1237,7 @@ def _merge_market_persona_fleet(
                 "status": "ready",
                 "owner_id": "pathreon-management",
                 "owner_type": "control-plane",
+                "capital_mode": "paper",
                 "risk_policy_ref": f"risk-policy-{market.lower()}-paper",
                 "single_runtime_enforced": True,
                 "currency": "TWD" if market == "TW" else "USD",
@@ -2557,7 +2558,21 @@ class CanonicalSnapshotAdapter:
             available, _ = self._load_dataset("capital_pools")
             return available, None
         available, records = self._load_dataset("capital_pools")
-        return available, records.get(str(pool_id))
+        if not available:
+            return available, None
+        record = records.get(str(pool_id))
+        if record is not None:
+            return True, record
+        # The dataset dict may be keyed by a value other than the pool's public id: when the
+        # canonical payload is a JSON object, `_normalize_records` keys by the object's own keys
+        # (not `pool_id`/`id`), while `list_capital_pools` exposes each pool as `pool_id or id`.
+        # Resolve by that same identity so every id the list surface returns has a working detail
+        # endpoint (previously such pools 404'd even though they appeared in the list).
+        target = str(pool_id)
+        for candidate in records.values():
+            if str(candidate.get("pool_id") or candidate.get("id") or "") == target:
+                return True, candidate
+        return True, None
 
     def binding(self, binding_id: Optional[str]) -> tuple[bool, Optional[Dict[str, Any]]]:
         if not binding_id:
@@ -9100,6 +9115,29 @@ class ReadSurfaceStore:
             return records
         return {}
 
+    def _local_bff_write_records(
+        self,
+        dataset: str,
+        key_candidates: Optional[List[str]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        records = self._local_dataset(dataset)
+        if not isinstance(records, dict):
+            return {}
+        keys = key_candidates or self._MARKET_PERSONA_RECORD_KEYS.get(dataset, ["id"])
+        out: Dict[str, Dict[str, Any]] = {}
+        for fallback_key, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+            persistence_mode = str(record.get("persistenceMode") or metadata.get("persistenceMode") or "").strip()
+            write_authority = str(record.get("canonicalWriteAuthority") or "").strip()
+            if persistence_mode != "bff_local_dev_store" and not write_authority:
+                continue
+            key = _record_key(record, keys) or str(fallback_key or "").strip()
+            if key:
+                out[key] = json.loads(json.dumps(record))
+        return out
+
     def _local_bff_persona_records(self) -> Dict[str, Dict[str, Any]]:
         records = self._local_dataset("personas")
         if not isinstance(records, dict):
@@ -10731,7 +10769,10 @@ class ReadSurfaceStore:
         risk_policy_ref: Optional[str] = None,
         include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
-        local_pools = self._local_overlay_records("capital_pools")
+        local_pools = {
+            **self._local_bff_write_records("capital_pools", ["pool_id", "id"]),
+            **self._local_overlay_records("capital_pools"),
+        }
         available, raw_pools = self._canonical.list_records("capital_pools")
         if available:
             pools_by_id = {
@@ -10773,6 +10814,10 @@ class ReadSurfaceStore:
         validity: Optional[str] = None,
         include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
+        local_bindings = {
+            **self._local_bff_write_records("persona_bindings", ["binding_id", "id"]),
+            **self._local_overlay_records("persona_bindings"),
+        }
         available, raw_bindings = self._canonical.list_records("persona_bindings")
         if available:
             bindings_by_id = {
@@ -10785,6 +10830,10 @@ class ReadSurfaceStore:
                 for binding_id, binding in (self._local_fallback("persona_bindings") or {}).items()
                 if isinstance(binding, dict)
             }
+        for binding_id, binding in local_bindings.items():
+            key = str(binding.get("binding_id") or binding.get("id") or binding_id)
+            if key:
+                bindings_by_id[key] = json.loads(json.dumps(binding))
         if include_market_persona_defaults:
             bindings_by_id = self._merge_market_persona_records(
                 "persona_bindings",
@@ -10801,6 +10850,40 @@ class ReadSurfaceStore:
         if validity:
             bindings = [b for b in bindings if b.get("validity") == validity]
         return sorted(bindings, key=lambda x: x.get("id", ""))
+
+    def create_persona_binding(
+        self,
+        *,
+        binding_id: str,
+        persona_id: str,
+        capital_pool_id: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        role: str = "paper_owner",
+        validity: str = "active",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        bindings = self._ensure_local_overlay_records("persona_bindings")
+        timestamp = created_at or _utc_now_rfc3339()
+        record = {
+            "id": binding_id,
+            "binding_id": binding_id,
+            "persona_capital_binding_id": binding_id,
+            "persona_id": persona_id,
+            "capital_pool_id": capital_pool_id,
+            "role": role,
+            "validity": validity,
+            "status": validity,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "metadata": json.loads(json.dumps(metadata or {})),
+            "canonicalWriteAuthority": "capital_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        bindings[binding_id] = record
+        self._save()
+        return record
 
     def _deployment_saga_progress_for_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
         available, sagas = self._canonical.list_records("deployment_sagas")
@@ -10923,6 +11006,10 @@ class ReadSurfaceStore:
         capital_pool_id: Optional[str] = None,
         include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
+        local_plans = {
+            **self._local_bff_write_records("deployment_plans", ["plan_id", "id"]),
+            **self._local_overlay_records("deployment_plans"),
+        }
         available, raw_plans = self._canonical.list_records("deployment_plans")
         if available:
             runtime_by_plan: Dict[str, Dict[str, Any]] = {}
@@ -10948,7 +11035,6 @@ class ReadSurfaceStore:
                 )
         else:
             plans = list((self._local_fallback("deployment_plans") or {}).values())
-        local_plans = self._local_overlay_records("deployment_plans")
         if local_plans:
             plans_by_id = {str(p.get("id") or p.get("plan_id") or ""): p for p in plans}
             for overlay_key, plan in local_plans.items():
@@ -11007,7 +11093,10 @@ class ReadSurfaceStore:
         version: Optional[str] = None,
         include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
-        local_bindings = self._local_overlay_records("runtime_bindings")
+        local_bindings = {
+            **self._local_bff_write_records("runtime_bindings", ["runtime_id", "runtime_binding_id", "binding_id", "id"]),
+            **self._local_overlay_records("runtime_bindings"),
+        }
         available, raw_bindings = self._canonical.list_records("runtime_bindings")
         if available:
             bindings_by_id = {
@@ -11190,12 +11279,22 @@ class ReadSurfaceStore:
     def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not pool_id:
             return None
+        # Cheap fast paths for the common local/canonical cases.
         local_pool = self._local_overlay_records("capital_pools").get(pool_id)
-        if local_pool is not None:
+        if isinstance(local_pool, dict):
             return local_pool
         available, raw = self._canonical.capital_pool(pool_id)
-        if available:
-            return self._project_canonical_capital_pool(raw) if raw else None
+        if available and raw:
+            return self._project_canonical_capital_pool(raw)
+        # Definitive fallback: resolve against the EXACT set list_capital_pools() surfaces, so any
+        # pool the list shows has a working detail endpoint. This covers every source the list
+        # merges — the BFF local dev write store (persona-created paper pools), market-persona
+        # default pools (pool-*-paper), and canonical — without this method having to re-enumerate
+        # (and inevitably miss) each one. Previously these 404'd even though they appear in the list.
+        target = str(pool_id)
+        for pool in self.list_capital_pools(include_market_persona_defaults=True):
+            if str(pool.get("id") or pool.get("pool_id") or "") == target:
+                return pool
         return None
 
     def create_capital_pool(
@@ -11221,6 +11320,12 @@ class ReadSurfaceStore:
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": actor_id,
+            "metadata": {
+                "created_via": "POST /bff/personas",
+                "persistenceMode": "bff_local_dev_store",
+            },
+            "canonicalWriteAuthority": "capital_service",
+            "persistenceMode": "bff_local_dev_store",
         }
         pools[pool_id] = record
         self._save()
@@ -11238,16 +11343,19 @@ class ReadSurfaceStore:
         actor_id: str,
         created_at: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
+        state: str = "stopped",
     ) -> Dict[str, Any]:
         runtimes = self._ensure_local_overlay_records("runtime_bindings")
         timestamp = created_at or _utc_now_rfc3339()
         clean_params = json.loads(json.dumps(params or {}))
+        clean_state = str(state or "stopped").strip() or "stopped"
+        capital_pool_id = clean_params.get("capital_pool_id")
         record = {
             "id": runtime_id,
             "runtime_id": runtime_id,
             "name": name,
-            "state": "stopped",
-            "status": "stopped",
+            "state": clean_state,
+            "status": clean_state,
             "persona_id": persona_id,
             "binding_id": binding_id,
             "runtime_binding_id": binding_id,
@@ -11257,6 +11365,7 @@ class ReadSurfaceStore:
             "runtime_kind": runtime_kind,
             "deployment_stage": runtime_kind,
             "deployment_mode": runtime_kind,
+            "capital_pool_id": capital_pool_id,
             "params": clean_params,
             "created_at": timestamp,
             "updated_at": timestamp,

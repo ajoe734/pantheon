@@ -99,12 +99,14 @@ def test_default_read_store_has_us_tw_crypto_persona_execution_chain() -> None:
             assert pool is not None
             assert pool["pool_id"] == pool_id
             assert pool["live_capital_enabled"] is False
+            assert pool["capital_mode"] == "paper"
 
             runtime = store.get_runtime_binding_by_runtime_id(f"runtime-{market.lower()}-equity-paper")
             if market == "CRYPTO":
                 runtime = store.get_runtime_binding_by_runtime_id("runtime-crypto-paper")
             assert runtime is not None
             assert runtime["deployment_stage"] == "paper"
+            assert runtime["runtime_binding_id"].endswith("-paper")
             assert runtime["metadata"]["live_write_enabled"] is False
 
             capabilities = store.get_capability_snapshot_for_persona(persona_id)
@@ -136,6 +138,8 @@ def test_persona_catalog_and_health_expose_market_fields() -> None:
         assert catalog[persona_id]["marketScope"] == [market]
         assert catalog[persona_id]["governanceRequired"] is True
         assert catalog[persona_id]["deploymentStage"] == "paper"
+        assert catalog[persona_id]["paperLedgerId"] == f"paper-ledger-{persona_id}"
+        assert "capitalPoolId" not in catalog[persona_id]
         assert catalog[persona_id]["dataSourceStatus"]["live_ingestion_enabled"] is False
         assert catalog[persona_id]["dataSources"]
         assert catalog[persona_id]["researchStatus"]["can_deploy"] is False
@@ -153,6 +157,8 @@ def test_persona_catalog_and_health_expose_market_fields() -> None:
         row = health_by_id[persona_id]
         assert row["market_scope"] == [market]
         assert row["mode"] == "paper"
+        assert row["paper_ledger_id"] == f"paper-ledger-{persona_id}"
+        assert row["capital_pool_id"] is None
         assert isinstance(row["score"], (int, float))
         assert row["routed_strategies"] >= 1
         assert row["metrics"]["violation_count"] == 0
@@ -185,6 +191,14 @@ def test_management_persona_fleet_hydrates_live_persona_market_context() -> None
     crypto = rows["persona-20260528-04688755"]
     assert crypto["name"] == "Crypto-Alt-Hunter"
     assert crypto["owner"] == "pantheon-dev-browser"
+    assert crypto["state"] == "paper_running"
+    assert crypto["capital_mode"] == "paper"
+    assert crypto["paper_ledger_id"] == "paper-ledger-persona-20260528-04688755"
+    assert crypto["paper_ledger"]["is_isolated"] is True
+    assert crypto["capital_pool_id"] is None
+    assert crypto["deployment_stage"] == "paper"
+    assert crypto["runtime_binding_id"]
+    assert crypto["runtime_health"]["status"] in {"healthy", "degraded", "critical"}
     assert crypto["data_source_summary"]["state"] == "datasource_smoke_ok"
     assert crypto["data_source_summary"]["provider_count"] >= 1
     assert crypto["data_source_summary"]["provider_status_counts"]["datasource_smoke_ok"] >= 1
@@ -195,12 +209,20 @@ def test_management_persona_fleet_hydrates_live_persona_market_context() -> None
     assert crypto["perf_delta"] > 0
 
     tw = rows["persona-20260528-5937dea1"]
+    assert tw["state"] == "paper_running"
+    assert tw["capital_mode"] == "paper"
+    assert tw["paper_ledger_id"] == "paper-ledger-persona-20260528-5937dea1"
+    assert tw["capital_pool_id"] is None
     assert tw["data_source_summary"]["state"] == "partial_readback"
     assert tw["data_source_summary"]["provider_status_counts"]["read_ok"] >= 1
     assert tw["research_summary"]["current_project_count"] >= 1
     assert tw["research_summary"]["stage"] == "management_review_linked"
 
     us = rows["persona-20260528-597cbad2"]
+    assert us["state"] == "paper_running"
+    assert us["capital_mode"] == "paper"
+    assert us["paper_ledger_id"] == "paper-ledger-persona-20260528-597cbad2"
+    assert us["capital_pool_id"] is None
     assert us["data_source_summary"]["provider_status_counts"]["read_ok"] >= 1
     assert us["research_summary"]["current_project_count"] >= 1
     assert us["current_work"] == "paper observation and OOS cost review"
@@ -244,6 +266,8 @@ def test_management_persona_fleet_composes_personas_ooda_capital_runtime_and_hum
     assert set(MARKET_PERSONAS.values()).issubset(fleet_ids)
     assert data["summary"]["capital_summary"]["total_nav"] > 0
     assert data["summary"]["human_inbox_summary"]["pending_count"] >= 3
+    assert data["summary"]["by_capital_mode"]["paper"] >= 3
+    assert data["summary"]["by_lifecycle_state"]["paper_running"] >= 2
     meta_surfaces = response.json()["meta"]["surfaces"]
     assert meta_surfaces["persona_league"]["status"] in {"ok", "degraded"}
     assert meta_surfaces["persona_league"]["source"] != "missing"
@@ -283,6 +307,27 @@ def test_management_persona_fleet_returns_slim_ui_safe_rows() -> None:
     assert tw["autonomy"] == "supervised"
     assert tw["human_needed"] is True
     assert tw["state"] == "needs_human_approval"
+    assert tw["capital_mode"] == "paper"
+    assert tw["paper_ledger_id"] == "paper-ledger-persona-tw-equity"
+    assert tw["paper_ledger"]["is_isolated"] is True
+    assert tw["legacy_paper_capital_pool_id"] == "pool-tw-equity-paper"
+    assert tw["capital_pool_id"] is None
+    assert tw["capital_pool"] is None
+    assert tw["runtime_id"] == "runtime-tw-equity-paper"
+    assert tw["runtime_binding_id"] == "runtime-tw-equity-paper"
+    assert tw["runtime_binding"]["deployment_stage"] == "paper"
+    assert tw["runtime_health"]["status"] in {"healthy", "degraded", "critical"}
+    assert tw["review_id"] == "approval-tw-equity-paper"
+    assert tw["review_type"] == "human_gate_review"
+    assert tw["inbox_id"] == "human_gate_review:approval-tw-equity-paper"
+    assert tw["review"]["requires_human_gate"] is True
+    assert tw["league_rank"] == 3
+    assert tw["league_score"] == 79.1
+    assert tw["rank"] == {
+        "league_rank": 3,
+        "league_score": 79.1,
+        "basis": "persona_league",
+    }
     assert tw["last_mutation"] == "2026-06-07"
     assert tw["perf_delta"] == 0.095
     assert tw["current_work"] == "TW corporate-action and session-boundary evidence review"

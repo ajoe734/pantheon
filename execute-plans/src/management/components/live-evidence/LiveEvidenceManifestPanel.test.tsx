@@ -62,6 +62,36 @@ const response: ManagementEvidenceResponse = {
             note: "4 artifact file(s); current-run scope only",
           },
         },
+        release_gate_summary: {
+          overall: "fail",
+          generated_at: "2026-07-04T13:30:00Z",
+          audit_dir: ".lovable/audits/current-run",
+          run_url: "https://github.com/ajoe734/pantheon/actions/runs/123456789",
+          checklist_out: ".lovable/audits/current-run/Release_Gate_Checklist.md",
+          open_check_count: 1,
+          checks: [
+            {
+              gate: "3",
+              index: 0,
+              label: "Authenticated: strict bearer RBAC matrix evidence passed.",
+              status: "fail",
+              note: "preflight bearer hash inventory mismatch",
+              owner: "Codex",
+              evidence: "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json",
+              blocking: true,
+            },
+            {
+              gate: "7",
+              index: 0,
+              label: "Evidence written to `.lovable/audits/current-run`.",
+              status: "pass",
+              note: "4 audit file(s) found",
+              owner: "",
+              evidence: ".lovable/audits/current-run",
+              blocking: false,
+            },
+          ],
+        },
         artifact_manifest: {
           file_count: 4,
           total_bytes: 39730,
@@ -192,6 +222,36 @@ describe("LiveEvidenceManifestPanel", () => {
       label: "RBAC matrix",
       status: "pass",
     });
+    expect(manifests[0].releaseGateSummary).toMatchObject({
+      overall: "fail",
+      generatedAt: "2026-07-04T13:30:00Z",
+      auditDir: ".lovable/audits/current-run",
+      runUrl: "https://github.com/ajoe734/pantheon/actions/runs/123456789",
+      checklistOut: ".lovable/audits/current-run/Release_Gate_Checklist.md",
+      openCheckCount: 1,
+      checks: [
+        {
+          gate: "3",
+          index: 0,
+          label: "Authenticated: strict bearer RBAC matrix evidence passed.",
+          status: "fail",
+          note: "preflight bearer hash inventory mismatch",
+          owner: "Codex",
+          evidence: "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json",
+          blocking: true,
+        },
+        {
+          gate: "7",
+          index: 0,
+          label: "Evidence written to `.lovable/audits/current-run`.",
+          status: "pass",
+          note: "4 audit file(s) found",
+          owner: "",
+          evidence: ".lovable/audits/current-run",
+          blocking: false,
+        },
+      ],
+    });
     expect(manifests[0].remediation).toMatchObject({
       githubEnvironment: "dev",
       repository: "ajoe734/pantheon",
@@ -266,6 +326,18 @@ describe("LiveEvidenceManifestPanel", () => {
     expect(within(manifest).getByTestId("live-evidence-token-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY-sse_replay-duplicates").textContent).toBe("duplicates:0");
     expect(within(manifest).getByText("Current-run artifact scope")).toBeTruthy();
     expect(within(manifest).getByText("4 artifact file(s); current-run scope only")).toBeTruthy();
+    const releaseGate = within(manifest).getByTestId("live-evidence-release-gate-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY");
+    expect(within(releaseGate).getByText("Release gate summary")).toBeTruthy();
+    expect(within(releaseGate).getByTestId("live-evidence-release-gate-overall-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY").textContent).toBe("fail");
+    expect(within(releaseGate).getByTestId("live-evidence-release-gate-open-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY").textContent).toBe("open:1");
+    expect(within(releaseGate).getByTestId("live-evidence-release-gate-audit-dir-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY").textContent).toBe(".lovable/audits/current-run");
+    expect(within(releaseGate).getByTestId("live-evidence-release-gate-run-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY").getAttribute("href")).toBe("https://github.com/ajoe734/pantheon/actions/runs/123456789");
+    expect(within(releaseGate).getByText("Gate 3")).toBeTruthy();
+    expect(within(releaseGate).getByText("Authenticated: strict bearer RBAC matrix evidence passed.")).toBeTruthy();
+    expect(within(releaseGate).getByText("preflight bearer hash inventory mismatch")).toBeTruthy();
+    expect(within(releaseGate).getByText("BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json")).toBeTruthy();
+    expect(within(releaseGate).getByTestId("live-evidence-release-gate-status-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY-3-0").textContent).toBe("fail");
+    expect(within(releaseGate).getByText("Gate 7")).toBeTruthy();
     expect(within(manifest).getAllByText("current-run")).toHaveLength(4);
     expect(within(manifest).getAllByText("clean")).toHaveLength(4);
   });

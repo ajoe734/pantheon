@@ -66,7 +66,7 @@ class DeployableInternalApiTests(unittest.TestCase):
         self.command_state_path = Path(self.tempdir.name) / "commands.json"
         self.main = _load_main_module(self.store_path, self.command_state_path)
         self.client = self.main.app.test_client()
-        self.auth = {"Authorization": "Bearer integration-test"}
+        self.auth = {"Authorization": "Bearer integration-test:operator"}
         self.legacy = importlib.import_module("services.control_plane.internal.internal_api")
 
     def tearDown(self) -> None:

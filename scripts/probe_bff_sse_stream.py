@@ -97,6 +97,10 @@ def utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def utc_from_epoch(epoch_seconds: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch_seconds))
+
+
 def sha256_12(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
@@ -545,7 +549,8 @@ def stream_soak(
         last_event_id=last_event_id,
     )
     req = urllib.request.Request(url, headers=headers, method="GET")
-    started = time.time()
+    started_wall = time.time()
+    started_monotonic = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=max(timeout, seconds + 5.0)) as response:
             response_headers = dict(response.headers.items())
@@ -565,6 +570,8 @@ def stream_soak(
                 and not block_summary["duplicate_event_ids"]
                 and expected_ids.issubset(observed_ids)
             )
+            finished_wall = time.time()
+            duration_ms = round((time.monotonic() - started_monotonic) * 1000)
             return {
                 "mode": mode.name,
                 "browser_client": mode.browser_client,
@@ -572,7 +579,14 @@ def stream_soak(
                 "with_credentials": mode.with_credentials,
                 "status": int(response.status),
                 "ok": ok,
-                "duration_ms": round((time.time() - started) * 1000),
+                "duration_ms": duration_ms,
+                "timeline": {
+                    "started_at": utc_from_epoch(started_wall),
+                    "finished_at": utc_from_epoch(finished_wall),
+                    "requested_seconds": seconds,
+                    "observed_duration_ms": duration_ms,
+                    "observed_duration_seconds": round(duration_ms / 1000, 3),
+                },
                 "soak_seconds": seconds,
                 "min_heartbeats": min_heartbeats,
                 "expected_event_ids": sorted(expected_ids),
@@ -588,7 +602,7 @@ def stream_soak(
             "mode": mode.name,
             "status": int(exc.code),
             "ok": False,
-            "duration_ms": round((time.time() - started) * 1000),
+            "duration_ms": round((time.monotonic() - started_monotonic) * 1000),
             "request_headers": redacted_request_headers(headers),
             "response_headers": selected_headers(dict(exc.headers.items())),
             "error_body_prefix": raw[:500],
@@ -598,7 +612,7 @@ def stream_soak(
             "mode": mode.name,
             "status": 0,
             "ok": False,
-            "duration_ms": round((time.time() - started) * 1000),
+            "duration_ms": round((time.monotonic() - started_monotonic) * 1000),
             "request_headers": redacted_request_headers(headers),
             "error": f"{type(exc).__name__}: {exc}",
         }

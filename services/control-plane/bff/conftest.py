@@ -18,3 +18,17 @@ def _bff_stub_auth_default(monkeypatch):
         monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     if not os.environ.get("PANTHEON_BFF_AUTH_MODE"):
         monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    if not os.environ.get("PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS"):
+        monkeypatch.setenv(
+            "PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS",
+            ",".join(
+                [
+                    "fake-auth",
+                    "ignored",
+                    "operator_001",
+                    "repair-smoke",
+                    "test",
+                    "test-token",
+                ]
+            ),
+        )

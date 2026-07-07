@@ -1,5 +1,14 @@
 export type ManagementRouteStatus = "shell" | "active-panel" | "planned-workflow";
-export type ManagementPanelKey = "shell" | "evidence" | "loop-truth" | "ooda" | "planned";
+export type ManagementPanelKey =
+  | "shell"
+  | "evidence"
+  | "loop-truth"
+  | "ooda"
+  | "ai-ops"
+  | "readiness-suite"
+  | "decision-workbench"
+  | "performance-review"
+  | "planned";
 
 export interface ManagementRouteDescriptor {
   path: string;
@@ -67,9 +76,9 @@ const routeRules: RouteRule[] = [
     descriptor: {
       label: "Management AI Ops",
       workflow: "AI audit and conversation control",
-      status: "planned-workflow",
-      panel: "planned",
-      summary: "Backend routes exist, but the dedicated chat, audit, streaming, and attachment workflow is not mounted yet.",
+      status: "active-panel",
+      panel: "ai-ops",
+      summary: "Served by the active shell through the Management AI/NL workflow panel.",
     },
   },
   {
@@ -77,9 +86,9 @@ const routeRules: RouteRule[] = [
     descriptor: {
       label: "Readiness",
       workflow: "Go-live readiness",
-      status: "planned-workflow",
-      panel: "planned",
-      summary: "Readiness BFF routes exist; the next UI step is one consolidated readiness suite.",
+      status: "active-panel",
+      panel: "readiness-suite",
+      summary: "Served by the active shell through the consolidated readiness suite.",
     },
   },
   {
@@ -97,9 +106,9 @@ const routeRules: RouteRule[] = [
     descriptor: {
       label: "Decision Workbench",
       workflow: "Operator queue and governance receipts",
-      status: "planned-workflow",
-      panel: "planned",
-      summary: "Queue and governance APIs exist; the UI should converge into one decision workbench instead of duplicate pages.",
+      status: "active-panel",
+      panel: "decision-workbench",
+      summary: "Served by the active shell through the decision and operations workbench.",
     },
   },
   {
@@ -114,9 +123,9 @@ const routeRules: RouteRule[] = [
     descriptor: {
       label: "Performance Review",
       workflow: "Portfolio, league, ranking, attribution, and cost review",
-      status: "planned-workflow",
-      panel: "planned",
-      summary: "Performance BFF routes exist; this should become one review suite with tabs and drilldowns.",
+      status: "active-panel",
+      panel: "performance-review",
+      summary: "Served by the active shell through the performance review suite.",
     },
   },
   {

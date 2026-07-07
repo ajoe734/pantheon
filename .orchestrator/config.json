@@ -74,9 +74,7 @@
     "cooldown_seconds": 1800,
     "candidates": [
       "Codex",
-      "Codex2",
-      "Claude",
-      "Claude2"
+      "Codex2"
     ],
     "task_id": "OPS-CHAIR-REVIEW",
     "output_dir": ".orchestrator/chair-reviews",
@@ -195,33 +193,25 @@
       ],
       "Claude2": [
         "Codex",
-        "Codex2",
-        "Claude"
+        "Codex2"
       ],
       "Antigravity": [
         "Codex",
-        "Codex2",
-        "Claude"
+        "Codex2"
       ],
       "Antigravity2": [
         "Codex",
-        "Codex2",
-        "Claude"
+        "Codex2"
       ],
       "Codex": [
-        "Codex2",
-        "Claude",
-        "Claude2"
+        "Codex2"
       ],
       "Codex2": [
-        "Codex",
-        "Claude",
-        "Claude2"
+        "Codex"
       ],
       "Copilot": [
         "Codex",
-        "Codex2",
-        "Claude"
+        "Codex2"
       ]
     },
     "reviewer_fallbacks": {
@@ -231,33 +221,25 @@
       ],
       "Claude2": [
         "Codex",
-        "Codex2",
-        "Claude"
+        "Codex2"
       ],
       "Antigravity": [
         "Codex",
-        "Codex2",
-        "Claude"
+        "Codex2"
       ],
       "Antigravity2": [
         "Codex",
-        "Codex2",
-        "Claude"
+        "Codex2"
       ],
       "Codex": [
-        "Codex2",
-        "Claude",
-        "Claude2"
+        "Codex2"
       ],
       "Codex2": [
-        "Codex",
-        "Claude",
-        "Claude2"
+        "Codex"
       ],
       "Copilot": [
         "Codex",
-        "Codex2",
-        "Claude"
+        "Codex2"
       ]
     }
   },
@@ -509,6 +491,7 @@
   "providers": {
     "claude": {
       "delivery_mode": "claude_cli",
+      "account_group": "claude_account_shared_max_1",
       "allow_inbox_fallback": false,
       "file_inbox": {
         "path": ".llm-inbox/claude.md",
@@ -548,6 +531,7 @@
     },
     "claude2": {
       "delivery_mode": "claude_cli",
+      "account_group": "claude_account_shared_max_1",
       "allow_inbox_fallback": false,
       "file_inbox": {
         "path": ".llm-inbox/claude2.md",
@@ -861,6 +845,10 @@
     "cooldown_seconds": 0,
     "max_new_sidecars_per_wave": 2,
     "max_active_sidecars_per_agent": 1,
+    "excluded_agents": [
+      "Claude",
+      "Claude2"
+    ],
     "productive_worker_statuses": [
       "running",
       "waiting_approval",
@@ -882,7 +870,11 @@
     ],
     "sidecar_only_agents": [],
     "disabled_agents": [
-      "antigravity"
+      "Claude",
+      "Claude2",
+      "Antigravity",
+      "Antigravity2",
+      "Copilot"
     ],
     "dependency_done_statuses": [
       "done"
@@ -920,33 +912,33 @@
       ]
     },
     "target_workload": {
-      "Claude": 10,
-      "Claude2": 5,
-      "Antigravity": 5,
-      "Antigravity2": 5,
+      "Claude": 0,
+      "Claude2": 0,
+      "Antigravity": 0,
+      "Antigravity2": 0,
       "Codex": 30,
       "Codex2": 30,
-      "Copilot": 5
+      "Copilot": 0
     },
     "max_tasks_per_agent_by_agent": {
-      "Claude": 3,
-      "Claude2": 2,
-      "Antigravity": 1,
-      "Antigravity2": 1,
+      "Claude": 0,
+      "Claude2": 0,
+      "Antigravity": 0,
+      "Antigravity2": 0,
       "Codex": 4,
       "Codex2": 4,
-      "Copilot": 1
+      "Copilot": 0
     },
     "max_dispatches_per_tick": 10,
     "max_active_workers_per_task": 1,
     "max_concurrent_per_quota_group": {
-      "claude": 3,
-      "claude2": 2,
-      "antigravity": 1,
-      "antigravity2": 1,
+      "claude": 0,
+      "claude2": 0,
+      "antigravity": 0,
+      "antigravity2": 0,
       "codex1": 4,
       "codex2": 4,
-      "copilot": 1
+      "copilot": 0
     },
     "max_concurrent_workers": 13
   },

@@ -146,6 +146,7 @@ from loop_inventory import (
     truth_label_payload,
 )
 from read_store import ReadSurfaceStore, redact_evidence_refs
+from services.persona.runtime_profile import build_persona_runtime_profile
 from settings_store import SettingsStore
 
 logging.basicConfig(level=logging.INFO)
@@ -160,6 +161,7 @@ def _bool_from_env(name: str, *, default: bool = False) -> bool:
 
 
 _BFF_AUTH_STUB_ENV = "PANTHEON_BFF_AUTH_STUB"
+_BFF_STUB_LEGACY_BARE_TOKENS_ENV = "PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS"
 _PRODUCTION_STRICT_ENVIRONMENTS = {
     "canary",
     "live",
@@ -378,6 +380,7 @@ _CORS_ALLOW_HEADERS = [
     "Authorization",
     "Cache-Control",
     "Content-Type",
+    "If-Match",
     "X-BFF-Api-Version",
     "X-Confirm-Token",
     "Idempotency-Key",
@@ -393,6 +396,7 @@ _CORS_ALLOW_HEADERS = [
     "X-Trace-Id",
 ]
 _CORS_EXPOSE_HEADERS = [
+    "ETag",
     "X-BFF-Api-Version",
     "X-Correlation-Id",
     "X-Request-Id",
@@ -788,11 +792,33 @@ def _pack_d_direct_error_response(
     )
 
 
+def _with_cors_actual_response_headers(request: Request, headers: Dict[str, str]) -> Dict[str, str]:
+    response_headers = dict(headers)
+    origin = request.headers.get("origin")
+    if not origin or not _cors_origin_allowed(origin):
+        return response_headers
+
+    response_headers.setdefault("Access-Control-Allow-Origin", _normalized_origin(origin))
+    response_headers.setdefault("Access-Control-Allow-Credentials", "true")
+    response_headers.setdefault("Access-Control-Expose-Headers", ", ".join(_CORS_EXPOSE_HEADERS))
+
+    vary_value = response_headers.get("Vary") or response_headers.get("vary") or ""
+    vary_parts = [part.strip() for part in vary_value.split(",") if part.strip()]
+    if "Origin" not in {part.title() for part in vary_parts}:
+        vary_parts.append("Origin")
+    if vary_parts:
+        response_headers["Vary"] = ", ".join(vary_parts)
+    return response_headers
+
+
 def _pack_d_http_exception_response(
     request: Request,
     exc: StarletteHTTPException,
 ) -> JSONResponse:
-    headers = dict(getattr(exc, "headers", None) or {})
+    headers = _with_cors_actual_response_headers(
+        request,
+        dict(getattr(exc, "headers", None) or {}),
+    )
     correlation_id = _error_response_correlation_id(request, headers)
     detail = exc.detail
     source = detail
@@ -929,6 +955,8 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 # Dev/test stub mode is available only when PANTHEON_BFF_AUTH_STUB=true and
 # PANTHEON_BFF_AUTH_MODE is not strict.
 # Stub accepts "Bearer <operator_id>:<comma_roles>[:mfa]" for local iteration.
+# Legacy bare stub tokens are accepted only when explicitly allowlisted by
+# PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS for tests/migration.
 #
 # BFF-scoped env vars (mapped to runtime_auth_inbound key names internally):
 #   PANTHEON_BFF_AUTH_MODE     - "strict" (default) or "permissive"
@@ -1147,8 +1175,25 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             reason="Token is absent or not a Bearer token",
             suggestion="Re-authenticate and include a valid Bearer token",
         )
-    token = authorization[len("Bearer "):]
+    token = authorization[len("Bearer "):].strip()
+    if not token:
+        raise _bff_error(
+            status_code=401,
+            code=ErrorCode.AUTH_REQUIRED,
+            message="Missing or invalid Authorization header",
+            reason="Token is absent or not a Bearer token",
+            suggestion="Re-authenticate and include a valid Bearer token",
+        )
     if ":" not in token:
+        allowed_bare_tokens = set(_env_csv(_BFF_STUB_LEGACY_BARE_TOKENS_ENV))
+        if token not in allowed_bare_tokens:
+            raise _bff_error(
+                status_code=403,
+                code=ErrorCode.FORBIDDEN,
+                message="Stub bearer token must include explicit roles",
+                reason="AUTH_STUB_TOKEN_NO_ROLES",
+                suggestion="Use Bearer <operator_id>:<comma_roles> for dev stub auth",
+            )
         lowered = token.lower()
         inferred_roles = ["operator"]
         if lowered.startswith("admin_"):
@@ -9189,6 +9234,9 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     operator_remediation = item.get("operator_remediation")
     if isinstance(operator_remediation, dict):
         public_item["operator_remediation"] = _management_json_clone(operator_remediation)
+    release_gate_summary = item.get("release_gate_summary")
+    if isinstance(release_gate_summary, dict):
+        public_item["release_gate_summary"] = _management_json_clone(release_gate_summary)
     if "overall" in item:
         public_item["overall"] = item.get("overall")
     return public_item
@@ -9288,6 +9336,52 @@ def _management_live_evidence_preflight_remediation(artifact_dir: Path) -> Optio
     return safe_remediation
 
 
+def _management_live_evidence_release_gate_summary(artifact_dir: Path) -> Optional[Dict[str, Any]]:
+    summary_path = artifact_dir / "release-gate-summary.json"
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    checks: List[Dict[str, Any]] = []
+    gates = payload.get("gates")
+    if isinstance(gates, dict):
+        for gate, gate_checks in sorted(gates.items(), key=lambda item: str(item[0])):
+            if not isinstance(gate_checks, list):
+                continue
+            for index, check in enumerate(gate_checks):
+                if not isinstance(check, dict):
+                    continue
+                status = _management_optional_text(check.get("status")) or "missing"
+                label = _management_optional_text(check.get("label"))
+                if not label and not status:
+                    continue
+                checks.append(
+                    {
+                        "gate": str(gate),
+                        "index": index,
+                        "label": label,
+                        "status": status,
+                        "note": _management_optional_text(check.get("note")),
+                        "owner": _management_optional_text(check.get("owner")),
+                        "evidence": _management_optional_text(check.get("evidence")),
+                        "blocking": status != "pass",
+                    }
+                )
+
+    return {
+        "overall": _management_optional_text(payload.get("overall")),
+        "generated_at": _management_optional_text(payload.get("generatedAt") or payload.get("generated_at")),
+        "audit_dir": _management_optional_text(payload.get("auditDir") or payload.get("audit_dir")),
+        "run_url": _management_optional_text(payload.get("runUrl") or payload.get("run_url")),
+        "checklist_out": _management_optional_text(payload.get("checklistOut") or payload.get("checklist_out")),
+        "open_check_count": sum(1 for check in checks if bool(check.get("blocking"))),
+        "checks": checks,
+    }
+
+
 def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
     for candidate in _management_live_evidence_verify_candidates():
         try:
@@ -9315,6 +9409,7 @@ def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
         artifact_dir_path = Path(str(payload.get("artifact_dir") or candidate.parent))
         artifact_dir = str(artifact_dir_path)
         operator_remediation = _management_live_evidence_preflight_remediation(artifact_dir_path)
+        release_gate_summary = _management_live_evidence_release_gate_summary(artifact_dir_path)
         evidence_ref = {
             "ref_id": _BFF_LIVE_EVIDENCE_REF_ID,
             "evidence_type": "live_evidence_artifact",
@@ -9345,6 +9440,8 @@ def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
         }
         if operator_remediation is not None:
             evidence_ref["operator_remediation"] = operator_remediation
+        if release_gate_summary is not None:
+            evidence_ref["release_gate_summary"] = release_gate_summary
         return [evidence_ref]
     return []
 
@@ -24040,6 +24137,17 @@ _STRATEGY_BFF_LIFECYCLE_MAP = {
     "deployed": "deployed",
     "paused": "paused",
     "retired": "retired",
+    "paper": "paper_running",
+    "paper_running": "paper_running",
+    "canary": "canary_running",
+    "canary_running": "canary_running",
+    "canary_authorized_not_started": "canary_authorized_not_started",
+    "live": "live_running",
+    "live_running": "live_running",
+    "needs_human_approval": "needs_human_approval",
+    "rollback_required": "rollback_required",
+    "stopped": "stopped",
+    "failed": "failed",
 }
 
 _PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
@@ -24047,6 +24155,12 @@ _PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
     "deployed",
     "ready",
     "running",
+    "paper",
+    "paper_running",
+    "canary",
+    "canary_running",
+    "live",
+    "live_running",
 })
 
 
@@ -25085,6 +25199,46 @@ def _project_persona_dto(
         or raw.get("mandate")
         or "generalist"
     )
+    capital_mode = str(
+        metadata.get("capital_mode")
+        or metadata.get("capitalMode")
+        or metadata.get("deployment_stage")
+        or metadata.get("deploymentStage")
+        or ""
+    ).strip().lower()
+    if capital_mode not in {"paper", "canary", "live"}:
+        capital_mode = ""
+    metadata_paper_ledger = (
+        metadata.get("paper_ledger")
+        if isinstance(metadata.get("paper_ledger"), dict)
+        else {}
+    )
+    paper_ledger_id = (
+        str(
+            metadata.get("paper_ledger_id")
+            or metadata.get("paperLedgerId")
+            or metadata_paper_ledger.get("id")
+            or ""
+        ).strip()
+        or (f"paper-ledger-{persona_id}" if capital_mode == "paper" and persona_id else None)
+    )
+    paper_ledger = None
+    if paper_ledger_id:
+        paper_ledger = dict(metadata_paper_ledger)
+        paper_ledger.update({
+            "id": paper_ledger_id,
+            "mode": paper_ledger.get("mode") or "paper",
+            "persona_id": paper_ledger.get("persona_id") or persona_id,
+            "is_isolated": bool(paper_ledger.get("is_isolated", True)),
+            "isolated": bool(paper_ledger.get("isolated", True)),
+        })
+    legacy_paper_capital_pool_id = None
+    if capital_mode == "paper":
+        legacy_paper_capital_pool_id = (
+            metadata.get("legacy_paper_capital_pool_id")
+            or metadata.get("capital_pool_id")
+        )
+    capital_pool_id = None if capital_mode == "paper" else metadata.get("capital_pool_id")
     dto: Dict[str, Any] = {
         "id": persona_id,
         "name": raw.get("name") or persona_id,
@@ -25099,8 +25253,14 @@ def _project_persona_dto(
         "lifecycleStatus": str(raw.get("lifecycle_state") or ""),
         "marketScope": list(metadata.get("market_scope") or []),
         "assetClasses": list(metadata.get("asset_classes") or []),
-        "capitalPoolId": metadata.get("capital_pool_id"),
-        "runtimeId": metadata.get("runtime_binding_id"),
+        "paperLedgerId": paper_ledger_id,
+        "paperLedger": paper_ledger,
+        "legacyPaperCapitalPoolId": legacy_paper_capital_pool_id,
+        "capitalPoolId": capital_pool_id,
+        "capitalMode": metadata.get("capital_mode") or capital_mode or None,
+        "runtimeId": metadata.get("runtime_id") or metadata.get("runtime_binding_id"),
+        "runtimeBindingId": metadata.get("runtime_binding_id"),
+        "deploymentPlanId": metadata.get("deployment_plan_id"),
         "deploymentStage": metadata.get("deployment_stage"),
         "oodaStage": metadata.get("ooda_stage"),
         "currentWork": metadata.get("current_work"),
@@ -25113,6 +25273,13 @@ def _project_persona_dto(
         "strategyFamily": raw.get("strategy_family") or "",
         "traits": metadata.get("traits") if isinstance(metadata.get("traits"), dict) else {},
     }
+    if dto.get("capitalPoolId") is None:
+        dto.pop("capitalPoolId", None)
+    if not dto.get("paperLedgerId"):
+        dto.pop("paperLedgerId", None)
+        dto.pop("paperLedger", None)
+    if not dto.get("legacyPaperCapitalPoolId"):
+        dto.pop("legacyPaperCapitalPoolId", None)
     required_data_sources = (
         raw.get("required_data_sources")
         if isinstance(raw.get("required_data_sources"), list)
@@ -30435,9 +30602,113 @@ def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str
     )
 
 
+def _submitted_promotion_review_records(
+    identity: OperatorIdentity,
+    *,
+    snapshot_at: str,
+) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for command in command_store._get_all_commands():
+        if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+            continue
+        params = command.get("params") if isinstance(command.get("params"), dict) else {}
+        recommendation_id = str(
+            params.get("recommendation_id")
+            or params.get("recommendationId")
+            or (command.get("target") or {}).get("id")
+            or ""
+        ).strip()
+        if not recommendation_id or recommendation_id in seen:
+            continue
+        review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
+            identity,
+            recommendation_id,
+            snapshot_at=snapshot_at,
+            quarter=str(params.get("quarter") or "").strip() or None,
+        )
+        if review is None or not bool(review.get("submitted")):
+            continue
+        seen.add(recommendation_id)
+        records.append(review)
+    return records
+
+
+def _human_inbox_promotion_review_item(review: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    review_id = str(review.get("review_id") or review.get("promotion_review_id") or "").strip()
+    if not review_id:
+        return None
+    decision_status = str(review.get("decision_status") or "pending").strip().lower() or "pending"
+    status = "accepted" if decision_status == "accepted" else "pending"
+    risk_level = str(review.get("risk_level") or "high").strip().lower() or "high"
+    priority = _human_inbox_priority(review.get("priority") or risk_level, fallback="high")
+    submission = review.get("submission") if isinstance(review.get("submission"), dict) else {}
+    created_at = submission.get("submitted_at") or review.get("created_at")
+    updated_at = (review.get("decision") or {}).get("decided_at") if isinstance(review.get("decision"), dict) else None
+    updated_at = updated_at or created_at
+    inbox_id = _promotion_review_target_id(review_id)
+    route = f"/management/human-inbox/{quote(inbox_id, safe='')}"
+    action_state = "pending" if status == "pending" else "resolved"
+    stage_path = review.get("promotion_path") if isinstance(review.get("promotion_path"), dict) else {}
+    projected = {
+        "id": inbox_id,
+        "inbox_id": inbox_id,
+        "inboxType": "promotion_review",
+        "source_type": "promotion_review",
+        "source_id": review_id,
+        "review_id": review_id,
+        "promotion_review_id": review_id,
+        "recommendation_id": review.get("recommendation_id"),
+        "persona_id": review.get("persona_id"),
+        "title": f"Persona governance review: {review.get('name') or review.get('persona_id')}",
+        "summary": review.get("rationale") or "Persona ranking recommendation requires Human Gate approval.",
+        "priority": priority,
+        "risk_level": risk_level,
+        "status": status,
+        "action_state": action_state,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "submitted_by": submission.get("submitted_by"),
+        "target": {
+            "type": "persona",
+            "id": review.get("persona_id"),
+        },
+        "route": route,
+        "bff_detail_path": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
+        "decisionHref": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
+        "detailHref": route,
+        "promotion_review": _management_json_clone(review),
+        "promotion_context": {
+            "from_stage": stage_path.get("from_stage"),
+            "target_stage": stage_path.get("target_stage"),
+            "review_kind": review.get("review_kind") or stage_path.get("review_kind"),
+            "action_id": review.get("action_id"),
+            "live_capital_mutation": False,
+        },
+        "allowedActions": _management_json_clone(review.get("allowedActions") or {
+            "canApprove": action_state == "pending",
+            "canApproveWithConditions": action_state == "pending",
+            "canReject": action_state == "pending",
+        }),
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+    }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="promotion_review",
+        source_dataset="promotion_reviews",
+        risk_level=risk_level,
+        created_at=created_at,
+        updated_at=updated_at,
+        href=route,
+        source_record=review,
+    )
+
+
 def _human_inbox_all_items(
     snapshot_at: Optional[str] = None,
     *,
+    identity: Optional[OperatorIdentity] = None,
     source_types: Optional[set[str]] = None,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     snapshot_at = snapshot_at or utc_now()
@@ -30469,6 +30740,11 @@ def _human_inbox_all_items(
         if include_all or "readiness_blocker" in source_types
         else []
     )
+    promotion_review_records = (
+        _submitted_promotion_review_records(identity, snapshot_at=snapshot_at)
+        if identity is not None and (include_all or "promotion_review" in source_types)
+        else []
+    )
     items: List[Dict[str, Any]] = []
     for review in review_records:
         projected = _human_inbox_governance_review_item(review)
@@ -30490,6 +30766,10 @@ def _human_inbox_all_items(
         projected = _human_inbox_persona_readiness_item(persona, snapshot_at=snapshot_at)
         if projected is not None:
             items.append(projected)
+    for review in promotion_review_records:
+        projected = _human_inbox_promotion_review_item(review)
+        if projected is not None:
+            items.append(projected)
     items.sort(
         key=lambda item: (
             _HUMAN_INBOX_PRIORITY_RANK.get(str(item.get("priority") or "unknown"), 0),
@@ -30505,6 +30785,7 @@ def _human_inbox_all_items(
         "sentinel_available": sentinel_available,
         "sentinel_records": sentinel_records,
         "persona_rows": persona_rows,
+        "promotion_review_records": promotion_review_records,
     }
 
 
@@ -30637,6 +30918,7 @@ def _human_inbox_surfaces(
 def _human_inbox_payload(
     snapshot_at: str,
     *,
+    identity: Optional[OperatorIdentity] = None,
     source_type: Optional[str] = None,
     status: Optional[str] = None,
     priority: Optional[str] = None,
@@ -30644,7 +30926,7 @@ def _human_inbox_payload(
     page_size: Optional[int] = 20,
 ) -> Dict[str, Any]:
     source_types = _human_inbox_csv_filter(source_type)
-    items, sources = _human_inbox_all_items(snapshot_at, source_types=source_types)
+    items, sources = _human_inbox_all_items(snapshot_at, identity=identity, source_types=source_types)
     filtered = _human_inbox_filter_items(
         items,
         source_type=source_type,
@@ -32442,6 +32724,7 @@ async def bff_management_human_inbox(
 
     return _human_inbox_payload(
         utc_now(),
+        identity=identity,
         source_type=source_type,
         status=status,
         priority=priority,
@@ -32460,7 +32743,7 @@ async def bff_management_human_inbox_detail(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    items, sources = _human_inbox_all_items(snapshot_at)
+    items, sources = _human_inbox_all_items(snapshot_at, identity=identity)
     for item in items:
         if _human_inbox_detail_match(item, item_id):
             detail = json.loads(json.dumps(item))
@@ -38196,6 +38479,33 @@ def _try_register_persona_cron(persona_id: str) -> Optional[Dict[str, Any]]:
     persona creation is never blocked by gateway unavailability.
     """
     try:
+        if "persona_cron_registrar" not in sys.modules:
+            # persona_cron_registrar.py does bare `from models import utc_now`
+            # / `from workflows import WORKFLOW_CATALOG`. Both names collide
+            # with same-named, unrelated modules elsewhere on sys.path — this
+            # file's own top-level `from models import (...)` above already
+            # cached sys.modules["models"] as services/control-plane/bff's
+            # models.py before this function ever runs, and Python checks
+            # sys.modules by name before ever consulting sys.path, so bumping
+            # sys.path priority alone can't force a re-resolve. Evict the
+            # colliding names, import fresh (which re-populates them from
+            # services/control-plane/cron), then restore this module's own
+            # "models" binding so nothing else in this process breaks.
+            # persona_cron_registrar keeps direct references to what it
+            # imported, so swapping sys.modules back afterward is safe.
+            _saved_modules = {
+                name: sys.modules.pop(name)
+                for name in ("models", "workflows")
+                if name in sys.modules
+            }
+            sys.path.insert(0, _CRON_SERVICE_DIR)
+            try:
+                import persona_cron_registrar  # noqa: F401
+            finally:
+                sys.path.remove(_CRON_SERVICE_DIR)
+                for name in ("models", "workflows"):
+                    sys.modules.pop(name, None)
+                sys.modules.update(_saved_modules)
         from persona_cron_registrar import PersonaCronRegistrar  # type: ignore[import]
         registrar = PersonaCronRegistrar()
         result = registrar.register_for_persona(persona_id)
@@ -38255,6 +38565,141 @@ async def bff_list_personas(
     }
 
 
+_PERSONA_CREATE_FORBIDDEN_INITIAL_MODES = frozenset({
+    "canary",
+    "canary_running",
+    "live",
+    "live_running",
+    "prod",
+    "production",
+    "real",
+})
+
+
+def _persona_create_requested_capital_mode(payload: Dict[str, Any]) -> str:
+    for key in (
+        "capitalMode",
+        "capital_mode",
+        "capitalPoolMode",
+        "capital_pool_mode",
+        "deploymentStage",
+        "deployment_stage",
+        "executionMode",
+        "execution_mode",
+        "initialMode",
+        "initial_mode",
+    ):
+        value = str(payload.get(key) or "").strip().lower()
+        if value:
+            return value
+    return "paper"
+
+
+def _persona_create_validate_paper_only(payload: Dict[str, Any]) -> str:
+    requested = _persona_create_requested_capital_mode(payload)
+    if requested in _PERSONA_CREATE_FORBIDDEN_INITIAL_MODES:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Initial Persona capital mode must be paper",
+            "New Personas start in paper trading only. Canary/live capital requires a Human Inbox promotion review.",
+            precondition_failed="capital_mode",
+            suggestion="Create the Persona in paper mode, then request promotion review after evidence is ready.",
+        )
+    return "paper"
+
+
+def _persona_create_paper_refs(persona_id: str, payload: Dict[str, Any]) -> Dict[str, str]:
+    paper_ledger_id = str(
+        payload.get("paperLedgerId")
+        or payload.get("paper_ledger_id")
+        or payload.get("paperAccountId")
+        or payload.get("paper_account_id")
+        or f"paper-ledger-{persona_id}"
+    ).strip()
+    legacy_capital_ref_id = str(
+        payload.get("legacyPaperCapitalPoolId")
+        or payload.get("legacy_paper_capital_pool_id")
+        or payload.get("paperCapitalPoolId")
+        or payload.get("paper_capital_pool_id")
+        or payload.get("capitalPoolId")
+        or payload.get("capital_pool_id")
+        or paper_ledger_id
+    ).strip()
+    binding_id = str(
+        payload.get("paperBindingId")
+        or payload.get("paper_binding_id")
+        or payload.get("bindingId")
+        or payload.get("binding_id")
+        or f"binding-{persona_id}-paper"
+    ).strip()
+    plan_id = str(
+        payload.get("paperDeploymentPlanId")
+        or payload.get("paper_deployment_plan_id")
+        or payload.get("deploymentPlanId")
+        or payload.get("deployment_plan_id")
+        or f"paper-plan-{persona_id}"
+    ).strip()
+    runtime_id = str(
+        payload.get("paperRuntimeId")
+        or payload.get("paper_runtime_id")
+        or payload.get("runtimeId")
+        or payload.get("runtime_id")
+        or f"runtime-{persona_id}-paper"
+    ).strip()
+    artifact_id = str(
+        payload.get("artifactId")
+        or payload.get("artifact_id")
+        or f"paper-artifact-{persona_id}"
+    ).strip()
+    return {
+        "paper_ledger_id": paper_ledger_id,
+        "capital_pool_id": legacy_capital_ref_id,
+        "binding_id": binding_id,
+        "deployment_plan_id": plan_id,
+        "runtime_id": runtime_id,
+        "artifact_id": artifact_id,
+    }
+
+
+def _openclaw_agent_reconcile_request(
+    persona: Dict[str, Any],
+    *,
+    reason: str,
+    route_policy: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+    request: Dict[str, Any] = {
+        "status": "pending",
+        "reason": reason,
+        "agent_id": persona_id,
+        "model_id": f"openclaw/{persona_id}" if persona_id else "",
+        "consumer": "scripts/openclaw-sync-persona-agents.py",
+    }
+    try:
+        profile = build_persona_runtime_profile(persona, route_policy=route_policy).to_dict()
+    except ValueError as exc:
+        request.update({
+            "status": "blocked",
+            "blocked_reason": str(exc),
+            "repair_action": "fix_persona_runtime_profile",
+        })
+        return request
+    routing = dict(profile.get("model_routing") or {})
+    if routing.get("status") != "ready":
+        request.update({
+            "status": "blocked",
+            "blocked_reason": routing.get("blocked_reason") or routing.get("reason") or "model_routing_degraded",
+            "repair_action": "fix_persona_route_policy_or_provider_pool",
+        })
+    request.update({
+        "workspace_ref": profile.get("workspace_ref"),
+        "sync_generation": profile.get("sync_generation"),
+        "model_routing": routing,
+    })
+    return request
+
+
 @app.post("/bff/personas", status_code=201)
 async def bff_create_persona(
     payload: Dict[str, Any] = Body(...),
@@ -38285,9 +38730,9 @@ async def bff_create_persona(
     owner = str(payload.get("owner") or identity.operator_id)
     archetype = str(payload.get("archetype") or "generalist")
     risk = _normalize_risk_level(payload.get("risk") or "low")
-    lifecycle_state = _normalize_lifecycle_state(
-        payload.get("state") or payload.get("lifecycleStatus") or "draft"
-    )
+    capital_mode = _persona_create_validate_paper_only(payload)
+    refs = _persona_create_paper_refs(persona_id, payload)
+    lifecycle_state = "paper_running"
     # Real persona identity + trading-character traits — these flow to the
     # persona's OpenClaw agent SOUL (integrations/openclaw/persona_agent_sync).
     mandate = str(payload.get("mandate") or "").strip() or None
@@ -38304,7 +38749,66 @@ async def bff_create_persona(
         "initial_mode": payload.get("initialMode"),
         "execution_mode": payload.get("executionMode") or payload.get("initialMode"),
         "success_rate": float(payload.get("successRate") or 0.0),
+        "capital_mode": capital_mode,
+        "paper_ledger_id": refs["paper_ledger_id"],
+        "paper_ledger": {
+            "id": refs["paper_ledger_id"],
+            "mode": "paper",
+            "persona_id": persona_id,
+            "is_isolated": True,
+            "benchmark_budget": payload.get("paperBudget") or payload.get("paper_budget"),
+        },
+        "legacy_paper_capital_pool_id": refs["capital_pool_id"],
+        "persona_capital_binding_id": refs["binding_id"],
+        "binding_id": refs["binding_id"],
+        "runtime_id": refs["runtime_id"],
+        "runtime_binding_id": refs["binding_id"],
+        "deployment_plan_id": refs["deployment_plan_id"],
+        "deployment_stage": "paper",
+        "paper_runtime_state": "running",
+        "live_capital_enabled": False,
+        "live_write_enabled": False,
+        "order_side_effects_allowed": False,
+        "capital_side_effects_allowed": False,
+        "governance_required": True,
+        "recommended_governance_action": "none",
+        "data_source_status": payload.get("dataSourceStatus") or payload.get("data_source_status") or {
+            "state": "paper_readback_pending",
+            "provider_count": len(payload.get("dataSources") or payload.get("data_sources") or []),
+            "provider_status_counts": {},
+            "live_ingestion_enabled": False,
+            "order_side_effects_allowed": False,
+        },
+        "data_sources": payload.get("dataSources") or payload.get("data_sources") or [],
+        "risk_profile": payload.get("riskProfile") or payload.get("risk_profile") or {
+            "risk_level": risk,
+            "max_drawdown": payload.get("maxDrawdown") or payload.get("max_drawdown"),
+            "daily_loss_limit": payload.get("dailyLossLimit") or payload.get("daily_loss_limit"),
+        },
+        "evidence_refs": [
+            f"evidence://persona-create/{persona_id}/request",
+            f"evidence://persona-create/{persona_id}/paper-ledger-binding",
+            f"evidence://persona-create/{persona_id}/paper-runtime-binding",
+        ],
     }
+    persona_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
+        {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": name,
+            "mandate": mandate or archetype,
+            "strategy_family": strategy_family or archetype,
+            "lifecycle_state": lifecycle_state,
+            "metadata": {
+                **persona_metadata,
+                "owner": owner,
+                "archetype": archetype,
+                "risk_level": risk,
+                **({"traits": traits} if traits else {}),
+            },
+        },
+        reason="persona_created",
+    )
     if dry_run:
         persona_record = {
             "id": persona_id,
@@ -38338,11 +38842,71 @@ async def bff_create_persona(
             traits=traits,
             metadata=persona_metadata,
         )
+        read_store.create_persona_binding(
+            binding_id=refs["binding_id"],
+            persona_id=persona_id,
+            capital_pool_id=refs["capital_pool_id"],
+            actor_id=owner,
+            created_at=snapshot_at,
+            role="paper_owner",
+            validity="active",
+            metadata={
+                "capital_mode": "paper",
+                "paper_ledger_id": refs["paper_ledger_id"],
+                "legacy_paper_capital_pool_id": refs["capital_pool_id"],
+                "live_capital_enabled": False,
+                "created_via": "POST /bff/personas",
+            },
+        )
+        read_store.create_deployment_plan(
+            plan_id=refs["deployment_plan_id"],
+            binding_id=refs["binding_id"],
+            artifact_id=refs["artifact_id"],
+            deployment_mode="paper",
+            capital_pool_id=refs["capital_pool_id"],
+            actor_id=owner,
+            created_at=snapshot_at,
+            params={
+                "persona_id": persona_id,
+                "capital_mode": "paper",
+                "paper_ledger_id": refs["paper_ledger_id"],
+                "human_review_required_for_live": True,
+            },
+            locked=True,
+            status="approved",
+        )
+        read_store.create_runtime_binding(
+            runtime_id=refs["runtime_id"],
+            name=f"{name} paper runtime",
+            persona_id=persona_id,
+            binding_id=refs["binding_id"],
+            deployment_plan_id=refs["deployment_plan_id"],
+            runtime_kind="paper",
+            actor_id=owner,
+            created_at=snapshot_at,
+            params={
+                "capital_pool_id": refs["capital_pool_id"],
+                "capital_mode": "paper",
+                "paper_ledger_id": refs["paper_ledger_id"],
+                "live_write_enabled": False,
+                "order_side_effects_allowed": False,
+            },
+            state="running",
+        )
     overlay = _project_persona_dto(
         persona_record,
         overlay={
             "routedStrategies": int(payload.get("routedStrategies") or 0),
             "successRate": float(payload.get("successRate") or 0.0),
+            "capitalMode": "paper",
+            "paperLedgerId": refs["paper_ledger_id"],
+            "paperLedger": persona_metadata["paper_ledger"],
+            "legacyPaperCapitalPoolId": refs["capital_pool_id"],
+            "runtimeId": refs["runtime_id"],
+            "runtimeBindingId": refs["binding_id"],
+            "deploymentPlanId": refs["deployment_plan_id"],
+            "deploymentStage": "paper",
+            "evidenceRefs": list(persona_metadata["evidence_refs"]),
         },
         routed_strategies=0,
     )
@@ -38369,7 +38933,19 @@ async def bff_create_persona(
 
     result = {
         "data": overlay,
-        "meta": {"snapshot_at": snapshot_at, **ooda_meta},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "create_flow": "one_shot_paper_running",
+            "capital_mode": "paper",
+            "paper_ledger_id": refs["paper_ledger_id"],
+            "legacy_paper_capital_pool_id": refs["capital_pool_id"],
+            "runtime_binding_id": refs["binding_id"],
+            "runtime_id": refs["runtime_id"],
+            "deployment_plan_id": refs["deployment_plan_id"],
+            "live_capital_side_effects": False,
+            "human_review_required_for_live": True,
+            **ooda_meta,
+        },
     }
     _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
@@ -38449,6 +39025,28 @@ async def bff_patch_persona(
         base["risk"] = _normalize_risk_level(payload["risk"])
     base["updatedAt"] = snapshot_at
     base["id"] = persona_id
+    existing_metadata = dict(raw.get("metadata") if isinstance(raw, dict) and isinstance(raw.get("metadata"), dict) else {})
+    update_metadata: Dict[str, Any] = {
+        "success_rate": float(base.get("successRate") or 0.0),
+    }
+    update_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
+        {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": str(base.get("name") or persona_id),
+            "mandate": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
+            "strategy_family": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
+            "lifecycle_state": str(base.get("state") or "draft"),
+            "metadata": {
+                **existing_metadata,
+                **update_metadata,
+                "owner": str(base.get("owner") or identity.operator_id),
+                "archetype": str(base.get("archetype") or "generalist"),
+                "risk_level": str(base.get("risk") or "low"),
+            },
+        },
+        reason="persona_updated",
+    )
     persona_record = read_store.update_persona(
         persona_id,
         name=str(base.get("name") or persona_id),
@@ -38457,9 +39055,7 @@ async def bff_patch_persona(
         archetype=str(base.get("archetype") or "generalist"),
         lifecycle_state=str(base.get("state") or "draft"),
         risk_level=str(base.get("risk") or "low"),
-        metadata={
-            "success_rate": float(base.get("successRate") or 0.0),
-        },
+        metadata=update_metadata,
     )
     if persona_record is not None:
         routed = _routed_strategies_for_persona(persona_id)
@@ -38516,6 +39112,42 @@ async def bff_get_persona_route_policy(
         "data": policy,
         "meta": _read_surface_meta(
             "personas", "persona_route_policy",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/runtime-profile")
+async def bff_get_persona_runtime_profile(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: persona OpenClaw runtime profile contract."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    persona = read_store.get_persona(persona_id) or {"persona_id": persona_id}
+    route_policy = None
+    fetcher = getattr(read_store, "get_route_policy_for_persona", None)
+    if callable(fetcher):
+        route_policy = fetcher(persona_id)
+    try:
+        profile = build_persona_runtime_profile(
+            persona,
+            route_policy=route_policy if isinstance(route_policy, dict) else None,
+        ).to_dict()
+    except ValueError as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid persona runtime profile",
+            str(exc),
+        ) from exc
+    return {
+        "data": profile,
+        "meta": _read_surface_meta(
+            "personas", "persona_runtime_profile",
             snapshot_at=snapshot_at,
         ),
     }
@@ -39934,6 +40566,836 @@ def _pm12_quarterly_recommendations(
         reverse=True,
     )
     return recommendations
+
+
+_PROMOTION_REVIEW_ACTION_IDS: Set[str] = set(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)
+_PROMOTION_REVIEW_PROMOTION_ACTION_IDS: Set[str] = {"promote_to_canary_candidate"}
+_PROMOTION_REVIEW_DECISIONS: Set[str] = {"approve", "approve_with_conditions", "reject"}
+_PROMOTION_REVIEW_ID_PREFIX = "promotion-review:"
+_PROMOTION_REVIEW_TARGET_PREFIX = "promotion_review:"
+_PROMOTION_REVIEW_ID_QUARTER_RE = re.compile(r"pm12-(?P<quarter>\d{4}-q[1-4])-", re.IGNORECASE)
+
+
+def _promotion_review_clean_id(review_id: Any) -> str:
+    clean_id = str(review_id or "").strip()
+    if clean_id.startswith(_PROMOTION_REVIEW_ID_PREFIX):
+        clean_id = clean_id[len(_PROMOTION_REVIEW_ID_PREFIX):]
+    if clean_id.startswith(_PROMOTION_REVIEW_TARGET_PREFIX):
+        clean_id = clean_id[len(_PROMOTION_REVIEW_TARGET_PREFIX):]
+    return clean_id
+
+
+def _promotion_review_target_id(review_id: Any) -> str:
+    return f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}"
+
+
+def _promotion_review_quarter_from_id(review_id: Any) -> Optional[str]:
+    match = _PROMOTION_REVIEW_ID_QUARTER_RE.search(_promotion_review_clean_id(review_id))
+    if match is None:
+        return None
+    return match.group("quarter").upper()
+
+
+def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, Any]:
+    action_id = str(recommendation.get("action_id") or "").strip()
+    state = str(recommendation.get("state") or "").strip().lower()
+    if "canary" in state:
+        from_stage = "canary"
+    elif "live" in state:
+        from_stage = "live"
+    else:
+        from_stage = "paper"
+
+    if action_id in _PROMOTION_REVIEW_PROMOTION_ACTION_IDS:
+        if from_stage == "canary":
+            target_stage = "live_candidate"
+            review_kind = "canary_to_live_review"
+        elif from_stage == "live":
+            target_stage = "live_rebalance_review"
+            review_kind = "live_ranking_review"
+        else:
+            target_stage = "canary_candidate"
+            review_kind = "paper_to_canary_review"
+    elif action_id in {"reduce_capital_access", "freeze_persona", "suspend_persona", "retire_persona"}:
+        target_stage = "risk_containment_review"
+        review_kind = "risk_containment_review"
+    elif action_id in {"increase_research_budget", "grant_tool_access"}:
+        target_stage = "resource_change_review"
+        review_kind = "resource_change_review"
+    else:
+        target_stage = "governance_review"
+        review_kind = "ranking_governance_review"
+
+    return {
+        "from_stage": from_stage,
+        "target_stage": target_stage,
+        "review_kind": review_kind,
+        "eventual_live_stage": "live",
+        "live_requires_separate_human_gate": target_stage != "risk_containment_review",
+    }
+
+
+def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, Any]]:
+    clean_id = _promotion_review_clean_id(review_id)
+    for record in reversed(command_store._get_all_commands()):
+        if record.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+            continue
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        if target.get("id") == clean_id:
+            return record
+        if str(params.get("recommendation_id") or params.get("recommendationId") or "").strip() == clean_id:
+            return record
+        if str(params.get("review_id") or params.get("promotion_review_id") or "").strip() == clean_id:
+            return record
+    return None
+
+
+def _promotion_review_submission_projection(review_id: Any) -> Optional[Dict[str, Any]]:
+    record = _latest_promotion_review_submission(review_id)
+    if record is None:
+        return None
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    return {
+        "submitted": True,
+        "submit_status": record.get("status"),
+        "command_id": record.get("command_id"),
+        "commandId": record.get("command_id"),
+        "receipt_id": record.get("command_id"),
+        "submitted_at": record.get("submitted_at"),
+        "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
+        "recommendation_id": params.get("recommendation_id") or params.get("recommendationId"),
+        "recommendation_action_id": params.get("recommendation_action_id") or params.get("recommendationActionId"),
+        "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}",
+        "live_capital_mutation": False,
+        "requires_human_gate_decision": True,
+    }
+
+
+def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
+    clean_id = _promotion_review_clean_id(review_id)
+    target_id = _promotion_review_target_id(clean_id)
+    for record in reversed(command_store._get_all_commands()):
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        if target.get("type") != ObjectType.HUMAN_GATE_ITEM.value:
+            continue
+        if target.get("id") == target_id:
+            return record
+        if str(params.get("review_id") or params.get("promotion_review_id") or "").strip() == clean_id:
+            return record
+        if str(params.get("recommendation_id") or "").strip() == clean_id:
+            return record
+    return None
+
+
+def _promotion_review_decision_projection(review_id: Any) -> Optional[Dict[str, Any]]:
+    record = _latest_promotion_review_command(review_id)
+    if record is None:
+        return None
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    rationale = (
+        params.get("rationale")
+        or params.get("reason")
+        or params.get("rejection_reason")
+        or params.get("memo")
+    )
+    projection: Dict[str, Any] = {
+        "decision": params.get("decision"),
+        "decision_status": "accepted",
+        "command_id": record.get("command_id"),
+        "commandId": record.get("command_id"),
+        "receipt_id": record.get("command_id"),
+        "submitted_at": record.get("submitted_at"),
+        "decided_at": record.get("submitted_at"),
+        "decided_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
+        "command_status": record.get("status"),
+        "live_capital_mutation": False,
+        "requires_human_gate_decision": True,
+    }
+    if rationale not in (None, ""):
+        projection["rationale"] = rationale
+    if "conditions" in params:
+        projection["conditions"] = json.loads(json.dumps(params.get("conditions")))
+    return projection
+
+
+def _promotion_review_item_from_recommendation(
+    recommendation: Dict[str, Any],
+) -> Dict[str, Any]:
+    review_id = str(recommendation.get("recommendation_id") or recommendation.get("id") or "")
+    action_id = str(recommendation.get("action_id") or "")
+    submission = _promotion_review_submission_projection(review_id)
+    decision = _promotion_review_decision_projection(review_id)
+    stage_path = _promotion_review_stage_path(recommendation)
+    target_stage = str(stage_path.get("target_stage") or "governance_review")
+    status = "decision_accepted" if decision else "pending_human_gate" if submission else "recommended_not_submitted"
+    decision_status = str((decision or {}).get("decision_status") or "pending")
+    governance = {
+        "requires_human_gate_decision": True,
+        "decision_status": decision_status,
+        "live_capital_mutation": False,
+        "direct_live_capital_mutation": False,
+        "paper_to_canary_gate": stage_path.get("review_kind") == "paper_to_canary_review",
+        "canary_to_live_gate": stage_path.get("review_kind") == "canary_to_live_review",
+        "live_ranking_review": stage_path.get("review_kind") == "live_ranking_review",
+        "live_promotion_requires_separate_human_gate": bool(stage_path.get("live_requires_separate_human_gate", True)),
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+    }
+    item: Dict[str, Any] = {
+        "id": review_id,
+        "review_id": review_id,
+        "promotion_review_id": review_id,
+        "recommendation_id": recommendation.get("recommendation_id") or recommendation.get("id"),
+        "quarter": recommendation.get("quarter"),
+        "quarter_window": recommendation.get("quarter_window"),
+        "persona_id": recommendation.get("persona_id"),
+        "name": recommendation.get("name"),
+        "owner": recommendation.get("owner"),
+        "rank": recommendation.get("rank"),
+        "score": recommendation.get("score"),
+        "tier": recommendation.get("tier"),
+        "action_id": action_id,
+        "action_label": recommendation.get("action_label"),
+        "priority": recommendation.get("priority"),
+        "risk_level": recommendation.get("risk_level"),
+        "status": status,
+        "decision_status": decision_status,
+        "submitted": bool(submission),
+        "submit_status": (submission or {}).get("submit_status") if submission else "not_submitted",
+        "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{review_id}",
+        "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
+        "allowedActions": {
+            "canSubmit": not bool(submission),
+            "canApprove": bool(submission),
+            "canApproveWithConditions": bool(submission),
+            "canReject": bool(submission),
+        },
+        "promotion_path": stage_path,
+        "review_kind": stage_path.get("review_kind"),
+        "rationale": recommendation.get("rationale"),
+        "rationale_codes": list(recommendation.get("rationale_codes") or []),
+        "metrics": json.loads(json.dumps(recommendation.get("metrics") or {})),
+        "components": json.loads(json.dumps(recommendation.get("components") or {})),
+        "evidence_refs": json.loads(json.dumps(recommendation.get("evidence_refs") or [])),
+        "evidence_ref_ids": list(recommendation.get("evidence_ref_ids") or []),
+        "source_recommendation": json.loads(json.dumps(recommendation)),
+        "governance": governance,
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "direct_live_capital_mutation": False,
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        "links": {
+            "persona": f"/bff/personas/{recommendation.get('persona_id')}",
+            "recommendation": "/bff/management/quarterly-ranking/recommendations",
+            "submit": f"/bff/management/quarterly-ranking/recommendations/{quote(review_id, safe='')}/submit",
+            "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
+            "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
+            "human_inbox": f"/bff/management/human-inbox/{quote(_promotion_review_target_id(review_id), safe='')}",
+        },
+    }
+    if submission:
+        item["submission"] = submission
+    if decision:
+        item["decision"] = decision
+    return item
+
+
+def _promotion_review_items(
+    identity: OperatorIdentity,
+    *,
+    snapshot_at: str,
+    quarter: Optional[str],
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = "",
+) -> tuple[List[Dict[str, Any]], Dict[str, Any], int, bool]:
+    quarter_window = _pm12_quarter_window(quarter, snapshot_at)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    recommendations = _pm12_quarterly_recommendations(
+        ranked_items,
+        quarter_window=quarter_window,
+        evidence_refs=public_evidence_refs,
+    )
+    reviews = [
+        _promotion_review_item_from_recommendation(item)
+        for item in recommendations
+        if str(item.get("action_id") or "") in _PROMOTION_REVIEW_ACTION_IDS
+    ]
+    return reviews, quarter_window, redacted_count, evidence_dataset_available
+
+
+def _promotion_review_surfaces(
+    *,
+    snapshot_at: str,
+    evidence_dataset_available: bool,
+) -> Dict[str, Dict[str, Any]]:
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    approval_queue_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    human_gate_surface = _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at)
+    recommendations_surface = _aggregate_group_surface(
+        "quarterly_ranking_recommendations",
+        [*source_surfaces.values(), formula_surface, evidence_surface, approval_queue_surface, human_gate_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking recommendations aggregate unavailable.",
+        degraded_message="Quarterly ranking recommendations are degraded because one or more source surfaces are degraded.",
+    )
+    promotion_reviews_surface = _aggregate_group_surface(
+        "promotion_reviews",
+        [recommendations_surface, approval_queue_surface, human_gate_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Promotion review aggregate unavailable.",
+        degraded_message="Promotion review aggregate is degraded because one or more governance surfaces are degraded.",
+    )
+    return {
+        "promotion_reviews": promotion_reviews_surface,
+        "quarterly_ranking_recommendations": recommendations_surface,
+        "formula": formula_surface,
+        "evidence_refs": evidence_surface,
+        "knowledge_evidence": evidence_surface,
+        "human_inbox": _composed_surface_status(snapshot_at=snapshot_at),
+        "governance_queue": approval_queue_surface,
+        "human_gate_decision": human_gate_surface,
+        **source_surfaces,
+    }
+
+
+def _promotion_review_find(
+    identity: OperatorIdentity,
+    review_id: str,
+    *,
+    snapshot_at: str,
+    quarter: Optional[str] = None,
+) -> tuple[Optional[Dict[str, Any]], Dict[str, Any], int, bool]:
+    clean_id = _promotion_review_clean_id(review_id)
+    resolved_quarter = quarter or _promotion_review_quarter_from_id(clean_id)
+    reviews, quarter_window, redacted_count, evidence_dataset_available = _promotion_review_items(
+        identity,
+        snapshot_at=snapshot_at,
+        quarter=resolved_quarter,
+    )
+    for item in reviews:
+        identifiers = {
+            str(item.get("id") or ""),
+            str(item.get("review_id") or ""),
+            str(item.get("promotion_review_id") or ""),
+            str(item.get("recommendation_id") or ""),
+        }
+        if clean_id in identifiers:
+            return item, quarter_window, redacted_count, evidence_dataset_available
+    return None, quarter_window, redacted_count, evidence_dataset_available
+
+
+def _promotion_review_rationale(payload: Dict[str, Any]) -> str:
+    return str(
+        payload.get("rationale")
+        or payload.get("reason")
+        or payload.get("memo")
+        or payload.get("rejection_reason")
+        or ""
+    ).strip()
+
+
+def _raise_if_promotion_review_direct_mutation_requested(payload: Dict[str, Any]) -> None:
+    mutation_fields = (
+        "live_capital_mutation",
+        "liveCapitalMutation",
+        "liveCapitalSideEffects",
+        "runtime_mutation",
+        "runtimeMutation",
+    )
+    for field in mutation_fields:
+        if bool(payload.get(field)):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Promotion review decisions cannot request direct live/runtime mutation",
+                f"{field} must be false or omitted; promotion requires a human-gated command receipt only.",
+                precondition_failed=field,
+                suggestion="Submit the promotion review decision without live/runtime mutation flags.",
+            )
+
+
+def _promotion_review_decision_payload(
+    *,
+    payload: Dict[str, Any],
+    review: Dict[str, Any],
+    decision: str,
+    rationale: str,
+    identity: OperatorIdentity,
+) -> Dict[str, Any]:
+    command_payload = {
+        **payload,
+        "decision": decision,
+        "review_id": review["review_id"],
+        "promotion_review_id": review["promotion_review_id"],
+        "recommendation_id": review["recommendation_id"],
+        "persona_id": review.get("persona_id"),
+        "action_id": review.get("action_id"),
+        "promotion_stage_from": "paper",
+        "promotion_stage_to": (review.get("promotion_path") or {}).get("target_stage"),
+        "eventual_live_stage": "live",
+        "live_promotion_requires_separate_human_gate": True,
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "liveCapitalMutation": False,
+        "liveCapitalSideEffects": False,
+        "direct_live_capital_mutation": False,
+        "runtime_mutation": False,
+        "audit_event": f"promotion_review.{decision}",
+        "actor_id": identity.operator_id,
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+    }
+    if rationale:
+        command_payload["rationale"] = rationale
+    if decision == "reject":
+        command_payload["rejection_reason"] = rationale
+    if "conditions" in payload:
+        command_payload["conditions"] = json.loads(json.dumps(payload.get("conditions")))
+    return command_payload
+
+
+def _promotion_review_decision_response(
+    command_response: JSONResponse,
+    *,
+    review: Dict[str, Any],
+    decision: str,
+    command_payload: Dict[str, Any],
+) -> JSONResponse:
+    content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
+    data = content.setdefault("data", {})
+    data.update(
+        {
+            "review_id": review["review_id"],
+            "promotion_review_id": review["promotion_review_id"],
+            "recommendation_id": review["recommendation_id"],
+            "persona_id": review.get("persona_id"),
+            "action_id": review.get("action_id"),
+            "decision": decision,
+            "decision_status": "accepted",
+            "requires_human_gate_decision": True,
+            "live_capital_mutation": False,
+            "liveCapitalMutation": False,
+            "liveCapitalSideEffects": False,
+            "direct_live_capital_mutation": False,
+            "runtime_mutation": False,
+            "promotion_stage_from": "paper",
+            "promotion_stage_to": command_payload.get("promotion_stage_to"),
+            "eventual_live_stage": "live",
+        }
+    )
+    if command_payload.get("rationale"):
+        data["rationale"] = command_payload.get("rationale")
+    if "conditions" in command_payload:
+        data["conditions"] = json.loads(json.dumps(command_payload.get("conditions")))
+    meta = content.setdefault("meta", {})
+    meta.update(
+        {
+            "live_capital_mutation": False,
+            "liveCapitalMutation": False,
+            "liveCapitalSideEffects": False,
+            "direct_live_capital_mutation": False,
+            "runtime_mutation": False,
+            "requires_human_gate_decision": True,
+            "decision_status": "accepted",
+            "decision": decision,
+            "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
+        }
+    )
+    return JSONResponse(status_code=command_response.status_code, content=jsonable_encoder(content))
+
+
+def _promotion_review_submit_response(
+    command_response: JSONResponse,
+    *,
+    review: Dict[str, Any],
+) -> JSONResponse:
+    content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
+    refreshed = _promotion_review_item_from_recommendation(review["source_recommendation"])
+    data = content.setdefault("data", {})
+    data.update(
+        {
+            "review_id": refreshed["review_id"],
+            "promotion_review_id": refreshed["promotion_review_id"],
+            "recommendation_id": refreshed["recommendation_id"],
+            "persona_id": refreshed.get("persona_id"),
+            "action_id": refreshed.get("action_id"),
+            "status": refreshed.get("status"),
+            "submitted": True,
+            "human_inbox_id": refreshed.get("human_inbox_id"),
+            "requires_human_gate_decision": True,
+            "live_capital_mutation": False,
+            "liveCapitalMutation": False,
+            "direct_live_capital_mutation": False,
+            "runtime_mutation": False,
+            "review": refreshed,
+            "links": refreshed.get("links") or {},
+        }
+    )
+    meta = content.setdefault("meta", {})
+    meta.update(
+        {
+            "live_capital_mutation": False,
+            "liveCapitalMutation": False,
+            "direct_live_capital_mutation": False,
+            "runtime_mutation": False,
+            "requires_human_gate_decision": True,
+            "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
+        }
+    )
+    return JSONResponse(status_code=command_response.status_code, content=jsonable_encoder(content))
+
+
+@app.post("/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit", status_code=202)
+async def bff_management_quarterly_ranking_recommendation_submit(
+    recommendation_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: submit a PM-12 recommendation into Human Gate review without live mutation."""
+    identity = _extract_identity(authorization)
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Quarterly ranking recommendation submission requires operator-level role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, approver, or admin role",
+        )
+    _reject_body_idempotency_key(payload)
+    _raise_if_promotion_review_direct_mutation_requested(payload)
+
+    snapshot_at = utc_now()
+    review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
+        identity,
+        recommendation_id,
+        snapshot_at=snapshot_at,
+        quarter=str(payload.get("quarter") or "").strip() or None,
+    )
+    if review is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Quarterly ranking recommendation not found",
+            f"Recommendation {recommendation_id} does not exist",
+            precondition_failed="recommendation_id",
+        )
+
+    existing_submission = _promotion_review_submission_projection(review["review_id"])
+    if existing_submission:
+        already = _promotion_review_item_from_recommendation(review["source_recommendation"])
+        return JSONResponse(
+            status_code=200,
+            content=jsonable_encoder(
+                {
+                    "data": {
+                        "command_id": existing_submission.get("command_id"),
+                        "review_id": already["review_id"],
+                        "promotion_review_id": already["promotion_review_id"],
+                        "recommendation_id": already["recommendation_id"],
+                        "persona_id": already.get("persona_id"),
+                        "action_id": already.get("action_id"),
+                        "status": already.get("status"),
+                        "submitted": True,
+                        "human_inbox_id": already.get("human_inbox_id"),
+                        "requires_human_gate_decision": True,
+                        "live_capital_mutation": False,
+                        "review": already,
+                        "links": already.get("links") or {},
+                    },
+                    "meta": {
+                        **_snapshot_meta(snapshot_at),
+                        "idempotency": {"replayed": True, "source": "existing_submission"},
+                        "live_capital_mutation": False,
+                        "direct_live_capital_mutation": False,
+                        "requires_human_gate_decision": True,
+                        "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
+                    },
+                }
+            ),
+        )
+
+    command_payload = {
+        **payload,
+        "quarter": review.get("quarter"),
+        "review_id": review["review_id"],
+        "promotion_review_id": review["promotion_review_id"],
+        "recommendation_id": review["recommendation_id"],
+        "recommendationId": review["recommendation_id"],
+        "recommendation_action_id": review.get("action_id"),
+        "recommendationActionId": review.get("action_id"),
+        "persona_id": review.get("persona_id"),
+        "stage_from": (review.get("promotion_path") or {}).get("from_stage"),
+        "stage_to": (review.get("promotion_path") or {}).get("target_stage"),
+        "review_kind": review.get("review_kind"),
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "liveCapitalMutation": False,
+        "direct_live_capital_mutation": False,
+        "runtime_mutation": False,
+        "source_type": "quarterly_ranking_recommendation",
+        "source_record_id": review["recommendation_id"],
+        "audit_event": "quarterly_ranking.recommendation_submitted",
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+    }
+    _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
+    command_response = _sem_command_response(
+        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        target_type=ObjectType.RANKING,
+        target_id=review["recommendation_id"],
+        payload=command_payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+    return _promotion_review_submit_response(command_response, review=review)
+
+
+@app.get("/bff/management/promotion-reviews")
+async def bff_management_promotion_reviews(
+    quarter: Optional[str] = Query(default=None),
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    action_id: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: promotion review queue derived from PM-12 recommendations."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    reviews, quarter_window, redacted_count, evidence_dataset_available = _promotion_review_items(
+        identity,
+        snapshot_at=snapshot_at,
+        quarter=quarter,
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
+    if action_id:
+        clean_action = str(action_id or "").strip()
+        if clean_action not in _PROMOTION_REVIEW_ACTION_IDS:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "action_id is not a promotion review action",
+                f"action_id must be one of {sorted(_PROMOTION_REVIEW_ACTION_IDS)}",
+                precondition_failed="action_id",
+            )
+        reviews = [item for item in reviews if item.get("action_id") == clean_action]
+    if status:
+        requested_statuses = {value.strip() for value in str(status).split(",") if value.strip()}
+        reviews = [item for item in reviews if str(item.get("status") or "") in requested_statuses]
+
+    total = len(reviews)
+    page_items, next_page_token = _page_slice(reviews, page_token, page_size)
+    surfaces = _promotion_review_surfaces(
+        snapshot_at=snapshot_at,
+        evidence_dataset_available=evidence_dataset_available,
+    )
+    summary = {
+        "quarter": quarter_window["quarter"],
+        "review_count": total,
+        "returned_count": len(page_items),
+        "pending_count": len([item for item in reviews if item.get("decision_status") == "pending"]),
+        "decision_accepted_count": len([item for item in reviews if item.get("decision_status") == "accepted"]),
+        "live_capital_mutation_count": 0,
+        "requires_human_gate_decision": True,
+        "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+    }
+    return {
+        "data": {
+            "id": f"promotion-reviews-{quarter_window['quarter'].lower()}",
+            "quarter": quarter_window["quarter"],
+            "quarter_window": quarter_window,
+            "items": page_items,
+            "summary": summary,
+        },
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": surfaces,
+            "composition_sources": [
+                "GET /bff/management/quarterly-ranking/recommendations",
+                "GET /bff/management/human-inbox",
+                "GET /api/v1/operator/governance/approval-queue",
+            ],
+            "redacted_evidence_count": redacted_count,
+            "requires_human_gate_decision": True,
+            "live_capital_mutation": False,
+            "direct_live_capital_mutation": False,
+            "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
+            "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        },
+    }
+
+
+@app.get("/bff/management/promotion-reviews/{review_id}")
+async def bff_management_promotion_review_detail(
+    review_id: str,
+    quarter: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: promotion review detail by review id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    review, quarter_window, redacted_count, evidence_dataset_available = _promotion_review_find(
+        identity,
+        review_id,
+        snapshot_at=snapshot_at,
+        quarter=quarter,
+    )
+    if review is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Promotion review not found",
+            f"Promotion review {review_id} does not exist",
+            precondition_failed="review_id",
+        )
+    return {
+        "data": review,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "quarter": quarter_window["quarter"],
+            "surfaces": _promotion_review_surfaces(
+                snapshot_at=snapshot_at,
+                evidence_dataset_available=evidence_dataset_available,
+            ),
+            "redacted_evidence_count": redacted_count,
+            "requires_human_gate_decision": True,
+            "live_capital_mutation": False,
+            "direct_live_capital_mutation": False,
+            "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        },
+    }
+
+
+@app.post("/bff/management/promotion-reviews/{review_id}/decisions", status_code=202)
+async def bff_management_promotion_review_decision(
+    review_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: accept a human-gated promotion review decision without live mutation."""
+    identity = _extract_identity(authorization)
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Promotion review decision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+    _reject_body_idempotency_key(payload)
+    _raise_if_promotion_review_direct_mutation_requested(payload)
+
+    raw_decision = str(payload.get("decision") or "").strip().lower()
+    if raw_decision not in _PROMOTION_REVIEW_DECISIONS:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "decision is invalid",
+            f"decision must be one of {sorted(_PROMOTION_REVIEW_DECISIONS)}",
+            precondition_failed="decision",
+        )
+    rationale = _promotion_review_rationale(payload)
+    if raw_decision == "reject" and not rationale:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "reject decision requires a non-empty rationale",
+            "rationale must be a non-empty string when decision=reject",
+            precondition_failed="rationale",
+        )
+
+    snapshot_at = utc_now()
+    review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
+        identity,
+        review_id,
+        snapshot_at=snapshot_at,
+        quarter=str(payload.get("quarter") or "").strip() or None,
+    )
+    if review is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Promotion review not found",
+            f"Promotion review {review_id} does not exist",
+            precondition_failed="review_id",
+        )
+    if not bool(review.get("submitted")):
+        raise _bff_error(
+            409,
+            ErrorCode.HUMAN_GATE_PENDING,
+            "Promotion review has not been submitted",
+            "Submit the quarterly ranking recommendation before recording a Human Gate decision.",
+            precondition_failed="recommendation_submission",
+            suggestion="POST the recommendation submit route and then retry the decision.",
+            details_extra={
+                "recommendationId": review.get("recommendation_id"),
+                "submitHref": (review.get("links") or {}).get("submit"),
+            },
+        )
+
+    command_type = (
+        CommandType.HUMAN_GATE_REJECT
+        if raw_decision == "reject"
+        else CommandType.HUMAN_GATE_APPROVE
+    )
+    command_payload = _promotion_review_decision_payload(
+        payload=payload,
+        review=review,
+        decision=raw_decision,
+        rationale=rationale,
+        identity=identity,
+    )
+    command_response = _sem_command_response(
+        command_type=command_type,
+        target_type=ObjectType.HUMAN_GATE_ITEM,
+        target_id=_promotion_review_target_id(review["review_id"]),
+        payload=command_payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+    return _promotion_review_decision_response(
+        command_response,
+        review=review,
+        decision=raw_decision,
+        command_payload=command_payload,
+    )
 
 
 def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -51608,9 +53070,25 @@ _PERSONA_FLEET_CONTEXT_METADATA_KEYS = (
     "current_work",
     "ooda_stage",
     "deployment_stage",
+    "capital_mode",
+    "capital_pool_id",
+    "target_capital_pool_id",
+    "live_capital_pool_id",
+    "paper_ledger_id",
+    "paper_ledger",
+    "paper_budget",
+    "paper_benchmark_budget",
+    "runtime_id",
+    "runtime_binding_id",
+    "league_rank",
     "league_score",
     "recommended_governance_action",
     "governance_required",
+    "review_id",
+    "review_type",
+    "review_status",
+    "promotion_review_id",
+    "inbox_id",
     "risk_flags",
     "performance",
     "data_source_status",
@@ -51758,6 +53236,7 @@ def _build_persona_health_items(
         pool_id = (
             league_entry.get("capital_pool_id")
             or metadata.get("capital_pool_id")
+            or context_metadata.get("capital_pool_id")
             or binding.get("capital_pool_id")
         )
         runtime = _runtime_for_pool(
@@ -51768,6 +53247,8 @@ def _build_persona_health_items(
             league_entry.get("runtime_id")
             or runtime.get("runtime_id")
             or runtime.get("id")
+            or context_metadata.get("runtime_id")
+            or context_metadata.get("runtime_binding_id")
             or metadata.get("runtime_binding_id")
         )
         deployment_stage = (
@@ -51777,6 +53258,37 @@ def _build_persona_health_items(
             or metadata.get("deployment_stage")
             or context_metadata.get("deployment_stage")
             or "none"
+        )
+        capital_mode = _persona_fleet_capital_mode(
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            binding=binding,
+            runtime=runtime,
+            deployment_stage=deployment_stage,
+        )
+        live_pool_id = _persona_fleet_live_capital_pool_id(
+            capital_mode=capital_mode,
+            pool_id=pool_id,
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            context_metadata=context_metadata,
+            binding=binding,
+        )
+        paper_ledger_id = _persona_fleet_paper_ledger_id(
+            persona_id=persona_id,
+            capital_mode=capital_mode,
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            context_metadata=context_metadata,
+            binding=binding,
+            runtime=runtime,
+        )
+        paper_ledger = _persona_fleet_paper_ledger(
+            paper_ledger_id=paper_ledger_id,
+            persona_id=persona_id,
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            context_metadata=context_metadata,
         )
         market_scope = list(
             league_entry.get("market_scope")
@@ -51902,8 +53414,16 @@ def _build_persona_health_items(
             "marketScope": market_scope,
             "asset_classes": asset_classes,
             "assetClasses": asset_classes,
-            "capital_pool_id": pool_id,
-            "capitalPoolId": pool_id,
+            "capital_mode": capital_mode,
+            "capitalMode": capital_mode,
+            "paper_ledger_id": paper_ledger_id,
+            "paperLedgerId": paper_ledger_id,
+            "paper_ledger": paper_ledger,
+            "paperLedger": paper_ledger,
+            "legacy_paper_capital_pool_id": pool_id if capital_mode == "paper" else None,
+            "legacyPaperCapitalPoolId": pool_id if capital_mode == "paper" else None,
+            "capital_pool_id": live_pool_id,
+            "capitalPoolId": live_pool_id,
             "runtime_id": runtime_id,
             "runtimeId": runtime_id,
             "deployment_stage": deployment_stage,
@@ -52131,6 +53651,320 @@ def _persona_fleet_list_research_summary(metadata: Dict[str, Any]) -> Dict[str, 
     }
 
 
+_PERSONA_FLEET_RUNNING_STAGE_STATES = {
+    "paper": "paper_running",
+    "canary": "canary_running",
+    "live": "live_running",
+}
+
+_PERSONA_FLEET_TERMINAL_OR_GOVERNED_STATES = {
+    "draft",
+    "needs_human_approval",
+    "canary_authorized_not_started",
+    "rollback_required",
+    "paused",
+    "retired",
+    "stopped",
+    "failed",
+}
+
+
+def _persona_fleet_record_value(record: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return value
+    for nested_key in ("params", "metadata"):
+        nested = record.get(nested_key)
+        if not isinstance(nested, dict):
+            continue
+        for key in keys:
+            value = nested.get(key)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _persona_fleet_capital_mode(
+    *,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    binding: Dict[str, Any],
+    runtime: Dict[str, Any],
+    deployment_stage: Any,
+) -> str:
+    for value in (
+        league_entry.get("capital_mode"),
+        league_entry.get("capitalMode"),
+        raw_metadata.get("capital_mode"),
+        raw_metadata.get("capitalMode"),
+        _persona_fleet_record_value(binding, "capital_mode", "capitalMode", "allowed_deployment_scope"),
+        _persona_fleet_record_value(runtime, "capital_mode", "capitalMode", "runtime_kind"),
+        deployment_stage,
+    ):
+        normalized = str(value or "").strip().lower()
+        if normalized in _PERSONA_FLEET_RUNNING_STAGE_STATES:
+            return normalized
+    return "none"
+
+
+def _persona_fleet_live_capital_pool_id(
+    *,
+    capital_mode: str,
+    pool_id: Any,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    context_metadata: Dict[str, Any],
+    binding: Dict[str, Any],
+) -> Optional[str]:
+    if capital_mode != "paper":
+        clean = str(pool_id or "").strip()
+        return clean or None
+    for value in (
+        league_entry.get("target_capital_pool_id"),
+        league_entry.get("targetCapitalPoolId"),
+        raw_metadata.get("target_capital_pool_id"),
+        raw_metadata.get("targetCapitalPoolId"),
+        context_metadata.get("target_capital_pool_id"),
+        context_metadata.get("targetCapitalPoolId"),
+        league_entry.get("live_capital_pool_id"),
+        raw_metadata.get("live_capital_pool_id"),
+        context_metadata.get("live_capital_pool_id"),
+        _persona_fleet_record_value(binding, "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id"),
+    ):
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return None
+
+
+def _persona_fleet_paper_ledger_id(
+    *,
+    persona_id: str,
+    capital_mode: str,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    context_metadata: Dict[str, Any],
+    binding: Dict[str, Any],
+    runtime: Dict[str, Any],
+) -> Optional[str]:
+    if capital_mode != "paper":
+        return None
+    paper_ledger = context_metadata.get("paper_ledger") if isinstance(context_metadata.get("paper_ledger"), dict) else {}
+    raw_paper_ledger = raw_metadata.get("paper_ledger") if isinstance(raw_metadata.get("paper_ledger"), dict) else {}
+    for value in (
+        league_entry.get("paper_ledger_id"),
+        league_entry.get("paperLedgerId"),
+        raw_metadata.get("paper_ledger_id"),
+        raw_metadata.get("paperLedgerId"),
+        context_metadata.get("paper_ledger_id"),
+        context_metadata.get("paperLedgerId"),
+        paper_ledger.get("id"),
+        raw_paper_ledger.get("id"),
+        _persona_fleet_record_value(binding, "paper_ledger_id", "paperLedgerId"),
+        _persona_fleet_record_value(runtime, "paper_ledger_id", "paperLedgerId"),
+    ):
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return f"paper-ledger-{persona_id}"
+
+
+def _persona_fleet_paper_budget(
+    *,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    context_metadata: Dict[str, Any],
+) -> Optional[float]:
+    paper_ledger = context_metadata.get("paper_ledger") if isinstance(context_metadata.get("paper_ledger"), dict) else {}
+    for value in (
+        league_entry.get("paper_benchmark_budget"),
+        league_entry.get("paperBenchmarkBudget"),
+        raw_metadata.get("paper_benchmark_budget"),
+        raw_metadata.get("paperBenchmarkBudget"),
+        context_metadata.get("paper_benchmark_budget"),
+        context_metadata.get("paperBenchmarkBudget"),
+        paper_ledger.get("benchmark_budget"),
+        paper_ledger.get("benchmarkBudget"),
+        raw_metadata.get("paper_budget"),
+        context_metadata.get("paper_budget"),
+    ):
+        if value in (None, "") or isinstance(value, bool):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _persona_fleet_paper_ledger(
+    *,
+    paper_ledger_id: Optional[str],
+    persona_id: str,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    context_metadata: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    if not paper_ledger_id:
+        return None
+    out: Dict[str, Any] = {
+        "id": paper_ledger_id,
+        "mode": "paper",
+        "persona_id": persona_id,
+        "is_isolated": True,
+        "isolated": True,
+    }
+    budget = _persona_fleet_paper_budget(
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata=context_metadata,
+    )
+    if budget is not None:
+        out["benchmark_budget"] = budget
+        out["benchmarkBudget"] = budget
+    return out
+
+
+def _persona_fleet_runtime_binding_id(
+    *,
+    runtime_id: Any,
+    runtime: Dict[str, Any],
+    binding: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+) -> Optional[str]:
+    for value in (
+        runtime.get("runtime_binding_id"),
+        runtime.get("binding_id"),
+        raw_metadata.get("runtime_binding_id"),
+        binding.get("runtime_binding_id"),
+        binding.get("binding_id"),
+        binding.get("id"),
+        runtime_id,
+    ):
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return None
+
+
+def _persona_fleet_runtime_status(runtime: Dict[str, Any]) -> str:
+    return str(runtime.get("state") or runtime.get("status") or "").strip().lower()
+
+
+def _persona_fleet_optional_int(value: Any) -> Optional[int]:
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _persona_fleet_lifecycle_state(
+    *,
+    persona_status: Any,
+    lifecycle_state: Any,
+    capital_mode: str,
+    deployment_stage: Any,
+    runtime: Dict[str, Any],
+    has_runtime_or_binding: bool,
+) -> str:
+    raw_state = str(persona_status or lifecycle_state or "unknown").strip().lower()
+    normalized_lifecycle = str(lifecycle_state or "").strip().lower()
+    if raw_state in _PERSONA_FLEET_RUNNING_STAGE_STATES.values():
+        return raw_state
+    if raw_state in _PERSONA_FLEET_TERMINAL_OR_GOVERNED_STATES:
+        return raw_state
+    if normalized_lifecycle in _PERSONA_FLEET_TERMINAL_OR_GOVERNED_STATES:
+        return normalized_lifecycle
+
+    runtime_status = _persona_fleet_runtime_status(runtime)
+    if runtime_status in {"failed", "error"}:
+        return "failed"
+    if runtime_status in {"stopped", "paused"} and capital_mode == "none":
+        return runtime_status
+
+    stage = str(deployment_stage or "").strip().lower()
+    for candidate in (capital_mode, stage):
+        if candidate in _PERSONA_FLEET_RUNNING_STAGE_STATES:
+            return _PERSONA_FLEET_RUNNING_STAGE_STATES[candidate]
+
+    if raw_state in {"deployed", "active", "running", "ready", "paper"} and has_runtime_or_binding:
+        return "paper_running"
+    return raw_state or "unknown"
+
+
+def _persona_fleet_review_projection(
+    *,
+    persona_id: str,
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    binding: Dict[str, Any],
+    runtime: Dict[str, Any],
+    human_needed: bool,
+    recommendation: Any,
+) -> Dict[str, Any]:
+    review_id = str(
+        league_entry.get("review_id")
+        or league_entry.get("reviewId")
+        or league_entry.get("promotion_review_id")
+        or raw_metadata.get("review_id")
+        or raw_metadata.get("promotion_review_id")
+        or binding.get("review_id")
+        or binding.get("approval_decision_id")
+        or runtime.get("review_id")
+        or runtime.get("approval_decision_id")
+        or ""
+    ).strip()
+    recommendation_text = str(recommendation or "").strip().lower()
+    review_type = str(
+        league_entry.get("review_type")
+        or raw_metadata.get("review_type")
+        or ""
+    ).strip().lower()
+    if not review_type and any(term in recommendation_text for term in ("promote", "canary", "live")):
+        review_type = "promotion_review"
+    if not review_type and human_needed:
+        review_type = "human_gate_review"
+    if not review_id and human_needed:
+        review_id = f"readiness_blocker:persona:{persona_id}"
+        review_type = review_type or "readiness_blocker"
+    inbox_id = str(
+        league_entry.get("inbox_id")
+        or raw_metadata.get("inbox_id")
+        or (f"{review_type}:{review_id}" if review_id and review_type else "")
+    ).strip()
+    promotion_review_id = str(
+        league_entry.get("promotion_review_id")
+        or raw_metadata.get("promotion_review_id")
+        or (review_id if review_type == "promotion_review" else "")
+    ).strip()
+    status = str(
+        league_entry.get("review_status")
+        or raw_metadata.get("review_status")
+        or ("pending" if human_needed else "none")
+    ).strip().lower()
+    route = "/bff/management/human-inbox"
+    if inbox_id:
+        route = f"/bff/management/human-inbox/{inbox_id}"
+    return {
+        "review_id": review_id or None,
+        "review_type": review_type or None,
+        "promotion_review_id": promotion_review_id or None,
+        "inbox_id": inbox_id or None,
+        "review_status": status,
+        "review": {
+            "id": review_id or None,
+            "type": review_type or None,
+            "status": status,
+            "inbox_id": inbox_id or None,
+            "route": route if review_id or human_needed else None,
+            "requires_human_gate": bool(human_needed),
+        },
+    }
+
+
 def _project_persona_fleet_list_row(
     *,
     persona: Dict[str, Any],
@@ -52158,12 +53992,15 @@ def _project_persona_fleet_list_row(
     pool_id = (
         league_entry.get("capital_pool_id")
         or raw_metadata.get("capital_pool_id")
+        or context_metadata.get("capital_pool_id")
         or binding.get("capital_pool_id")
     )
     runtime_id = (
         league_entry.get("runtime_id")
         or runtime.get("runtime_id")
         or runtime.get("id")
+        or context_metadata.get("runtime_id")
+        or context_metadata.get("runtime_binding_id")
         or raw_metadata.get("runtime_binding_id")
     )
     deployment_stage = (
@@ -52173,6 +54010,37 @@ def _project_persona_fleet_list_row(
         or raw_metadata.get("deployment_stage")
         or context_metadata.get("deployment_stage")
         or "none"
+    )
+    capital_mode = _persona_fleet_capital_mode(
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        binding=binding,
+        runtime=runtime,
+        deployment_stage=deployment_stage,
+    )
+    live_pool_id = _persona_fleet_live_capital_pool_id(
+        capital_mode=capital_mode,
+        pool_id=pool_id,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata=context_metadata,
+        binding=binding,
+    )
+    paper_ledger_id = _persona_fleet_paper_ledger_id(
+        persona_id=persona_id,
+        capital_mode=capital_mode,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata=context_metadata,
+        binding=binding,
+        runtime=runtime,
+    )
+    paper_ledger = _persona_fleet_paper_ledger(
+        paper_ledger_id=paper_ledger_id,
+        persona_id=persona_id,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata=context_metadata,
     )
     market_scope = list(league_entry.get("market_scope") or context_metadata.get("market_scope") or [])
     risk_flags = list(league_entry.get("risk_flags") or context_metadata.get("risk_flags") or [])
@@ -52210,6 +54078,29 @@ def _project_persona_fleet_list_row(
         or persona.get("status")
         or lifecycle_state
     )
+    runtime_binding_id = _persona_fleet_runtime_binding_id(
+        runtime_id=runtime_id,
+        runtime=runtime,
+        binding=binding,
+        raw_metadata=raw_metadata,
+    )
+    normalized_state = _persona_fleet_lifecycle_state(
+        persona_status=persona_status,
+        lifecycle_state=lifecycle_state,
+        capital_mode=capital_mode,
+        deployment_stage=deployment_stage,
+        runtime=runtime,
+        has_runtime_or_binding=bool(runtime or binding or pool_id),
+    )
+    review_projection = _persona_fleet_review_projection(
+        persona_id=persona_id,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        binding=binding,
+        runtime=runtime,
+        human_needed=human_needed,
+        recommendation=recommendation,
+    )
     updated_at = (
         league_entry.get("updated_at")
         or persona.get("updated_at")
@@ -52221,6 +54112,12 @@ def _project_persona_fleet_list_row(
         _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), 75.0),
         _as_float(operational_health.get("score"), 100.0),
     )
+    league_rank = _persona_fleet_optional_int(
+        league_entry.get("league_rank")
+        or league_entry.get("rank")
+        or context_metadata.get("league_rank")
+    )
+    league_score = _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), score)
     routed = _routed_strategies_for_persona(persona_id)
     drill_target = runtime_id or persona_id
     data_source_status = (
@@ -52293,18 +54190,67 @@ def _project_persona_fleet_list_row(
         "perf_delta": _training_improvement_delta(metrics),
         "human_needed": human_needed,
         "last_mutation": str(updated_at)[:10],
-        "state": persona_status,
+        "state": normalized_state,
         "current_work": context_metadata.get("current_work"),
         "routed_strategies": routed,
         "open_findings": len(risk_flags) + int(metrics.get("violation_count") or 0) + len(active_incidents),
         "market_scope": market_scope,
         "asset_classes": list(context_metadata.get("asset_classes") or []),
-        "capital_pool_id": pool_id,
+        "capital_mode": capital_mode,
+        "paper_ledger_id": paper_ledger_id,
+        "paperLedgerId": paper_ledger_id,
+        "paper_ledger": paper_ledger,
+        "paperLedger": paper_ledger,
+        "legacy_paper_capital_pool_id": pool_id if capital_mode == "paper" else None,
+        "legacyPaperCapitalPoolId": pool_id if capital_mode == "paper" else None,
+        "capital_pool_id": live_pool_id,
+        "capitalPoolId": live_pool_id,
+        "capital_pool": (
+            {
+                "id": live_pool_id,
+                "mode": capital_mode,
+                "live_capital_enabled": capital_mode == "live",
+            }
+            if live_pool_id
+            else None
+        ),
+        "capitalPool": (
+            {
+                "id": live_pool_id,
+                "mode": capital_mode,
+                "liveCapitalEnabled": capital_mode == "live",
+            }
+            if live_pool_id
+            else None
+        ),
         "runtime_id": runtime_id,
+        "runtime_binding_id": runtime_binding_id,
+        "runtime_binding": {
+            "id": runtime_binding_id,
+            "runtime_id": runtime_id,
+            "state": _persona_fleet_runtime_status(runtime) or None,
+            "deployment_stage": deployment_stage,
+            "capital_mode": capital_mode,
+            "health": operational_health.get("status"),
+        },
         "deployment_stage": deployment_stage,
         "ooda_stage": ooda_stage,
         "recommendation": recommendation,
         "governance_required": governance_required,
+        "review_id": review_projection["review_id"],
+        "review_type": review_projection["review_type"],
+        "promotion_review_id": review_projection["promotion_review_id"],
+        "inbox_id": review_projection["inbox_id"],
+        "review_status": review_projection["review_status"],
+        "review": review_projection["review"],
+        "league_rank": league_rank,
+        "league_score": league_score,
+        "rank": {
+            "league_rank": league_rank,
+            "league_score": league_score,
+            "basis": "persona_league",
+        },
+        "runtime_health": operational_health,
         "data_source_summary": _persona_fleet_list_data_source_summary(
             metadata=row_context_metadata,
             persona=persona,
@@ -52368,6 +54314,21 @@ def _persona_fleet_slim_list_payload(
         for runtime in runtimes
         if str(runtime.get("capital_pool_id") or "").strip()
     }
+    runtime_by_persona = {
+        str(runtime.get("persona_id") or ""): runtime
+        for runtime in runtimes
+        if str(runtime.get("persona_id") or "").strip()
+    }
+    runtime_by_binding = {
+        candidate: runtime
+        for runtime in runtimes
+        for candidate in (
+            str(runtime.get("binding_id") or "").strip(),
+            str(runtime.get("runtime_binding_id") or "").strip(),
+            str(runtime.get("id") or "").strip(),
+        )
+        if candidate
+    }
 
     rows: List[Dict[str, Any]] = []
     for persona in personas:
@@ -52385,9 +54346,17 @@ def _persona_fleet_slim_list_payload(
         pool_id = (
             league_entry.get("capital_pool_id")
             or raw_metadata.get("capital_pool_id")
+            or context_metadata.get("capital_pool_id")
             or binding.get("capital_pool_id")
         )
         runtime = runtime_by_pool.get(str(pool_id or ""), {})
+        if not runtime:
+            runtime = runtime_by_persona.get(persona_id, {})
+        if not runtime and binding:
+            runtime = runtime_by_binding.get(
+                str(binding.get("binding_id") or binding.get("id") or "").strip(),
+                {},
+            )
         binding_ids = {
             str(binding.get("id") or binding.get("binding_id") or "").strip()
         }
@@ -52505,6 +54474,8 @@ def _persona_fleet_slim_list_payload(
         "human_needed_personas": len([item for item in rows if item.get("human_needed")]),
         "governance_required_personas": len([item for item in rows if item.get("governance_required")]),
         "by_deployment_stage": _persona_fleet_count_by(rows, "deployment_stage"),
+        "by_capital_mode": _persona_fleet_count_by(rows, "capital_mode"),
+        "by_lifecycle_state": _persona_fleet_count_by(rows, "state"),
         "by_market_scope": {
             market: sum(1 for item in rows if market in {str(scope) for scope in item.get("market_scope") or []})
             for market in sorted({str(scope) for item in rows for scope in (item.get("market_scope") or [])})

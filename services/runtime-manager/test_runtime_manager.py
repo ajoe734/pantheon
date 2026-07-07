@@ -339,7 +339,7 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.store_path = Path(self.tempdir.name) / "bindings.json"
         self.main = _load_main_module(self.store_path)
         self.client = self.main.app.test_client()
-        self.auth = {"Authorization": "Bearer test-token"}
+        self.auth = {"Authorization": "Bearer test-token:operator"}
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
@@ -775,7 +775,7 @@ class KillSwitchHttpRouteTests(unittest.TestCase):
         self.store_path = Path(self.tempdir.name) / "bindings.json"
         self.main = _load_main_module(self.store_path)
         self.client = self.main.app.test_client()
-        self.auth = {"Authorization": "Bearer test-token"}
+        self.auth = {"Authorization": "Bearer test-token:operator"}
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()

@@ -55,6 +55,27 @@ export interface LiveEvidenceRemediationView {
   notes: string[];
 }
 
+export interface LiveEvidenceReleaseGateCheckView {
+  gate: string;
+  index: number;
+  label: string;
+  status: string;
+  note: string;
+  owner: string;
+  evidence: string;
+  blocking: boolean;
+}
+
+export interface LiveEvidenceReleaseGateSummaryView {
+  overall: string;
+  generatedAt: string;
+  auditDir: string;
+  runUrl: string;
+  checklistOut: string;
+  openCheckCount: number;
+  checks: LiveEvidenceReleaseGateCheckView[];
+}
+
 export interface LiveEvidenceManifestView {
   id: string;
   title: string;
@@ -66,6 +87,7 @@ export interface LiveEvidenceManifestView {
   maxFileBytes: number;
   files: LiveEvidenceManifestFile[];
   criteria: LiveEvidenceCriterionView[];
+  releaseGateSummary: LiveEvidenceReleaseGateSummaryView | null;
   remediation: LiveEvidenceRemediationView | null;
 }
 
@@ -178,6 +200,42 @@ function booleanFrom(value: unknown): boolean {
   return value === true || String(value ?? "").toLowerCase() === "true";
 }
 
+function normalizeReleaseGateCheck(value: unknown, index: number): LiveEvidenceReleaseGateCheckView | null {
+  const record = asRecord(value);
+  const status = textFrom(record.status ?? record.state ?? record.outcome, "missing");
+  const label = textFrom(record.label ?? record.title ?? record.name, "");
+  if (!label && Object.keys(record).length === 0) return null;
+  return {
+    gate: textFrom(record.gate ?? record.gate_id ?? record.gateId ?? record.gate_no ?? record.gateNo, "-"),
+    index: asNumber(record.index ?? record.order, index),
+    label: label || "-",
+    status,
+    note: textFrom(record.note ?? record.reason ?? record.message ?? record.detail, ""),
+    owner: textFrom(record.owner, ""),
+    evidence: textFrom(record.evidence ?? record.evidence_ref ?? record.evidenceRef, ""),
+    blocking: record.blocking === undefined ? status !== "pass" : booleanFrom(record.blocking),
+  };
+}
+
+function normalizeReleaseGateSummary(value: unknown): LiveEvidenceReleaseGateSummaryView | null {
+  const record = asRecord(value);
+  if (Object.keys(record).length === 0) return null;
+  const checks = Array.isArray(record.checks)
+    ? record.checks
+        .map((item, index) => normalizeReleaseGateCheck(item, index))
+        .filter((item): item is LiveEvidenceReleaseGateCheckView => item !== null)
+    : [];
+  return {
+    overall: textFrom(record.overall ?? record.status, "unknown"),
+    generatedAt: textFrom(record.generated_at ?? record.generatedAt, ""),
+    auditDir: textFrom(record.audit_dir ?? record.auditDir, ""),
+    runUrl: textFrom(record.run_url ?? record.runUrl, ""),
+    checklistOut: textFrom(record.checklist_out ?? record.checklistOut, ""),
+    openCheckCount: asNumber(record.open_check_count ?? record.openCheckCount, checks.filter((check) => check.blocking).length),
+    checks,
+  };
+}
+
 function normalizeManifestFile(value: unknown, fallbackPath = ""): LiveEvidenceManifestFile | null {
   const record = asRecord(value);
   const path = textFrom(record.path ?? record.name ?? record.storage_ref ?? fallbackPath, "");
@@ -244,6 +302,19 @@ function findOperatorRemediation(value: unknown): unknown {
   }
   for (const key of ["payload", "data", "metadata", "meta", "details", "resolvedLink", "resolved_link"]) {
     const nested = findOperatorRemediation(record[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function findReleaseGateSummary(value: unknown): unknown {
+  const record = asRecord(value);
+  for (const key of ["release_gate_summary", "releaseGateSummary"]) {
+    const summary = asRecord(record[key]);
+    if (Object.keys(summary).length > 0) return summary;
+  }
+  for (const key of ["payload", "data", "metadata", "meta", "details", "resolvedLink", "resolved_link"]) {
+    const nested = findReleaseGateSummary(record[key]);
     if (nested) return nested;
   }
   return null;
@@ -330,6 +401,7 @@ function normalizeManifestView(item: ManagementEvidenceItem, index: number): Liv
   const limits = asRecord(manifest.limits);
   const itemPayload = asRecord(item.payload);
   const criteria = normalizeCriteria(findVerificationCriteria(item));
+  const releaseGateSummary = normalizeReleaseGateSummary(findReleaseGateSummary(item));
   const remediation = normalizeRemediation(findOperatorRemediation(item));
   const id = textFrom(item.ref_id ?? item.id, `live-evidence-${index}`);
   return {
@@ -343,6 +415,7 @@ function normalizeManifestView(item: ManagementEvidenceItem, index: number): Liv
     maxFileBytes: asNumber(limits.max_file_bytes ?? manifest.max_file_bytes ?? manifest.maxFileBytes, 0),
     files,
     criteria,
+    releaseGateSummary,
     remediation,
   };
 }
@@ -488,6 +561,75 @@ function RemediationSection({ manifest }: { manifest: LiveEvidenceManifestView }
 }
 
 
+function ReleaseGateSummarySection({ manifest }: { manifest: LiveEvidenceManifestView }) {
+  const summary = manifest.releaseGateSummary;
+  if (!summary) return null;
+  return (
+    <section className="mt-3 border-t border-border pt-3 text-xs" data-testid={`live-evidence-release-gate-${manifest.id}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="text-sm font-semibold">Release gate summary</h4>
+        <Badge variant="outline" className={cn("capitalize", statusTone(summary.overall))} data-testid={`live-evidence-release-gate-overall-${manifest.id}`}>
+          {labelFrom(summary.overall)}
+        </Badge>
+        <Badge variant="outline" className="font-mono text-[10px]" data-testid={`live-evidence-release-gate-open-${manifest.id}`}>
+          open:{summary.openCheckCount}
+        </Badge>
+        {summary.auditDir ? (
+          <Badge variant="outline" className="font-mono text-[10px]" data-testid={`live-evidence-release-gate-audit-dir-${manifest.id}`}>
+            {summary.auditDir}
+          </Badge>
+        ) : null}
+        {summary.runUrl ? (
+          <a
+            href={summary.runUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="font-mono text-[10px] text-primary underline-offset-2 hover:underline"
+            data-testid={`live-evidence-release-gate-run-${manifest.id}`}
+          >
+            Run
+          </a>
+        ) : null}
+      </div>
+
+      {summary.checks.length > 0 ? (
+        <ManagementDenseTable className="mt-2" testId={`live-evidence-release-gate-checks-${manifest.id}`}>
+          <table className="w-full min-w-[640px] text-left text-xs">
+            <thead className="text-muted-foreground">
+              <tr>
+                <th className="py-1 pr-3 font-medium">Gate</th>
+                <th className="py-1 pr-3 font-medium">Check</th>
+                <th className="py-1 pr-3 font-medium">Status</th>
+                <th className="py-1 pr-3 font-medium">Note</th>
+                <th className="py-1 pr-3 font-medium">Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.checks.map((check) => (
+                <tr key={`${check.gate}:${check.index}:${check.label}`} className="border-t border-border">
+                  <td className="py-1.5 pr-3 font-mono text-[11px]">Gate {check.gate}</td>
+                  <td className="py-1.5 pr-3 font-medium">{check.label}</td>
+                  <td className="py-1.5 pr-3">
+                    <Badge
+                      variant="outline"
+                      className={cn("capitalize", statusTone(check.status))}
+                      data-testid={`live-evidence-release-gate-status-${manifest.id}-${testIdPart(check.gate)}-${check.index}`}
+                    >
+                      {labelFrom(check.status)}
+                    </Badge>
+                  </td>
+                  <td className="py-1.5 pr-3 text-muted-foreground break-words">{check.note || "-"}</td>
+                  <td className="py-1.5 pr-3 font-mono text-[11px] break-all">{check.evidence || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ManagementDenseTable>
+      ) : null}
+    </section>
+  );
+}
+
 function ManifestRow({ manifest }: { manifest: LiveEvidenceManifestView }) {
   const allowedCount = manifest.files.filter((file) => file.currentRunAllowed).length;
   const forbiddenCount = manifest.files.filter((file) => file.forbiddenAuditScope).length;
@@ -596,6 +738,8 @@ function ManifestRow({ manifest }: { manifest: LiveEvidenceManifestView }) {
           </table>
         </ManagementDenseTable>
       ) : null}
+
+      <ReleaseGateSummarySection manifest={manifest} />
 
       <RemediationSection manifest={manifest} />
 

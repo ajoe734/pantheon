@@ -530,6 +530,138 @@ def _record_visible_to_scope(record: Dict[str, Any], scope: Dict[str, str]) -> b
     )
 
 
+def _gate_state(readiness: Dict[str, Any], gate_name: str) -> str:
+    for gate in readiness.get("gates") or []:
+        if gate.get("gate") == gate_name:
+            return str(gate.get("state") or "")
+    return ""
+
+
+def _ready_strategy_projection(
+    *,
+    session: Dict[str, Any],
+    readiness: Dict[str, Any],
+    events: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if readiness.get("highest_ready_gate") != "trading_room":
+        return None
+    if _gate_state(readiness, "trading_room") != "ready":
+        return None
+
+    strategy_id = str(readiness.get("strategy_id") or session.get("strategy_id") or "").strip()
+    registry_id = str(
+        readiness.get("strategy_spec_registry_id")
+        or session.get("active_strategy_spec_registry_id")
+        or strategy_id
+    ).strip()
+    if not strategy_id or not registry_id:
+        return None
+
+    counts: Dict[str, int] = {"entry": 0, "add": 0, "reduce": 0, "exit": 0, "review": 0}
+    for ev in events:
+        if ev.get("strategy_id") != strategy_id:
+            continue
+        kind = ev.get("event_kind")
+        if kind in counts:
+            counts[kind] += 1
+
+    version_id = str(
+        readiness.get("workshop_version_id")
+        or session.get("selected_version_id")
+        or registry_id
+    ).strip()
+    dashboard_recipe_id = f"agora-trading-{strategy_id}-{version_id}".replace(" ", "-")
+    title = str(session.get("title") or "").strip() or f"Ready strategy {strategy_id}"
+    evidence_refs = [
+        dict(ref)
+        for ref in readiness.get("evidence_refs") or []
+        if isinstance(ref, dict)
+    ]
+
+    return {
+        "summary": {
+            "strategy_id": strategy_id,
+            "strategy_spec_registry_id": registry_id,
+            "title": title,
+            "readiness_state": "ready",
+            "dashboard_recipe_id": dashboard_recipe_id,
+            "monitoring_state": "monitoring",
+            "candidate_count": 0,
+            "position_count": 0,
+            "pending_event_counts": counts,
+            "staleness_reasons": list(readiness.get("staleness_reasons") or []),
+        },
+        "detail": {
+            "strategy_id": strategy_id,
+            "strategy_spec_registry_id": registry_id,
+            "strategy_version": version_id,
+            "workshop_id": session.get("workshop_id"),
+            "workshop_version_id": version_id,
+            "assessment_id": readiness.get("assessment_id"),
+            "assessment_version": readiness.get("assessment_version"),
+            "readiness_state": "ready",
+            "highest_ready_gate": "trading_room",
+            "readiness_gates": readiness.get("gates") or [],
+            "evidence_refs": evidence_refs,
+            "dashboard_recipe_id": dashboard_recipe_id,
+            "workspace_template_ref": f"winner-branch:{strategy_id}:{version_id}",
+            "pending_event_counts": counts,
+            "monitoring_state": "monitoring",
+        },
+    }
+
+
+def _list_ready_strategy_projections(
+    *,
+    workshop_store: Any,
+    scope: Dict[str, str],
+    events: List[Dict[str, Any]],
+    assessed_at: str,
+) -> List[Dict[str, Any]]:
+    if workshop_store is None or not hasattr(workshop_store, "list_sessions"):
+        return []
+    sessions, _next_cursor = workshop_store.list_sessions(
+        user_id=scope["user_id"],
+        tenant_id=scope["tenant_id"],
+        status=None,
+        limit=100,
+    )
+    projections: List[Dict[str, Any]] = []
+    for session in sessions:
+        workshop_id = str(session.get("workshop_id") or "")
+        if not workshop_id:
+            continue
+        readiness = (
+            workshop_store.get_latest_readiness_assessment(workshop_id)
+            if hasattr(workshop_store, "get_latest_readiness_assessment")
+            else None
+        )
+        if not isinstance(readiness, dict) and (
+            hasattr(workshop_store, "list_events")
+            and hasattr(workshop_store, "get_latest_completeness_snapshot")
+        ):
+            from ..strategy_workshop.router import _build_readiness_assessment
+
+            readiness = _build_readiness_assessment(
+                session=session,
+                events=workshop_store.list_events(workshop_id),
+                snapshot=workshop_store.get_latest_completeness_snapshot(workshop_id),
+                assessed_at=assessed_at,
+                assessment_version=1,
+            )
+        if not isinstance(readiness, dict):
+            continue
+        projection = _ready_strategy_projection(
+            session=session,
+            readiness=readiness,
+            events=events,
+        )
+        if projection is not None:
+            projections.append(projection)
+    projections.sort(key=lambda item: str(item["summary"].get("strategy_id") or ""))
+    return projections
+
+
 def _to_registry_widget_spec(widget: Dict[str, Any], *, created_at: str) -> Dict[str, Any]:
     return {
         "spec_version": "2.0",
@@ -1284,6 +1416,9 @@ def _apply_workspace_layout_ops(
     if errors:
         return None, errors
 
+    for view in updated.get("views") or []:
+        view["widgetCount"] = len(view.get("widgets") or [])
+
     validation_errors: List[str] = []
     for view_index, view in enumerate(updated.get("views") or []):
         validation_errors.extend(_validate_view(view, now=now, path=f"views[{view_index}]"))
@@ -1304,6 +1439,7 @@ def create_trading_room_router(
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
     trading_room_store: Optional[TradingRoomStore] = None,
+    workshop_store: Optional[Any] = None,
 ) -> APIRouter:
     """Trading-room router — agora.trading.v1.
 
@@ -1680,18 +1816,25 @@ def create_trading_room_router(
         now = utc_now()
         page = store.list_decision_events(page_size=5)
         top_events = page["items"]
+        all_events = store.list_decision_events(page_size=1000)["items"]
 
         queue_counts: Dict[str, int] = {"entry": 0, "add": 0, "reduce": 0, "exit": 0, "review": 0}
-        for ev in store.list_decision_events(page_size=1000)["items"]:
+        for ev in all_events:
             kind = ev.get("event_kind")
             if kind in queue_counts:
                 queue_counts[kind] += 1
 
         scope = _workspace_scope(identity)
+        projections = _list_ready_strategy_projections(
+            workshop_store=workshop_store,
+            scope=scope,
+            events=all_events,
+            assessed_at=now,
+        )
         aggregate = TradingRoomAggregate(
             spec_version="1.0",
             user_scope_ref=f"operator:{scope['user_id'] or 'unknown'}",
-            strategies=[],
+            strategies=[TradingRoomStrategy(**item["summary"]) for item in projections],
             queue_summary=QueueSummary(**queue_counts),
             top_decision_events=[TradingDecisionEvent(**e) for e in top_events],
             position_summaries=[],
@@ -1714,9 +1857,11 @@ def create_trading_room_router(
         """Return per-strategy Trading Room detail (DetailEnvelope)."""
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        scope = _workspace_scope(identity)
 
+        all_events = store.list_decision_events(page_size=1000)["items"]
         events = [
-            e for e in store.list_decision_events(page_size=1000)["items"]
+            e for e in all_events
             if e.get("strategy_id") == strategy_id
         ]
         counts: Dict[str, int] = {"entry": 0, "add": 0, "reduce": 0, "exit": 0, "review": 0}
@@ -1724,6 +1869,26 @@ def create_trading_room_router(
             kind = ev.get("event_kind")
             if kind in counts:
                 counts[kind] += 1
+        projection = next(
+            (
+                item for item in _list_ready_strategy_projections(
+                    workshop_store=workshop_store,
+                    scope=scope,
+                    events=all_events,
+                    assessed_at=utc_now(),
+                )
+                if item["summary"].get("strategy_id") == strategy_id
+            ),
+            None,
+        )
+        if projection is None and not events:
+            ErrorCode = _error_code_enum()
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"Trading Room strategy {strategy_id!r} not found",
+                "trading_room_strategy_not_found",
+            )
 
         return {
             "object_ref": {"type": "trading_room_strategy", "id": strategy_id},
@@ -1740,6 +1905,7 @@ def create_trading_room_router(
             },
             "data": {
                 "strategy_id": strategy_id,
+                **((projection or {}).get("detail") or {}),
                 "pending_event_counts": counts,
                 "readiness_state": "ready",
                 "monitoring_state": "monitoring",

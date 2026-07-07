@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/schemas/persona/runtime_profile.schema.json",
+  "title": "PersonaRuntimeProfile",
+  "type": "object",
+  "required": [
+    "persona_id",
+    "workspace_ref",
+    "model_routing",
+    "memory_policy",
+    "sync_generation",
+    "source_refs"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "persona_id": {"type": "string", "minLength": 1},
+    "workspace_ref": {"type": "string", "minLength": 1},
+    "sync_generation": {"type": "integer", "minimum": 1},
+    "model_routing": {
+      "type": "object",
+      "required": [
+        "mode",
+        "status",
+        "primary_model",
+        "fallback_models",
+        "provider_pool_refs",
+        "requested_models",
+        "invalid_refs",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["pool_default", "preferred_pool_model", "hard_pin", "fallback"]
+        },
+        "status": {"type": "string", "enum": ["ready", "degraded"]},
+        "primary_model": {"type": ["string", "null"]},
+        "fallback_models": {"type": "array", "items": {"type": "string"}},
+        "provider_pool_refs": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^openclaw_provider_pool:"}
+        },
+        "selected_provider_pool_ref": {
+          "type": ["string", "null"],
+          "pattern": "^openclaw_provider_pool:"
+        },
+        "requested_models": {"type": "array", "items": {"type": "string"}},
+        "invalid_refs": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string", "minLength": 1},
+        "blocked_reason": {"type": ["string", "null"]}
+      }
+    },
+    "memory_policy": {
+      "type": "object",
+      "required": [
+        "source",
+        "read_endpoint",
+        "writeback_endpoint",
+        "canonical_store",
+        "materialization",
+        "workspace_files",
+        "cache_mutation_policy",
+        "direct_session_writes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"const": "canonical_persona_memory_plane"},
+        "read_endpoint": {"type": "string"},
+        "writeback_endpoint": {"type": "string"},
+        "canonical_store": {"type": "string"},
+        "materialization": {"const": "openclaw_workspace_cache"},
+        "workspace_files": {"type": "array", "items": {"type": "string"}},
+        "cache_mutation_policy": {"const": "memory_bridge_only"},
+        "direct_session_writes": {"const": false}
+      }
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["surface", "ref"],
+        "properties": {
+          "surface": {"type": "string", "minLength": 1},
+          "ref": {"type": "string", "minLength": 1},
+          "status": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

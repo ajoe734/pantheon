@@ -16,6 +16,7 @@
  */
 
 import { buildHeaders } from "../headers";
+import { readBffEnv } from "../runtimeEnv";
 
 // ── Types derived from v4 schemas ──────────────────────────────────────────────
 
@@ -184,10 +185,174 @@ export interface DecisionBody {
   modifications?: Record<string, unknown>;
 }
 
+export type TradingRoomHttpMethod = "GET" | "POST" | "PATCH";
+
+export interface TradingRoomBffDiagnostic {
+  method: TradingRoomHttpMethod;
+  url: string;
+  status: number;
+  statusText?: string;
+  code: string;
+  message: string;
+  requestId: string | null;
+  correlationId: string | null;
+  retryable: boolean;
+}
+
+export class TradingRoomBffError extends Error {
+  readonly diagnostic: TradingRoomBffDiagnostic;
+
+  constructor(diagnostic: TradingRoomBffDiagnostic) {
+    super(diagnostic.message);
+    this.name = "TradingRoomBffError";
+    this.diagnostic = diagnostic;
+  }
+}
+
+export function isTradingRoomBffError(error: unknown): error is TradingRoomBffError {
+  return error instanceof TradingRoomBffError;
+}
+
+export interface TradingRoomWorkspaceProposalRequest {
+  strategyVersion: string;
+  personalizationHints?: Record<string, unknown>;
+  evidenceRefs?: string[];
+  dataFreshness?: Record<string, unknown>;
+  tradingRoomReady?: boolean;
+}
+
+export interface TradingRoomWorkspaceProposal {
+  strategyId: string;
+  strategyVersion: string;
+  proposalId: string;
+  generatedAt: string;
+  status: "preview" | "accepted" | "rejected" | string;
+  views: TradingRoomWorkspaceView[];
+  rationale?: string;
+  warnings?: string[];
+  dataAvailability?: Record<string, unknown>;
+  personalizationApplied?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface TradingRoomWorkspaceView {
+  id: string;
+  title: string;
+  purpose?: string;
+  widgets: TradingRoomWidgetSpec[];
+  widgetCount?: number;
+  [key: string]: unknown;
+}
+
+export interface TradingRoomWidgetSpec {
+  id: string;
+  widgetType: string;
+  title: string;
+  placement?: Record<string, unknown>;
+  chartSpec?: Record<string, unknown>;
+  interactions?: Array<{ kind: string; params?: Record<string, unknown> }>;
+  [key: string]: unknown;
+}
+
+export interface TradingRoomWorkspace {
+  id: string;
+  userId: string;
+  strategyId: string;
+  strategyVersion: string;
+  dashboardVersion: number;
+  activeViewId: string;
+  views: TradingRoomWorkspaceView[];
+  status: "active" | "archived" | "rolled_back" | string;
+  generatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+  [key: string]: unknown;
+}
+
+export interface TradingRoomWorkspaceVersion {
+  id: string;
+  workspaceId: string;
+  dashboardVersion: number;
+  strategyId: string;
+  strategyVersion: string;
+  views: TradingRoomWorkspaceView[];
+  changeSummary?: string;
+  changeLog?: Record<string, unknown>;
+  createdAt?: string;
+  [key: string]: unknown;
+}
+
+export interface TradingRoomWidgetRevisionProposal {
+  id: string;
+  workspaceId: string;
+  viewId: string;
+  widgetId: string;
+  instruction: string;
+  beforeSpec: TradingRoomWidgetSpec;
+  proposedSpec: TradingRoomWidgetSpec;
+  rationale: string;
+  warnings: string[];
+  dataAvailability: "complete" | "partial" | "unavailable" | string;
+  status: "preview" | "accepted" | "rejected" | string;
+  [key: string]: unknown;
+}
+
+export interface TradingRoomWorkspaceResult {
+  workspace: TradingRoomWorkspace;
+  etag: string | null;
+  meta?: Record<string, unknown>;
+}
+
+export interface TradingRoomProposalResult {
+  proposal: TradingRoomWorkspaceProposal;
+  etag: string | null;
+  meta?: Record<string, unknown>;
+}
+
+export interface TradingRoomWorkspaceAcceptResult extends TradingRoomWorkspaceResult {
+  workspaceId: string;
+  version: TradingRoomWorkspaceVersion;
+}
+
+export interface TradingRoomLayoutOperation {
+  kind: "move_widget" | "resize_widget" | "remove_widget" | "add_registered_widget" | "replace_chart_spec" | "update_widget_query";
+  widgetId?: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface TradingRoomWidgetRevisionRequest {
+  instruction: string;
+  proposedSpec: TradingRoomWidgetSpec;
+  rationale: string;
+  warnings?: string[];
+  dataAvailability: "complete" | "partial" | "unavailable";
+}
+
+export interface TradingRoomWidgetRevisionResult {
+  proposal: TradingRoomWidgetRevisionProposal;
+  etag: string | null;
+  meta?: Record<string, unknown>;
+}
+
+export interface TradingRoomWidgetRevisionAcceptResult extends TradingRoomWorkspaceResult {
+  proposal: TradingRoomWidgetRevisionProposal;
+  version: TradingRoomWorkspaceVersion;
+  appliedAction: string;
+  copiedWidgetId?: string | null;
+  revisionProposalEtag?: string | null;
+}
+
+export interface TradingRoomRollbackResult extends TradingRoomWorkspaceResult {
+  version: TradingRoomWorkspaceVersion;
+  rollbackOfVersion: TradingRoomWorkspaceVersion;
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 function resolvedBase(baseUrl?: string): string {
   if (baseUrl) return baseUrl.replace(/\/+$/, "");
+  const configuredBase = readBffEnv().VITE_BFF_BASE_URL;
+  if (configuredBase) return configuredBase.replace(/\/+$/, "");
   if (typeof window !== "undefined" && window.location?.origin) {
     return window.location.origin.replace(/\/+$/, "");
   }
@@ -198,6 +363,10 @@ function recordFrom(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function stringFrom(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 async function parseJson(res: Response): Promise<unknown> {
@@ -231,22 +400,106 @@ function extractDecisionEvent(value: unknown): TradingDecisionEvent {
   return data as unknown as TradingDecisionEvent;
 }
 
+function extractEnvelope(value: unknown): { data: unknown; meta?: Record<string, unknown> } {
+  const root = recordFrom(value);
+  return {
+    data: root.data ?? root,
+    meta: root.meta && typeof root.meta === "object" ? recordFrom(root.meta) : undefined,
+  };
+}
+
+function diagnosticFromHttpError(
+  method: TradingRoomHttpMethod,
+  url: string,
+  res: Response,
+  body: unknown,
+): TradingRoomBffDiagnostic {
+  const root = recordFrom(body);
+  const error = recordFrom(root.error);
+  const meta = recordFrom(error.meta ?? root.meta);
+  const message =
+    stringFrom(error.message) ??
+    stringFrom(root.message) ??
+    `${method} ${url} failed ${res.status}`;
+  const code =
+    stringFrom(error.code) ??
+    stringFrom(root.code) ??
+    `BFF_HTTP_${res.status}`;
+
+  return {
+    method,
+    url,
+    status: res.status,
+    statusText: res.statusText,
+    code,
+    message,
+    requestId:
+      stringFrom(error.request_id) ??
+      stringFrom(error.requestId) ??
+      stringFrom(meta.request_id) ??
+      stringFrom(meta.requestId) ??
+      stringFrom(res.headers.get("X-Request-Id")),
+    correlationId:
+      stringFrom(error.correlation_id) ??
+      stringFrom(error.correlationId) ??
+      stringFrom(meta.correlation_id) ??
+      stringFrom(meta.correlationId) ??
+      stringFrom(res.headers.get("X-Correlation-Id")),
+    retryable: res.status === 408 || res.status === 409 || res.status === 412 || res.status >= 500,
+  };
+}
+
+function diagnosticFromTransportError(
+  method: TradingRoomHttpMethod,
+  url: string,
+  error: unknown,
+): TradingRoomBffDiagnostic {
+  return {
+    method,
+    url,
+    status: 0,
+    code: "BFF_NETWORK_ERROR",
+    message: error instanceof Error ? error.message : "Network request failed",
+    requestId: null,
+    correlationId: null,
+    retryable: true,
+  };
+}
+
+async function fetchTradingRoom(
+  url: string,
+  init: RequestInit,
+  method: TradingRoomHttpMethod,
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    throw new TradingRoomBffError(diagnosticFromTransportError(method, url, error));
+  }
+}
+
+async function assertOk(
+  res: Response,
+  method: TradingRoomHttpMethod,
+  url: string,
+): Promise<void> {
+  if (res.ok) return;
+  const body = await parseJson(res);
+  throw new TradingRoomBffError(diagnosticFromHttpError(method, url, res, body));
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /** Get the user-scoped Trading Room aggregate (all strategies, queue summary, risk). */
 export async function getTradingRoom(baseUrl?: string): Promise<TradingRoomAggregate> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/trading-room`;
-  const res = await fetch(url, {
+  const res = await fetchTradingRoom(url, {
     method: "GET",
     credentials: "include",
     headers: buildHeaders({ method: "GET" }),
-  });
-  if (!res.ok) {
-    const body = await parseJson(res);
-    const message = recordFrom(recordFrom(body).error).message ?? `GET ${url} failed ${res.status}`;
-    throw new Error(String(message));
-  }
+  }, "GET");
+  await assertOk(res, "GET", url);
   const body = await parseJson(res);
   return extractAggregate(body);
 }
@@ -258,17 +511,13 @@ export async function getTradingRoomStrategy(
 ): Promise<Record<string, unknown> | null> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/trading-room/strategies/${encodeURIComponent(strategyId)}`;
-  const res = await fetch(url, {
+  const res = await fetchTradingRoom(url, {
     method: "GET",
     credentials: "include",
     headers: buildHeaders({ method: "GET" }),
-  });
+  }, "GET");
   if (res.status === 404) return null;
-  if (!res.ok) {
-    const body = await parseJson(res);
-    const message = recordFrom(recordFrom(body).error).message ?? `GET ${url} failed ${res.status}`;
-    throw new Error(String(message));
-  }
+  await assertOk(res, "GET", url);
   const body = await parseJson(res);
   const root = recordFrom(body);
   return recordFrom(root.data ?? root);
@@ -296,16 +545,12 @@ export async function listDecisionEvents(
   if (params?.state) qs.set("state", params.state);
   const query = qs.toString();
   const url = `${base}/bff/agora/trading-room/decision-events${query ? `?${query}` : ""}`;
-  const res = await fetch(url, {
+  const res = await fetchTradingRoom(url, {
     method: "GET",
     credentials: "include",
     headers: buildHeaders({ method: "GET" }),
-  });
-  if (!res.ok) {
-    const body = await parseJson(res);
-    const message = recordFrom(recordFrom(body).error).message ?? `GET ${url} failed ${res.status}`;
-    throw new Error(String(message));
-  }
+  }, "GET");
+  await assertOk(res, "GET", url);
   const body = await parseJson(res);
   return {
     items: extractDecisionEvents(body),
@@ -320,17 +565,13 @@ export async function getDecisionEvent(
 ): Promise<TradingDecisionEvent | null> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/trading-room/decision-events/${encodeURIComponent(decisionEventId)}`;
-  const res = await fetch(url, {
+  const res = await fetchTradingRoom(url, {
     method: "GET",
     credentials: "include",
     headers: buildHeaders({ method: "GET" }),
-  });
+  }, "GET");
   if (res.status === 404) return null;
-  if (!res.ok) {
-    const body = await parseJson(res);
-    const message = recordFrom(recordFrom(body).error).message ?? `GET ${url} failed ${res.status}`;
-    throw new Error(String(message));
-  }
+  await assertOk(res, "GET", url);
   const body = await parseJson(res);
   return extractDecisionEvent(body);
 }
@@ -355,20 +596,263 @@ export async function decideOnEvent(
   if (options?.ifMatch) extra["If-Match"] = options.ifMatch;
   if (options?.idempotencyKey) extra["Idempotency-Key"] = options.idempotencyKey;
   if (options?.requestId) extra["X-Request-Id"] = options.requestId;
-  const res = await fetch(url, {
+  const res = await fetchTradingRoom(url, {
     method: "POST",
     credentials: "include",
     headers: buildHeaders({ method: "POST", extra }),
     body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const responseBody = await parseJson(res);
-    const message =
-      recordFrom(recordFrom(responseBody).error).message ??
-      `POST ${url} failed ${res.status}`;
-    throw new Error(String(message));
-  }
+  }, "POST");
+  await assertOk(res, "POST", url);
   const responseBody = await parseJson(res);
   const root = recordFrom(responseBody);
   return recordFrom(root.data ?? root);
+}
+
+export async function createWorkspaceProposal(
+  strategyId: string,
+  body: TradingRoomWorkspaceProposalRequest,
+  options?: { idempotencyKey?: string; requestId?: string },
+  baseUrl?: string,
+): Promise<TradingRoomProposalResult> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/strategies/${encodeURIComponent(strategyId)}/trading-room/proposals`;
+  const extra: Record<string, string> = { "Content-Type": "application/json" };
+  if (options?.idempotencyKey) extra["Idempotency-Key"] = options.idempotencyKey;
+  if (options?.requestId) extra["X-Request-Id"] = options.requestId;
+  const res = await fetchTradingRoom(url, {
+    method: "POST",
+    credentials: "include",
+    headers: buildHeaders({ method: "POST", extra }),
+    body: JSON.stringify(body),
+  }, "POST");
+  await assertOk(res, "POST", url);
+  const envelope = extractEnvelope(await parseJson(res));
+  return {
+    proposal: envelope.data as unknown as TradingRoomWorkspaceProposal,
+    etag: res.headers.get("ETag") ?? stringFrom(envelope.meta?.etag),
+    meta: envelope.meta,
+  };
+}
+
+export async function getWorkspaceProposal(
+  strategyId: string,
+  proposalId: string,
+  baseUrl?: string,
+): Promise<TradingRoomProposalResult | null> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/strategies/${encodeURIComponent(strategyId)}/trading-room/proposals/${encodeURIComponent(proposalId)}`;
+  const res = await fetchTradingRoom(url, {
+    method: "GET",
+    credentials: "include",
+    headers: buildHeaders({ method: "GET" }),
+  }, "GET");
+  if (res.status === 404) return null;
+  await assertOk(res, "GET", url);
+  const envelope = extractEnvelope(await parseJson(res));
+  return {
+    proposal: envelope.data as unknown as TradingRoomWorkspaceProposal,
+    etag: res.headers.get("ETag") ?? stringFrom(envelope.meta?.etag),
+    meta: envelope.meta,
+  };
+}
+
+export async function acceptWorkspaceProposal(
+  strategyId: string,
+  proposalId: string,
+  options?: { idempotencyKey?: string; requestId?: string },
+  baseUrl?: string,
+): Promise<TradingRoomWorkspaceAcceptResult> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/strategies/${encodeURIComponent(strategyId)}/trading-room/proposals/${encodeURIComponent(proposalId)}/accept`;
+  const extra: Record<string, string> = { "Content-Type": "application/json" };
+  if (options?.idempotencyKey) extra["Idempotency-Key"] = options.idempotencyKey;
+  if (options?.requestId) extra["X-Request-Id"] = options.requestId;
+  const res = await fetchTradingRoom(url, {
+    method: "POST",
+    credentials: "include",
+    headers: buildHeaders({ method: "POST", extra }),
+    body: JSON.stringify({ expectedStatus: "preview" }),
+  }, "POST");
+  await assertOk(res, "POST", url);
+  const envelope = extractEnvelope(await parseJson(res));
+  const data = recordFrom(envelope.data);
+  const workspace = data.workspace as TradingRoomWorkspace;
+  return {
+    workspaceId: String(data.workspaceId ?? workspace.id),
+    workspace,
+    version: data.version as TradingRoomWorkspaceVersion,
+    etag: res.headers.get("ETag") ?? stringFrom(envelope.meta?.etag),
+    meta: envelope.meta,
+  };
+}
+
+export async function getTradingRoomWorkspace(
+  workspaceId: string,
+  baseUrl?: string,
+): Promise<TradingRoomWorkspaceResult | null> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/trading-room/workspaces/${encodeURIComponent(workspaceId)}`;
+  const res = await fetchTradingRoom(url, {
+    method: "GET",
+    credentials: "include",
+    headers: buildHeaders({ method: "GET" }),
+  }, "GET");
+  if (res.status === 404) return null;
+  await assertOk(res, "GET", url);
+  const envelope = extractEnvelope(await parseJson(res));
+  return {
+    workspace: envelope.data as unknown as TradingRoomWorkspace,
+    etag: res.headers.get("ETag") ?? stringFrom(envelope.meta?.etag),
+    meta: envelope.meta,
+  };
+}
+
+export async function patchTradingRoomWorkspaceLayout(
+  workspaceId: string,
+  operations: TradingRoomLayoutOperation[],
+  options: { ifMatch: string; idempotencyKey?: string; requestId?: string },
+  baseUrl?: string,
+): Promise<TradingRoomWorkspaceResult & { versionId?: string | null }> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/trading-room/workspaces/${encodeURIComponent(workspaceId)}/layout`;
+  const extra: Record<string, string> = {
+    "Content-Type": "application/json",
+    "If-Match": options.ifMatch,
+  };
+  if (options.idempotencyKey) extra["Idempotency-Key"] = options.idempotencyKey;
+  if (options.requestId) extra["X-Request-Id"] = options.requestId;
+  const res = await fetchTradingRoom(url, {
+    method: "PATCH",
+    credentials: "include",
+    headers: buildHeaders({ method: "PATCH", extra }),
+    body: JSON.stringify({ operations }),
+  }, "PATCH");
+  await assertOk(res, "PATCH", url);
+  const envelope = extractEnvelope(await parseJson(res));
+  return {
+    workspace: envelope.data as unknown as TradingRoomWorkspace,
+    etag: res.headers.get("ETag") ?? stringFrom(envelope.meta?.etag),
+    meta: envelope.meta,
+    versionId: stringFrom(envelope.meta?.version_id) ?? stringFrom(envelope.meta?.versionId),
+  };
+}
+
+export async function createWidgetRevisionProposal(
+  workspaceId: string,
+  widgetId: string,
+  body: TradingRoomWidgetRevisionRequest,
+  options?: { idempotencyKey?: string; requestId?: string },
+  baseUrl?: string,
+): Promise<TradingRoomWidgetRevisionResult> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/trading-room/workspaces/${encodeURIComponent(workspaceId)}/widgets/${encodeURIComponent(widgetId)}/revision-proposals`;
+  const extra: Record<string, string> = { "Content-Type": "application/json" };
+  if (options?.idempotencyKey) extra["Idempotency-Key"] = options.idempotencyKey;
+  if (options?.requestId) extra["X-Request-Id"] = options.requestId;
+  const res = await fetchTradingRoom(url, {
+    method: "POST",
+    credentials: "include",
+    headers: buildHeaders({ method: "POST", extra }),
+    body: JSON.stringify(body),
+  }, "POST");
+  await assertOk(res, "POST", url);
+  const envelope = extractEnvelope(await parseJson(res));
+  return {
+    proposal: envelope.data as unknown as TradingRoomWidgetRevisionProposal,
+    etag: res.headers.get("ETag") ?? stringFrom(envelope.meta?.etag),
+    meta: envelope.meta,
+  };
+}
+
+export async function acceptWidgetRevisionProposal(
+  proposalId: string,
+  options: {
+    ifMatch: string;
+    acceptanceAction?: "apply" | "keep_original_add_modified_copy";
+    copyWidgetId?: string;
+    idempotencyKey?: string;
+    requestId?: string;
+  },
+  baseUrl?: string,
+): Promise<TradingRoomWidgetRevisionAcceptResult> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/trading-room/widget-revision-proposals/${encodeURIComponent(proposalId)}/accept`;
+  const extra: Record<string, string> = {
+    "Content-Type": "application/json",
+    "If-Match": options.ifMatch,
+  };
+  if (options.idempotencyKey) extra["Idempotency-Key"] = options.idempotencyKey;
+  if (options.requestId) extra["X-Request-Id"] = options.requestId;
+  const res = await fetchTradingRoom(url, {
+    method: "POST",
+    credentials: "include",
+    headers: buildHeaders({ method: "POST", extra }),
+    body: JSON.stringify({
+      acceptanceAction: options.acceptanceAction ?? "apply",
+      ...(options.copyWidgetId ? { copyWidgetId: options.copyWidgetId } : {}),
+    }),
+  }, "POST");
+  await assertOk(res, "POST", url);
+  const envelope = extractEnvelope(await parseJson(res));
+  const data = recordFrom(envelope.data);
+  return {
+    proposal: data.proposal as TradingRoomWidgetRevisionProposal,
+    workspace: data.workspace as TradingRoomWorkspace,
+    version: data.version as TradingRoomWorkspaceVersion,
+    appliedAction: String(data.appliedAction ?? ""),
+    copiedWidgetId: stringFrom(data.copiedWidgetId),
+    etag: res.headers.get("ETag") ?? stringFrom(envelope.meta?.etag),
+    revisionProposalEtag:
+      stringFrom(envelope.meta?.revision_proposal_etag) ??
+      stringFrom(envelope.meta?.revisionProposalEtag),
+    meta: envelope.meta,
+  };
+}
+
+export async function listTradingRoomWorkspaceVersions(
+  workspaceId: string,
+  baseUrl?: string,
+): Promise<TradingRoomWorkspaceVersion[]> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/trading-room/workspaces/${encodeURIComponent(workspaceId)}/versions`;
+  const res = await fetchTradingRoom(url, {
+    method: "GET",
+    credentials: "include",
+    headers: buildHeaders({ method: "GET" }),
+  }, "GET");
+  await assertOk(res, "GET", url);
+  const envelope = extractEnvelope(await parseJson(res));
+  return (Array.isArray(envelope.data) ? envelope.data : []) as unknown as TradingRoomWorkspaceVersion[];
+}
+
+export async function rollbackTradingRoomWorkspaceVersion(
+  workspaceId: string,
+  versionId: string,
+  options: { ifMatch: string; reason?: string; idempotencyKey?: string; requestId?: string },
+  baseUrl?: string,
+): Promise<TradingRoomRollbackResult> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/trading-room/workspaces/${encodeURIComponent(workspaceId)}/versions/${encodeURIComponent(versionId)}/rollback`;
+  const extra: Record<string, string> = {
+    "Content-Type": "application/json",
+    "If-Match": options.ifMatch,
+  };
+  if (options.idempotencyKey) extra["Idempotency-Key"] = options.idempotencyKey;
+  if (options.requestId) extra["X-Request-Id"] = options.requestId;
+  const res = await fetchTradingRoom(url, {
+    method: "POST",
+    credentials: "include",
+    headers: buildHeaders({ method: "POST", extra }),
+    body: JSON.stringify({ reason: options.reason ?? `rollback to ${versionId}` }),
+  }, "POST");
+  await assertOk(res, "POST", url);
+  const envelope = extractEnvelope(await parseJson(res));
+  const data = recordFrom(envelope.data);
+  return {
+    workspace: data.workspace as TradingRoomWorkspace,
+    version: data.version as TradingRoomWorkspaceVersion,
+    rollbackOfVersion: data.rollbackOfVersion as TradingRoomWorkspaceVersion,
+    etag: res.headers.get("ETag") ?? stringFrom(envelope.meta?.etag),
+    meta: envelope.meta,
+  };
 }

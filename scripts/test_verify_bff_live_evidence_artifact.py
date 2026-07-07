@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -33,6 +34,18 @@ MAX_CURRENT_RUN_ARTIFACT_FILES = 32
 MAX_CURRENT_RUN_ARTIFACT_BYTES = 8 * 1024 * 1024
 MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES = 4 * 1024 * 1024
 TARGET_URL = "https://pantheon-bff-dev.example.test"
+
+
+def sha256_12(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def source_hash(source: str) -> str:
+    return sha256_12(f"bearer:{source}")
+
+
+def strict_bearer_source_hashes() -> dict[str, str]:
+    return {source: source_hash(source) for source in BEARER_SHAPE_REQUIRED_SOURCES}
 
 
 def strict_live_evidence_run(**overrides: str) -> dict[str, str]:
@@ -153,6 +166,11 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
             "error_envelope": True,
             "error_envelope_shape": canonical_error_shape(),
             "error_code": "VALIDATION_FAILED",
+            "request_headers": {
+                "Authorization": "present",
+                "X-Dry-Run": "1",
+                "Idempotency-Key": "present",
+            },
             "side_effect_check": {
                 "kind": "validation_rejected_before_persistence",
                 "ok": True,
@@ -164,6 +182,11 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
         {
             "family": "dry-run-strategy-create",
             "method": "POST",
+            "request_headers": {
+                "Authorization": "present",
+                "X-Dry-Run": "1",
+                "Idempotency-Key": "present",
+            },
             "path": "/bff/strategies",
             "status": 200,
             "ok": True,
@@ -174,6 +197,11 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
         {
             "family": "dry-run-ranking-formula-create",
             "method": "POST",
+            "request_headers": {
+                "Authorization": "present",
+                "X-Dry-Run": "1",
+                "Idempotency-Key": "present",
+            },
             "path": "/bff/ranking-formulas",
             "status": 200,
             "ok": True,
@@ -184,6 +212,11 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
         {
             "family": "dry-run-v5-intervention-claim",
             "method": "POST",
+            "request_headers": {
+                "Authorization": "present",
+                "X-Dry-Run": "1",
+                "Idempotency-Key": "present",
+            },
             "path": "/bff/v5/interventions/int-live-dry-run/claim",
             "status": 200,
             "ok": True,
@@ -198,7 +231,7 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
 def strict_rbac_auth_source() -> dict[str, object]:
     labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
     cases: dict[str, object] = {"anonymous": {"kind": "anonymous"}}
-    cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in labels})
+    cases.update({label: {"kind": "provided_bearer", "sha256_12": source_hash(f"rbac:{label}")} for label in labels})
     return {
         "kind": "rbac_matrix",
         "cases": cases,
@@ -244,7 +277,7 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
                 item["error_code"] = "FORBIDDEN"
                 item["error_envelope_shape"] = canonical_error_shape()
             if label != "anonymous":
-                item["request_bearer_sha256_12"] = f"rbac-{label}-hash"
+                item["request_bearer_sha256_12"] = source_hash(f"rbac:{label}")
             items.append(item)
     for label in labels:
         for resource, path in write_paths.items():
@@ -264,7 +297,7 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
                 "auth_case_kind": "anonymous" if label == "anonymous" else "provided_bearer",
             }
             if label != "anonymous":
-                item["request_bearer_sha256_12"] = f"rbac-{label}-hash"
+                item["request_bearer_sha256_12"] = source_hash(f"rbac:{label}")
             if denied:
                 item["error_code"] = "FORBIDDEN"
                 item["error_envelope_shape"] = canonical_error_shape()
@@ -335,8 +368,8 @@ def strict_approval_race_entry() -> dict[str, object]:
         },
         "token_source": {
             "kind": "provided_bearer_pair",
-            "token_a_sha256_12": "race-token-a",
-            "token_b_sha256_12": "race-token-b",
+            "token_a_sha256_12": source_hash("approval_race:a"),
+            "token_b_sha256_12": source_hash("approval_race:b"),
         },
         "results": [
             {
@@ -348,7 +381,7 @@ def strict_approval_race_entry() -> dict[str, object]:
                 "error_envelope": False,
                 "actor_label": "a",
                 "target_id_sha256_12": target_hash,
-                "request_bearer_sha256_12": "race-token-a",
+                "request_bearer_sha256_12": source_hash("approval_race:a"),
                 "request_idempotency_key_sha256_12": "approval-idem-a",
                 "race_timing": {"start_ms": 1.0, "end_ms": 41.0, "duration_ms": 40.0},
             },
@@ -362,7 +395,7 @@ def strict_approval_race_entry() -> dict[str, object]:
                 "error_code": "STATE_CONFLICT",
                 "actor_label": "b",
                 "target_id_sha256_12": target_hash,
-                "request_bearer_sha256_12": "race-token-b",
+                "request_bearer_sha256_12": source_hash("approval_race:b"),
                 "request_idempotency_key_sha256_12": "approval-idem-b",
                 "race_timing": {"start_ms": 4.0, "end_ms": 42.0, "duration_ms": 38.0},
             },
@@ -395,8 +428,8 @@ def strict_two_man_race_entry() -> dict[str, object]:
         },
         "token_source": {
             "kind": "provided_bearer_pair",
-            "token_a_sha256_12": "race-token-a",
-            "token_b_sha256_12": "race-token-b",
+            "token_a_sha256_12": source_hash("approval_race:a"),
+            "token_b_sha256_12": source_hash("approval_race:b"),
         },
         "results": [
             {
@@ -408,7 +441,7 @@ def strict_two_man_race_entry() -> dict[str, object]:
                 "error_envelope": False,
                 "actor_label": "a",
                 "target_id_sha256_12": target_hash,
-                "request_bearer_sha256_12": "race-token-a",
+                "request_bearer_sha256_12": source_hash("approval_race:a"),
                 "request_idempotency_key_sha256_12": "two-man-shared-idem",
                 "request_signature_id_sha256_12": "two-man-sig-a",
                 "race_timing": {"start_ms": 2.0, "end_ms": 35.0, "duration_ms": 33.0},
@@ -426,7 +459,7 @@ def strict_two_man_race_entry() -> dict[str, object]:
                 "error_envelope": False,
                 "actor_label": "b",
                 "target_id_sha256_12": target_hash,
-                "request_bearer_sha256_12": "race-token-b",
+                "request_bearer_sha256_12": source_hash("approval_race:b"),
                 "request_idempotency_key_sha256_12": "two-man-shared-idem",
                 "request_signature_id_sha256_12": "two-man-sig-b",
                 "race_timing": {"start_ms": 3.0, "end_ms": 36.0, "duration_ms": 33.0},
@@ -446,7 +479,7 @@ def write_strict_auth_json(artifact_dir: Path) -> None:
                 "strict_live_evidence": True,
                 "strict_live_evidence_run": strict_live_evidence_run(),
                 "target_url": TARGET_URL,
-                "auth_source": {"kind": "provided_bearer"},
+                "auth_source": {"kind": "provided_bearer", "sha256_12": source_hash("smoke")},
                 "rbac_auth_source": strict_rbac_auth_source(),
                 "include_writes": True,
                 "include_rbac_matrix": True,
@@ -549,7 +582,7 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
                 "strict_live_evidence_run": strict_live_evidence_run(),
                 "target_url": TARGET_URL,
                 "channel": "approval",
-                "auth_source": {"kind": "provided_bearer", "token_sha256_12": "abcdef123456"},
+                "auth_source": {"kind": "provided_bearer", "token_sha256_12": source_hash("smoke")},
                 "strict_live_evidence_requirements": {
                     "min_soak_seconds": 75,
                     "min_heartbeats": 2,
@@ -562,6 +595,12 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
                     "min_heartbeats": 2,
                     "cookie_session": {
                         "ok": True,
+                        "duration_ms": 76000,
+                        "timeline": {
+                            "requested_seconds": 75.0,
+                            "observed_duration_ms": 76000,
+                            "observed_duration_seconds": 76.0,
+                        },
                         "request_headers": {
                             "Authorization": "absent",
                             "Cookie": "present",
@@ -575,6 +614,12 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
                     },
                     "bearer_polyfill": {
                         "ok": True,
+                        "duration_ms": 76000,
+                        "timeline": {
+                            "requested_seconds": 75.0,
+                            "observed_duration_ms": 76000,
+                            "observed_duration_seconds": 76.0,
+                        },
                         "request_headers": {
                             "Authorization": "present",
                             "Cookie": "absent",
@@ -679,6 +724,7 @@ def write_passing_artifact(artifact_dir: Path) -> None:
                 "approval_race_tokens": strict_preflight_approval_race_tokens(),
                 "cross_secret_bearers": strict_preflight_cross_secret(),
                 "bearer_shape": strict_preflight_bearer_shape(),
+                "bearer_source_hashes": strict_bearer_source_hashes(),
             }
         ),
         encoding="utf-8",
@@ -757,6 +803,29 @@ def test_verifier_rejects_auth_json_from_stale_sha_even_when_summary_passes(tmp_
         item = payload["criteria"][key]
         assert item["status"] == "fail"
         assert "runProvenance:sha" in item["note"]
+
+
+def test_verifier_rejects_strict_sse_when_observed_soak_duration_is_short(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    for mode in ("cookie_session", "bearer_polyfill"):
+        sse["soak"][mode]["duration_ms"] = 76000
+        sse["soak"][mode]["timeline"] = {
+            "requested_seconds": 75.0,
+            "observed_duration_ms": 1000,
+            "observed_duration_seconds": 1.0,
+        }
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "soak:75/75" in item["note"]
+    assert "soakDuration:1/75" in item["note"]
 
 
 def test_verifier_rejects_strict_sse_with_single_heartbeat_even_when_artifact_min_is_one(tmp_path: Path) -> None:
@@ -997,8 +1066,8 @@ def test_verifier_rejects_approval_race_without_distinct_provided_bearers(tmp_pa
     write_passing_artifact(artifact_dir)
     auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
     auth = json.loads(auth_path.read_text(encoding="utf-8"))
-    auth["approval_race"]["token_source"]["token_b_sha256_12"] = "race-token-a"
-    auth["approval_race"]["results"][1]["request_bearer_sha256_12"] = "race-token-a"
+    auth["approval_race"]["token_source"]["token_b_sha256_12"] = source_hash("approval_race:a")
+    auth["approval_race"]["results"][1]["request_bearer_sha256_12"] = source_hash("approval_race:a")
     auth_path.write_text(json.dumps(auth), encoding="utf-8")
 
     result = run_verifier(artifact_dir)
@@ -1190,6 +1259,24 @@ def test_verifier_rejects_dry_run_request_path_swap(tmp_path: Path) -> None:
     item = payload["criteria"]["dry_run_no_side_effects"]
     assert item["status"] == "fail"
     assert "meta-request-link" in item["note"]
+
+
+def test_verifier_rejects_dry_run_without_x_dry_run_request_header(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    invalid = next(item for item in auth["dry_run"] if item["family"] == "dry-run-invalid-strategy")
+    invalid.pop("request_headers")
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["dry_run_no_side_effects"]
+    assert item["status"] == "fail"
+    assert "dryRunRequests:4/5" in item["note"]
+    assert "dry-run-request-header" in item["note"]
 
 
 def test_verifier_fails_when_preflight_rbac_matrix_is_missing(tmp_path: Path) -> None:
@@ -1413,6 +1500,74 @@ def test_verifier_allows_bearer_shape_invalid_sources_only_when_preflight_report
     item = payload["criteria"]["preflight_ready"]
     assert item["status"] == "fail"
     assert item["note"] == "environment:dev invalid:PANTHEON_BFF_LIVE_EVIDENCE_BEARER_SHAPE"
+
+
+def test_verifier_fails_when_ready_preflight_bearer_hash_inventory_is_missing(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight.pop("bearer_source_hashes")
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "bearer_source_hashes:missing"
+
+
+def test_verifier_rejects_rbac_probe_hashes_from_different_preflight_inventory(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["bearer_source_hashes"]["rbac:viewer"] = "f" * 12
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["rbac_matrix"]
+    assert item["status"] == "fail"
+    assert "preflightBearerLinks:42/49" in item["note"]
+    assert "preflight-bearer-link" in item["note"]
+
+
+def test_verifier_rejects_sse_probe_hash_from_different_preflight_inventory(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["bearer_source_hashes"]["smoke"] = "f" * 12
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "preflightSmokeLink:False" in item["note"]
+
+
+def test_verifier_rejects_race_probe_hashes_from_different_preflight_inventory(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["bearer_source_hashes"]["approval_race:b"] = "f" * 12
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    approval = payload["criteria"]["approval_race"]
+    two_man = payload["criteria"]["two_man_race"]
+    assert approval["status"] == "fail"
+    assert two_man["status"] == "fail"
+    assert "preflightBearerLinks:1/2" in approval["note"]
+    assert "preflightBearerLinks:1/2" in two_man["note"]
 
 
 def test_verifier_fails_preflight_blocked_artifact(tmp_path: Path) -> None:

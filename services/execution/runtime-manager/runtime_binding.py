@@ -285,8 +285,11 @@ class RuntimeBindingStore:
     def __init__(self, path: Optional[Path] = None) -> None:
         self._bindings: Dict[str, RuntimeBinding] = {}
         self._path = path
+        self._backup_path = self._backup_for(path) if path else None
         if path and path.exists():
             self._load(path)
+        elif path:
+            self._restore_from_backup()
 
     # ---- Read helpers ----
 
@@ -423,15 +426,46 @@ class RuntimeBindingStore:
         if self._path:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             records = [b.to_dict() for b in self._bindings.values()]
-            self._path.write_text(json.dumps(records, indent=2))
+            self._write_records(self._path, records)
+            if records and self._backup_path:
+                self._write_records(self._backup_path, records)
 
     def _load(self, path: Path) -> None:
-        text = path.read_text()
-        if not text.strip():
+        records = self._read_records(path)
+        if not records and self._restore_from_backup():
             return
+        for b in records:
+            self._bindings[b.binding_id] = b
+        if records and path == self._path and self._backup_path:
+            self._write_records(self._backup_path, [b.to_dict() for b in records])
+
+    @staticmethod
+    def _backup_for(path: Path) -> Path:
+        return path.with_name(f"{path.name}.bak")
+
+    @staticmethod
+    def _read_records(path: Path) -> List[RuntimeBinding]:
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            return []
         data = json.loads(text)
         if not isinstance(data, list):
             raise RuntimeBindingError(f"Expected JSON array in {path}")
-        for record in data:
-            b = RuntimeBinding.from_dict(record)
-            self._bindings[b.binding_id] = b
+        return [RuntimeBinding.from_dict(record) for record in data]
+
+    @staticmethod
+    def _write_records(path: Path, records: List[Dict[str, Any]]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f".{path.name}.tmp")
+        tmp_path.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
+        tmp_path.replace(path)
+
+    def _restore_from_backup(self) -> bool:
+        if not self._path or not self._backup_path or not self._backup_path.exists():
+            return False
+        records = self._read_records(self._backup_path)
+        if not records:
+            return False
+        self._bindings = {b.binding_id: b for b in records}
+        self._write_records(self._path, [b.to_dict() for b in records])
+        return True

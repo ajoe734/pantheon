@@ -1,12 +1,16 @@
 {
   "version": 1,
-  "updated_at": "2026-07-01T20:27:20Z",
+  "updated_at": "2026-07-07T15:06:53Z",
   "counts": {
-    "total": 1958,
-    "completed": 1916,
-    "superseded": 42
+    "total": 1962,
+    "completed": 1919,
+    "superseded": 43
   },
   "recent_terminal_ids": [
+    "AG-DYNUI-FULL-007",
+    "AG-DYNUI-FULL-006",
+    "AG-DYNUI-FULL-005",
+    "AG-DYNUI-FULL-003",
     "MGMT-GAP-007",
     "MGMT-GAP-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
     "MGMT-GAP-007-SIDECAR-BFF-HANDOFF",
@@ -22,10 +26,6 @@
     "MGMT-LOAD-007",
     "MGMT-LOAD-006",
     "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
-    "MGMT-LOAD-003",
-    "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
-    "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
-    "MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
-    "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4"
+    "MGMT-LOAD-003"
   ]
 }

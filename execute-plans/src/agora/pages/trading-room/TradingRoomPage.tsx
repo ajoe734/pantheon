@@ -1,19 +1,33 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  acceptWidgetRevisionProposal,
+  acceptWorkspaceProposal,
+  createWidgetRevisionProposal,
+  createWorkspaceProposal,
   getTradingRoom,
+  getTradingRoomStrategy,
+  getTradingRoomWorkspace,
+  listTradingRoomWorkspaceVersions,
   listDecisionEvents,
+  patchTradingRoomWorkspaceLayout,
+  rollbackTradingRoomWorkspaceVersion,
   decideOnEvent,
   type TradingRoomAggregate,
   type TradingRoomStrategyEntry,
   type TradingDecisionEvent,
   type DecisionChoice,
+  type TradingRoomBffDiagnostic,
+  type TradingRoomLayoutOperation,
+  type TradingRoomWidgetRevisionProposal,
+  type TradingRoomWidgetSpec,
+  type TradingRoomWorkspace,
+  type TradingRoomWorkspaceVersion,
 } from "@/lib/bff-v1/agora/tradingRoom";
 
 function newUUID(): string {
   return crypto.randomUUID();
 }
-import { getDashboardRecipeById } from "@/lib/bff-v1/agora/dashboard";
-import type { DashboardRecipeV2, WidgetSpecV2 } from "@/lib/bff-v1/agora/types";
+import type { WidgetSpecV2 } from "@/lib/bff-v1/agora/types";
 import { DashboardGridEditor } from "@/agora/dashboard/DashboardGridEditor";
 import type { WidgetPlacement } from "@/agora/dashboard/DashboardGridEditor";
 
@@ -40,6 +54,159 @@ const C = {
   rejectBtn: "rgba(248,113,113,0.12)",
   rejectBtnText: "#f87171",
 } as const;
+
+function recordFrom(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function isTradingRoomBffDiagnostic(value: unknown): value is TradingRoomBffDiagnostic {
+  const record = recordFrom(value);
+  return (
+    typeof record.method === "string" &&
+    typeof record.url === "string" &&
+    typeof record.status === "number" &&
+    typeof record.code === "string" &&
+    typeof record.message === "string"
+  );
+}
+
+function diagnosticFromUnknown(error: unknown): TradingRoomBffDiagnostic {
+  const diagnostic = recordFrom(error).diagnostic;
+  if (isTradingRoomBffDiagnostic(diagnostic)) return diagnostic;
+  return {
+    method: "GET",
+    url: "/bff/agora/trading-room",
+    status: 0,
+    code: "TRADING_ROOM_CLIENT_ERROR",
+    message: error instanceof Error ? error.message : "Trading Room load failed",
+    requestId: null,
+    correlationId: null,
+    retryable: true,
+  };
+}
+
+function sanitizeDiagnosticText(value: string): string {
+  return value
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[redacted]")
+    .replace(/((?:access_)?token=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/(password=)[^&\s]+/gi, "$1[redacted]")
+    .slice(0, 240);
+}
+
+function endpointFromUrl(url: string): string {
+  try {
+    const base = typeof window !== "undefined" ? window.location.origin : "https://pantheon.local";
+    return new URL(url, base).pathname;
+  } catch {
+    return "/bff/agora/trading-room";
+  }
+}
+
+function buildSafeReloadHref(): string {
+  if (typeof window === "undefined") return "/agora/trading-room?pantheon_reload=latest";
+  const next = new URL(window.location.href);
+  next.searchParams.set("pantheon_reload", String(Date.now()));
+  return next.toString();
+}
+
+function safeReloadTradingRoom(href: string): void {
+  if (typeof window === "undefined") return;
+  window.location.assign(href);
+}
+
+function ErrorDiagnosticRow({ label, value }: { label: string; value: string | null }): JSX.Element {
+  return (
+    <div style={{ display: "flex", gap: 8, minWidth: 0 }}>
+      <span style={{ width: 90, color: C.muted, flexShrink: 0 }}>{label}</span>
+      <span style={{ color: C.text, overflowWrap: "anywhere" }}>{value || "unavailable"}</span>
+    </div>
+  );
+}
+
+interface TradingRoomErrorStateProps {
+  diagnostic: TradingRoomBffDiagnostic;
+  onRetry: () => void;
+}
+
+function TradingRoomErrorState({ diagnostic, onRetry }: TradingRoomErrorStateProps): JSX.Element {
+  const reloadHref = buildSafeReloadHref();
+  const endpoint = endpointFromUrl(diagnostic.url);
+  const statusLabel = diagnostic.status > 0 ? `HTTP ${diagnostic.status}` : "Network failure";
+
+  return (
+    <div
+      data-testid="trading-room-error"
+      data-bff-status={diagnostic.status}
+      data-bff-code={diagnostic.code}
+      data-request-id={diagnostic.requestId ?? ""}
+      data-correlation-id={diagnostic.correlationId ?? ""}
+      style={{
+        display: "flex",
+        height: "100%",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        background: C.bg,
+        color: C.text,
+      }}
+    >
+      <div style={{ width: "min(680px, 100%)", border: `1px solid ${C.border}`, background: C.surface, padding: 18 }}>
+        <div style={{ color: C.red, fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
+          Trading Room load failed
+        </div>
+        <div data-testid="trading-room-error-summary" style={{ fontSize: 13, color: C.secondary, marginBottom: 14 }}>
+          {statusLabel} · {diagnostic.code}
+        </div>
+        <div data-testid="trading-room-error-message" style={{ fontSize: 13, color: C.text, marginBottom: 14 }}>
+          {sanitizeDiagnosticText(diagnostic.message)}
+        </div>
+        <div
+          data-testid="trading-room-error-diagnostics"
+          style={{ display: "grid", gap: 6, fontSize: 12, marginBottom: 16 }}
+        >
+          <ErrorDiagnosticRow label="Endpoint" value={endpoint} />
+          <ErrorDiagnosticRow label="Request ID" value={diagnostic.requestId} />
+          <ErrorDiagnosticRow label="Correlation" value={diagnostic.correlationId} />
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <button
+            type="button"
+            data-testid="trading-room-retry"
+            onClick={onRetry}
+            style={{
+              padding: "7px 12px",
+              border: `1px solid ${C.amber}`,
+              background: "rgba(232,183,80,0.12)",
+              color: C.amber,
+              cursor: "pointer",
+              fontSize: 13,
+            }}
+          >
+            Retry
+          </button>
+          <button
+            type="button"
+            data-testid="trading-room-safe-reload"
+            data-reload-href={reloadHref}
+            onClick={() => safeReloadTradingRoom(reloadHref)}
+            style={{
+              padding: "7px 12px",
+              border: `1px solid ${C.border}`,
+              background: C.elevated,
+              color: C.text,
+              cursor: "pointer",
+              fontSize: 13,
+            }}
+          >
+            Reload latest bundle
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Strategy Lens Switcher ────────────────────────────────────────────────────
 
@@ -87,7 +254,7 @@ function StrategyLensSwitcher({
           whiteSpace: "nowrap",
         }}
       >
-        All Strategies
+        Workbench Entry
       </button>
       {strategies.map((s) => (
         <button
@@ -528,82 +695,85 @@ function PositionActionQueue({ positionSummaries }: PositionActionQueueProps): J
   );
 }
 
-// ── Strategy List (aggregate view) ────────────────────────────────────────────
+// ── Default Dynamic Entry (no explicit strategy selected) ────────────────────
 
-interface StrategyListProps {
-  strategies: TradingRoomStrategyEntry[];
-  onSelect: (strategyId: string) => void;
-}
-
-function StrategyList({ strategies, onSelect }: StrategyListProps): JSX.Element {
+function pendingEventTotal(strategy: TradingRoomStrategyEntry): number {
   return (
-    <div data-testid="strategy-list" style={{ padding: "8px 16px" }}>
-      {strategies.length === 0 ? (
-        <div data-testid="strategy-list-empty" style={{ fontSize: 13, color: C.muted }}>
-          No strategies in the Trading Room.
-        </div>
-      ) : (
-        <table
-          data-testid="strategy-list-table"
-          style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, color: C.text }}
-        >
-          <thead>
-            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              <th style={{ textAlign: "left", padding: "6px 0", fontWeight: 500, color: C.secondary }}>Strategy</th>
-              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: C.secondary }}>Readiness</th>
-              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: C.secondary }}>Monitoring</th>
-              <th style={{ textAlign: "right", padding: "6px 0", fontWeight: 500, color: C.secondary }}>Pending</th>
-            </tr>
-          </thead>
-          <tbody>
-            {strategies.map((s) => {
-              const total =
-                (s.pending_event_counts.entry ?? 0) +
-                (s.pending_event_counts.add ?? 0) +
-                (s.pending_event_counts.reduce ?? 0) +
-                (s.pending_event_counts.exit ?? 0) +
-                (s.pending_event_counts.review ?? 0);
-              return (
-                <tr
-                  key={s.strategy_id}
-                  data-testid={`strategy-row-${s.strategy_id}`}
-                  style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}
-                  onClick={() => onSelect(s.strategy_id)}
-                >
-                  <td style={{ padding: "6px 0" }}>{s.title}</td>
-                  <td style={{ padding: "6px 8px" }}>{s.readiness_state}</td>
-                  <td style={{ padding: "6px 8px" }}>{s.monitoring_state}</td>
-                  <td style={{ padding: "6px 0", textAlign: "right" }}>{total > 0 ? total : "—"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </div>
+    (strategy.pending_event_counts.entry ?? 0) +
+    (strategy.pending_event_counts.add ?? 0) +
+    (strategy.pending_event_counts.reduce ?? 0) +
+    (strategy.pending_event_counts.exit ?? 0) +
+    (strategy.pending_event_counts.review ?? 0)
   );
 }
 
-// ── Aggregate View (no strategy selected) ────────────────────────────────────
+const MONITORING_PRIORITY: Record<TradingRoomStrategyEntry["monitoring_state"], number> = {
+  monitoring: 5,
+  paper_requested: 4,
+  shadow: 3,
+  paused: 2,
+  inactive: 1,
+};
 
-interface AggregateViewProps {
+function selectDefaultReadyStrategy(
+  strategies: TradingRoomStrategyEntry[],
+): TradingRoomStrategyEntry | undefined {
+  return strategies
+    .filter((strategy) => strategy.readiness_state === "ready")
+    .slice()
+    .sort((a, b) => {
+      const recipeDiff = Number(Boolean(b.dashboard_recipe_id)) - Number(Boolean(a.dashboard_recipe_id));
+      if (recipeDiff !== 0) return recipeDiff;
+      const pendingDiff = pendingEventTotal(b) - pendingEventTotal(a);
+      if (pendingDiff !== 0) return pendingDiff;
+      const monitoringDiff = MONITORING_PRIORITY[b.monitoring_state] - MONITORING_PRIORITY[a.monitoring_state];
+      if (monitoringDiff !== 0) return monitoringDiff;
+      return a.title.localeCompare(b.title);
+    })[0];
+}
+
+function readinessReason(strategy: TradingRoomStrategyEntry): string {
+  if (strategy.readiness_state === "conditional") {
+    return "Conditional readiness: continue Strategy Workshop validation before proposal generation.";
+  }
+  if (strategy.readiness_state === "stale") {
+    return strategy.staleness_reasons?.[0] ?? "Readiness is stale; refresh workshop evidence.";
+  }
+  return "Blocked readiness: Strategy Workshop must close the missing gate before Trading Room entry.";
+}
+
+interface TradingRoomDefaultEntryProps {
   aggregate: TradingRoomAggregate;
-  events: TradingDecisionEvent[];
-  eventsLoading: boolean;
-  eventsEtag: string | null;
+  onOpenWorkshop?: () => void;
   onStrategySelect: (strategyId: string) => void;
 }
 
-function AggregateView({
+function TradingRoomDefaultEntry({
   aggregate,
-  events,
-  eventsLoading,
-  eventsEtag,
+  onOpenWorkshop,
   onStrategySelect,
-}: AggregateViewProps): JSX.Element {
+}: TradingRoomDefaultEntryProps): JSX.Element {
+  const strategies = aggregate.strategies;
+  const pendingTotal = strategies.reduce((total, strategy) => total + pendingEventTotal(strategy), 0);
+  const entryState = strategies.length === 0 ? "empty" : "no-ready-strategy";
+  const readinessRows = strategies
+    .slice()
+    .sort((a, b) => {
+      const readinessOrder: Record<TradingRoomStrategyEntry["readiness_state"], number> = {
+        conditional: 0,
+        stale: 1,
+        blocked: 2,
+        ready: 3,
+      };
+      const orderDiff = readinessOrder[a.readiness_state] - readinessOrder[b.readiness_state];
+      if (orderDiff !== 0) return orderDiff;
+      return (b.candidate_count ?? 0) - (a.candidate_count ?? 0);
+    });
+
   return (
     <div
-      data-testid="trading-room-aggregate-view"
+      data-entry-state={entryState}
+      data-testid="trading-room-default-entry"
       style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}
     >
       <QueueSummaryStrip {...aggregate.queue_summary} />
@@ -612,46 +782,526 @@ function AggregateView({
         summary={aggregate.risk_summary.summary}
         alerts={aggregate.risk_summary.alerts}
       />
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <StrategyList strategies={aggregate.strategies} onSelect={onStrategySelect} />
-          <TradingEventQueue events={events} loading={eventsLoading} eventsEtag={eventsEtag} />
-        </div>
-        <PositionActionQueue positionSummaries={aggregate.position_summaries ?? []} />
+
+      <div style={{ flex: 1, overflow: "auto", padding: 18 }}>
+        <section
+          style={{
+            background: C.surface,
+            border: `1px solid ${C.border}`,
+            borderRadius: 8,
+            display: "grid",
+            gap: 14,
+            padding: 18,
+          }}
+        >
+          <div>
+            <div style={{ color: C.secondary, fontSize: 12, fontWeight: 700 }}>Dynamic Entry</div>
+            <h2 style={{ color: C.text, fontSize: 20, fontWeight: 800, letterSpacing: 0, margin: "4px 0 0" }}>
+              {strategies.length === 0
+                ? "Strategy Workshop is the next step"
+                : "No strategy is ready for proposal generation yet"}
+            </h2>
+            <p style={{ color: C.secondary, fontSize: 13, lineHeight: 1.55, margin: "8px 0 0", maxWidth: 860 }}>
+              {strategies.length === 0
+                ? "The BFF returned no user-scoped Trading Room strategies, so the default route starts from workshop intake instead of an empty table shell."
+                : "The BFF returned strategies, but none has reached the trading_room readiness gate. Continue the readiness workflow before opening a generated V11 workspace."}
+            </p>
+          </div>
+
+          <div
+            data-testid="trading-room-default-snapshot"
+            style={{
+              color: C.secondary,
+              display: "flex",
+              flexWrap: "wrap",
+              fontSize: 12,
+              gap: 12,
+            }}
+          >
+            <span>Strategies: {strategies.length}</span>
+            <span>Ready: 0</span>
+            <span>Pending decisions: {pendingTotal}</span>
+            <span>Snapshot: {aggregate.snapshot_at || "unavailable"}</span>
+            <span>Data cutoff: {aggregate.data_cutoff || "unavailable"}</span>
+          </div>
+
+          <div>
+            <button
+              data-testid="trading-room-open-workshop"
+              disabled={!onOpenWorkshop}
+              onClick={onOpenWorkshop}
+              style={{
+                background: onOpenWorkshop ? C.amber : C.elevated,
+                border: `1px solid rgba(232,183,80,0.45)`,
+                borderRadius: 6,
+                color: onOpenWorkshop ? C.bg : C.muted,
+                cursor: onOpenWorkshop ? "pointer" : "not-allowed",
+                fontSize: 13,
+                fontWeight: 800,
+                padding: "8px 12px",
+              }}
+              type="button"
+            >
+              Open Strategy Workshop
+            </button>
+          </div>
+        </section>
+
+        {strategies.length > 0 ? (
+          <section
+            data-testid="trading-room-readiness-entry"
+            style={{
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              marginTop: 14,
+            }}
+          >
+            {readinessRows.map((strategy) => (
+              <article
+                data-testid={`trading-room-readiness-${strategy.strategy_id}`}
+                key={strategy.strategy_id}
+                style={{
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  color: C.text,
+                  padding: 14,
+                }}
+              >
+                <div style={{ color: C.secondary, fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>
+                  {strategy.readiness_state} · {strategy.monitoring_state}
+                </div>
+                <h3 style={{ fontSize: 15, fontWeight: 800, margin: "4px 0 0" }}>{strategy.title}</h3>
+                <p style={{ color: C.secondary, fontSize: 12, lineHeight: 1.45, margin: "8px 0 0" }}>
+                  {readinessReason(strategy)}
+                </p>
+                <div style={{ color: C.muted, display: "flex", flexWrap: "wrap", fontSize: 12, gap: 10, marginTop: 10 }}>
+                  <span>Version: {strategy.strategy_spec_registry_id}</span>
+                  <span>Candidates: {strategy.candidate_count ?? 0}</span>
+                  <span>Pending: {pendingEventTotal(strategy)}</span>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <button
+                    data-testid={`trading-room-open-workshop-${strategy.strategy_id}`}
+                    disabled={!onOpenWorkshop}
+                    onClick={onOpenWorkshop}
+                    style={{
+                      background: "transparent",
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 6,
+                      color: onOpenWorkshop ? C.amber : C.muted,
+                      cursor: onOpenWorkshop ? "pointer" : "not-allowed",
+                      fontSize: 12,
+                      padding: "6px 10px",
+                    }}
+                    type="button"
+                  >
+                    Review readiness
+                  </button>
+                  {strategy.readiness_state === "ready" && (
+                    <button
+                      data-testid={`trading-room-open-strategy-${strategy.strategy_id}`}
+                      onClick={() => onStrategySelect(strategy.strategy_id)}
+                      style={{
+                        background: C.elevated,
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 6,
+                        color: C.text,
+                        cursor: "pointer",
+                        fontSize: 12,
+                        padding: "6px 10px",
+                      }}
+                      type="button"
+                    >
+                      Open workspace
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </section>
+        ) : (
+          <section
+            data-testid="trading-room-workshop-empty-entry"
+            style={{
+              background: C.surface,
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+              color: C.secondary,
+              fontSize: 13,
+              lineHeight: 1.5,
+              marginTop: 14,
+              padding: 14,
+            }}
+          >
+            No BFF strategy records were available for this scope. Continue in the Strategy Workshop to create
+            or restore a strategy-specific readiness packet.
+          </section>
+        )}
       </div>
     </div>
   );
 }
 
-// ── Strategy Recipe Section ───────────────────────────────────────────────────
+// ── Live Dynamic Workspace ───────────────────────────────────────────────────
 
-interface StrategyRecipeSectionProps {
-  recipe: DashboardRecipeV2;
+type WorkspacePhase = "loading" | "active" | "mutating" | "error" | "blocked";
+
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
 }
 
-function StrategyRecipeSection({ recipe }: StrategyRecipeSectionProps): JSX.Element {
-  const [activeViewIdx, setActiveViewIdx] = useState(0);
-  const [viewPlacements, setViewPlacements] = useState<Record<string, WidgetPlacement[]>>(
-    () => Object.fromEntries(recipe.views.map((v) => [v.view_id, v.placements as WidgetPlacement[]]))
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function workspaceStorageKey(strategyId: string, strategyVersion: string): string {
+  return `pantheon.agora.tradingRoom.workspace.${strategyId}.${strategyVersion}`;
+}
+
+function readStoredWorkspaceId(strategyId: string, strategyVersion: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(workspaceStorageKey(strategyId, strategyVersion));
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredWorkspaceId(strategyId: string, strategyVersion: string, workspaceId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(workspaceStorageKey(strategyId, strategyVersion), workspaceId);
+  } catch {
+    // Storage is an optimization only; the live BFF remains the source of truth.
+  }
+}
+
+function workspaceStrategyVersion(
+  strategy: TradingRoomStrategyEntry | undefined,
+  detail: Record<string, unknown> | null,
+): string {
+  return stringValue(
+    detail?.strategy_version ??
+      detail?.strategyVersion ??
+      detail?.workshop_version_id ??
+      detail?.workshopVersionId ??
+      strategy?.strategy_spec_registry_id,
+    strategy?.strategy_id ?? "strategy-version",
   );
+}
 
-  const activeView = recipe.views[activeViewIdx];
-  const placements = (activeView ? viewPlacements[activeView.view_id] : undefined) ?? [];
-  const widgets: WidgetSpecV2[] = activeView?.widgets ?? [];
+function firstWorkspaceWidget(workspace: TradingRoomWorkspace | null): TradingRoomWidgetSpec | null {
+  for (const view of workspace?.views ?? []) {
+    for (const widget of view.widgets ?? []) {
+      if (widget && widget.visible !== false) return widget;
+    }
+  }
+  return null;
+}
 
-  if (!activeView) return <></>;
+function activeWorkspaceView(workspace: TradingRoomWorkspace): TradingRoomWorkspace["views"][number] | undefined {
+  return workspace.views.find((view) => view.id === workspace.activeViewId) ?? workspace.views[0];
+}
+
+function widgetPlacement(widget: TradingRoomWidgetSpec): WidgetPlacement {
+  const placement = recordFrom(widget.placement);
+  const minSize = recordFrom(widget.minSize);
+  const maxSize = recordFrom(widget.maxSize);
+  return {
+    widget_id: widget.id,
+    x: numberValue(placement.x, 0),
+    y: numberValue(placement.y, 0),
+    w: numberValue(placement.width ?? placement.w, 4),
+    h: numberValue(placement.height ?? placement.h, 4),
+    min_w: numberValue(placement.minWidth ?? placement.min_w ?? minSize.width, 2),
+    min_h: numberValue(placement.minHeight ?? placement.min_h ?? minSize.height, 2),
+    max_w: typeof (placement.maxWidth ?? maxSize.width) === "number" ? (placement.maxWidth ?? maxSize.width) as number : undefined,
+    max_h: typeof (placement.maxHeight ?? maxSize.height) === "number" ? (placement.maxHeight ?? maxSize.height) as number : undefined,
+    pinned: Boolean(placement.pinned),
+  };
+}
+
+function normalizeInteractionKind(kind: unknown): WidgetSpecV2["interactions"][number]["kind"] {
+  const clean = String(kind || "open_evidence");
+  const allowed = new Set([
+    "open_candidate",
+    "open_strategy",
+    "open_position",
+    "open_evidence",
+    "open_research_run",
+    "open_shadow_record",
+    "filter_workspace",
+    "cross_highlight",
+    "add_to_monitoring",
+    "remove_from_monitoring",
+    "park_candidate",
+    "request_more_research",
+    "send_to_shadow",
+    "request_widget_revision",
+    "create_journal_note",
+  ]);
+  return (allowed.has(clean) ? clean : "open_evidence") as WidgetSpecV2["interactions"][number]["kind"];
+}
+
+function normalizeSensitivity(value: unknown): WidgetSpecV2["sensitivity"] {
+  const clean = String(value || "user_private");
+  if (clean === "public_market" || clean === "broker_sensitive" || clean === "restricted") return clean;
+  return "user_private";
+}
+
+function workspaceWidgetToV2(widget: TradingRoomWidgetSpec, workspace: TradingRoomWorkspace): WidgetSpecV2 {
+  const placement = widgetPlacement(widget);
+  const chartSpec = recordFrom(widget.chartSpec);
+  const query = recordFrom(widget.query);
+  const interactions = Array.isArray(widget.interactions) ? widget.interactions : [];
+  return {
+    spec_version: "2.0",
+    widget_id: widget.id,
+    widget_type: stringValue(widget.widgetType, "strategy_status_summary"),
+    title: stringValue(widget.title, widget.id),
+    description: optionalString(widget.description ?? widget.purpose),
+    why_this_widget: optionalString(widget.whyIncluded),
+    data_source_id: stringValue(widget.dataSource, "agora.trading.events"),
+    query: {
+      filters: recordFrom(query.filters),
+      sort: recordFrom(query.sort) as Record<string, "asc" | "desc">,
+      limit: numberValue(query.limit, 500),
+      window: stringValue(query.window, "20d"),
+    },
+    chart_spec: {
+      spec_version: "1.0",
+      kind: stringValue(chartSpec.kind, "table") as WidgetSpecV2["chart_spec"]["kind"],
+      encodings: recordFrom(chartSpec.encodings) as WidgetSpecV2["chart_spec"]["encodings"],
+      transforms: Array.isArray(chartSpec.transforms) ? chartSpec.transforms as WidgetSpecV2["chart_spec"]["transforms"] : undefined,
+      tooltip_fields: Array.isArray(chartSpec.tooltip_fields) ? chartSpec.tooltip_fields as string[] : undefined,
+      thresholds: Array.isArray(chartSpec.thresholds) ? chartSpec.thresholds as WidgetSpecV2["chart_spec"]["thresholds"] : undefined,
+      click_action: chartSpec.click_action as WidgetSpecV2["chart_spec"]["click_action"],
+      options: recordFrom(chartSpec.options),
+    },
+    interactions: interactions.map((interaction) => {
+      const item = recordFrom(interaction);
+      return {
+        kind: normalizeInteractionKind(item.kind),
+        params: recordFrom(item.params),
+      };
+    }),
+    sensitivity: normalizeSensitivity(widget.sensitivity),
+    can_export: widget.canExport !== false,
+    registry_version: "widget_registry.v1",
+    layout_constraints: {
+      min_w: placement.min_w,
+      min_h: placement.min_h,
+      max_w: placement.max_w,
+      max_h: placement.max_h,
+    },
+    version: numberValue(widget.version, workspace.dashboardVersion),
+    created_at: stringValue(widget.createdAt, workspace.createdAt),
+    updated_at: stringValue(widget.updatedAt, workspace.updatedAt),
+    metadata: recordFrom(widget.metadata),
+  };
+}
+
+function makeRevisionSpec(widget: TradingRoomWidgetSpec): TradingRoomWidgetSpec {
+  const chartSpec = recordFrom(widget.chartSpec);
+  return {
+    ...widget,
+    title: `${widget.title} Live Revision`,
+    purpose: `${stringValue(widget.purpose, "Workspace widget")} revised through live BFF.`,
+    whyIncluded: `${stringValue(widget.whyIncluded, "Included in the trading workspace")} Revision preserves the allowlisted data source.`,
+    chartSpec: {
+      ...chartSpec,
+      kind: "bar",
+      encodings: {
+        x: { field: "label", type: "nominal" },
+        y: { field: "value", type: "quantitative" },
+      },
+    },
+  };
+}
+
+function workspaceErrorText(error: unknown): string {
+  if (error instanceof Error) return sanitizeDiagnosticText(error.message);
+  return "Workspace request failed";
+}
+
+interface LiveWorkspaceSectionProps {
+  strategy: TradingRoomStrategyEntry | undefined;
+  strategyDetail: Record<string, unknown> | null;
+  workspace: TradingRoomWorkspace;
+  workspaceEtag: string | null;
+  versions: TradingRoomWorkspaceVersion[];
+  revisionProposal: TradingRoomWidgetRevisionProposal | null;
+  phase: WorkspacePhase;
+  mutationMessage: string | null;
+  onLayoutPatch: (operations: TradingRoomLayoutOperation[], label: string) => Promise<void>;
+  onRequestRevision: () => Promise<void>;
+  onAcceptRevision: () => Promise<void>;
+  onRollback: (versionId: string) => Promise<void>;
+}
+
+function LiveWorkspaceSection({
+  strategy,
+  strategyDetail,
+  workspace,
+  workspaceEtag,
+  versions,
+  revisionProposal,
+  phase,
+  mutationMessage,
+  onLayoutPatch,
+  onRequestRevision,
+  onAcceptRevision,
+  onRollback,
+}: LiveWorkspaceSectionProps): JSX.Element {
+  const [activeViewIdx, setActiveViewIdx] = useState(0);
+  const activeView = workspace.views[activeViewIdx] ?? activeWorkspaceView(workspace);
+  const placements = useMemo(
+    () => (activeView?.widgets ?? []).filter((widget) => widget.visible !== false).map(widgetPlacement),
+    [activeView],
+  );
+  const widgets = useMemo(
+    () => (activeView?.widgets ?? [])
+      .filter((widget) => widget.visible !== false)
+      .map((widget) => workspaceWidgetToV2(widget, workspace)),
+    [activeView, workspace],
+  );
+  const firstWidget = firstWorkspaceWidget(workspace);
+  const rollbackTargetVersionId = versions[0]?.id;
+
+  const handlePlacementsChange = useCallback((nextPlacements: WidgetPlacement[]) => {
+    const prior = new Map(placements.map((placement) => [placement.widget_id, placement]));
+    const operations: TradingRoomLayoutOperation[] = [];
+    for (const next of nextPlacements) {
+      const before = prior.get(next.widget_id);
+      if (!before) continue;
+      if (before.x !== next.x || before.y !== next.y) {
+        operations.push({
+          kind: "move_widget",
+          widgetId: next.widget_id,
+          payload: { x: next.x, y: next.y },
+        });
+      }
+      if (before.w !== next.w || before.h !== next.h) {
+        operations.push({
+          kind: "resize_widget",
+          widgetId: next.widget_id,
+          payload: { width: next.w, height: next.h },
+        });
+      }
+    }
+    if (operations.length) void onLayoutPatch(operations, "layout grid edit");
+  }, [onLayoutPatch, placements]);
+
+  const patchFirstWidget = useCallback(() => {
+    if (!firstWidget) return;
+    const placement = widgetPlacement(firstWidget);
+    void onLayoutPatch([
+      {
+        kind: "move_widget",
+        widgetId: firstWidget.id,
+        payload: { x: (placement.x + 1) % 6, y: placement.y + 1 },
+      },
+      {
+        kind: "resize_widget",
+        widgetId: firstWidget.id,
+        payload: { width: Math.max(placement.w, 4), height: Math.max(placement.h, 4) },
+      },
+    ], "layout patch");
+  }, [firstWidget, onLayoutPatch]);
+
+  if (!activeView) {
+    return (
+      <div data-testid="live-workspace-empty" style={{ color: C.muted, fontSize: 13, padding: 16 }}>
+        Workspace has no views.
+      </div>
+    );
+  }
 
   return (
-    <div data-testid="strategy-recipe-workspace" style={{ flex: 1, overflow: "auto", padding: 8 }}>
-      {recipe.views.length > 1 && (
+    <div data-testid="live-dynamic-workspace" style={{ flex: 1, overflow: "auto", padding: 8 }}>
+      <div
+        data-testid="live-workspace-toolbar"
+        style={{
+          alignItems: "center",
+          borderBottom: `1px solid ${C.border}`,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          marginBottom: 8,
+          paddingBottom: 8,
+        }}
+      >
+        <span data-testid="live-workspace-version" style={{ color: C.secondary, fontSize: 12 }}>
+          Workspace {workspace.dashboardVersion} · {workspace.id}
+        </span>
+        <span data-testid="live-workspace-strategy-version" style={{ color: C.secondary, fontSize: 12 }}>
+          {stringValue(strategyDetail?.strategy_version ?? workspace.strategyVersion, strategy?.strategy_spec_registry_id ?? workspace.strategyVersion)}
+        </span>
+        {workspaceEtag ? (
+          <span data-testid="live-workspace-etag" style={{ color: C.muted, fontSize: 11 }}>
+            {workspaceEtag}
+          </span>
+        ) : null}
+        <button
+          data-testid="live-layout-patch"
+          disabled={!firstWidget || !workspaceEtag || phase === "mutating"}
+          onClick={patchFirstWidget}
+          style={{ background: C.elevated, border: `1px solid ${C.border}`, color: C.text, cursor: "pointer", fontSize: 12, padding: "6px 9px" }}
+          type="button"
+        >
+          Patch Layout
+        </button>
+        <button
+          data-testid="live-widget-revision-request"
+          disabled={!firstWidget || phase === "mutating"}
+          onClick={() => void onRequestRevision()}
+          style={{ background: C.elevated, border: `1px solid ${C.border}`, color: C.text, cursor: "pointer", fontSize: 12, padding: "6px 9px" }}
+          type="button"
+        >
+          Request Revision
+        </button>
+        <button
+          data-testid="live-widget-revision-accept"
+          disabled={!revisionProposal || !workspaceEtag || phase === "mutating"}
+          onClick={() => void onAcceptRevision()}
+          style={{ background: revisionProposal ? C.amber : C.elevated, border: `1px solid rgba(232,183,80,0.45)`, color: revisionProposal ? C.bg : C.muted, cursor: revisionProposal ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700, padding: "6px 9px" }}
+          type="button"
+        >
+          Accept Revision
+        </button>
+        <button
+          data-testid="live-workspace-rollback"
+          disabled={versions.length < 2 || !rollbackTargetVersionId || !workspaceEtag || phase === "mutating"}
+          onClick={() => {
+            if (rollbackTargetVersionId) void onRollback(rollbackTargetVersionId);
+          }}
+          style={{ background: C.elevated, border: `1px solid ${C.border}`, color: versions.length >= 2 ? C.text : C.muted, cursor: versions.length >= 2 ? "pointer" : "not-allowed", fontSize: 12, padding: "6px 9px" }}
+          type="button"
+        >
+          Rollback
+        </button>
+        {mutationMessage ? (
+          <span data-testid="live-workspace-mutation-status" style={{ color: phase === "error" ? C.red : C.green, fontSize: 12 }}>
+            {mutationMessage}
+          </span>
+        ) : null}
+      </div>
+
+      {workspace.views.length > 1 && (
         <div
-          data-testid="recipe-view-tabs"
+          data-testid="live-workspace-view-tabs"
           style={{ display: "flex", gap: 4, marginBottom: 8, borderBottom: `1px solid ${C.border}`, paddingBottom: 4 }}
         >
-          {recipe.views.map((v, idx) => (
+          {workspace.views.map((view, idx) => (
             <button
-              key={v.view_id}
-              data-testid={`recipe-view-tab-${v.view_id}`}
+              key={view.id}
+              data-testid={`live-workspace-view-tab-${view.id}`}
               aria-selected={idx === activeViewIdx}
               onClick={() => setActiveViewIdx(idx)}
               style={{
@@ -664,27 +1314,34 @@ function StrategyRecipeSection({ recipe }: StrategyRecipeSectionProps): JSX.Elem
                 color: idx === activeViewIdx ? C.amber : C.secondary,
                 borderBottom: idx === activeViewIdx ? `2px solid ${C.amber}` : "2px solid transparent",
               }}
+              type="button"
             >
-              {v.title}
+              {view.title}
             </button>
           ))}
         </div>
       )}
 
       <DashboardGridEditor
-        viewId={activeView.view_id}
-        recipeId={recipe.recipe_id}
+        viewId={activeView.id}
+        recipeId={workspace.id}
         placements={placements}
         widgets={widgets}
         operatorId="trading-room"
-        onPlacementsChange={(newPlacements) =>
-          setViewPlacements((prev) => ({ ...prev, [activeView.view_id]: newPlacements }))
-        }
-        onWidgetRemove={() => {}}
+        onPlacementsChange={handlePlacementsChange}
+        onWidgetRemove={(widgetId) => void onLayoutPatch([{ kind: "remove_widget", widgetId, payload: {} }], "remove widget")}
         onWidgetAdd={() => {}}
         onWidgetChartChange={() => {}}
         onPersonalizationEvent={() => {}}
       />
+
+      <div data-testid="live-workspace-versions" style={{ borderTop: `1px solid ${C.border}`, color: C.secondary, display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8, paddingTop: 8, fontSize: 12 }}>
+        {versions.map((version) => (
+          <span data-testid={`live-workspace-version-${version.id}`} key={version.id}>
+            v{version.dashboardVersion}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -710,36 +1367,258 @@ function StrategyWorkspaceView({
 }: StrategyWorkspaceViewProps): JSX.Element {
   const filteredEvents = events.filter((ev) => ev.strategy_id === strategyId);
 
-  const [recipe, setRecipe] = useState<DashboardRecipeV2 | null>(null);
-  const [recipeLoading, setRecipeLoading] = useState(true);
+  const [strategyDetail, setStrategyDetail] = useState<Record<string, unknown> | null>(null);
+  const [workspace, setWorkspace] = useState<TradingRoomWorkspace | null>(null);
+  const [workspaceEtag, setWorkspaceEtag] = useState<string | null>(null);
+  const [workspacePhase, setWorkspacePhase] = useState<WorkspacePhase>("loading");
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [workspaceVersions, setWorkspaceVersions] = useState<TradingRoomWorkspaceVersion[]>([]);
+  const [revisionProposal, setRevisionProposal] = useState<TradingRoomWidgetRevisionProposal | null>(null);
+  const [mutationMessage, setMutationMessage] = useState<string | null>(null);
 
-  const recipeId = strategy?.dashboard_recipe_id;
+  const refreshVersions = useCallback(async (workspaceId: string) => {
+    const versions = await listTradingRoomWorkspaceVersions(workspaceId);
+    setWorkspaceVersions(versions);
+  }, []);
 
   useEffect(() => {
-    if (!recipeId) {
-      setRecipe(null);
-      setRecipeLoading(false);
-      return;
+    let cancelled = false;
+
+    async function ensureWorkspace(): Promise<void> {
+      setWorkspacePhase("loading");
+      setWorkspaceError(null);
+      setMutationMessage(null);
+      setRevisionProposal(null);
+
+      if (strategy && strategy.readiness_state !== "ready") {
+        setWorkspace(null);
+        setWorkspaceEtag(null);
+        setWorkspaceVersions([]);
+        setWorkspacePhase("blocked");
+        return;
+      }
+
+      try {
+        const detail = await getTradingRoomStrategy(strategyId);
+        if (cancelled) return;
+        setStrategyDetail(detail);
+        const strategyVersion = workspaceStrategyVersion(strategy, detail);
+        const storedWorkspaceId = readStoredWorkspaceId(strategyId, strategyVersion);
+
+        if (storedWorkspaceId) {
+          const stored = await getTradingRoomWorkspace(storedWorkspaceId);
+          if (cancelled) return;
+          if (stored?.workspace) {
+            setWorkspace(stored.workspace);
+            setWorkspaceEtag(stored.etag);
+            setWorkspacePhase("active");
+            await refreshVersions(stored.workspace.id);
+            return;
+          }
+        }
+
+        const evidenceRefs = Array.isArray(detail?.evidence_refs)
+          ? detail.evidence_refs
+              .map((item) => stringValue(recordFrom(item).ref_id))
+              .filter(Boolean)
+          : [];
+        const proposalResult = await createWorkspaceProposal(
+          strategyId,
+          {
+            strategyVersion,
+            tradingRoomReady: true,
+            evidenceRefs,
+            personalizationHints: { density: "compact", source: "trading_room_live_workspace" },
+          },
+          { idempotencyKey: newUUID(), requestId: newUUID() },
+        );
+        if (cancelled) return;
+        const accepted = await acceptWorkspaceProposal(
+          strategyId,
+          proposalResult.proposal.proposalId,
+          { idempotencyKey: newUUID(), requestId: newUUID() },
+        );
+        if (cancelled) return;
+        writeStoredWorkspaceId(strategyId, strategyVersion, accepted.workspace.id);
+        setWorkspace(accepted.workspace);
+        setWorkspaceEtag(accepted.etag);
+        try {
+          await refreshVersions(accepted.workspace.id);
+        } catch {
+          if (cancelled) return;
+          setWorkspaceVersions([accepted.version]);
+        }
+        if (cancelled) return;
+        setWorkspacePhase("active");
+        setMutationMessage(`proposal ${proposalResult.proposal.proposalId} accepted`);
+      } catch (error) {
+        if (cancelled) return;
+        setWorkspace(null);
+        setWorkspaceEtag(null);
+        setWorkspaceVersions([]);
+        setWorkspacePhase("error");
+        setWorkspaceError(workspaceErrorText(error));
+      }
     }
 
-    let cancelled = false;
-    setRecipe(null);
-    setRecipeLoading(true);
-
-    getDashboardRecipeById(recipeId)
-      .then((r) => {
-        if (cancelled) return;
-        setRecipe(r);
-        setRecipeLoading(false);
-      })
-      .catch(() => {
-        if (!cancelled) setRecipeLoading(false);
-      });
+    void ensureWorkspace();
 
     return () => {
       cancelled = true;
     };
-  }, [recipeId]);
+  }, [refreshVersions, strategy, strategyId]);
+
+  const applyLayoutPatch = useCallback(async (operations: TradingRoomLayoutOperation[], label: string) => {
+    if (!workspace || !workspaceEtag) return;
+    setWorkspacePhase("mutating");
+    setWorkspaceError(null);
+    try {
+      const result = await patchTradingRoomWorkspaceLayout(
+        workspace.id,
+        operations,
+        { ifMatch: workspaceEtag, idempotencyKey: newUUID(), requestId: newUUID() },
+      );
+      setWorkspace(result.workspace);
+      setWorkspaceEtag(result.etag);
+      await refreshVersions(result.workspace.id);
+      setWorkspacePhase("active");
+      setMutationMessage(`${label} saved`);
+    } catch (error) {
+      setWorkspacePhase("error");
+      setWorkspaceError(workspaceErrorText(error));
+      setMutationMessage("layout mutation failed");
+    }
+  }, [refreshVersions, workspace, workspaceEtag]);
+
+  const requestWidgetRevision = useCallback(async () => {
+    if (!workspace) return;
+    const widget = firstWorkspaceWidget(workspace);
+    if (!widget) return;
+    setWorkspacePhase("mutating");
+    setWorkspaceError(null);
+    try {
+      const result = await createWidgetRevisionProposal(
+        workspace.id,
+        widget.id,
+        {
+          instruction: "Convert the widget to a faster comparison view.",
+          proposedSpec: makeRevisionSpec(widget),
+          rationale: "The revised chart improves quick comparison while preserving the allowlisted data source.",
+          warnings: ["Live revision preview only changes declarative WidgetSpec fields."],
+          dataAvailability: "partial",
+        },
+        { idempotencyKey: newUUID(), requestId: newUUID() },
+      );
+      setRevisionProposal(result.proposal);
+      setWorkspacePhase("active");
+      setMutationMessage(`revision ${result.proposal.id} previewed`);
+    } catch (error) {
+      setWorkspacePhase("error");
+      setWorkspaceError(workspaceErrorText(error));
+      setMutationMessage("revision request failed");
+    }
+  }, [workspace]);
+
+  const acceptRevision = useCallback(async () => {
+    if (!revisionProposal || !workspace || !workspaceEtag) return;
+    setWorkspacePhase("mutating");
+    setWorkspaceError(null);
+    try {
+      const result = await acceptWidgetRevisionProposal(
+        revisionProposal.id,
+        { ifMatch: workspaceEtag, acceptanceAction: "apply", idempotencyKey: newUUID(), requestId: newUUID() },
+      );
+      setWorkspace(result.workspace);
+      setWorkspaceEtag(result.etag);
+      setRevisionProposal(null);
+      await refreshVersions(result.workspace.id);
+      setWorkspacePhase("active");
+      setMutationMessage(`revision applied as v${result.version.dashboardVersion}`);
+    } catch (error) {
+      setWorkspacePhase("error");
+      setWorkspaceError(workspaceErrorText(error));
+      setMutationMessage("revision accept failed");
+    }
+  }, [refreshVersions, revisionProposal, workspace, workspaceEtag]);
+
+  const rollbackVersion = useCallback(async (versionId: string) => {
+    if (!versionId || !workspace || !workspaceEtag) return;
+    setWorkspacePhase("mutating");
+    setWorkspaceError(null);
+    try {
+      const result = await rollbackTradingRoomWorkspaceVersion(
+        workspace.id,
+        versionId,
+        {
+          ifMatch: workspaceEtag,
+          reason: `Rollback from Trading Room live workflow to ${versionId}`,
+          idempotencyKey: newUUID(),
+          requestId: newUUID(),
+        },
+      );
+      setWorkspace(result.workspace);
+      setWorkspaceEtag(result.etag);
+      await refreshVersions(result.workspace.id);
+      setWorkspacePhase("active");
+      setMutationMessage(`rolled back to ${versionId}`);
+    } catch (error) {
+      setWorkspacePhase("error");
+      setWorkspaceError(workspaceErrorText(error));
+      setMutationMessage("rollback failed");
+    }
+  }, [refreshVersions, workspace, workspaceEtag]);
+
+  const workspaceBody = (() => {
+    if (workspacePhase === "loading") {
+      return (
+        <div
+          data-testid="live-workspace-loading"
+          style={{ padding: 16, fontSize: 13, color: C.muted }}
+        >
+          Loading live workspace…
+        </div>
+      );
+    }
+
+    if (workspacePhase === "blocked") {
+      return (
+        <div
+          data-testid="live-workspace-blocked"
+          style={{ padding: 16, fontSize: 13, color: C.muted }}
+        >
+          Strategy is not ready for Trading Room workspace generation.
+        </div>
+      );
+    }
+
+    if (!workspace) {
+      return (
+        <div
+          data-testid="live-workspace-error"
+          style={{ padding: 16, fontSize: 13, color: C.red }}
+        >
+          {workspaceError ?? "Live workspace unavailable."}
+        </div>
+      );
+    }
+
+    return (
+      <LiveWorkspaceSection
+        strategy={strategy}
+        strategyDetail={strategyDetail}
+        workspace={workspace}
+        workspaceEtag={workspaceEtag}
+        versions={workspaceVersions}
+        revisionProposal={revisionProposal}
+        phase={workspacePhase}
+        mutationMessage={workspaceError ?? mutationMessage}
+        onLayoutPatch={applyLayoutPatch}
+        onRequestRevision={requestWidgetRevision}
+        onAcceptRevision={acceptRevision}
+        onRollback={rollbackVersion}
+      />
+    );
+  })();
 
   return (
     <div
@@ -762,23 +1641,7 @@ function StrategyWorkspaceView({
 
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {recipeLoading ? (
-            <div
-              data-testid="strategy-recipe-loading"
-              style={{ padding: 16, fontSize: 13, color: C.muted }}
-            >
-              Loading strategy workspace…
-            </div>
-          ) : recipe ? (
-            <StrategyRecipeSection key={strategyId} recipe={recipe} />
-          ) : (
-            <div
-              data-testid="strategy-recipe-unavailable"
-              style={{ padding: 16, fontSize: 13, color: C.muted }}
-            >
-              Dashboard recipe unavailable for this strategy.
-            </div>
-          )}
+          {workspaceBody}
 
           <TradingEventQueue events={filteredEvents} loading={eventsLoading} eventsEtag={eventsEtag} />
         </div>
@@ -795,11 +1658,18 @@ type LoadState = "loading" | "loaded" | "error";
 interface TradingRoomPageProps {
   strategyId?: string;
   onStrategySelect?: (strategyId: string | undefined) => void;
+  onOpenWorkshop?: () => void;
 }
 
-export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPageProps): JSX.Element {
+export function TradingRoomPage({
+  strategyId,
+  onStrategySelect,
+  onOpenWorkshop,
+}: TradingRoomPageProps): JSX.Element {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [aggregate, setAggregate] = useState<TradingRoomAggregate | null>(null);
+  const [loadError, setLoadError] = useState<TradingRoomBffDiagnostic | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [events, setEvents] = useState<TradingDecisionEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [eventsEtag, setEventsEtag] = useState<string | null>(null);
@@ -807,6 +1677,7 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
   useEffect(() => {
     let cancelled = false;
     setLoadState("loading");
+    setLoadError(null);
 
     getTradingRoom()
       .then((agg) => {
@@ -814,14 +1685,16 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
         setAggregate(agg);
         setLoadState("loaded");
       })
-      .catch(() => {
-        if (!cancelled) setLoadState("error");
+      .catch((error) => {
+        if (cancelled) return;
+        setLoadError(diagnosticFromUnknown(error));
+        setLoadState("error");
       });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadAttempt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -860,17 +1733,18 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
 
   if (loadState === "error" || !aggregate) {
     return (
-      <div
-        data-testid="trading-room-error"
-        style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center", fontSize: 13, color: C.red }}
-      >
-        Failed to load Trading Room.
-      </div>
+      <TradingRoomErrorState
+        diagnostic={loadError ?? diagnosticFromUnknown(new Error("Trading Room aggregate missing"))}
+        onRetry={() => setLoadAttempt((attempt) => attempt + 1)}
+      />
     );
   }
 
-  const activeStrategy = strategyId
-    ? aggregate.strategies.find((s) => s.strategy_id === strategyId)
+  const defaultReadyStrategy =
+    !strategyId && aggregate ? selectDefaultReadyStrategy(aggregate.strategies) : undefined;
+  const effectiveStrategyId = strategyId ?? defaultReadyStrategy?.strategy_id;
+  const activeStrategy = effectiveStrategyId
+    ? aggregate.strategies.find((s) => s.strategy_id === effectiveStrategyId)
     : undefined;
 
   return (
@@ -880,13 +1754,13 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
     >
       <StrategyLensSwitcher
         strategies={aggregate.strategies}
-        activeStrategyId={strategyId}
+        activeStrategyId={effectiveStrategyId}
         onSelect={handleStrategySelect}
       />
 
-      {strategyId ? (
+      {effectiveStrategyId ? (
         <StrategyWorkspaceView
-          strategyId={strategyId}
+          strategyId={effectiveStrategyId}
           strategy={activeStrategy}
           aggregate={aggregate}
           events={events}
@@ -894,12 +1768,10 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
           eventsEtag={eventsEtag}
         />
       ) : (
-        <AggregateView
+        <TradingRoomDefaultEntry
           aggregate={aggregate}
-          events={events}
-          eventsLoading={eventsLoading}
-          eventsEtag={eventsEtag}
-          onStrategySelect={(id) => handleStrategySelect(id)}
+          onOpenWorkshop={onOpenWorkshop}
+          onStrategySelect={handleStrategySelect}
         />
       )}
     </div>

@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-DYNUI-PROD-001 BFF and frontend handoff packet
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Auto-reassigned ownership from Copilot to Codex2 after repeated Copilot quota terminal: You have exceeded your monthly quota (Request ID: AA04:39980B:741AEB:8A2375:6A484F6F). Task returned to todo until Codex2 starts a fresh run.
+- Next: Reviewed PR #2849: support-only scope is respected; packet records missing design zip, execute-plans/.fe-ep source split, default route aggregate gap, workshop handoff gap, and downstream production-proof ownership. Checks passed; approve for support-only merge.
 
 ## Summary
 平行支援 AG-DYNUI-PROD-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。

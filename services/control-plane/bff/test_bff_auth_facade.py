@@ -213,6 +213,16 @@ class TestExtractIdentityJwt:
         assert identity.operator_id == "op-internal"
         assert "operator" in identity.roles
 
+    def test_permissive_mode_rejects_plain_bearer_token(self):
+        """permissive mode must not silently grant operator to arbitrary bearer strings."""
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(
+                "Bearer definitely-invalid-no-role-token",
+                env_overrides={"PANTHEON_BFF_AUTH_MODE": "permissive", "PANTHEON_BFF_JWT_SECRET": ""},
+            )
+        assert exc_info.value.status_code == 403
+
     def test_permissive_structured_token_preserves_capability_suffix(self):
         identity = self._call(
             "Bearer op-admin:admin,operator:mfa:assistant.kernel.debug,audit.read",
@@ -289,8 +299,17 @@ class TestExtractIdentityStub:
             self._call("op-bare-token")
         assert exc_info.value.status_code == 401
 
-    def test_no_colon_infers_operator_role(self):
-        identity = self._call("Bearer sometoken")
+    def test_no_colon_requires_explicit_legacy_allowlist(self):
+        from fastapi import HTTPException
+
+        with patch.dict(os.environ, {"PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS": ""}, clear=False):
+            with pytest.raises(HTTPException) as exc_info:
+                self._call("Bearer sometoken")
+        assert exc_info.value.status_code == 403
+
+    def test_allowlisted_no_colon_infers_operator_role(self):
+        with patch.dict(os.environ, {"PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS": "sometoken"}, clear=False):
+            identity = self._call("Bearer sometoken")
         assert "operator" in identity.roles
 
 

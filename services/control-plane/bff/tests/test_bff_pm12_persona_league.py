@@ -84,7 +84,7 @@ def test_pm12_persona_league_filters_searches_and_paginates() -> None:
             response = client.get(
                 "/bff/management/persona-league",
                 headers=HEADERS,
-                params={"state": "draft", "archetype": "macro", "q": "macro", "page_size": 1},
+                params={"state": "paper_running", "archetype": "macro", "q": "macro", "page_size": 1},
             )
 
             assert response.status_code == 200, response.text
