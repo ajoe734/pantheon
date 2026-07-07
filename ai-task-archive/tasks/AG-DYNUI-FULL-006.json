@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-FULL-006",
+  "archived_at": "2026-07-07T15:06:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-FULL-006",
+    "title": "Replace fixture-backed hosted E2E with production gate",
+    "summary_zh": "重寫 hosted Winner Branch E2E：production gate path 不准 page.route/mock BFF；修復 execute-plans FE-BFF Integration Gate failure，desktop/mobile screenshots 必須來自 live flow。",
+    "phase": "Agora DYNUI Full Production Recovery / Wave 4 no-fixture hosted gate",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-FULL-005"
+    ],
+    "artifacts": [
+      "execute-plans/e2e/agora-winner-branch-hosted.spec.ts",
+      "execute-plans/.github/workflows/",
+      "execute-plans/scripts/",
+      "docs/deployment/evidence/ag-dynui-full-006/20260705T175529Z/",
+      "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-closeout/INDEX.md"
+    ],
+    "acceptance": [
+      "production-gate E2E contains no page.route/mock fulfillments for Agora BFF routes",
+      "E2E creates or restores a real workshop and reaches readiness through live BFF",
+      "E2E joins Trading Room with real strategy/version route context",
+      "E2E completes proposal, accept, grid edit, widget revision, version history, rollback live",
+      "desktop and mobile screenshots show the live production UI states",
+      "execute-plans FE-BFF Integration Gate is success on PR and dev push",
+      "Dev FE Deploy succeeds and deployment.json matches the merge SHA"
+    ],
+    "next": "Board/archive reconciliation removed the stale untouched todo row. Fixture-free hosted E2E was published by execute-plans PR #187 merge 37f8e320ac9a3fed621bfe3d36d34138f2b7c73d, Pantheon PRs #3033/#3034/#3035, deploy runs 28748417821/28748692234/28748861121, and integration gate 28749332352. Latest continuity proof is /tmp/agora-live-proof-9a4d164d via execute-plans PR #198.",
+    "last_update": "2026-07-07T15:06:53Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_full_production_recovery_2026-07-05",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "evidence": "docs/deployment/evidence/ag-dynui-full-006/20260705T175529Z/README.md",
+      "reconciliation_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-closeout/AG-DYNUI-FULL-007-production-closeout.md",
+      "production_inventory": "docs/bff/execution-tasks/2026-07-06-agora-srclive-production-inventory/INDEX.md"
+    },
+    "production_recovery_children": [
+      "AG-DYNUI-FULL-001",
+      "AG-DYNUI-FULL-002",
+      "AG-DYNUI-FULL-003",
+      "AG-DYNUI-FULL-004",
+      "AG-DYNUI-FULL-005",
+      "AG-DYNUI-FULL-006",
+      "AG-DYNUI-FULL-007"
+    ],
+    "wave": 4,
+    "fleet_lane": "agora-no-fixture-hosted-e2e",
+    "review_notes_zh": [
+      "Board row was stale relative to merged hosted production-gate evidence; no Agora runtime code changed during reconciliation.",
+      "The task is archived from the clean AG-DYNUI-FULL-007-BOARD-RECONCILE worktree because the live status root was dirty and unsafe for direct mutation."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-07T15:06:53Z",
+      "repository_id": "execute_plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "commit": "37f8e320ac9a3fed621bfe3d36d34138f2b7c73d",
+      "commit_subject": "AG-DYNUI-FULL-006: replace hosted gate with live workflow",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true,
+      "related_prs": [
+        "https://github.com/ajoe734/execute-plans/pull/187",
+        "https://github.com/ajoe734/pantheon/pull/3033",
+        "https://github.com/ajoe734/pantheon/pull/3034",
+        "https://github.com/ajoe734/pantheon/pull/3035",
+        "https://github.com/ajoe734/execute-plans/pull/198"
+      ],
+      "related_pantheon_merges": [
+        "3e553bb3a1c4e2d8572d233c3030349249b99d75",
+        "f010383fd367c8b960f6341c0c3c4ad93c1865cd",
+        "d002ed5a7fcec5c30c8fee13efd6cb6c30fbf8fb"
+      ]
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

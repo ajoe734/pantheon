@@ -151,3 +151,18 @@ Updated board conclusion:
 - AG-DYNUI-FULL-008 and AG-DYNUI-FULL-009 are not current board tasks; they are published design-parity and overflow-polish work with proof through #198.
 
 See also: ../2026-07-06-agora-srclive-production-inventory/INDEX.md.
+
+## 2026-07-07 Archive Reconciliation Result
+
+The live status root was dirty and on a retired branch, so direct board
+mutation was unsafe. The clean `AG-DYNUI-FULL-007-BOARD-RECONCILE` task patch
+therefore records the board reconciliation as reviewed archive state:
+
+| Task | Reconciliation result | Evidence |
+|---|---|---|
+| `AG-DYNUI-FULL-003` | archived completed | Pantheon PRs #3020/#3021/#3030, latest merge `4933c36564b30085480dce5a0e0bfc71d7806c49` |
+| `AG-DYNUI-FULL-005` | archived completed | Pantheon PR #3032, merge `66efc0e849f3facb33889634fe48a5947603cafb`; re-proven by hosted gates |
+| `AG-DYNUI-FULL-006` | archived completed | Pantheon PRs #3033/#3034/#3035, execute-plans PR #187, integration gate `28749332352`, continuity proof through #198 |
+| `AG-DYNUI-FULL-007` | archived superseded | Replaced by explicit `AG-DYNUI-FULL-007-BOARD-RECONCILE` and `AG-DYNUI-FULL-008`; no runtime rebuild authorized |
+
+This reconciliation does not alter Agora runtime behavior.

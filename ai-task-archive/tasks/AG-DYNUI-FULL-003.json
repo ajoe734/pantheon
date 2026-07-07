@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-FULL-003",
+  "archived_at": "2026-07-07T15:06:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-FULL-003",
+    "title": "Materialize ready Strategy Workshop output into Trading Room",
+    "summary_zh": "把 workshop readiness/evidence 轉成可查詢的 ready strategy/version，投影進 /bff/agora/trading-room aggregate；live strategies 不能再是空陣列。",
+    "phase": "Agora DYNUI Full Production Recovery / Wave 2 ready strategy projection",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-FULL-002"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/strategy_workshop/",
+      "services/control-plane/bff/agora/trading_room/router.py",
+      "services/control-plane/bff/agora/trading_room/store.py",
+      "services/control-plane/bff/agora/trading_room/test_trading_room.py",
+      "services/control-plane/specs/agora/",
+      "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-closeout/INDEX.md"
+    ],
+    "acceptance": [
+      "a workshop whose readiness reaches trading_room creates or exposes a strategy_id and strategy_version",
+      "GET /bff/agora/trading-room returns strategies.length > 0 for that scoped user after readiness",
+      "GET /bff/agora/trading-room/strategies/{strategy_id} returns strategy detail for the materialized strategy",
+      "projection is tenant/user scoped and does not leak strategies across identities",
+      "readiness state, evidence refs, strategy version, and dashboard recipe/workspace refs are durable enough for the E2E",
+      "post-deploy live curl proof shows non-empty strategies from a real created/restored workflow"
+    ],
+    "next": "Board/archive reconciliation removed the stale active in_progress row. Evidence is published by Pantheon PR #3020 merge 9a7d1f3260767585962bf2a673437ae85318d494, PR #3021 merge 96d6a7288061047ceca7b911843555d6296d8425, and PR #3030 merge 4933c36564b30085480dce5a0e0bfc71d7806c49; downstream hosted live workflow proof is recorded by AG-DYNUI-FULL-005/006.",
+    "last_update": "2026-07-07T15:06:53Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_full_production_recovery_2026-07-05",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "reconciliation_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-closeout/AG-DYNUI-FULL-007-production-closeout.md",
+      "production_inventory": "docs/bff/execution-tasks/2026-07-06-agora-srclive-production-inventory/INDEX.md"
+    },
+    "production_recovery_children": [
+      "AG-DYNUI-FULL-001",
+      "AG-DYNUI-FULL-002",
+      "AG-DYNUI-FULL-003",
+      "AG-DYNUI-FULL-004",
+      "AG-DYNUI-FULL-005",
+      "AG-DYNUI-FULL-006",
+      "AG-DYNUI-FULL-007"
+    ],
+    "wave": 2,
+    "fleet_lane": "agora-ready-strategy-projection",
+    "review_notes_zh": [
+      "Board row was stale relative to merged implementation evidence; no Agora runtime code changed during reconciliation.",
+      "The task is archived from the clean AG-DYNUI-FULL-007-BOARD-RECONCILE worktree because the live status root was dirty and unsafe for direct mutation."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-07T15:06:53Z",
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "commit": "4933c36564b30085480dce5a0e0bfc71d7806c49",
+      "commit_subject": "Merge pull request #3030 from ajoe734/task/AG-DYNUI-FULL-003-MATERIALIZE-LIVE-20260705",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true,
+      "related_prs": [
+        "https://github.com/ajoe734/pantheon/pull/3020",
+        "https://github.com/ajoe734/pantheon/pull/3021",
+        "https://github.com/ajoe734/pantheon/pull/3030"
+      ]
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}
