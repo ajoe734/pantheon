@@ -118,3 +118,36 @@ A task in this packet is not done until all applicable items are true:
 10. Hosted live proof exists for user-visible behavior.
 11. Evidence paths, PR number, merge commit, checks, deploy run, and residual
     risks are recorded.
+
+## 2026-07-06 Supervisor Update
+
+Latest verified execute-plans dev SHA: 9a4d164d996feda7826aa59ca972b1e7d7dc7ee3.
+
+Additional published evidence after the original packet:
+
+| Area | Repository | PR | Merge commit | Checks/deploy |
+|---|---|---:|---|---|
+| Agora workspace dark-surface design parity | ajoe734/execute-plans | #190 | 705649c430d3b6064cf34aa7d854c3936b4c86af | integration gate 28759918178 and dev FE deploy 28759918145 succeeded |
+| Route-load readiness stabilization | ajoe734/execute-plans | #192 | d32d3d01f01cdbca7177a585ba214a7dbecbe1b2 | integration gate 28761768678 and dev FE deploy 28761768704 succeeded |
+| Agora proposal overflow polish | ajoe734/execute-plans | #195 | 2dd6cf39157adc5d965b721e9e9ec53fbcfc0dac | integration gate 28762688310 and dev FE deploy 28762688290 succeeded |
+| Post-polish FE deploy continuity | ajoe734/execute-plans | #196 | ac7cb5bccee855bcc45fe18506e33569a3d6d4e6 | integration gate 28762771408 and dev FE deploy 28762771372 succeeded |
+| Dev FE continuity | ajoe734/execute-plans | #197 | 8dbd5515c2b4ccdccf7f4b3b235beb95ddbe9755 | integration gate 28763070893 and dev FE deploy 28763070856 succeeded |
+| Current latest dev FE continuity | ajoe734/execute-plans | #198 | 9a4d164d996feda7826aa59ca972b1e7d7dc7ee3 | integration gate 28763583593 and dev FE deploy 28763583587 succeeded |
+
+Latest hosted proof:
+
+- Hosted E2E command: e2e/agora-winner-branch-hosted.spec.ts against the real dev FE/BFF URLs, desktop and mobile Chromium.
+- Result: 2 passed.
+- Evidence directory: /tmp/agora-live-proof-9a4d164d.
+- Direct route: /agora/trading-room returned HTTP 200 on desktop and mobile.
+- Failure strings absent: Failed to load Trading Room, STRICT TYPED ERROR, sse_open_failed, seed fallback blocked.
+
+Updated board conclusion:
+
+- AG-DYNUI-FULL-003 is stale active board state; implementation evidence is published by PRs #3020, #3021, and #3030.
+- AG-DYNUI-FULL-005 is stale todo board state; dynamic workflow was published by PR #3032 and re-proven through hosted gates.
+- AG-DYNUI-FULL-006 is stale todo board state; fixture-free live E2E was published by execute-plans PR #187 and re-proven through #198.
+- AG-DYNUI-FULL-007 remains the board/archive reconciliation task. It must not reimplement Agora runtime.
+- AG-DYNUI-FULL-008 and AG-DYNUI-FULL-009 are not current board tasks; they are published design-parity and overflow-polish work with proof through #198.
+
+See also: ../2026-07-06-agora-srclive-production-inventory/INDEX.md.

@@ -83,3 +83,16 @@ If the worker changes status-tooling code, also run the relevant
 full `scripts/test_ai_status.py` suite failed on current `dev` in an unrelated
 mixed-repository metadata fallback test, so do not use that existing failure as
 evidence against this docs-only packet.
+
+## 2026-07-06 Supervisor Update
+
+Do not reimplement Agora runtime for this task. The hosted dev FE/BFF path already renders the dynamic Trading Room and has live E2E proof through execute-plans #198.
+
+Additional evidence to record during reconciliation:
+
+- Design parity and visual polish: execute-plans PRs #190 and #195.
+- Post-polish continuity: execute-plans PRs #196, #197, and #198.
+- Latest hosted evidence directory: /tmp/agora-live-proof-9a4d164d.
+- Final hosted probe must remain free of Failed to load Trading Room, STRICT TYPED ERROR, sse_open_failed, and seed fallback blocked.
+
+The owned work is status/archive reconciliation and current-proof recording only. If the live status checkout is dirty or unsafe to mutate, the worker must record that blocker and use a reviewed closeout PR rather than direct state edits.
