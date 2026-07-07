@@ -107,3 +107,16 @@ PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io \
 PANTHEON_BFF_TENANT_ID=pantheon-dev \
 npx playwright test e2e/agora-winner-branch-hosted.spec.ts --project=mobile-chromium --reporter=list
 ```
+
+## 2026-07-06 Supervisor Update
+
+Published design-parity work now includes:
+
+- execute-plans PR #190: AG-DYNUI-FULL-008 dark-surface alignment, merge 705649c430d3b6064cf34aa7d854c3936b4c86af.
+- execute-plans PR #195: AG-DYNUI-FULL-009 proposal overflow polish, merge 2dd6cf39157adc5d965b721e9e9ec53fbcfc0dac.
+- Follow-up deploy continuity through execute-plans PRs #196, #197, and #198.
+- Latest hosted proof directory: /tmp/agora-live-proof-9a4d164d.
+
+Do not create a duplicate implementation task for the above work. New work is allowed only for a concrete regression found by comparing the current deployed SHA against the available design pack and hosted screenshots.
+
+The referenced file /home/lupin/code/pantheon/AI%20Trading%20Desk%20Design.zip is still not present, and /home/lupin/code/pantheon/AI Trading Desk Design.zip was also not found. The available local design pack remains /home/lupin/code/pantheon/Pantheon_Agora_Design_Closure_Pack_2026-06-20.zip.
