@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-04T00:03:08Z",
+  "updated_at": "2026-07-07T13:40:53Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -103,11 +103,12 @@
         "MGMT-LOAD-003",
         "OCLAW-PMEM-001",
         "AG-DYNUI-PROD-002",
-        "AG-DYNUI-PROD-005"
+        "AG-DYNUI-PROD-005",
+        "PPL-ALLOC-006"
       ],
       "branch": "task/LSP-002-V2",
-      "next": "Pick up AG-DYNUI-PROD-005 from Agora DYNUI production-gap packet.",
-      "last_update": "2026-07-04T00:01:55Z"
+      "next": "Expand Promotion & Allocation into the primary operator workbench.",
+      "last_update": "2026-07-07T13:40:53Z"
     },
     {
       "name": "Gemini",
@@ -123,11 +124,12 @@
         "LOOP-AUTO-RT-002",
         "LOOP-AUTO-EVO-003",
         "MGMT-GAP-005",
-        "MGMT-LOAD-005"
+        "MGMT-LOAD-005",
+        "PPL-ALLOC-004"
       ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Start studios/capabilities hardening from the mock-visible route list: make Formula Studio, Skill Sandbox, Alpha Factory, Tools/MCP/Skills runtime-backed or demote/fixture-gate them.",
-      "last_update": "2026-07-01T07:06:48Z"
+      "next": "Implement stage-aware ranking, target weights, caps, and rebalance proposal contract.",
+      "last_update": "2026-07-07T13:40:53Z"
     },
     {
       "name": "Codex",
@@ -145,11 +147,13 @@
         "OCLAW-PMEM-000",
         "OCLAW-PMEM-005",
         "AG-DYNUI-PROD-001",
-        "AG-DYNUI-PROD-006"
+        "AG-DYNUI-PROD-006",
+        "PPL-ALLOC-001",
+        "PPL-ALLOC-009"
       ],
       "branch": "task/ASST-OCGW-001",
-      "next": "Pick up AG-DYNUI-PROD-006 from Agora DYNUI production-gap packet.",
-      "last_update": "2026-07-04T00:01:55Z"
+      "next": "Lock current-state page inventory and acceptance before implementation.",
+      "last_update": "2026-07-07T13:40:53Z"
     },
     {
       "name": "Codex2",
@@ -166,11 +170,12 @@
         "LOOP-AUTO-RT-005",
         "MGMT-LOAD-004",
         "OCLAW-PMEM-002",
-        "AG-DYNUI-PROD-004"
+        "AG-DYNUI-PROD-004",
+        "PPL-ALLOC-005"
       ],
       "branch": "task/ASST-OCGW-004",
-      "next": "Pick up AG-DYNUI-PROD-004 from Agora DYNUI production-gap packet.",
-      "last_update": "2026-07-04T00:01:55Z"
+      "next": "Replace generic persona create UI with Create Paper Persona flow.",
+      "last_update": "2026-07-07T13:40:53Z"
     },
     {
       "name": "Copilot",
@@ -205,11 +210,12 @@
         "MGMT-GAP-009",
         "MGMT-LOAD-002",
         "OCLAW-PMEM-004",
-        "AG-DYNUI-PROD-003"
+        "AG-DYNUI-PROD-003",
+        "PPL-ALLOC-002"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Pick up AG-DYNUI-PROD-003 from Agora DYNUI production-gap packet.",
-      "last_update": "2026-07-04T00:01:55Z"
+      "next": "Implement BFF create-paper-bundle so new personas enter paper_running with ledger/runtime bindings.",
+      "last_update": "2026-07-07T13:40:53Z"
     },
     {
       "name": "Gemini2",
@@ -228,11 +234,12 @@
         "MGMT-GAP-010",
         "MGMT-LOAD-001",
         "MGMT-LOAD-006",
-        "OCLAW-PMEM-003"
+        "OCLAW-PMEM-003",
+        "PPL-ALLOC-003"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Wait for OCLAW-PMEM-001, then implement Memory Plane materialization and writeback candidate flow.",
-      "last_update": "2026-07-03T12:23:32Z",
+      "next": "Normalize paper ledger, canary sleeve, and live pool/sleeve binding read models.",
+      "last_update": "2026-07-07T13:40:53Z",
       "last_action_at": "2026-05-20T11:29:47Z",
       "last_action_note": "Manual ai-status sync by Claude: cleared ['LOVABLE-STRICT-PUBLISH', 'OSS-QUANTLIB-V2-001'] after push-auth failure."
     },
@@ -257,11 +264,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "PPL-ALLOC-007"
+      ],
       "branch": "feat/antigravity-research-runtime",
-      "next": "",
-      "last_update": null
+      "next": "Fix binding visibility and prune/demote duplicate workflow routes.",
+      "last_update": "2026-07-07T13:40:53Z"
     },
     {
       "name": "Antigravity2",
@@ -271,11 +280,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "PPL-ALLOC-008"
+      ],
       "branch": "feat/antigravity2-research-runtime",
-      "next": "",
-      "last_update": null
+      "next": "Implement emergency containment rules without promotion or allocation-increase side effects.",
+      "last_update": "2026-07-07T13:40:53Z"
     }
   ],
   "tasks": [
@@ -3773,6 +3784,340 @@
       "delivery_layer": "primary",
       "mutates_canonical": true,
       "fleet_lane": "agora-dynui-production-gap"
+    },
+    {
+      "id": "PPL-ALLOC-001",
+      "title": "Current state and page inventory guard",
+      "summary_zh": "盤點 persona 建立、paper/real 晉升、資金權重調整與 management pages，鎖定哪些頁面要保留、改造、降級或 redirect。",
+      "phase": "Persona Promotion Allocation / Wave 0 source truth",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07",
+        "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap"
+      ],
+      "acceptance": [
+        "current-state audit names every relevant page; creation/paper_running invariant proven or disproven; downstream blockers listed"
+      ],
+      "next": "Lock current-state page inventory and acceptance before implementation.",
+      "last_update": "2026-07-07T13:40:53Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 0,
+      "fleet_lane": "source-truth-page-inventory"
+    },
+    {
+      "id": "PPL-ALLOC-002",
+      "title": "BFF create paper persona bundle",
+      "summary_zh": "新增 idempotent create-paper-bundle：建立 persona 時一次完成 mandate、資料源、風險偏好、paper ledger、paper runtime、paper deployment plan。",
+      "phase": "Persona Promotion Allocation / Wave 1 BFF create bundle",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "PPL-ALLOC-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py"
+      ],
+      "acceptance": [
+        "successful create returns stage=paper_running with paper_ledger_id and runtime_binding_id; partial failure is repairable; no live capital or broker side effects"
+      ],
+      "next": "Implement BFF create-paper-bundle so new personas enter paper_running with ledger/runtime bindings.",
+      "last_update": "2026-07-07T13:40:53Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 1,
+      "fleet_lane": "bff-create-paper-bundle"
+    },
+    {
+      "id": "PPL-ALLOC-003",
+      "title": "Capital binding read model",
+      "summary_zh": "讓 persona fleet / capital rows 清楚顯示 paper ledger、canary sleeve、live sleeve/pool、current weight、target weight 與 binding state。",
+      "phase": "Persona Promotion Allocation / Wave 1 binding read models",
+      "owner": "Gemini2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "PPL-ALLOC-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "services/control-plane/bff/tests/test_bff_capital_pool_bindings.py"
+      ],
+      "acceptance": [
+        "paper rows show isolated ledgers; canary/live rows show sleeve/pool and weights; legacy paper pool ids are migration trace only"
+      ],
+      "next": "Normalize paper ledger, canary sleeve, and live pool/sleeve binding read models.",
+      "last_update": "2026-07-07T13:40:53Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 1,
+      "fleet_lane": "capital-binding-read-model"
+    },
+    {
+      "id": "PPL-ALLOC-004",
+      "title": "Ranking allocation policy and rebalance proposal contract",
+      "summary_zh": "實作 stage-aware ranking、real allocation target weights、caps/smoothing/exclusions，並產出 auditable rebalance proposal 而非直接改資金。",
+      "phase": "Persona Promotion Allocation / Wave 1 allocation policy",
+      "owner": "Gemini",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "PPL-ALLOC-001",
+        "PPL-ALLOC-003"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/control-plane/bff/tests/test_bff_persona_allocation_policy.py",
+        "services/control-plane/bff/tests/test_bff_rebalance_proposals.py"
+      ],
+      "acceptance": [
+        "target weights include current/target/delta/cap reason/evidence; live increases require human approval; emergency reduction cannot promote or increase"
+      ],
+      "next": "Implement stage-aware ranking, target weights, caps, and rebalance proposal contract.",
+      "last_update": "2026-07-07T13:40:53Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 1,
+      "fleet_lane": "allocation-policy-rebalance"
+    },
+    {
+      "id": "PPL-ALLOC-005",
+      "title": "Frontend create paper persona flow",
+      "summary_zh": "把 Personas 的 generic create 改成 Create Paper Persona；成功後看到 paper_running，失敗則進 setup repair。",
+      "phase": "Persona Promotion Allocation / Wave 2 frontend create flow",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "PPL-ALLOC-002",
+        "PPL-ALLOC-003"
+      ],
+      "artifacts": [
+        "execute-plans:src/management/pages",
+        "execute-plans:src/lib/bff-v1"
+      ],
+      "acceptance": [
+        "create UI never reports success without paper ledger/runtime binding; PersonaOnboarding is repair-only; component tests cover success/partial/error"
+      ],
+      "next": "Replace generic persona create UI with Create Paper Persona flow.",
+      "last_update": "2026-07-07T13:40:53Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 2,
+      "fleet_lane": "fe-create-paper-persona"
+    },
+    {
+      "id": "PPL-ALLOC-006",
+      "title": "Promotion and allocation workbench",
+      "summary_zh": "把 Promotion & Allocation 擴成唯一操作工作台：paper candidates、real ranking、quarterly capital、emergency actions。",
+      "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "PPL-ALLOC-003",
+        "PPL-ALLOC-004"
+      ],
+      "artifacts": [
+        "execute-plans:src/management/pages/oversight",
+        "execute-plans:src/lib/v5/management",
+        "execute-plans:src/lib/bff-v1"
+      ],
+      "acceptance": [
+        "workbench distinguishes recommendation/review/approved/applied; real ranking shows current/target weights and cap reasons; rebalance proposal links to detail"
+      ],
+      "next": "Expand Promotion & Allocation into the primary operator workbench.",
+      "last_update": "2026-07-07T13:40:53Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 2,
+      "fleet_lane": "fe-promotion-allocation-workbench"
+    },
+    {
+      "id": "PPL-ALLOC-007",
+      "title": "Binding visibility and route prune",
+      "summary_zh": "修 Persona Fleet / Capital 顯示不同 persona 綁定到不同 paper ledger 或 real sleeve；legacy/diagnostic 頁面不再搶主流程。",
+      "phase": "Persona Promotion Allocation / Wave 2 IA and binding visibility",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "PPL-ALLOC-003",
+        "PPL-ALLOC-006"
+      ],
+      "artifacts": [
+        "execute-plans:src/management",
+        "execute-plans:src/App.tsx",
+        "execute-plans:e2e"
+      ],
+      "acceptance": [
+        "capital/persona pages show distinct binding identity; legacy routes redirect; ranking/readiness pages are diagnostics/readiness only"
+      ],
+      "next": "Fix binding visibility and prune/demote duplicate workflow routes.",
+      "last_update": "2026-07-07T13:40:53Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 2,
+      "fleet_lane": "fe-binding-visibility-route-prune"
+    },
+    {
+      "id": "PPL-ALLOC-008",
+      "title": "Emergency containment policy",
+      "summary_zh": "實作大額虧損、hard risk breach、binding mismatch 等立即處置；只能降風險，不能晉升或加資金。",
+      "phase": "Persona Promotion Allocation / Wave 2 emergency containment",
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "PPL-ALLOC-001",
+        "PPL-ALLOC-004"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "execute-plans:src/management/pages/v5",
+        "execute-plans:src/management/pages/oversight"
+      ],
+      "acceptance": [
+        "containment commands are role-gated/audited; tests reject emergency promotion or allocation increase; UI labels actions as containment"
+      ],
+      "next": "Implement emergency containment rules without promotion or allocation-increase side effects.",
+      "last_update": "2026-07-07T13:40:53Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 2,
+      "fleet_lane": "emergency-containment"
+    },
+    {
+      "id": "PPL-ALLOC-009",
+      "title": "Closeout and dev publish",
+      "summary_zh": "彙整所有任務 PR、測試、merge、dev publish 與 hosted smoke，證明 create->paper、paper->real review、real allocation、emergency containment 閉環。",
+      "phase": "Persona Promotion Allocation / Wave 3 closeout",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "PPL-ALLOC-002",
+        "PPL-ALLOC-003",
+        "PPL-ALLOC-004",
+        "PPL-ALLOC-005",
+        "PPL-ALLOC-006",
+        "PPL-ALLOC-007",
+        "PPL-ALLOC-008"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive",
+        "services/control-plane/bff",
+        "execute-plans:src"
+      ],
+      "acceptance": [
+        "all child tasks done or reviewed superseded; hosted smoke proves full path; closeout records PRs",
+        "SHAs",
+        "deployed commits",
+        "validation",
+        "residual risks"
+      ],
+      "next": "Close with PRs, tests, dev publish, hosted smoke, and residual-risk evidence.",
+      "last_update": "2026-07-07T13:40:53Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 3,
+      "fleet_lane": "production-closeout"
     }
   ],
   "handoffs": [
