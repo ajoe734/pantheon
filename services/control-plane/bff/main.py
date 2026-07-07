@@ -145,6 +145,18 @@ from loop_inventory import (
     loop_inventory_meta,
     truth_label_payload,
 )
+from operations_read_model import (
+    OperationsPerformance,
+    OperationsReadModelEntry,
+    SourceDiagnostic,
+    SourceState,
+    SourceStatus,
+    build_operations_identity,
+    classify_confidence,
+    dedupe_ids,
+    diagnostic as ops_read_model_diagnostic,
+    sanitize_metric as ops_read_model_sanitize_metric,
+)
 from read_store import ReadSurfaceStore, redact_evidence_refs
 from services.persona.runtime_profile import build_persona_runtime_profile
 from settings_store import SettingsStore
@@ -42689,6 +42701,256 @@ def _pm12_performance_attribution_response(
             "dimensions": dimensions,
             "policy": "read_only_performance_attribution",
         },
+    }
+
+
+def _ops_read_model_entry_for_persona(
+    persona_id: str,
+    *,
+    period: str = "latest",
+) -> Optional[OperationsReadModelEntry]:
+    """MGMT-OPS-001: compose the shared identity/source-confidence entry for one persona.
+
+    Joins persona-fleet, performance-attribution, and capital-pool sources so a
+    caller sees one data_confidence verdict and explicit diagnostics for any
+    missing or unresolved join, instead of each page inventing its own
+    fallback or rendering `nan`. See the "Read Model Contract" section of
+    docs/04/pantheon_management_console_operations_workflow_2026-07-07/
+    MANAGEMENT_CONSOLE_OPERATIONS_WORKFLOW_PLAN.md.
+    """
+    persona = read_store.get_persona(persona_id)
+    if persona is None:
+        return None
+
+    snapshot_at = utc_now()
+    period_key = str(period or "").strip() or "latest"
+
+    fleet_payload = _persona_fleet_slim_list_payload(
+        snapshot_at=snapshot_at,
+        state=None,
+        health=None,
+        deployment_stage=None,
+        market_scope=None,
+        q=None,
+        page_token=None,
+        page_size=500,
+    )
+    fleet_row = next(
+        (
+            item
+            for item in fleet_payload.get("data", {}).get("items", [])
+            if str(item.get("persona_id") or "") == persona_id
+        ),
+        None,
+    ) or {}
+
+    attribution_sources = _pm12_performance_attribution_sources()
+    persona_facts = [
+        fact
+        for fact in _pm12_performance_attribution_facts(attribution_sources, period_key)
+        if str(fact.get("persona_id") or "") == persona_id
+    ]
+    has_formal_attribution = any(
+        fact.get("telemetry_available") and ops_read_model_sanitize_metric(fact.get("total_pnl")) is not None
+        for fact in persona_facts
+    )
+    has_partial_attribution = bool(persona_facts) and not has_formal_attribution
+
+    sources: List[SourceStatus] = []
+    diagnostics: List[SourceDiagnostic] = []
+
+    if has_formal_attribution:
+        attribution_status = SourceState.OK
+    elif has_partial_attribution:
+        attribution_status = SourceState.PARTIAL
+    else:
+        attribution_status = SourceState.UNAVAILABLE
+        diagnostics.append(ops_read_model_diagnostic(
+            "performance_attribution",
+            "MISSING_ATTRIBUTION_MATCH",
+            f"No performance-attribution row matched persona {persona_id} in period {period_key}.",
+        ))
+    sources.append(SourceStatus(
+        source_name="performance_attribution",
+        source_status=attribution_status,
+        source_row_count=len(persona_facts),
+        coverage_ratio=1.0 if persona_facts else 0.0,
+    ))
+
+    holdings_rows = [
+        fact for fact in persona_facts
+        if ops_read_model_sanitize_metric(fact.get("market_value")) is not None
+    ]
+    holdings_status = SourceState.OK if holdings_rows else SourceState.UNAVAILABLE
+    if not holdings_rows:
+        diagnostics.append(ops_read_model_diagnostic(
+            "portfolio_holdings",
+            "MISSING_HOLDINGS_MATCH",
+            f"No holdings source returned a matching row for persona {persona_id}.",
+        ))
+    sources.append(SourceStatus(
+        source_name="portfolio_holdings",
+        source_status=holdings_status,
+        source_row_count=len(holdings_rows),
+    ))
+
+    pool_ids_seen = dedupe_ids(fact.get("capital_pool_id") for fact in persona_facts)
+    pools_by_id = attribution_sources.get("pools_by_id", {})
+    unresolved_pool_ids = [pool_id for pool_id in pool_ids_seen if pool_id not in pools_by_id]
+    if unresolved_pool_ids:
+        capital_pool_status = SourceState.DEGRADED
+        diagnostics.append(ops_read_model_diagnostic(
+            "capital_pools",
+            "CAPITAL_POOL_ID_UNRESOLVED",
+            f"Capital pool id(s) {unresolved_pool_ids} referenced by attribution facts do not "
+            "resolve to a capital-pool record.",
+        ))
+    elif pool_ids_seen:
+        capital_pool_status = SourceState.OK
+    else:
+        capital_pool_status = SourceState.UNAVAILABLE
+    sources.append(SourceStatus(
+        source_name="capital_pools",
+        source_status=capital_pool_status,
+        source_row_count=len(pool_ids_seen),
+    ))
+
+    fallback_performance: Dict[str, Any] = (
+        fleet_row.get("performance_summary") if isinstance(fleet_row.get("performance_summary"), dict) else {}
+    ) or {}
+    if fleet_row:
+        sources.append(SourceStatus(
+            source_name="persona_fleet_summary",
+            source_status=SourceState.OK,
+            source_row_count=1,
+        ))
+    else:
+        sources.append(SourceStatus(
+            source_name="persona_fleet_summary",
+            source_status=SourceState.UNAVAILABLE,
+        ))
+        diagnostics.append(ops_read_model_diagnostic(
+            "persona_fleet_summary",
+            "PERSONA_NOT_IN_FLEET",
+            f"Persona {persona_id} has no persona-fleet row to source a fallback summary from.",
+        ))
+
+    # `performance_summary` values are produced by `_as_float(..., 0.0)` in the
+    # fleet composer, so a bare 0.0 does not distinguish "no evidence" from a
+    # real zero. Use identity/ranking evidence instead: a fleet row only
+    # counts as a usable fallback source once it is actually bound to a
+    # runtime, a capital pool, or a league ranking.
+    fallback_has_signal = bool(
+        fleet_row.get("runtime_binding_id")
+        or fleet_row.get("capital_pool_id")
+        or fleet_row.get("league_rank") is not None
+    )
+    is_fallback = not has_formal_attribution and not has_partial_attribution and fallback_has_signal
+    if is_fallback:
+        diagnostics.append(ops_read_model_diagnostic(
+            "persona_fleet_summary",
+            "FORMAL_ATTRIBUTION_MISSING_USING_FLEET_FALLBACK",
+            "Performance is synthesized from the persona-fleet summary because no formal "
+            "attribution or holdings row matched this persona; treat as fallback, not formal evidence.",
+        ))
+
+    has_degraded_source = any(source.source_status == SourceState.DEGRADED for source in sources)
+    has_unavailable_source = any(source.source_status == SourceState.UNAVAILABLE for source in sources)
+
+    confidence = classify_confidence(
+        has_formal_match=has_formal_attribution,
+        has_partial_evidence=has_partial_attribution,
+        is_fallback=is_fallback,
+        has_degraded_source=has_degraded_source,
+        has_unavailable_source=has_unavailable_source,
+    )
+
+    if has_formal_attribution or has_partial_attribution:
+        attribution_metrics = _pm12_attribution_metrics(persona_facts)
+        pnl = ops_read_model_sanitize_metric(attribution_metrics.get("total_pnl"))
+        drawdown = ops_read_model_sanitize_metric(attribution_metrics.get("worst_drawdown"))
+        sharpe = None
+    else:
+        pnl = ops_read_model_sanitize_metric(fallback_performance.get("pnl"))
+        drawdown = ops_read_model_sanitize_metric(fallback_performance.get("max_drawdown"))
+        sharpe = ops_read_model_sanitize_metric(fallback_performance.get("sharpe"))
+
+    league_entry = read_store.get_persona_league_entry(persona_id) or {}
+    rank_value = league_entry.get("rank") or league_entry.get("league_rank") or fleet_row.get("league_rank")
+    score_value = ops_read_model_sanitize_metric(
+        league_entry.get("score") or league_entry.get("league_score") or fleet_row.get("league_score")
+    )
+
+    stage = (
+        str(fleet_row.get("state") or "").strip()
+        or str(persona.get("lifecycle_state") or persona.get("status") or "").strip()
+        or None
+    )
+    persona_label = str(persona.get("name") or "").strip() or None
+
+    identity = build_operations_identity(
+        persona_id=persona_id,
+        persona_label=persona_label,
+        stage=stage,
+        runtime_ids=[fact.get("runtime_id") for fact in persona_facts] + [fleet_row.get("runtime_id")],
+        paper_ledger_ids=[fleet_row.get("paper_ledger_id")],
+        capital_pool_ids=pool_ids_seen + [fleet_row.get("capital_pool_id")],
+        strategy_ids=[fact.get("strategy_id") for fact in persona_facts],
+        broker_ids=[fact.get("broker_id") for fact in persona_facts],
+        period=period_key,
+        as_of=snapshot_at,
+    )
+
+    performance = OperationsPerformance(
+        pnl=pnl,
+        drawdown_pct=drawdown,
+        sharpe=sharpe,
+        rank=int(rank_value) if isinstance(rank_value, (int, float)) and not isinstance(rank_value, bool) else None,
+        score=score_value,
+        performance_delta=ops_read_model_sanitize_metric(fleet_row.get("perf_delta")),
+    )
+
+    return OperationsReadModelEntry(
+        identity=identity,
+        data_confidence=confidence,
+        performance=performance,
+        sources=sources,
+        diagnostics=diagnostics,
+    )
+
+
+@app.get("/bff/management/operations-read-model/{persona_id}")
+async def bff_management_operations_read_model(
+    persona_id: str,
+    period: str = Query(default="latest"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """MGMT-OPS-001: shared identity/source-confidence read model for one persona.
+
+    Composes runtime, performance-attribution, holdings, and persona-fleet
+    sources into a single envelope so Persona Fleet, Portfolio Book,
+    Performance Attribution, Persona League, and Human Review can agree on
+    identity and data confidence instead of each page inventing its own
+    fallback semantics.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    entry = _ops_read_model_entry_for_persona(persona_id, period=period)
+    if entry is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+    return {
+        "data": entry.model_dump(mode="json"),
+        "meta": _read_surface_meta(
+            "operations_read_model",
+            "operations_read_model",
+            snapshot_at=snapshot_at,
+        ),
     }
 
 
