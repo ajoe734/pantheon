@@ -1,0 +1,198 @@
+{
+  "task_id": "SRCLIVE-001-LIVE-ACTIVATION",
+  "parent_task_id": "SRCLIVE-001",
+  "observed_at": "2026-07-07T15:16:00Z",
+  "vm_host": "pantheon-lupin-dev",
+  "raw_evidence_dir": "/tmp/srclive-001-20260707T151545Z",
+  "trace_ts": "20260707T151545Z",
+  "source_ingest_base": "http://127.0.0.1:18097",
+  "bff_base": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "runbook_note": {
+    "runbook_default_source_ingest_port": 38097,
+    "active_vm_source_ingest_port": 18097,
+    "reason": "The active dev VM compose deployment maps pantheon-source-ingest-1 as 0.0.0.0:18097->8097/tcp."
+  },
+  "deploy": {
+    "pantheon_dev_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "pantheon_dev_root_head": "26cd48b380bab7a7475150114c4e07113d8f4816",
+    "pantheon_dev_root_subject": "Merge pull request #3041 from ajoe734/task/bff-capital-pool-detail-bff-local-store",
+    "frontend_deployment": {
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json",
+      "commit": "b65b16b5088499bc797d890edd4c5c2b0f17b4ce",
+      "deployed_at": "20260707T150551Z",
+      "bff_mode": "live",
+      "bff_fallback": "strict",
+      "real_writes": "false"
+    },
+    "services": {
+      "source_ingest": {
+        "container": "pantheon-source-ingest-1",
+        "image": "pantheon-source-ingest",
+        "image_id": "sha256:f8f67d9a8b18977cf3426114232fe21615d7dd48d4596244ecfb4208eb034146",
+        "started_at": "2026-07-07T07:44:22.010101044Z"
+      },
+      "operator_bff": {
+        "container": "pantheon-operator-bff-1",
+        "image": "pantheon-operator-bff",
+        "image_id": "sha256:7ff809d930e898f77896c0bbfe4d1bc33377a0327081cef62aca5537dab8c04d",
+        "started_at": "2026-07-07T07:45:13.043725546Z",
+        "health_version": "0.2.0"
+      }
+    }
+  },
+  "activation_commands": [
+    {
+      "name": "configure_tw_market_connector",
+      "method": "POST",
+      "url": "http://127.0.0.1:18097/api/source-ingest/connectors",
+      "http_status": 201,
+      "connector_id": "tw-twse-tpex-official-market"
+    },
+    {
+      "name": "configure_mops_connector",
+      "method": "POST",
+      "url": "http://127.0.0.1:18097/api/source-ingest/connectors",
+      "http_status": 201,
+      "connector_id": "tw-mops-official-disclosures"
+    },
+    {
+      "name": "trigger_tw_market_ingest",
+      "method": "POST",
+      "url": "http://127.0.0.1:18097/api/source-ingest/jobs",
+      "http_status": 201,
+      "connector_id": "tw-twse-tpex-official-market",
+      "trace_id": "srclive-001-tw-official-20260707T151545Z"
+    },
+    {
+      "name": "trigger_mops_ingest",
+      "method": "POST",
+      "url": "http://127.0.0.1:18097/api/source-ingest/jobs",
+      "http_status": 201,
+      "connector_id": "tw-mops-official-disclosures",
+      "trace_id": "srclive-001-mops-20260707T151545Z"
+    }
+  ],
+  "ingest_runs": {
+    "tw-twse-tpex-official-market": {
+      "ingest_run_id": "ingest-80004fc3fbc6",
+      "trace_id": "srclive-001-tw-official-20260707T151545Z",
+      "trigger_type": "srclive_001_activation",
+      "status": "completed",
+      "started_at": "2026-07-07T15:15:45Z",
+      "finished_at": "2026-07-07T15:15:47Z",
+      "raw_count": 1000,
+      "normalized_count": 1000,
+      "rejected_count": 0,
+      "evidence_bundle_id": "evbundle-ingest-80004fc3fbc6-5e050427c438",
+      "evidence_item_count": 1000,
+      "knowledge_object_count": 1000,
+      "storage_summary": {
+        "raw_ref_count": 1,
+        "normalized_ref_count": 1,
+        "feature_ref_count": 0,
+        "normalized_row_count": 1000
+      }
+    },
+    "tw-mops-official-disclosures": {
+      "ingest_run_id": "ingest-bce9c0c807b8",
+      "trace_id": "srclive-001-mops-20260707T151545Z",
+      "trigger_type": "srclive_001_activation",
+      "status": "completed",
+      "started_at": "2026-07-07T15:15:54Z",
+      "finished_at": "2026-07-07T15:15:54Z",
+      "raw_count": 8,
+      "normalized_count": 8,
+      "rejected_count": 0,
+      "evidence_bundle_id": "evbundle-ingest-bce9c0c807b8-1fb4cb8023da",
+      "evidence_item_count": 8,
+      "knowledge_object_count": 8,
+      "storage_summary": {
+        "raw_ref_count": 1,
+        "normalized_ref_count": 1,
+        "feature_ref_count": 0,
+        "normalized_row_count": 8
+      }
+    }
+  },
+  "health_usage_snapshot": {
+    "tw-twse-tpex-official-market": {
+      "status": "ok",
+      "last_success_at": "2026-07-07T15:15:47Z",
+      "row_count_last_run": 1000,
+      "last_ingest_run_id": "ingest-80004fc3fbc6",
+      "last_run_status": "completed"
+    },
+    "tw-mops-official-disclosures": {
+      "status": "ok",
+      "last_success_at": "2026-07-07T15:15:54Z",
+      "row_count_last_run": 8,
+      "last_ingest_run_id": "ingest-bce9c0c807b8",
+      "last_run_status": "completed"
+    }
+  },
+  "source_ingest_health": {
+    "status": "ok",
+    "run_count": 22016,
+    "connector_count": 13,
+    "source_record_count": 2703,
+    "evidence_item_count": 2800,
+    "posture_alert_count": 0
+  },
+  "bff_readback": {
+    "route": "GET /bff/management/persona-fleet",
+    "http_status": 200,
+    "persona_id": "persona-tw-equity",
+    "data_source_summary": {
+      "state": "live_readback_ok",
+      "provider_count": 5,
+      "provider_status_counts": {
+        "read_ok": 5
+      },
+      "degraded_provider_count": 0,
+      "required_source_count": 2,
+      "configured_source_count": 5,
+      "live_ingestion_enabled": true,
+      "source_health_source": "source_ingest"
+    },
+    "provider_statuses": {
+      "shioaji": "read_ok",
+      "twse": "read_ok",
+      "tpex": "read_ok",
+      "mops": "read_ok",
+      "finmind": "read_ok"
+    }
+  },
+  "verification": {
+    "result": "passed",
+    "command": "BFF_BASE=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io BFF_TOKEN=<dev structured admin token> SOURCE_INGEST_BASE=http://127.0.0.1:18097 python3 scripts/verify_srclive_readback.py --json",
+    "verified_personas": [
+      "persona-tw-equity",
+      "persona-us-equity",
+      "persona-crypto"
+    ]
+  },
+  "residual_observations": [
+    {
+      "surface": "source_search_refresh",
+      "status": "notify_failed",
+      "error": "timed out",
+      "scope": "Both raw ingest job responses recorded a source-search refresh notification timeout. SRCLIVE-001 acceptance is source-ingest activation plus BFF source-health readback; source-ingest health and persona-tw-equity BFF readback passed."
+    },
+    {
+      "surface": "container_logs",
+      "status": "no_matching_trace_lines",
+      "scope": "docker logs --since 20m did not include trace-id lines; the HTTP job responses and health snapshot carry the authoritative run ids and trace ids."
+    }
+  ],
+  "raw_artifact_hashes": {
+    "configure-tw-market.json": "a0bf69a417ee26a96ef079a9b57f847dbdc1946deff53432c9509bcc03c085db",
+    "configure-mops.json": "2cb9d77ab01bcee34bc69e0e80b2fce6942b9ded6c66d430951f2d770f8f0b73",
+    "job-tw-market.json": "b12a4417326c8c91fc1ec90149fd8c929c2ed7ed2d0cb4d7c2f8352391713b63",
+    "job-mops.json": "3f7c305b549e0a05fca92bb2297037360e07099f07d8c7270c05026aa75ddfc7",
+    "health-usage-snapshot.json": "d86b6c686fc6418efd364e14e3463c747d3c8635b5bd6c69f84b9132571472c3",
+    "health-usage-snapshot-filtered.json": "6c2bee7ba31507a0ff147504fdeacb1f6ec1b92a5ec16314b864b15db5bf7ebe",
+    "persona-fleet.json": "fad94a29220469aa9ff16b990b1d9b7c7d9727d12737cb33ae69cdf7d33ea4f8",
+    "persona-tw-equity-readback.json": "a75298a56b0a0803392ee21d6240fe1ff629e7daf4bcfdf83ec51488af35b1df",
+    "verify-srclive-readback.json": "d04dc4be653dc728c0ca7b91bb71e82379ce2b437ea6b21d7e8053a2ff941f3c"
+  }
+}
