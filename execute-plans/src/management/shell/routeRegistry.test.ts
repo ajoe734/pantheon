@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  buildPerformanceAttributionHref,
+  dataConfidenceFromSurface,
+  displayMoney,
+  displayPercent,
+  displayText,
+  managementField,
+} from "@/lib/utils";
+
 import { describeManagementRoute } from "./routeRegistry";
 
 describe("describeManagementRoute", () => {
@@ -30,32 +39,18 @@ describe("describeManagementRoute", () => {
   });
 
   it("maps newly mounted workflow suites to active panels", () => {
-    expect(describeManagementRoute("/management/persona-league")).toMatchObject({
+    expect(describeManagementRoute("/management/promotion-allocation")).toMatchObject({
       label: "Promotion & Allocation",
       status: "active-panel",
       panel: "promotion-allocation",
-    });
-    expect(describeManagementRoute("/management/quarterly-ranking")).toMatchObject({
-      label: "Promotion & Allocation",
-      status: "active-panel",
-      panel: "promotion-allocation",
-    });
-    expect(describeManagementRoute("/management/rebalances/rb-q3")).toMatchObject({
-      label: "Promotion & Allocation",
-      status: "active-panel",
-      panel: "promotion-allocation",
-    });
-    expect(describeManagementRoute("/management/capital")).toMatchObject({
-      label: "Promotion & Allocation",
-      status: "active-panel",
-      panel: "promotion-allocation",
-    });
-    expect(describeManagementRoute("/management/readiness/capital-binding-live")).toMatchObject({
-      label: "Promotion & Allocation",
-      status: "active-panel",
-      panel: "promotion-allocation",
+      canonicalPath: "/management/promotion-allocation",
     });
     expect(describeManagementRoute("/management/portfolio-book")).toMatchObject({
+      label: "Performance Review",
+      status: "active-panel",
+      panel: "performance-review",
+    });
+    expect(describeManagementRoute("/management/persona-fleet")).toMatchObject({
       label: "Performance Review",
       status: "active-panel",
       panel: "performance-review",
@@ -77,11 +72,98 @@ describe("describeManagementRoute", () => {
     });
   });
 
+  it("retires legacy promotion and allocation URLs with canonical redirects", () => {
+    expect(describeManagementRoute("/management/persona-league")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      canonicalPath: "/management/promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=paper-candidates",
+    });
+    expect(describeManagementRoute("/management/quarterly-ranking")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=paper-candidates",
+    });
+    expect(describeManagementRoute("/management/rebalances/rb-q3")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=quarterly-capital&rebalance_id=rb-q3",
+    });
+    expect(describeManagementRoute("/management/capital")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=quarterly-capital",
+    });
+    expect(describeManagementRoute("/management/readiness/capital-binding-live")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=quarterly-capital",
+    });
+    expect(describeManagementRoute("/management/promotion-reviews/review-alpha")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=promotion-review&review_id=review-alpha",
+    });
+    expect(describeManagementRoute("/management/ranking-formulas/rank-v3")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=formula-policy&formula_id=rank-v3",
+    });
+  });
+
   it("classifies historical registry URLs as planned workflows instead of pretending they are full pages", () => {
     expect(describeManagementRoute("/management/control-room")).toMatchObject({
       label: "Management Registry",
       status: "planned-workflow",
       panel: "planned",
     });
+  });
+});
+
+describe("management display helpers", () => {
+  it("normalizes snake_case and camelCase field reads at the adapter boundary", () => {
+    const camel = { runtimeId: "runtime-1", totalPnl: 42 };
+    const snake = { runtime_id: "runtime-2", total_pnl: 84 };
+
+    expect(managementField(camel, "runtime_id")).toBe("runtime-1");
+    expect(managementField(camel, "total_pnl")).toBe(42);
+    expect(managementField(snake, "runtimeId")).toBe("runtime-2");
+    expect(managementField(snake, "totalPnl")).toBe(84);
+  });
+
+  it("never renders nan, undefined, or missing numeric values as operator metrics", () => {
+    expect(displayText("nan")).toBe("-");
+    expect(displayText("undefined")).toBe("-");
+    expect(displayMoney(Number.NaN)).toBe("-");
+    expect(displayPercent("NaN")).toBe("-");
+  });
+
+  it("maps surface metadata to the shared confidence states", () => {
+    expect(dataConfidenceFromSurface({ status: "ok", source: "bff_composed" })).toBe("formal");
+    expect(dataConfidenceFromSurface({ status: "ok", source: "snapshot_fallback" })).toBe("fallback");
+    expect(dataConfidenceFromSurface({ status: "degraded", source: "bff_composed" })).toBe("degraded");
+    expect(dataConfidenceFromSurface({ status: "unavailable", source: "missing" })).toBe("unavailable");
+  });
+
+  it("builds attribution links that preserve persona, runtime, period, and source confidence", () => {
+    const href = buildPerformanceAttributionHref({
+      personaId: "persona-alpha",
+      runtimeId: "runtime-alpha",
+      period: "quarter",
+      sourceHint: "bff_composed_slim_list",
+      sourceConfidence: "fallback",
+      diagnostic: true,
+    });
+
+    expect(href).toBe(
+      "/management/performance-attribution?dimension=persona&period=quarter&persona_id=persona-alpha&runtime_id=runtime-alpha&source_hint=bff_composed_slim_list&source_confidence=fallback&mode=fallback-diagnostic",
+    );
   });
 });

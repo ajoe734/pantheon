@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { managementClient } from "@/lib/bff/client";
+import { managementClient, type PersonaFleetAggregate } from "@/lib/bff/client";
 import * as managementApi from "@/lib/bff-v1/management";
 import type {
   ManagementCostAttributionResponse,
@@ -21,6 +21,7 @@ import {
 } from "./index";
 
 const surfaceOk = { status: "ok", source: "bff_composed" };
+const personaFleetSurface = { status: "ok", source: "bff_composed_slim_list" };
 
 function quarterlyItem(index: number, name = `Persona ${index}`) {
   return {
@@ -84,6 +85,40 @@ const personaLeagueResponse = {
     surfaces: { management_persona_league: surfaceOk },
   },
 } as ManagementPersonaLeagueResponse;
+
+const personaFleetResponse = {
+  data: {
+    items: [
+      {
+        id: "persona-alpha",
+        persona_id: "persona-alpha",
+        name: "Alpha Persona",
+        owner: "research",
+        status: "healthy",
+        health: "healthy",
+        runtime_id: "runtime-alpha",
+        performance_summary: {
+          totalPnl: 124000,
+          violationCount: 0,
+        },
+      },
+    ],
+    summary: {
+      total_personas: 12,
+      returned_personas: 1,
+      critical_personas: 0,
+      degraded_personas: 0,
+      healthy_personas: 1,
+      bound_personas: 1,
+      runtime_bound_personas: 1,
+    },
+  },
+  page_info: { next_page_token: null, total: 12, page_size: 1 },
+  meta: {
+    snapshot_at: "2026-07-03T12:00:00Z",
+    surfaces: { persona_fleet: personaFleetSurface },
+  },
+} as PersonaFleetAggregate;
 
 const personaMoversResponse = {
   data: {
@@ -612,6 +647,21 @@ const emptyPersonaLeagueResponse = {
   },
 } as ManagementPersonaLeagueResponse;
 
+const emptyPersonaFleetResponse = {
+  ...personaFleetResponse,
+  data: {
+    ...personaFleetResponse.data,
+    items: [],
+    summary: {
+      ...personaFleetResponse.data.summary,
+      total_personas: 0,
+      returned_personas: 0,
+      healthy_personas: 0,
+      runtime_bound_personas: 0,
+    },
+  },
+} as PersonaFleetAggregate;
+
 const emptyPersonaMoversResponse = {
   ...personaMoversResponse,
   data: {
@@ -714,6 +764,7 @@ const emptyTradingRankingsResponse = {
 } as ManagementTradingPulseRankingsResponse;
 
 function mockHappyPath() {
+  vi.spyOn(managementClient.personaFleet, "list").mockResolvedValue(personaFleetResponse);
   vi.spyOn(managementApi, "fetchManagementPersonaLeague").mockResolvedValue(personaLeagueResponse);
   vi.spyOn(managementApi, "fetchManagementPersonaLeagueMovers").mockResolvedValue(personaMoversResponse);
   vi.spyOn(managementApi, "fetchManagementQuarterlyRanking").mockResolvedValue(quarterlyRankingResponse);
@@ -727,6 +778,7 @@ function mockHappyPath() {
 }
 
 function mockEmptyPath() {
+  vi.spyOn(managementClient.personaFleet, "list").mockResolvedValue(emptyPersonaFleetResponse);
   vi.spyOn(managementApi, "fetchManagementPersonaLeague").mockResolvedValue(emptyPersonaLeagueResponse);
   vi.spyOn(managementApi, "fetchManagementPersonaLeagueMovers").mockResolvedValue(emptyPersonaMoversResponse);
   vi.spyOn(managementApi, "fetchManagementQuarterlyRanking").mockResolvedValue(emptyQuarterlyRankingResponse);
@@ -755,6 +807,9 @@ describe("ManagementPerformanceReviewPanel", () => {
     expect(screen.getByRole("status").textContent).toContain("Loading performance review");
 
     await waitFor(() => {
+      expect(managementClient.personaFleet.list).toHaveBeenCalledWith({
+        page_size: PERFORMANCE_REVIEW_LIMITS.personaLeague,
+      });
       expect(managementApi.fetchManagementPersonaLeague).toHaveBeenCalledWith({
         page_size: PERFORMANCE_REVIEW_LIMITS.personaLeague,
       });
@@ -768,6 +823,10 @@ describe("ManagementPerformanceReviewPanel", () => {
     expect(managementApi.fetchManagementPerformanceAttributionByPersona).toHaveBeenCalledWith({
       period: "quarter",
       page_size: PERFORMANCE_REVIEW_LIMITS.attribution,
+      persona_id: undefined,
+      runtime_id: undefined,
+      source_hint: undefined,
+      source_confidence: undefined,
     });
     expect(managementApi.fetchManagementPerformanceAttributionByPool).toHaveBeenCalledWith({
       period: "quarter",
@@ -790,6 +849,7 @@ describe("ManagementPerformanceReviewPanel", () => {
     await screen.findByText("Performance Review");
     expect(screen.getByText("Q3 2026")).toBeTruthy();
     expect(screen.getAllByText("Quarterly Ranking").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Persona Fleet").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Performance Attribution").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Portfolio Book").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Cost Attribution").length).toBeGreaterThan(0);
@@ -806,6 +866,7 @@ describe("ManagementPerformanceReviewPanel", () => {
     expect(within(rankingTable).getByText("Hotel Persona")).toBeTruthy();
     expect(within(rankingTable).queryByText("Overflow Persona")).toBeNull();
 
+    expect(within(screen.getByTestId("performance-review-table-persona-fleet")).getByText("runtime-alpha")).toBeTruthy();
     expect(within(screen.getByTestId("performance-review-table-persona-attribution")).getByText("Alpha Persona")).toBeTruthy();
     expect(within(screen.getByTestId("performance-review-table-pool-attribution")).getByText("Growth Pool")).toBeTruthy();
     expect(within(screen.getByTestId("performance-review-table-cost-attribution")).getByText("Carry Strategy")).toBeTruthy();
@@ -828,6 +889,47 @@ describe("ManagementPerformanceReviewPanel", () => {
     expect(screen.queryByText("Performance review unavailable")).toBeNull();
   });
 
+  it("opens Persona Fleet performance links as fallback diagnostics when formal attribution rows are absent", async () => {
+    vi.spyOn(managementApi, "fetchManagementPerformanceAttributionByPersona").mockResolvedValue(emptyAttributionResponse);
+    vi.spyOn(managementApi, "fetchManagementPerformanceAttributionByPool").mockResolvedValue(emptyAttributionResponse);
+
+    render(<ManagementPerformanceReviewPanel />);
+
+    const fleetTable = await screen.findByTestId("performance-review-table-persona-fleet");
+    const link = within(fleetTable).getByTestId("persona-fleet-performance-link-persona-alpha") as HTMLAnchorElement;
+
+    expect(link.getAttribute("href")).toBe(
+      "/management/performance-attribution?dimension=persona&period=quarter&persona_id=persona-alpha&runtime_id=runtime-alpha&source_hint=bff_composed_slim_list&source_confidence=fallback&mode=fallback-diagnostic",
+    );
+    expect(within(fleetTable).getAllByText("Fallback source").length).toBeGreaterThan(0);
+    expect(within(fleetTable).queryByText("Formal source")).toBeNull();
+  });
+
+  it("suppresses nan and undefined values in operator-facing metric cells", async () => {
+    vi.spyOn(managementClient.personaFleet, "list").mockResolvedValue({
+      ...personaFleetResponse,
+      data: {
+        ...personaFleetResponse.data,
+        items: [
+          {
+            ...personaFleetResponse.data.items[0],
+            runtime_id: "undefined",
+            performance_summary: {
+              totalPnl: Number.NaN,
+              violationCount: "nan",
+            },
+          },
+        ],
+      },
+    } as PersonaFleetAggregate);
+
+    const { container } = render(<ManagementPerformanceReviewPanel />);
+
+    await screen.findByTestId("performance-review-table-persona-fleet");
+    expect(container.textContent?.toLowerCase()).not.toContain("nan");
+    expect(container.textContent?.toLowerCase()).not.toContain("undefined");
+  });
+
   it("shows an empty state when all bounded lists return no rows", async () => {
     vi.restoreAllMocks();
     mockEmptyPath();
@@ -841,6 +943,7 @@ describe("ManagementPerformanceReviewPanel", () => {
   it("shows an error state when every review source fails", async () => {
     vi.restoreAllMocks();
     const failure = new Error("bff offline");
+    vi.spyOn(managementClient.personaFleet, "list").mockRejectedValue(failure);
     vi.spyOn(managementApi, "fetchManagementPersonaLeague").mockRejectedValue(failure);
     vi.spyOn(managementApi, "fetchManagementPersonaLeagueMovers").mockRejectedValue(failure);
     vi.spyOn(managementApi, "fetchManagementQuarterlyRanking").mockRejectedValue(failure);
