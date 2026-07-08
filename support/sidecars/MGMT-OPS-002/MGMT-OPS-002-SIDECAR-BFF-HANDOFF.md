@@ -8,7 +8,7 @@
 | Sidecar task | `MGMT-OPS-002-SIDECAR-BFF-HANDOFF` |
 | Sidecar owner / reviewer | `Codex2` / `Codex` |
 | Helper kind | `bff_handoff_packet` |
-| Updated | `2026-07-08T06:51:51Z` |
+| Updated | `2026-07-08T07:02:02Z` |
 | Mutates canonical | `false` |
 
 This is a support artifact only. It packages the MGMT-OPS-001 BFF read-model
@@ -24,9 +24,9 @@ governance logic, or action policy.
 |---|---|
 | `AI_COLLABORATION_GUIDE.md` | L0 status coordinates work; support packets do not override L1/L2 product truth. |
 | `.orchestrator/task-briefs/mgmt_ops_002_sidecar_bff_handoff.md` | Sidecar scope is BFF query gap, operator journey, and frontend handoff material only. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-OPS-002-SIDECAR-BFF-HANDOFF` | Task is `in_progress`, owner `Codex2`, reviewer `Codex`, artifact path is this file. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-OPS-002-SIDECAR-BFF-HANDOFF` | Task is `review_approved`, owner `Codex2`, reviewer `Codex`, artifact path is this file. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Meaningful support/document changes must become durable through scoped worker commits. |
-| `.orchestrator/skills/task-closeout-finalization.md` | Final `done` is owner-only after review approval and merged task PR; this packet is not a done transition. |
+| `.orchestrator/skills/task-closeout-finalization.md` | Final `done` is owner-only after review approval and merged task PR; PR #3067 must be refreshed/merged before status closeout. |
 | `support/sidecars/MGMT-OPS-001/MGMT-OPS-001-SIDECAR-BFF-HANDOFF.md` | Prior sidecar established the source-confidence handoff framing and frontend gap matrix. |
 | `services/control-plane/bff/operations_read_model.py` | Defines `DataConfidence`, `SourceState`, identity, performance, source, diagnostic, and finite metric helpers. |
 | `services/control-plane/bff/main.py` | Publishes `GET /bff/management/operations-read-model/{persona_id}` with `OperationsReadModelEnvelope`. |
@@ -243,12 +243,12 @@ For parent owner absorption:
 
 For sidecar reviewer `Codex`:
 
-- Confirm this packet edits support material only.
-- Confirm the BFF route, focus persona values, and diagnostic codes match the
+- Reviewed and approved: this packet edits support material only.
+- Reviewed and approved: the BFF route, focus persona values, and diagnostic codes match the
   checked-in BFF tests.
-- Confirm frontend gap claims match the current `execute-plans` files listed in
+- Reviewed and approved: frontend gap claims match the current `execute-plans` files listed in
   Sources Read.
-- Confirm the packet does not claim canonical, runtime, registry, or governance
+- Reviewed and approved: the packet does not claim canonical, runtime, registry, or governance
   implementation changes.
 
 ---
@@ -272,6 +272,10 @@ Focused validation performed:
 
 - `python3 -m pytest services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py -q`
   -> `11 passed, 8 warnings`.
+- `gh pr view 3067 --json number,state,mergeStateStatus,statusCheckRollup,autoMergeRequest`
+  -> PR #3067 was open with successful checks and auto-merge enabled, but
+  `mergeStateStatus` was `BEHIND`; closeout requires refreshing and merging
+  the task branch before `AI_NAME=Codex2 ./scripts/ai-status.sh done`.
 
 No runtime, registry, governance, BFF implementation, frontend implementation,
 L1 canonical document, or live environment changes were made by this sidecar.
