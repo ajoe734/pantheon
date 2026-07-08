@@ -46,19 +46,22 @@ performance state from live BFF read contracts.
 - Merge commit: `91c039d051bf596d42d4468c8c4f5b9b8f82803d`
 - GitHub check: `integration-gate` passed at `2026-07-08T00:49:27Z`.
 
-## Hosted Proof Requirement
+## Hosted Proof
 
-After the dev frontend is redeployed from execute-plans merge commit
-`91c039d051bf596d42d4468c8c4f5b9b8f82803d`, run a hosted browser smoke
-against:
+Hosted browser proof passed against the Pantheon dev frontend after the
+execute-plans merge commit `91c039d051bf596d42d4468c8c4f5b9b8f82803d` was
+available on the hosted route:
 
 ```bash
 PANTHEON_FE_BASE_URL=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io \
+PANTHEON_HOSTED_PROBE_PATH=/agora/strategy-performance \
+PANTHEON_HOSTED_REQUIRED_BFF_PATHS=/bff/agora/trading-room,/bff/agora/trading-room/decision-events,/bff/management/performance-attribution/by-strategy \
   npm run probe:browser
 ```
 
-The hosted proof should confirm that clicking `Performance` in the Agora shell
-loads the `Strategy Performance` page and does not show the old placeholder.
+Reviewer screenshot smoke also passed for desktop and mobile viewports. The
+hosted page rendered `Strategy Performance`, the old placeholder text was
+absent, and all required live BFF reads returned successful responses.
 
 See:
 

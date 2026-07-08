@@ -33,19 +33,35 @@ The production build completed with existing non-blocking warnings:
 
 ## Hosted Proof
 
-Hosted proof is pending until the dev frontend is redeployed from execute-plans
-merge commit `91c039d051bf596d42d4468c8c4f5b9b8f82803d`. The expected
-post-deploy smoke is:
+Hosted proof passed against the Pantheon dev frontend after the execute-plans
+merge commit `91c039d051bf596d42d4468c8c4f5b9b8f82803d` was available on the
+hosted route.
 
 ```bash
 PANTHEON_FE_BASE_URL=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io \
+PANTHEON_HOSTED_PROBE_PATH=/agora/strategy-performance \
+PANTHEON_HOSTED_REQUIRED_BFF_PATHS=/bff/agora/trading-room,/bff/agora/trading-room/decision-events,/bff/management/performance-attribution/by-strategy \
   npm run probe:browser
 ```
 
-Acceptance target:
+- Passed at: `2026-07-08T01:09:40Z`.
+- Result: required live BFF responses were complete, old BFF URL hit count was
+  `0`, failed request count was `0`, console error count was `0`, and the probe
+  reported `pass: true`.
+
+Reviewer screenshot smoke:
+
+- Summary: `performance-hosted-smoke.json`.
+- Desktop screenshot: `performance-desktop.png`.
+- Mobile screenshot: `performance-mobile.png`.
+- Passed at: `2026-07-08T01:12:09Z`.
+
+Acceptance result:
 
 - `/agora/strategy-performance` or the Agora shell `Performance` tab renders
   `Strategy Performance`.
 - The old placeholder text is absent.
-  `Strategy Performance` must be backed by live BFF reads and must not render
-  seed/demo fallback rows.
+- The page is backed by live BFF reads:
+  - `GET /bff/agora/trading-room`
+  - `GET /bff/agora/trading-room/decision-events`
+  - `GET /bff/management/performance-attribution/by-strategy?period=latest&page_size=50`
