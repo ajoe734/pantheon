@@ -39,30 +39,11 @@ describe("describeManagementRoute", () => {
   });
 
   it("maps newly mounted workflow suites to active panels", () => {
-    expect(describeManagementRoute("/management/persona-league")).toMatchObject({
+    expect(describeManagementRoute("/management/promotion-allocation")).toMatchObject({
       label: "Promotion & Allocation",
       status: "active-panel",
       panel: "promotion-allocation",
-    });
-    expect(describeManagementRoute("/management/quarterly-ranking")).toMatchObject({
-      label: "Promotion & Allocation",
-      status: "active-panel",
-      panel: "promotion-allocation",
-    });
-    expect(describeManagementRoute("/management/rebalances/rb-q3")).toMatchObject({
-      label: "Promotion & Allocation",
-      status: "active-panel",
-      panel: "promotion-allocation",
-    });
-    expect(describeManagementRoute("/management/capital")).toMatchObject({
-      label: "Promotion & Allocation",
-      status: "active-panel",
-      panel: "promotion-allocation",
-    });
-    expect(describeManagementRoute("/management/readiness/capital-binding-live")).toMatchObject({
-      label: "Promotion & Allocation",
-      status: "active-panel",
-      panel: "promotion-allocation",
+      canonicalPath: "/management/promotion-allocation",
     });
     expect(describeManagementRoute("/management/portfolio-book")).toMatchObject({
       label: "Performance Review",
@@ -88,6 +69,52 @@ describe("describeManagementRoute", () => {
       label: "Decision Workbench",
       status: "active-panel",
       panel: "decision-workbench",
+    });
+  });
+
+  it("retires legacy promotion and allocation URLs with canonical redirects", () => {
+    expect(describeManagementRoute("/management/persona-league")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      canonicalPath: "/management/promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=paper-candidates",
+    });
+    expect(describeManagementRoute("/management/quarterly-ranking")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=paper-candidates",
+    });
+    expect(describeManagementRoute("/management/rebalances/rb-q3")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=quarterly-capital&rebalance_id=rb-q3",
+    });
+    expect(describeManagementRoute("/management/capital")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=quarterly-capital",
+    });
+    expect(describeManagementRoute("/management/readiness/capital-binding-live")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=quarterly-capital",
+    });
+    expect(describeManagementRoute("/management/promotion-reviews/review-alpha")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=promotion-review&review_id=review-alpha",
+    });
+    expect(describeManagementRoute("/management/ranking-formulas/rank-v3")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "retired-route",
+      panel: "promotion-allocation",
+      redirectTo: "/management/promotion-allocation?tab=formula-policy&formula_id=rank-v3",
     });
   });
 

@@ -8,12 +8,14 @@ import type { ManagementRouteDescriptor, ManagementRouteStatus as RouteStatus } 
 const statusTone: Record<RouteStatus, string> = {
   shell: "bg-primary/10 text-primary border-primary/30",
   "active-panel": "bg-status-success/15 text-status-success border-status-success/30",
+  "retired-route": "bg-status-warning/15 text-status-warning border-status-warning/30",
   "planned-workflow": "bg-status-warning/15 text-status-warning border-status-warning/30",
 };
 
 const statusLabel: Record<RouteStatus, string> = {
   shell: "Shell",
   "active-panel": "Active panel",
+  "retired-route": "Retired route",
   "planned-workflow": "Planned workflow",
 };
 
@@ -47,6 +49,11 @@ export function ManagementRouteStatus({ route }: { route: ManagementRouteDescrip
         </Badge>
       </div>
       <p className="mt-2 text-sm text-muted-foreground">{route.summary}</p>
+      {route.redirectTo ? (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Canonical: <span className="font-mono">{route.redirectTo}</span>
+        </p>
+      ) : null}
     </section>
   );
 }
