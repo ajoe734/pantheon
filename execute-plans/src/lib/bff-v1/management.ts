@@ -1,3 +1,4 @@
+import { buildHeaders } from "./headers";
 import { paths } from "./paths";
 
 export type ManagementSurfaceStatus = "ok" | "degraded" | "unavailable" | string;
@@ -1581,6 +1582,171 @@ export interface ManagementQuarterlyRankingRecommendationsResponse {
   };
 }
 
+export interface ManagementPromotionReviewsQuery {
+  quarter?: string;
+  state?: string;
+  archetype?: string;
+  q?: string;
+  action_id?: string;
+  status?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementPromotionReviewDecision = "approve" | "approve_with_conditions" | "reject" | string;
+
+export interface ManagementPromotionReviewItem {
+  id?: string;
+  review_id: string;
+  promotion_review_id: string;
+  recommendation_id: string;
+  human_inbox_id?: string | null;
+  quarter?: string;
+  persona_id?: string;
+  name?: string;
+  owner?: string;
+  state?: string;
+  rank?: number;
+  score?: number;
+  action_id?: string;
+  action_label?: string;
+  status?: string;
+  decision_status?: string;
+  submitted?: boolean;
+  submitted_at?: string | null;
+  promotion_path?: {
+    from_stage?: string;
+    target_stage?: string;
+    eventual_live_stage?: string;
+    [key: string]: unknown;
+  };
+  governance?: ManagementQuarterlyRankingRecommendationGovernance;
+  requires_human_gate_decision?: boolean;
+  live_capital_mutation?: boolean;
+  direct_live_capital_mutation?: boolean;
+  evidence_refs?: ManagementEvidenceItem[];
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPromotionReviewsSummary {
+  quarter: string;
+  review_count: number;
+  returned_count: number;
+  pending_count: number;
+  decision_accepted_count: number;
+  live_capital_mutation_count: number;
+  requires_human_gate_decision: boolean;
+  allowed_decisions: ManagementPromotionReviewDecision[];
+  policy: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementPromotionReviewsResponse {
+  data: {
+    id: string;
+    quarter: string;
+    quarter_window: ManagementQuarterlyRankingWindow;
+    items: ManagementPromotionReviewItem[];
+    summary: ManagementPromotionReviewsSummary;
+    [key: string]: unknown;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    allowed_decisions?: ManagementPromotionReviewDecision[];
+    requires_human_gate_decision?: boolean;
+    live_capital_mutation?: boolean;
+    direct_live_capital_mutation?: boolean;
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementPromotionReviewDetailResponse {
+  data: ManagementPromotionReviewItem;
+  meta: ManagementPromotionReviewsResponse["meta"] & {
+    quarter?: string;
+  };
+}
+
+export interface ManagementQuarterlyRankingRecommendationSubmitResponse {
+  data: {
+    command_id?: string;
+    review_id: string;
+    promotion_review_id: string;
+    recommendation_id: string;
+    persona_id?: string;
+    action_id?: string;
+    status?: string;
+    submitted: boolean;
+    human_inbox_id?: string | null;
+    requires_human_gate_decision: boolean;
+    live_capital_mutation: boolean;
+    direct_live_capital_mutation?: boolean;
+    runtime_mutation?: boolean;
+    review?: ManagementPromotionReviewItem;
+    links?: Record<string, string | null | undefined>;
+    [key: string]: unknown;
+  };
+  meta?: {
+    snapshot_at?: string;
+    requires_human_gate_decision?: boolean;
+    live_capital_mutation?: boolean;
+    direct_live_capital_mutation?: boolean;
+    runtime_mutation?: boolean;
+    governance_policy?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementPromotionReviewDecisionPayload {
+  decision: ManagementPromotionReviewDecision;
+  rationale?: string;
+  conditions?: unknown;
+  quarter?: string;
+}
+
+export interface ManagementPromotionReviewDecisionResponse {
+  data: {
+    command_id?: string;
+    review_id: string;
+    promotion_review_id: string;
+    recommendation_id: string;
+    persona_id?: string;
+    action_id?: string;
+    decision: ManagementPromotionReviewDecision;
+    decision_status: string;
+    requires_human_gate_decision: boolean;
+    live_capital_mutation: boolean;
+    direct_live_capital_mutation?: boolean;
+    runtime_mutation?: boolean;
+    promotion_stage_from?: string;
+    promotion_stage_to?: string;
+    eventual_live_stage?: string;
+    rationale?: string;
+    conditions?: unknown;
+    [key: string]: unknown;
+  };
+  meta?: {
+    snapshot_at?: string;
+    requires_human_gate_decision?: boolean;
+    live_capital_mutation?: boolean;
+    direct_live_capital_mutation?: boolean;
+    runtime_mutation?: boolean;
+    decision_status?: string;
+    decision?: ManagementPromotionReviewDecision;
+    governance_policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export type ManagementPerformanceAttributionDimension =
   | "persona"
   | "strategy"
@@ -3099,6 +3265,24 @@ export function managementQuarterlyRankingRecommendationsPath(
   return withQuery(paths.managementQuarterlyRankingRecommendations(), query);
 }
 
+export function managementQuarterlyRankingRecommendationSubmitPath(id: string): string {
+  return paths.managementQuarterlyRankingRecommendationSubmit(id);
+}
+
+export function managementPromotionReviewsPath(
+  query?: ManagementPromotionReviewsQuery,
+): string {
+  return withQuery(paths.managementPromotionReviews(), query);
+}
+
+export function managementPromotionReviewPath(id: string, query?: { quarter?: string }): string {
+  return withQuery(paths.managementPromotionReview(id), query);
+}
+
+export function managementPromotionReviewDecisionsPath(id: string): string {
+  return paths.managementPromotionReviewDecisions(id);
+}
+
 export function managementPerformanceAttributionPath(
   query?: ManagementPerformanceAttributionQuery,
 ): string {
@@ -3721,6 +3905,108 @@ export async function fetchManagementQuarterlyRankingRecommendations(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementQuarterlyRankingRecommendationsResponse>;
+}
+
+function defaultIdempotencyKey(prefix: string): string {
+  const random = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
+  return `${prefix}-${Date.now()}-${random}`;
+}
+
+export async function submitManagementQuarterlyRankingRecommendation(
+  recommendationId: string,
+  payload: Record<string, unknown> = {},
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementQuarterlyRankingRecommendationSubmitResponse> {
+  const path = managementQuarterlyRankingRecommendationSubmitPath(recommendationId);
+  const headers = buildHeaders({
+    method: "POST",
+    extra: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": defaultIdempotencyKey("quarterly-recommendation-submit"),
+      ...Object.fromEntries(new Headers(init?.headers).entries()),
+    },
+  });
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "POST",
+    credentials: "include",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`POST ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementQuarterlyRankingRecommendationSubmitResponse>;
+}
+
+export async function fetchManagementPromotionReviews(
+  query?: ManagementPromotionReviewsQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPromotionReviewsResponse> {
+  const path = managementPromotionReviewsPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPromotionReviewsResponse>;
+}
+
+export async function fetchManagementPromotionReview(
+  reviewId: string,
+  query?: { quarter?: string },
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPromotionReviewDetailResponse> {
+  const path = managementPromotionReviewPath(reviewId, query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPromotionReviewDetailResponse>;
+}
+
+export async function submitManagementPromotionReviewDecision(
+  reviewId: string,
+  payload: ManagementPromotionReviewDecisionPayload,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPromotionReviewDecisionResponse> {
+  const path = managementPromotionReviewDecisionsPath(reviewId);
+  const headers = buildHeaders({
+    method: "POST",
+    extra: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": defaultIdempotencyKey("promotion-review-decision"),
+      ...Object.fromEntries(new Headers(init?.headers).entries()),
+    },
+  });
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "POST",
+    credentials: "include",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`POST ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPromotionReviewDecisionResponse>;
 }
 
 export async function fetchManagementPerformanceAttribution(

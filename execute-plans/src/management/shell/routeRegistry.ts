@@ -8,6 +8,7 @@ export type ManagementPanelKey =
   | "readiness-suite"
   | "decision-workbench"
   | "performance-review"
+  | "promotion-allocation"
   | "planned";
 
 export interface ManagementRouteDescriptor {
@@ -82,6 +83,30 @@ const routeRules: RouteRule[] = [
     },
   },
   {
+    match: (path) =>
+      [
+        "/management/promotion-allocation",
+        "/management/promotion-reviews",
+        "/management/quarterly-ranking",
+        "/management/persona-league",
+        "/management/rebalance",
+        "/management/rebalances",
+        "/management/capital",
+        "/management/capital-pools",
+        "/management/ranking",
+        "/management/ranking/formulas",
+        "/management/ranking-formulas",
+      ].some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
+      || path === "/management/readiness/capital-binding-live",
+    descriptor: {
+      label: "Promotion & Allocation",
+      workflow: "Paper promotion, formula policy, and quarterly capital",
+      status: "active-panel",
+      panel: "promotion-allocation",
+      summary: "Served by the active shell through the promotion and allocation workbench.",
+    },
+  },
+  {
     match: (path) => path.startsWith("/management/readiness"),
     descriptor: {
       label: "Readiness",
@@ -114,9 +139,7 @@ const routeRules: RouteRule[] = [
   {
     match: (path) =>
       [
-        "/management/persona-league",
         "/management/portfolio-book",
-        "/management/quarterly-ranking",
         "/management/performance-attribution",
         "/management/cost-attribution",
       ].some((prefix) => path === prefix || path.startsWith(`${prefix}/`)),
@@ -134,10 +157,8 @@ const routeRules: RouteRule[] = [
         "/management/control-room",
         "/management/strategies",
         "/management/personas",
-        "/management/capital",
         "/management/deployments",
         "/management/runtimes",
-        "/management/rebalance",
         "/management/evolution",
         "/management/experiments",
         "/management/tools",

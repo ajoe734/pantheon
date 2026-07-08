@@ -31,6 +31,31 @@ describe("describeManagementRoute", () => {
 
   it("maps newly mounted workflow suites to active panels", () => {
     expect(describeManagementRoute("/management/persona-league")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "active-panel",
+      panel: "promotion-allocation",
+    });
+    expect(describeManagementRoute("/management/quarterly-ranking")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "active-panel",
+      panel: "promotion-allocation",
+    });
+    expect(describeManagementRoute("/management/rebalances/rb-q3")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "active-panel",
+      panel: "promotion-allocation",
+    });
+    expect(describeManagementRoute("/management/capital")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "active-panel",
+      panel: "promotion-allocation",
+    });
+    expect(describeManagementRoute("/management/readiness/capital-binding-live")).toMatchObject({
+      label: "Promotion & Allocation",
+      status: "active-panel",
+      panel: "promotion-allocation",
+    });
+    expect(describeManagementRoute("/management/portfolio-book")).toMatchObject({
       label: "Performance Review",
       status: "active-panel",
       panel: "performance-review",
