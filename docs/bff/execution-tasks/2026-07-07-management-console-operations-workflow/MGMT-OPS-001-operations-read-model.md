@@ -1,8 +1,8 @@
 # MGMT-OPS-001 - Operations Read Model And Source Confidence Contract
 
-Owner: Claude2
+Owner: Codex2
 
-Reviewer: Codex2
+Reviewer: Codex
 
 Wave: 0
 

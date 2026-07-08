@@ -579,6 +579,18 @@ OpenAPI must publish these shared schema components for management console reads
 `SurfaceState`, `PageInfo`, `ManagementListMeta`, `ManagementRecordsEnvelope`,
 `DataSourcesEnvelope`, and `LineageEnvelope`.
 
+MGMT-OPS-001 adds the shared per-persona operations confidence read model:
+
+```
+GET /bff/management/operations-read-model/{persona_id}?period=latest
+```
+
+The `200` response must publish `OperationsReadModelEnvelope` in OpenAPI. The
+envelope contains `identity`, `data_confidence`, finite-or-null `performance`
+metrics, `sources[]`, and `diagnostics[]` so management console pages share the
+same `formal`/`partial`/`fallback`/`degraded`/`unavailable` source-confidence
+semantics instead of synthesizing local fallback rules.
+
 ### 10.2 Consistency Model
 
 Composed views support the `snapshot` query parameter:
