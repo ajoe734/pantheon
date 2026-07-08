@@ -4,11 +4,12 @@
 |---|---|
 | Parent task | `MGMT-OPS-001` |
 | Parent title | Operations read model and source confidence contract |
-| Parent owner / reviewer | `Claude2` / `Codex` |
+| Parent owner / reviewer | `Codex2` / `Codex` at closeout |
 | Sidecar task | `MGMT-OPS-001-SIDECAR-BFF-HANDOFF` |
-| Sidecar owner / reviewer | `Codex2` / `Claude2` |
+| Sidecar owner / reviewer | `Codex2` / `Codex` |
 | Helper kind | `bff_handoff_packet` |
 | Generated | `2026-07-07` |
+| Closeout update | `2026-07-08`; PR #3051 merged at `2026-07-07T15:54:41Z`; parent PR #3050 merged at `2026-07-08T04:16:27Z` |
 | Mutates canonical | `false` |
 
 This is a support artifact only. It does not define canonical truth, update L1
@@ -24,9 +25,9 @@ revise, or ignore this packet.
 |---|---|
 | `AI_COLLABORATION_GUIDE.md` | L0 status coordinates ownership; support packets do not override L1/L2 product truth. |
 | `.orchestrator/task-briefs/mgmt_ops_001_sidecar_bff_handoff.md` | Sidecar scope is BFF query gap, operator journey, and frontend handoff material only. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-OPS-001-SIDECAR-BFF-HANDOFF` | Canonical status root has this sidecar `in_progress`, owner `Codex2`, reviewer `Claude2`, artifact path this file. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-OPS-001` | Parent is `in_progress`; status note says PR #3050 is open with auto-merge enabled and waiting for CI. |
-| `origin/task/MGMT-OPS-001@9e6850539` | Parent candidate implements `operations_read_model.py`, `GET /bff/management/operations-read-model/{persona_id}`, evidence doc, and 10 focused tests. This sidecar did not merge that branch. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-OPS-001-SIDECAR-BFF-HANDOFF` | Canonical status root has this sidecar `review_approved`, owner `Codex2`, reviewer `Codex`, artifact path this file, and review approval noting PR #3051 is merged. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-OPS-001` / `gh pr view 3050` | Parent status root remains `in_progress`, but GitHub PR #3050 is merged to `dev` at merge commit `cea8d1f94`. Parent owner still owns its own closeout. |
+| `origin/task/MGMT-OPS-001@9e6850539`, then PR #3050 | Parent candidate implements `operations_read_model.py`, `GET /bff/management/operations-read-model/{persona_id}`, evidence doc, and focused tests. The original packet inspected the parent branch without merging it; this closeout branch later absorbed it only through `origin/dev` after PR #3050 merged. |
 | `docs/04/pantheon_management_console_operations_workflow_2026-07-07/MANAGEMENT_CONSOLE_OPERATIONS_WORKFLOW_PLAN.md` | Source plan requires one shared data-confidence vocabulary across Persona Fleet, Portfolio Book, Performance Attribution, Persona League, Quarterly Ranking, and Human Review. |
 | `docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/INDEX.md` | Execution packet sequences `MGMT-OPS-001` before Wave 1 frontend/page integration tasks. |
 | `docs/frontend/execute-plans-dev-hosting.md` | Active frontend repo is `ajoe734/execute-plans`; dev delivery must use the Pantheon-owned FE/BFF host, not Lovable. |
@@ -78,7 +79,7 @@ without issuing unbounded per-row calls.
 
 | Route | Current role | Handoff guidance |
 |---|---|---|
-| `GET /bff/management/operations-read-model/{persona_id}` | Parent candidate route on `origin/task/MGMT-OPS-001`; returns one composed operations read-model entry. | Frontend should consume after parent PR #3050 merges and generated client/types are refreshed. |
+| `GET /bff/management/operations-read-model/{persona_id}` | Parent route merged to `dev` through PR #3050; returns one composed operations read-model entry. | Frontend should consume after the dev BFF is deployed/restarted as needed and generated client/types are refreshed. |
 | `period` query param | Defaults to `latest`. | Preserve it in drilldown links from fleet/capital/ranking pages so the selected period is not lost. |
 | 404 unknown persona | Parent tests expect `RESOURCE_NOT_FOUND`, not a fabricated row. | UI should show "persona not found" / stale-link state, not empty formal attribution. |
 | `data_confidence` | Backend confidence verdict for the represented row. | Use as the primary visual authority badge; do not infer confidence from page-local heuristics. |
@@ -111,14 +112,14 @@ managementOperationsReadModel: (personaId: string) =>
 
 | Need | Current state | BFF/frontend gap |
 |---|---|---|
-| Single-persona source confidence | Parent candidate route provides one entry by `persona_id`. | Frontend adapter/type mapping is missing until Wave 1 work consumes the route. |
-| Table-wide confidence | Parent candidate is one persona per request. | If Persona Fleet or ranking tables need confidence for many rows, parent/follow-up should add a bounded list or batch query instead of unbounded frontend N+1 calls. |
+| Single-persona source confidence | Parent route provides one entry by `persona_id`. | Frontend adapter/type mapping is missing until Wave 1 work consumes the route. |
+| Table-wide confidence | Parent route is one persona per request. | If Persona Fleet or ranking tables need confidence for many rows, parent/follow-up should add a bounded list or batch query instead of unbounded frontend N+1 calls. |
 | Focus persona fallback | Parent route reports fallback plus `MISSING_ATTRIBUTION_MATCH`, `MISSING_HOLDINGS_MATCH`, and `FORMAL_ATTRIBUTION_MISSING_USING_FLEET_FALLBACK`. | Performance page must show fallback as fallback, not as formal attribution or zero-filled holdings. |
 | Source coverage | Parent route returns `sources[]` with source status and row counts. | Frontend needs common source-status badge/tooltip treatment across capital, fleet, attribution, league, ranking, and review pages. |
 | Diagnostics | Parent route returns `diagnostics[]`. | Frontend needs a diagnostics panel and row-level indicators; diagnostics should block unsafe action escalation when evidence is fallback/degraded/unavailable. |
 | Null/non-finite metrics | Parent helper sanitizes `nan`/`inf` to `null`. | Frontend number formatters must render empty/missing states, not `0`, `NaN`, or implied formal evidence. |
 | Action state | Source plan requires observe/request-review/pause/resume/demote/promote/rebalance/apply/containment states. | Parent route does not by itself implement action state; Wave 3/Human Review work must attach governed action availability and receipts. |
-| Dev deploy proof | Parent route is currently a parent PR candidate. | Hosted proof must wait for PR merge, deploy/restart if needed, and dev FE built from `execute-plans` with strict BFF wiring. |
+| Dev deploy proof | Parent PR #3050 is merged to `dev`. | Hosted proof still requires deploy/restart if needed and dev FE built from `execute-plans` with strict BFF wiring. |
 
 ---
 
@@ -178,7 +179,7 @@ managementOperationsReadModel: (personaId: string) =>
 
 ## 6. Frontend Handoff Materials
 
-Recommended frontend implementation sequence after parent PR #3050 merges:
+Recommended frontend implementation sequence after the dev BFF includes PR #3050:
 
 1. Add `paths.managementOperationsReadModel(personaId)` and a typed read helper.
 2. Add an `OperationsReadModelEntry` adapter in
@@ -215,8 +216,8 @@ UI rules:
 
 For parent `MGMT-OPS-001` review/closeout:
 
-- Confirm PR #3050 merged before downstream frontend work treats the route as
-  available on `dev`.
+- Record PR #3050 merge commit `cea8d1f94` before downstream frontend work
+  treats the route as available on `dev`.
 - Confirm the route returns one entry with stable `identity`,
   `data_confidence`, `performance`, `sources`, and `diagnostics`.
 - Confirm the focus persona fallback evidence remains visible and finite.
@@ -226,7 +227,7 @@ For parent `MGMT-OPS-001` review/closeout:
 - Confirm this sidecar did not broaden parent scope into frontend or governed
   action implementation.
 
-For sidecar reviewer `Claude2`:
+For sidecar reviewer `Codex`:
 
 - Confirm this packet is support-only and edits only
   `support/sidecars/MGMT-OPS-001/MGMT-OPS-001-SIDECAR-BFF-HANDOFF.md`.
@@ -244,9 +245,17 @@ For sidecar reviewer `Claude2`:
 Sidecar verification was source inspection only:
 
 - Confirmed task state through `AI_NAME=Codex2 ./scripts/ai-status.sh show`.
+- Confirmed PR #3051 is merged to `dev` at merge commit
+  `f3f36553f5d1cf00373233123d4bd9491129467d`.
+- Confirmed PR #3051 changed only this support packet and all visible GitHub
+  checks reported success before merge.
+- Confirmed parent PR #3050 is merged to `dev` at merge commit
+  `cea8d1f94fd3a3f5efb831331435ced071f303d0`; parent task status still needs
+  parent-owner closeout.
 - Fast-forwarded the sidecar branch to `origin/dev` before writing this packet.
 - Inspected parent candidate `origin/task/MGMT-OPS-001@9e6850539` without
-  merging it into the sidecar.
+  merging it into the original sidecar packet; closeout later merged
+  `origin/dev` only after PR #3050 was already on `dev`.
 - Read the parent evidence doc, operation read-model module, route references,
   and focused test file from the parent branch.
 - Inspected frontend route/client files for existing management paths and lack
@@ -254,4 +263,3 @@ Sidecar verification was source inspection only:
 
 No runtime, registry, governance, BFF implementation, frontend implementation,
 L1 canonical document, or live environment changes were made by this sidecar.
-
