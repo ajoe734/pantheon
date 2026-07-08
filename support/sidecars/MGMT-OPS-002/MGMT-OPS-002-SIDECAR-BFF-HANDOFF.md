@@ -1,186 +1,281 @@
-# MGMT-OPS-002 BFF and Frontend Handoff Packet (Sidecar)
+# MGMT-OPS-002 BFF And Frontend Handoff Packet
 
-**Parent Task**: `MGMT-OPS-002` — Normalize management frontend adapters and data-confidence UI rules
-**Parent Owner**: Codex2
-**Parent Reviewer**: Claude2
-**Parent Status**: `todo`
-**Sidecar Owner**: Antigravity
-**Sidecar Reviewer**: Codex
-**Helper Kind**: `bff_handoff_packet`
-**Generated**: 2026-07-08T04:28:20Z
+| Field | Value |
+|---|---|
+| Parent task | `MGMT-OPS-002` |
+| Parent title | Normalize management frontend adapters and data-confidence UI rules |
+| Parent owner / reviewer | Parent owner decides absorption; this sidecar does not approve parent scope |
+| Sidecar task | `MGMT-OPS-002-SIDECAR-BFF-HANDOFF` |
+| Sidecar owner / reviewer | `Codex2` / `Codex` |
+| Helper kind | `bff_handoff_packet` |
+| Updated | `2026-07-08T07:02:02Z` |
+| Mutates canonical | `false` |
 
-> [!NOTE]
-> This is a support artifact only. It does not modify L1 canonical truth, core contract schemas, or backend runtime governance implementations. It packages Wave 0 outputs (`MGMT-OPS-001`) into a Wave 1-ready frontend handoff packet.
-
----
-
-## 1. What MGMT-OPS-002 Can Reuse Immediately
-
-Wave 0 (`MGMT-OPS-001`) locked the BFF response models and read pathways. The frontend system (`execute-plans`) should consume these directly.
-
-### 1.1 Autorun Read Model Endpoint
-- **Route**: `GET /bff/management/operations-read-model/{persona_id}`
-- **OpenAPI Type**: `OperationsReadModelEnvelope`
-- **Behavior**: Retrieves a unified record containing identity, performance stats, data source states, and diagnostic codes for a specific persona. It handles missing database joins gracefully, returning diagnostics instead of failing or filtering out rows.
-
-### 1.2 Data Confidence Hierarchy
-`DataConfidence` is defined as a standard enum in the backend (`services/control-plane/bff/operations_read_model.py`):
-- `formal`: Canonical data source has a matching row and all required joins are healthy.
-- `partial`: Canonical source exists, but some optional joined evidence is missing.
-- `fallback`: Core attribution/holdings are missing; summary was synthesized from fleet runtime metrics.
-- `degraded`: Upstream database or service returned degraded/fixture coverage.
-- `unavailable`: Data source did not respond or cannot produce the requested slice.
+This is a support artifact only. It packages the MGMT-OPS-001 BFF read-model
+surface into a Wave 1 frontend handoff for MGMT-OPS-002. It does not edit L1
+canonical truth, BFF/runtime implementation, frontend code, registries,
+governance logic, or action policy.
 
 ---
 
-## 2. Focus Persona Identity Triage: `persona-20260528-04688755`
+## 1. Sources Read
 
-The focus persona `persona-20260528-04688755` (`Crypto-Alt-Hunter`) exposes a critical identity mismatch that the frontend adapter must handle gracefully.
+| Source | Relevant finding |
+|---|---|
+| `AI_COLLABORATION_GUIDE.md` | L0 status coordinates work; support packets do not override L1/L2 product truth. |
+| `.orchestrator/task-briefs/mgmt_ops_002_sidecar_bff_handoff.md` | Sidecar scope is BFF query gap, operator journey, and frontend handoff material only. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-OPS-002-SIDECAR-BFF-HANDOFF` | Task is `review_approved`, owner `Codex2`, reviewer `Codex`, artifact path is this file. |
+| `.orchestrator/skills/worker-anchor-commit.md` | Meaningful support/document changes must become durable through scoped worker commits. |
+| `.orchestrator/skills/task-closeout-finalization.md` | Final `done` is owner-only after review approval and merged task PR; PR #3067 must be refreshed/merged before status closeout. |
+| `support/sidecars/MGMT-OPS-001/MGMT-OPS-001-SIDECAR-BFF-HANDOFF.md` | Prior sidecar established the source-confidence handoff framing and frontend gap matrix. |
+| `services/control-plane/bff/operations_read_model.py` | Defines `DataConfidence`, `SourceState`, identity, performance, source, diagnostic, and finite metric helpers. |
+| `services/control-plane/bff/main.py` | Publishes `GET /bff/management/operations-read-model/{persona_id}` with `OperationsReadModelEnvelope`. |
+| `services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py` | Covers OpenAPI envelope, finite metrics, formal/partial/fallback/degraded/unavailable confidence, 404, and focus persona fallback. |
+| `services/control-plane/bff/BFF_API_CONTRACT.md` | Documents the per-persona operations read-model route and confidence semantics. |
+| `/home/lupin/code/execute-plans/src/lib/bff-v1/paths.ts` | Current frontend path registry still lacks an `operations-read-model` helper. |
+| `/home/lupin/code/execute-plans/src/management/pages/oversight/PerformanceAttribution.tsx` | Current page derives fallback locally from Persona Fleet and uses `NaN` sentinel rows for missing holdings. |
+| `/home/lupin/code/execute-plans/src/management/pages/oversight/personaFleetLinks.ts` | Current fleet performance links preserve `dimension=persona` and `persona`, but not runtime, period, or source-confidence context. |
 
-### 2.1 The Mismatch
-- **Persona Fleet View**: Resolves `persona-20260528-04688755` to runtime `runtime-crypto-paper` with summary stats (`pnl = $48,000`, `max_drawdown = 6.40%`).
-- **Attribution View**: `runtime-crypto-paper` is linked to a seed default persona (`persona-crypto`). Querying formal attribution for `persona-20260528-04688755` returns nothing because of this mapping difference.
-
-### 2.2 The Fallback Solution
-Querying `GET /bff/management/operations-read-model/persona-20260528-04688755` yields:
-- `data_confidence`: `"fallback"`
-- `performance`: Stats populated from the Persona Fleet runtime summary (PnL: `48000.0`, drawdown: `0.064`).
-- `diagnostics`: Surfaced explicit codes:
-  - `MISSING_ATTRIBUTION_MATCH`
-  - `MISSING_HOLDINGS_MATCH`
-  - `FORMAL_ATTRIBUTION_MISSING_USING_FLEET_FALLBACK`
-
-> [!IMPORTANT]
-> The frontend adapter must inspect these diagnostics and render a prominent fallback banner rather than claiming the data represents formal attribution.
+`current-work.md` and the full `ai-activity-log.jsonl` were intentionally not
+scanned.
 
 ---
 
-## 3. Frontend Data Adapter & Normalization Guidelines
+## 2. Current BFF Surface For MGMT-OPS-002
 
-The frontend code under `execute-plans:src/management` and `execute-plans:src/lib` must normalize property names, format missing values safely, and prevent `NaN`/`undefined` from leaking into operator screens.
+MGMT-OPS-001 supplies the read-only route that MGMT-OPS-002 should consume:
 
-### 3.1 Field Normalization Matrix
-Translate `snake_case` BFF fields to frontend camelCase equivalents at the adapter boundary:
-
-| BFF Property | Composed Frontend Property | Type | Description |
-|---|---|---|---|
-| `persona_id` | `personaId` | `string` | Unique identifier of the persona |
-| `persona_label` | `personaLabel` | `string \| null` | Human-readable persona label |
-| `runtime_ids` | `runtimeIds` | `string[]` | Linked runtime identifiers |
-| `paper_ledger_ids` | `paperLedgerIds` | `string[]` | Linked paper ledger accounts |
-| `capital_pool_ids` | `capitalPoolIds` | `string[]` | Linked live capital pool IDs |
-| `sleeve_ids` | `sleeveIds` | `string[]` | Composed asset sleeve IDs |
-| `strategy_ids` | `strategyIds` | `string[]` | Underlying strategy config IDs |
-| `artifact_ids` | `artifactIds` | `string[]` | Registered artifact output IDs |
-| `as_of` | `asOf` | `string` | ISO timestamp of last update |
-| `pnl` | `pnl` | `number \| null` | Absolute profit and loss in USD |
-| `pnl_pct` | `pnlPct` | `number \| null` | Percentage return relative to capital |
-| `drawdown_pct` | `drawdownPct` | `number \| null` | Peak-to-trough drawdown fraction |
-| `risk_pct` | `riskPct` | `number \| null` | Risk limit utilization fraction |
-| `performance_delta` | `performanceDelta` | `number \| null` | Short-term performance difference |
-| `source_contribution` | `sourceContribution` | `number \| null` | Weight of the specific source |
-| `coverage_ratio` | `coverageRatio` | `number \| null` | Data ingestion coverage score |
-
-### 3.2 Metric Sanitization and Display Formatting
-Do not permit raw string coercion of missing numeric fields. If a value is non-finite (`NaN`, `Infinity`) or `null`, render an explicit state rather than `0` or `nan`.
-
-#### Recommended Typescript Helper:
-```typescript
-interface FormatOptions {
-  type: 'currency' | 'percent' | 'decimal';
-  emptyPlaceholder?: string;
-  decimals?: number;
-}
-
-export function formatSafeMetric(value: any, options: FormatOptions): string {
-  const placeholder = options.emptyPlaceholder ?? '--';
-  if (value === null || value === undefined) {
-    return placeholder;
-  }
-  
-  const num = Number(value);
-  if (Number.isNaN(num) || !Number.isFinite(num)) {
-    return placeholder;
-  }
-
-  const decimals = options.decimals ?? 2;
-
-  switch (options.type) {
-    case 'currency':
-      return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
-      }).format(num);
-    case 'percent':
-      // Backend percentages are stored as fractions (e.g. 0.182 for 18.2%)
-      return `${(num * 100).toFixed(decimals)}%`;
-    case 'decimal':
-      return num.toFixed(decimals);
-    default:
-      return String(value);
-  }
-}
+```text
+GET /bff/management/operations-read-model/{persona_id}?period=latest
 ```
 
-### 3.3 Visual State Tokens
-Target UI pages must map the `data_confidence` enum to consistent CSS classes and labels:
+The `200` response is an `OperationsReadModelEnvelope`:
 
-| Confidence Level | Badge Style | Label | Action Permission |
-|---|---|---|---|
-| `formal` | Green Solid | `Formal Attribution` | Full operator actions allowed |
-| `partial` | Yellow Outline | `Partial Evidence` | Review recommended before actions |
-| `fallback` | Orange Border | `Runtime Fallback` | Operational actions locked; Triage first |
-| `degraded` | Red Outline | `Degraded Telemetry` | Safety-critical actions block; Redirect to CLI |
-| `unavailable` | Grey Solid | `Data Unavailable` | Disable actions; Display diagnostic info |
+- `data.identity`: persona, stage, runtime, paper ledger, capital pool,
+  sleeve, strategy, artifact, broker, period, and `as_of` context;
+- `data.data_confidence`: `formal`, `partial`, `fallback`, `degraded`, or
+  `unavailable`;
+- `data.performance`: finite numbers or `null`, never `nan`/`inf`;
+- `data.sources[]`: source name, status, row count, freshness/error/coverage;
+- `data.diagnostics[]`: explicit missing joins and degraded source reasons;
+- `meta`: BFF read-surface metadata.
 
----
-
-## 4. Operator Journey & Navigation Wiring
-
-### 4.1 Preserving Context in Drilldowns
-When navigating from the **Persona Fleet** list to **Performance Attribution**, the link must carry context parameters to avoid default selections resetting state.
-
-- **Source Route**: `/management/persona-fleet`
-- **Target Route**: `/management/performance-attribution`
-- **Query Params**:
-  - `dimension`: MUST equal `persona`
-  - `personaId`: Current row's `persona_id` (e.g. `persona-20260528-04688755`)
-  - `runtimeId`: First runtime in row's `runtime_ids` (e.g. `runtime-crypto-paper`)
-  - `period`: Active duration filter (e.g. `latest`, `30d`)
-  - `source`: Rows confidence level (`fallback` or `formal`)
-
-### 4.2 Diagnostic Overlay for Fallbacks
-If the target `Performance Attribution` page loads with `data_confidence === "fallback"`, the page should:
-1. Render a **Data Confidence Alert Banner** at the top of the details panel.
-2. Display the diagnostic codes (e.g. `MISSING_HOLDINGS_MATCH`) inside a collapsible diagnostic drawer.
-3. Replace empty holding tables with a clear message: `"Holdings database has no record matching selected persona 'persona-20260528-04688755'. Rendering fallback metrics from runtime summary."`
+Unknown personas return a typed `404` with `RESOURCE_NOT_FOUND`; the UI should
+render a stale-link/not-found state instead of fabricating an empty row.
 
 ---
 
-## 5. Recommended E2E Test Scenarios
+## 3. Focus Persona Gap
 
-Verify the frontend adapter rules in `execute-plans:e2e`:
+Focus persona: `persona-20260528-04688755` (`Crypto-Alt-Hunter`).
 
-### 5.1 Diagnostic Redirection Test
-1. Mock `GET /bff/management/operations-read-model/persona-20260528-04688755` to return a `fallback` payload with diagnostic codes.
-2. Navigate to `/management/persona-fleet` and click the performance attribution link on the target persona row.
-3. Assert that the URL contains the preserved query parameters.
-4. Assert that the target page renders a `Runtime Fallback` alert and displays `$48,000` rather than `NaN` or an empty view.
-5. Assert that no table row or metric displays `nan` or `undefined`.
+Observed contract behavior from the BFF tests:
+
+| Field | Expected value |
+|---|---|
+| `data.identity.persona_id` | `persona-20260528-04688755` |
+| `data.identity.persona_label` | `Crypto-Alt-Hunter` |
+| `data.identity.runtime_ids` | non-empty; runtime identity survives without formal attribution |
+| `data.identity.paper_ledger_ids` | `paper-ledger-persona-20260528-04688755` |
+| `data.data_confidence` | `fallback` |
+| `performance_attribution.source_status` | `unavailable` |
+| `portfolio_holdings.source_status` | `unavailable` |
+| `persona_fleet_summary.source_status` | `ok` |
+| `data.performance.pnl` | `48000.0` |
+| `data.performance.sharpe` | `1.76` |
+| `data.performance.drawdown_pct` | `0.064` |
+
+Required diagnostic codes:
+
+- `MISSING_ATTRIBUTION_MATCH`
+- `MISSING_HOLDINGS_MATCH`
+- `FORMAL_ATTRIBUTION_MISSING_USING_FLEET_FALLBACK`
+
+MGMT-OPS-002 should remove page-local ambiguity here: fallback metrics are
+valid runtime summary evidence, but they are not formal attribution or holdings
+evidence.
 
 ---
 
-## 6. Verification & Self-Audit Checklist
+## 4. BFF Query Gap Matrix
 
-| Check | Status | Verification Command / Target |
+| Need | Current state | MGMT-OPS-002 handoff |
 |---|---|---|
-| Support artifact only | ✅ PASS | Only `support/sidecars/MGMT-OPS-002/MGMT-OPS-002-SIDECAR-BFF-HANDOFF.md` created |
-| No canonical changes | ✅ PASS | Referenced `OperationsReadModelEnvelope` and L1 architecture without edits |
-| Matches actual implementation | ✅ PASS | Validated against `main.py` route and `operations_read_model.py` schema |
-| Ready for review | ✅ PASS | Handed over to Codex for Downstream execution |
+| Single-persona confidence | BFF has one route by `persona_id`. | Add a frontend path/helper and consume the BFF verdict at the adapter boundary. |
+| Table-wide confidence | BFF route is per persona. | Avoid frontend N+1 calls for fleet/ranking tables; if table-wide badges are required, request a bounded list/batch BFF follow-up. |
+| Focus persona fallback | BFF reports `fallback` plus diagnostics and finite metrics. | Performance Attribution must display fallback as fallback, not formal attribution, empty success, or zero-filled holdings. |
+| Source coverage | BFF returns `sources[]`. | Render source status and coverage consistently across Persona Fleet, Portfolio Book, Attribution, League, Ranking, and Human Review. |
+| Diagnostics | BFF returns `diagnostics[]`. | Surface diagnostics near the affected metrics before high-impact controls. |
+| Missing/non-finite metrics | BFF normalizes non-finite values to `null`; frontend still has local `NaN` sentinel paths. | Shared formatters should render explicit empty/diagnostic states, never `NaN`, `undefined`, or fake `0`. |
+| Drilldown context | Current fleet link keeps `dimension=persona` and `persona` only. | Carry persona, runtime, period, and source-confidence hint into attribution routes. |
+| Governed actions | Operations read model is read-only. | Do not infer promote/pause/rebalance permission from confidence alone; action availability still comes from governed action/read-review surfaces. |
 
 ---
 
-*Generated by Antigravity as a sidecar `bff_handoff_packet` helper for MGMT-OPS-002. This file is a support artifact and does not modify canonical truth.*
+## 5. Frontend Adapter Rules
+
+Add the route helper in `execute-plans/src/lib/bff-v1/paths.ts`:
+
+```ts
+mgmtOperationsReadModel: (personaId: string, period?: string) =>
+  `${BASE}/management/operations-read-model/${enc(personaId)}${period ? `?period=${enc(period)}` : ""}`,
+```
+
+Add a typed adapter/read helper near existing management BFF adapters. It should
+accept backend snake_case and expose frontend-friendly aliases without dropping
+the raw fields:
+
+| BFF field | Frontend alias | Rule |
+|---|---|---|
+| `identity.persona_id` | `identity.personaId` | Required row identity. |
+| `identity.persona_label` | `identity.personaLabel` | Nullable display label. |
+| `identity.runtime_ids` | `identity.runtimeIds` | Preserve array order and all ids. |
+| `identity.paper_ledger_ids` | `identity.paperLedgerIds` | Do not infer live capital from paper ledger ids. |
+| `identity.capital_pool_ids` | `identity.capitalPoolIds` | Nullable/empty means missing evidence, not zero exposure. |
+| `identity.strategy_ids` | `identity.strategyIds` | Preserve raw ids for drilldown. |
+| `identity.broker_ids` | `identity.brokerIds` | Evidence only; no broker mutation path. |
+| `identity.period` | `identity.period` | Echo selected period. |
+| `identity.as_of` | `identity.asOf` | Use as freshness timestamp. |
+| `data_confidence` | `dataConfidence` | Primary visual authority; never recompute in browser. |
+| `performance.drawdown_pct` | `performance.drawdownPct` | Fraction value; format as percent in UI. |
+| `performance.performance_delta` | `performance.performanceDelta` | Nullable; no fallback zero. |
+| `performance.source_contribution` | `performance.sourceContribution` | Nullable; no fallback zero. |
+| `sources[].source_name` | `sources[].sourceName` | Stable badge/detail key. |
+| `sources[].source_status` | `sources[].sourceStatus` | Map from backend `SourceState`. |
+| `sources[].source_row_count` | `sources[].sourceRowCount` | Show count semantics explicitly. |
+| `diagnostics[].code` | `diagnostics[].code` | Render as operator-visible evidence. |
+
+Metric formatting rules:
+
+- Accept numbers only when `Number.isFinite(value)` is true.
+- Render `null`, `undefined`, `NaN`, `Infinity`, and absent fields as a
+  placeholder plus diagnostic context when available.
+- Format backend percentage fractions by multiplying by 100 only at display
+  time.
+- Treat missing `data_confidence` as unknown/degraded, not formal.
+
+---
+
+## 6. UI State Mapping
+
+| `data_confidence` | Label | UI treatment | Action treatment |
+|---|---|---|---|
+| `formal` | Formal attribution | Positive badge; normal evidence panel. | Read-only confidence does not itself grant actions. |
+| `partial` | Partial evidence | Warning badge; show missing optional evidence. | Require review context before high-impact actions. |
+| `fallback` | Runtime fallback | Prominent warning/banner; show fallback source and diagnostics. | Lock or route high-impact actions to Human Review/data-quality triage. |
+| `degraded` | Degraded telemetry | Error/warning banner; show degraded source. | Block safety-critical actions unless governed review explicitly permits. |
+| `unavailable` | Data unavailable | Muted/error empty state with diagnostics. | Disable dependent actions; offer retry/review path. |
+
+The UI should not hide source/diagnostic evidence inside a collapsed detail by
+default when confidence is `fallback`, `degraded`, or `unavailable`.
+
+---
+
+## 7. Operator Journey Handoff
+
+### Persona Fleet To Performance Attribution
+
+Current fallback link shape:
+
+```text
+/management/performance-attribution?dimension=persona&persona={personaId}
+```
+
+Recommended MGMT-OPS-002 link shape:
+
+```text
+/management/performance-attribution?dimension=persona&persona={personaId}&runtime={runtimeId}&period={period}&source={dataConfidence}
+```
+
+Keep accepting the existing `persona` query parameter for compatibility. If the
+frontend introduces `personaId`, map it to the same internal focus value and do
+not break current route tests.
+
+### Focus Persona Attribution
+
+1. Operator selects `persona-20260528-04688755` from Persona Fleet.
+2. Attribution route keeps persona, runtime, period, and confidence hint.
+3. Page reads `/bff/management/operations-read-model/{persona_id}`.
+4. Page renders `Runtime fallback` with the three required diagnostics.
+5. Performance metrics render `$48,000`, `1.76`, and `6.40%` as fallback
+   evidence.
+6. Holdings section renders a missing-match diagnostic instead of `NaN`,
+   `undefined`, blank success, or a zero-value holding row.
+
+### Human Review
+
+When confidence is not `formal`, Human Review packets should include:
+
+- persona id, runtime ids, ledger/pool ids, period, and `as_of`;
+- `data_confidence`;
+- `sources[]` summarized by source name/status/count;
+- `diagnostics[]` codes/messages;
+- the proposed governed action and its separate authorization source.
+
+---
+
+## 8. Recommended Frontend Test Coverage
+
+Add focused tests in `execute-plans` after the adapter is implemented:
+
+| Test | Assertion |
+|---|---|
+| Path helper | `paths.mgmtOperationsReadModel("persona-x", "latest")` returns `/bff/management/operations-read-model/persona-x?period=latest`. |
+| Adapter normalization | Snake_case identity/source fields produce camelCase aliases and preserve raw diagnostics. |
+| Non-finite metrics | `null`, `NaN`, `Infinity`, and missing values render placeholders, not text `NaN`/`undefined` or fake zero. |
+| Focus fallback | Mock focus persona BFF response with `fallback`; Attribution renders `Runtime fallback`, diagnostics, `$48,000`, `1.76`, and `6.40%`. |
+| Drilldown context | Persona Fleet performance link carries persona, runtime, period, and source/confidence context while preserving current `persona` compatibility. |
+| Action gating | Fallback/degraded/unavailable confidence does not expose high-impact action CTAs unless a governed review packet/action surface provides permission. |
+
+---
+
+## 9. Parent / Reviewer Checklist
+
+For parent owner absorption:
+
+- Use the MGMT-OPS-001 read model as the source of confidence truth instead of
+  page-local heuristics.
+- Keep the sidecar boundary: if table-wide confidence is needed, create a
+  bounded BFF follow-up rather than front-end N+1 calls.
+- Preserve existing frontend route compatibility while adding richer context.
+- Do not route any new write/governance action through this read model.
+- Carry diagnostics into Human Review and data-quality triage surfaces.
+
+For sidecar reviewer `Codex`:
+
+- Reviewed and approved: this packet edits support material only.
+- Reviewed and approved: the BFF route, focus persona values, and diagnostic codes match the
+  checked-in BFF tests.
+- Reviewed and approved: frontend gap claims match the current `execute-plans` files listed in
+  Sources Read.
+- Reviewed and approved: the packet does not claim canonical, runtime, registry, or governance
+  implementation changes.
+
+---
+
+## 10. Verification Notes
+
+Source inspection performed:
+
+- `git status -sb`, `git branch --show-current`, and `git remote -v`.
+- `AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-OPS-002-SIDECAR-BFF-HANDOFF`.
+- `services/control-plane/bff/operations_read_model.py`.
+- `services/control-plane/bff/main.py` route implementation.
+- `services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py`.
+- `services/control-plane/bff/BFF_API_CONTRACT.md`.
+- `/home/lupin/code/execute-plans/src/lib/bff-v1/paths.ts`.
+- `/home/lupin/code/execute-plans/src/management/pages/oversight/PerformanceAttribution.tsx`.
+- `/home/lupin/code/execute-plans/src/management/pages/oversight/personaFleetLinks.ts`.
+- `/home/lupin/code/execute-plans/src/lib/bff-v1/managementConsoleReads.ts`.
+
+Focused validation performed:
+
+- `python3 -m pytest services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py -q`
+  -> `11 passed, 8 warnings`.
+- `gh pr view 3067 --json number,state,mergeStateStatus,statusCheckRollup,autoMergeRequest`
+  -> PR #3067 was open with successful checks and auto-merge enabled, but
+  `mergeStateStatus` was `BEHIND`; closeout requires refreshing and merging
+  the task branch before `AI_NAME=Codex2 ./scripts/ai-status.sh done`.
+
+No runtime, registry, governance, BFF implementation, frontend implementation,
+L1 canonical document, or live environment changes were made by this sidecar.
