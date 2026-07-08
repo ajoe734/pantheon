@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ManagementAiOpsPanel } from "@/management/components/ai-ops";
 import { ManagementDecisionWorkbenchPanel } from "@/management/components/decision-workbench";
@@ -14,8 +14,26 @@ import { describeManagementRoute } from "@/management/shell/routeRegistry";
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element #root not found");
 
+function currentManagementLocation(): string {
+  return `${window.location.pathname}${window.location.search}`;
+}
+
 function ManagementApp() {
-  const route = describeManagementRoute(window.location.pathname);
+  const [locationKey, setLocationKey] = useState(currentManagementLocation);
+  const route = describeManagementRoute(locationKey);
+
+  useEffect(() => {
+    const handlePopState = () => setLocationKey(currentManagementLocation());
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (!route.redirectTo || currentManagementLocation() === route.redirectTo) return;
+    window.history.replaceState({}, "", route.redirectTo);
+    setLocationKey(route.redirectTo);
+  }, [route.redirectTo]);
+
   const showEvidence = route.panel === "shell" || route.panel === "evidence";
   const showLoopTruth = route.panel === "shell" || route.panel === "loop-truth";
   const showOoda = route.panel === "ooda";
