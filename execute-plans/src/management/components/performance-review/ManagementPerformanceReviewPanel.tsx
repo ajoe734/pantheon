@@ -12,7 +12,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
-import { managementClient } from "@/lib/bff/client";
+import { managementClient, type PersonaFleetAggregate, type PersonaFleetItem } from "@/lib/bff/client";
 import * as managementApi from "@/lib/bff-v1/management";
 import type {
   ManagementCostAttributionResponse,
@@ -33,7 +33,31 @@ import type {
   ManagementTradingPulseRuntimeRow,
 } from "@/lib/bff-v1/management";
 import { ManagementDenseTable } from "@/management/components/dense-table";
-import { cn } from "@/lib/utils";
+import {
+  DATA_CONFIDENCE_EMPTY_COPY,
+  DATA_CONFIDENCE_LABELS,
+  DATA_CONFIDENCE_TONE,
+  aggregateDataConfidence,
+  asManagementRecord,
+  buildPerformanceAttributionHref,
+  dataConfidenceFromSurface,
+  displayBps as safeDisplayBps,
+  displayInteger as safeDisplayInteger,
+  displayLabel as safeDisplayLabel,
+  displayMoney as safeDisplayMoney,
+  displayNumber as safeDisplayNumber,
+  displayPercent as safeDisplayPercent,
+  displayText as safeDisplayText,
+  displayTime as safeDisplayTime,
+  displayTitle as safeDisplayTitle,
+  finiteNumber,
+  firstSurface,
+  firstSurfaceSource as firstSurfaceSourceLabel,
+  managementField,
+  surfaceIssueMessage,
+  type ManagementDataConfidenceState,
+  cn,
+} from "@/lib/utils";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -55,6 +79,7 @@ interface ReviewIssue {
 }
 
 interface ManagementPerformanceReviewSnapshot {
+  personaFleet?: PersonaFleetAggregate;
   personaLeague?: ManagementPersonaLeagueResponse;
   personaMovers?: ManagementPersonaLeagueMoversResponse;
   quarterlyRanking?: ManagementQuarterlyRankingResponse;
@@ -77,99 +102,51 @@ interface SnapshotTask<T> {
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+  return asManagementRecord(value);
 }
 
 function asNumber(value: unknown, fallback = 0): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return finiteNumber(value) ?? fallback;
 }
 
 function nullableNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return finiteNumber(value);
 }
 
 function textFrom(value: unknown, fallback = "-"): string {
-  const text = String(value ?? "").trim();
-  return text || fallback;
+  return safeDisplayText(value, fallback);
 }
 
 function labelFrom(value: unknown, fallback = "unknown"): string {
-  return textFrom(value, fallback).replace(/_/g, " ");
+  return safeDisplayLabel(value, fallback);
 }
 
 function titleFrom(value: unknown, fallback = "Unknown"): string {
-  return labelFrom(value, fallback)
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function numberFrom(record: Record<string, unknown>, keys: string[], fallback = 0): number {
-  for (const key of keys) {
-    const parsed = nullableNumber(record[key]);
-    if (parsed !== null) return parsed;
-  }
-  return fallback;
-}
-
-function nullableFrom(record: Record<string, unknown>, keys: string[]): number | null {
-  for (const key of keys) {
-    const parsed = nullableNumber(record[key]);
-    if (parsed !== null) return parsed;
-  }
-  return null;
+  return safeDisplayTitle(value, fallback);
 }
 
 function formatInteger(value: unknown): string {
-  const parsed = nullableNumber(value);
-  if (parsed === null) return "-";
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(parsed);
+  return safeDisplayInteger(value);
 }
 
 function formatNumber(value: unknown, maximumFractionDigits = 2): string {
-  const parsed = nullableNumber(value);
-  if (parsed === null) return "-";
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits,
-  }).format(parsed);
+  return safeDisplayNumber(value, maximumFractionDigits);
 }
 
 function formatMoney(value: unknown): string {
-  const parsed = nullableNumber(value);
-  if (parsed === null) return "-";
-  const sign = parsed < 0 ? "-" : "";
-  const absolute = Math.abs(parsed);
-  return `${sign}$${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(absolute)}`;
+  return safeDisplayMoney(value);
 }
 
 function formatPercent(value: unknown): string {
-  const parsed = nullableNumber(value);
-  if (parsed === null) return "-";
-  const normalized = Math.abs(parsed) <= 1 ? parsed * 100 : parsed;
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(normalized)}%`;
+  return safeDisplayPercent(value);
 }
 
 function formatBps(value: unknown): string {
-  const parsed = nullableNumber(value);
-  if (parsed === null) return "-";
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(parsed)} bps`;
+  return safeDisplayBps(value);
 }
 
 function formatTime(value: unknown): string {
-  const text = String(value ?? "").trim();
-  if (!text) return "-";
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return text;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-  }).format(parsed);
+  return safeDisplayTime(value);
 }
 
 function statusTone(status: unknown): string {
@@ -186,6 +163,26 @@ function statusTone(status: unknown): string {
   return "bg-muted text-muted-foreground border-border";
 }
 
+function DataConfidenceBadge({
+  state,
+  source,
+}: {
+  state: ManagementDataConfidenceState;
+  source?: unknown;
+}) {
+  const sourceLabel = labelFrom(source, "");
+  return (
+    <Badge
+      variant="outline"
+      className={cn("whitespace-nowrap", DATA_CONFIDENCE_TONE[state])}
+      data-confidence-state={state}
+      title={sourceLabel ? `${DATA_CONFIDENCE_LABELS[state]}: ${sourceLabel}` : DATA_CONFIDENCE_LABELS[state]}
+    >
+      {DATA_CONFIDENCE_LABELS[state]}
+    </Badge>
+  );
+}
+
 function safeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -194,21 +191,22 @@ function rowId(prefix: string, value: unknown, index: number): string {
   return `${prefix}-${textFrom(value, String(index)).replace(/[^A-Za-z0-9_-]+/g, "-")}`;
 }
 
-function surfaceIssues(source: string, response: { meta?: { surfaces?: Record<string, ManagementSurfaceRef | undefined> } } | undefined): ReviewIssue[] {
+function surfaceIssues(source: string, response: { meta?: { surfaces?: Record<string, unknown> } } | undefined): ReviewIssue[] {
   const surfaces = asRecord(response?.meta?.surfaces) as Record<string, ManagementSurfaceRef | undefined>;
   return Object.entries(surfaces)
     .filter(([, surface]) => {
-      const status = String(surface?.status ?? "ok").toLowerCase();
+      const status = textFrom(surface?.status, "ok").toLowerCase();
       return status !== "ok" && status !== "ready" && status !== "healthy";
     })
     .map(([key, surface]) => ({
       source: `${source} / ${labelFrom(key)}`,
-      message: textFrom(surface?.message ?? surface?.note ?? surface?.source ?? surface?.status, "degraded"),
+      message: surfaceIssueMessage(surface),
     }));
 }
 
 function allSurfaceIssues(snapshot: ManagementPerformanceReviewSnapshot): ReviewIssue[] {
   return [
+    ...surfaceIssues("Persona Fleet", snapshot.personaFleet),
     ...surfaceIssues("Persona league", snapshot.personaLeague),
     ...surfaceIssues("Persona movers", snapshot.personaMovers),
     ...surfaceIssues("Quarterly ranking", snapshot.quarterlyRanking),
@@ -222,17 +220,17 @@ function allSurfaceIssues(snapshot: ManagementPerformanceReviewSnapshot): Review
   ];
 }
 
-function firstSurfaceSource(snapshot: ManagementPerformanceReviewSnapshot): string {
+function firstReviewSurfaceSource(snapshot: ManagementPerformanceReviewSnapshot): string {
   const responses = [
+    snapshot.personaFleet,
     snapshot.quarterlyRanking,
     snapshot.personaLeague,
     snapshot.portfolioPositions,
     snapshot.tradingPulse,
   ];
   for (const response of responses) {
-    const surfaces = asRecord(response?.meta?.surfaces) as Record<string, ManagementSurfaceRef | undefined>;
-    const surface = Object.values(surfaces).find(Boolean);
-    if (surface?.source) return labelFrom(surface.source);
+    const source = firstSurfaceSourceLabel(response?.meta?.surfaces, "");
+    if (source) return source;
   }
   return "BFF";
 }
@@ -257,6 +255,10 @@ function personaAttributionItems(snapshot: ManagementPerformanceReviewSnapshot):
 
 function poolAttributionItems(snapshot: ManagementPerformanceReviewSnapshot): ManagementPerformanceAttributionRow[] {
   return (snapshot.attributionByPool?.data.items ?? []).slice(0, PERFORMANCE_REVIEW_LIMITS.attribution);
+}
+
+function personaFleetItems(snapshot: ManagementPerformanceReviewSnapshot): PersonaFleetItem[] {
+  return (snapshot.personaFleet?.data.items ?? []).slice(0, PERFORMANCE_REVIEW_LIMITS.personaLeague);
 }
 
 function costItems(snapshot: ManagementPerformanceReviewSnapshot): ManagementCostAttributionRow[] {
@@ -285,6 +287,7 @@ function tradingRuntimeRows(snapshot: ManagementPerformanceReviewSnapshot): Mana
 
 function hasReviewData(snapshot: ManagementPerformanceReviewSnapshot): boolean {
   return [
+    snapshot.personaFleet?.data.items,
     snapshot.personaLeague?.data.items,
     snapshot.personaMovers?.data.items,
     snapshot.quarterlyRanking?.data.items,
@@ -299,8 +302,59 @@ function hasReviewData(snapshot: ManagementPerformanceReviewSnapshot): boolean {
   ].some((items) => Array.isArray(items) && items.length > 0);
 }
 
-function summaryCount(value: unknown, fallback = 0): number {
-  return asNumber(value, fallback);
+function snapshotDataConfidence(snapshot: ManagementPerformanceReviewSnapshot | null, state: LoadState): ManagementDataConfidenceState {
+  if (state === "error" || !snapshot) return "unavailable";
+  const responses = [
+    snapshot.personaFleet,
+    snapshot.personaLeague,
+    snapshot.personaMovers,
+    snapshot.quarterlyRanking,
+    snapshot.attributionByPersona,
+    snapshot.attributionByPool,
+    snapshot.costAttribution,
+    snapshot.portfolioExposure,
+    snapshot.portfolioPositions,
+    snapshot.tradingPulse,
+    snapshot.tradingRankings,
+  ].filter(Boolean);
+  if (responses.length === 0) return "unavailable";
+  const aggregate = aggregateDataConfidence(
+    responses.map((response) => dataConfidenceFromSurface(firstSurface(response?.meta?.surfaces))),
+  );
+  return snapshot.issues.length > 0 && aggregate === "formal" ? "partial" : aggregate;
+}
+
+function normalizeConfidenceState(value: unknown): ManagementDataConfidenceState | undefined {
+  const normalized = textFrom(value, "").toLowerCase();
+  return ["formal", "partial", "fallback", "degraded", "unavailable"].includes(normalized)
+    ? normalized as ManagementDataConfidenceState
+    : undefined;
+}
+
+export interface ManagementPerformanceReviewFocus {
+  personaId?: string;
+  runtimeId?: string;
+  period: string;
+  sourceHint?: string;
+  sourceConfidence?: ManagementDataConfidenceState;
+  diagnostic: boolean;
+}
+
+function performanceFocusFromLocation(): ManagementPerformanceReviewFocus {
+  if (typeof window === "undefined") {
+    return { period: REVIEW_PERIOD, diagnostic: false };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const sourceConfidence = normalizeConfidenceState(params.get("source_confidence"));
+  const mode = textFrom(params.get("mode"), "");
+  return {
+    personaId: textFrom(params.get("persona_id"), "") || undefined,
+    runtimeId: textFrom(params.get("runtime_id"), "") || undefined,
+    period: textFrom(params.get("period"), REVIEW_PERIOD),
+    sourceHint: textFrom(params.get("source_hint"), "") || undefined,
+    sourceConfidence,
+    diagnostic: mode === "fallback-diagnostic" || sourceConfidence === "fallback",
+  };
 }
 
 async function settleTask<T>(
@@ -317,8 +371,24 @@ async function settleTask<T>(
   }
 }
 
-export async function loadManagementPerformanceReviewSnapshot(): Promise<ManagementPerformanceReviewSnapshot> {
+export async function loadManagementPerformanceReviewSnapshot(
+  focus: ManagementPerformanceReviewFocus = { period: REVIEW_PERIOD, diagnostic: false },
+): Promise<ManagementPerformanceReviewSnapshot> {
+  const period = textFrom(focus.period, REVIEW_PERIOD);
+  const attributionQuery = {
+    period,
+    page_size: PERFORMANCE_REVIEW_LIMITS.attribution,
+    persona_id: focus.personaId,
+    runtime_id: focus.runtimeId,
+    source_hint: focus.sourceHint,
+    source_confidence: focus.sourceConfidence,
+  };
   const tasks: SnapshotTask<unknown>[] = [
+    {
+      key: "personaFleet",
+      source: "Persona Fleet",
+      run: () => managementClient.personaFleet.list({ page_size: PERFORMANCE_REVIEW_LIMITS.personaLeague }),
+    },
     {
       key: "personaLeague",
       source: "Persona league",
@@ -337,16 +407,13 @@ export async function loadManagementPerformanceReviewSnapshot(): Promise<Managem
     {
       key: "attributionByPersona",
       source: "Persona attribution",
-      run: () => managementApi.fetchManagementPerformanceAttributionByPersona({
-        period: REVIEW_PERIOD,
-        page_size: PERFORMANCE_REVIEW_LIMITS.attribution,
-      }),
+      run: () => managementApi.fetchManagementPerformanceAttributionByPersona(attributionQuery),
     },
     {
       key: "attributionByPool",
       source: "Pool attribution",
       run: () => managementApi.fetchManagementPerformanceAttributionByPool({
-        period: REVIEW_PERIOD,
+        period,
         page_size: PERFORMANCE_REVIEW_LIMITS.attribution,
       }),
     },
@@ -354,7 +421,7 @@ export async function loadManagementPerformanceReviewSnapshot(): Promise<Managem
       key: "costAttribution",
       source: "Cost attribution",
       run: () => managementApi.fetchManagementCostAttribution({
-        period: REVIEW_PERIOD,
+        period,
         page_size: PERFORMANCE_REVIEW_LIMITS.costAttribution,
       }),
     },
@@ -397,14 +464,16 @@ export function ManagementPerformanceReviewPanel({ className }: { className?: st
   const [state, setState] = useState<LoadState>("loading");
   const [snapshot, setSnapshot] = useState<ManagementPerformanceReviewSnapshot | null>(null);
   const [error, setError] = useState<string | undefined>();
+  const focus = useMemo(() => performanceFocusFromLocation(), []);
 
   const load = useCallback(async () => {
     setState("loading");
     setError(undefined);
     try {
-      const nextSnapshot = await loadManagementPerformanceReviewSnapshot();
+      const nextSnapshot = await loadManagementPerformanceReviewSnapshot(focus);
       setSnapshot(nextSnapshot);
-      const everySourceFailed = nextSnapshot.issues.length >= 10
+      const everySourceFailed = nextSnapshot.issues.length >= 11
+        && !nextSnapshot.personaFleet
         && !nextSnapshot.personaLeague
         && !nextSnapshot.personaMovers
         && !nextSnapshot.quarterlyRanking
@@ -426,7 +495,7 @@ export function ManagementPerformanceReviewPanel({ className }: { className?: st
       setError(safeErrorMessage(err));
       setState("error");
     }
-  }, []);
+  }, [focus]);
 
   useEffect(() => {
     void load();
@@ -434,8 +503,9 @@ export function ManagementPerformanceReviewPanel({ className }: { className?: st
 
   const issueCount = snapshot?.issues.length ?? 0;
   const panelStatus = state === "error" ? "error" : issueCount > 0 ? "degraded" : "ok";
+  const confidenceState = snapshotDataConfidence(snapshot, state);
   const quarter = textFrom(snapshot?.quarterlyRanking?.data.quarter_window?.label ?? snapshot?.quarterlyRanking?.data.summary.quarter, "Current quarter");
-  const source = snapshot ? firstSurfaceSource(snapshot) : "BFF";
+  const source = snapshot ? firstReviewSurfaceSource(snapshot) : "BFF";
   const snapshotAt = snapshot ? responseSnapshotAt(snapshot) : "-";
   const hasData = snapshot ? hasReviewData(snapshot) : false;
 
@@ -449,7 +519,9 @@ export function ManagementPerformanceReviewPanel({ className }: { className?: st
             <Badge variant="outline" className={cn("capitalize", statusTone(panelStatus))}>
               {panelStatus}
             </Badge>
+            <DataConfidenceBadge state={confidenceState} source={source} />
             {quarter ? <Badge variant="outline">{quarter}</Badge> : null}
+            {focus.personaId ? <Badge variant="outline">Focus {focus.personaId}</Badge> : null}
           </div>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>Source: {source}</span>
@@ -487,7 +559,7 @@ export function ManagementPerformanceReviewPanel({ className }: { className?: st
         <EmptyState
           icon={<BarChart3 className="h-8 w-8" />}
           title="No performance review data"
-          description="The review sources returned successfully, but no ranking, attribution, portfolio, cost, or trading rows were available."
+          description={DATA_CONFIDENCE_EMPTY_COPY[confidenceState]}
           cta={{ label: "Refresh", onClick: load }}
         />
       ) : null}
@@ -496,6 +568,7 @@ export function ManagementPerformanceReviewPanel({ className }: { className?: st
         <>
           {issueCount > 0 ? <DegradedBanner issues={snapshot.issues} /> : null}
           <ReviewSummary snapshot={snapshot} />
+          <PersonaFleetSection snapshot={snapshot} focus={focus} />
           <QuarterlyRankingSection snapshot={snapshot} />
           <AttributionSection snapshot={snapshot} />
           <PortfolioBookSection snapshot={snapshot} />
@@ -531,12 +604,12 @@ function DegradedBanner({ issues }: { issues: ReviewIssue[] }) {
 function ReviewSummary({ snapshot }: { snapshot: ManagementPerformanceReviewSnapshot }) {
   const quarterlySummary = snapshot.quarterlyRanking?.data.summary;
   const personaSummary = snapshot.personaLeague?.data.summary;
+  const fleetSummary = snapshot.personaFleet?.data.summary;
   const exposureSummary = snapshot.portfolioExposure?.summary ?? snapshot.portfolioExposure?.data.summary;
   const positionSummary = snapshot.portfolioPositions?.summary ?? snapshot.portfolioPositions?.data.summary;
   const personaAttributionSummary = snapshot.attributionByPersona?.data.summary;
   const costSummary = snapshot.costAttribution?.data.summary;
   const tradingSummary = snapshot.tradingPulse?.data.summary;
-  const moverSummary = snapshot.personaMovers?.data.summary;
 
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" data-testid="performance-review-summary">
@@ -566,9 +639,9 @@ function ReviewSummary({ snapshot }: { snapshot: ManagementPerformanceReviewSnap
       />
       <SummaryMetric
         icon={<TrendingUp className="h-4 w-4" />}
-        label="Persona League"
-        primary={`${formatInteger(personaSummary?.persona_count)} personas`}
-        secondary={`${formatInteger(moverSummary?.up_count)} up / ${formatInteger(moverSummary?.down_count)} down`}
+        label="Persona Fleet"
+        primary={`${formatInteger(fleetSummary?.total_personas ?? personaSummary?.persona_count)} personas`}
+        secondary={`${formatInteger(fleetSummary?.runtime_bound_personas)} runtime bound / ${formatInteger(fleetSummary?.critical_personas)} critical`}
       />
       <SummaryMetric
         icon={<BarChart3 className="h-4 w-4" />}
@@ -612,6 +685,107 @@ function SummaryMetric({
       <div className="mt-2 text-lg font-semibold">{primary}</div>
       <div className="mt-1 text-xs text-muted-foreground">{secondary}</div>
     </div>
+  );
+}
+
+function personaRuntimeId(row: PersonaFleetItem): string {
+  return textFrom(
+    row.runtime_id
+      ?? managementField(row.performance_summary, ["runtime_id", "runtimeId"])
+      ?? managementField(row.binding_summary, ["runtime_id", "runtimeId"]),
+    "",
+  );
+}
+
+function personaFleetLinkConfidence(snapshot: ManagementPerformanceReviewSnapshot): ManagementDataConfidenceState {
+  const formalAttributionRows = personaAttributionItems(snapshot).length > 0;
+  if (!formalAttributionRows) return "fallback";
+  return dataConfidenceFromSurface(firstSurface(snapshot.attributionByPersona?.meta?.surfaces));
+}
+
+function PersonaFleetSection({
+  snapshot,
+  focus,
+}: {
+  snapshot: ManagementPerformanceReviewSnapshot;
+  focus: ManagementPerformanceReviewFocus;
+}) {
+  const rows = personaFleetItems(snapshot);
+  if (rows.length === 0) return null;
+
+  const fleetSurface = firstSurface(snapshot.personaFleet?.meta?.surfaces);
+  const linkConfidence = personaFleetLinkConfidence(snapshot);
+  const diagnostic = linkConfidence !== "formal";
+  const sourceHint = fleetSurface?.source ?? focus.sourceHint ?? "persona_fleet";
+
+  return (
+    <PanelSection
+      title="Persona Fleet"
+      icon={<TrendingUp className="h-4 w-4" />}
+      summary={diagnostic ? DATA_CONFIDENCE_EMPTY_COPY.fallback : "Performance links open formal attribution context."}
+    >
+      <ManagementDenseTable minWidth={920} testId="performance-review-table-persona-fleet">
+        <table className="w-full min-w-[920px] text-left text-xs">
+          <thead className="border-b border-border text-muted-foreground">
+            <tr>
+              <th className="px-2 py-2 font-medium">Persona</th>
+              <th className="px-2 py-2 font-medium">Health</th>
+              <th className="px-2 py-2 font-medium">Runtime</th>
+              <th className="px-2 py-2 font-medium">Performance</th>
+              <th className="px-2 py-2 font-medium">Attribution Link</th>
+              <th className="px-2 py-2 font-medium">Confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => {
+              const personaId = textFrom(row.persona_id ?? row.id, "");
+              const runtimeId = personaRuntimeId(row);
+              const performance = asRecord(row.performance_summary);
+              const href = buildPerformanceAttributionHref({
+                personaId,
+                runtimeId,
+                period: focus.period,
+                sourceHint,
+                sourceConfidence: linkConfidence,
+                diagnostic,
+              });
+              return (
+                <tr key={row.id} className="border-b border-border/60" data-testid={rowId("persona-fleet-row", personaId || row.id, index)}>
+                  <td className="px-2 py-2">
+                    <div className="font-medium">{textFrom(row.name ?? personaId)}</div>
+                    <div className="text-muted-foreground">{textFrom(row.owner, "unassigned")} / {textFrom(personaId)}</div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <Badge variant="outline" className={statusTone(row.health ?? row.status)}>
+                      {labelFrom(row.health ?? row.status)}
+                    </Badge>
+                  </td>
+                  <td className="px-2 py-2 font-mono">{textFrom(runtimeId, "-")}</td>
+                  <td className="px-2 py-2">
+                    <div>{formatMoney(managementField(performance, ["total_pnl", "totalPnl", "pnl"]))}</div>
+                    <div className="text-muted-foreground">
+                      violations {formatInteger(managementField(performance, ["violation_count", "violationCount"]))}
+                    </div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <a
+                      href={href}
+                      className="font-medium text-primary hover:underline"
+                      data-testid={`persona-fleet-performance-link-${personaId || row.id}`}
+                    >
+                      Performance Attribution
+                    </a>
+                  </td>
+                  <td className="px-2 py-2">
+                    <DataConfidenceBadge state={linkConfidence} source={sourceHint} />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </ManagementDenseTable>
+    </PanelSection>
   );
 }
 
