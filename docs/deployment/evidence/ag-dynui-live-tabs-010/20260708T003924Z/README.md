@@ -6,6 +6,9 @@
 - PR: `https://github.com/ajoe734/execute-plans/pull/216`
 - Branch: `task/AG-DYNUI-LIVE-PERFORMANCE-010`
 - Head commit: `4b7fa00459b481e3f150e40b100c5210c2605cbf`
+- Merged at: `2026-07-08T00:49:56Z`
+- Merge commit: `91c039d051bf596d42d4468c8c4f5b9b8f82803d`
+- GitHub check: `integration-gate` passed at `2026-07-08T00:49:27Z`.
 
 ## Local Verification
 
@@ -30,8 +33,9 @@ The production build completed with existing non-blocking warnings:
 
 ## Hosted Proof
 
-Hosted proof is pending until execute-plans PR #216 merges and the dev frontend
-is redeployed from that merged commit. The expected post-deploy smoke is:
+Hosted proof is pending until the dev frontend is redeployed from execute-plans
+merge commit `91c039d051bf596d42d4468c8c4f5b9b8f82803d`. The expected
+post-deploy smoke is:
 
 ```bash
 PANTHEON_FE_BASE_URL=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io \

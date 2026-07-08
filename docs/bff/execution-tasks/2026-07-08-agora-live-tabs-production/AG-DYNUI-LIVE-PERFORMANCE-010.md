@@ -42,12 +42,15 @@ performance state from live BFF read contracts.
 
 - execute-plans PR: `https://github.com/ajoe734/execute-plans/pull/216`
 - Head commit: `4b7fa00459b481e3f150e40b100c5210c2605cbf`
-- Merge commit: pending while GitHub `integration-gate` runs.
+- Merged at: `2026-07-08T00:49:56Z`
+- Merge commit: `91c039d051bf596d42d4468c8c4f5b9b8f82803d`
+- GitHub check: `integration-gate` passed at `2026-07-08T00:49:27Z`.
 
 ## Hosted Proof Requirement
 
-After execute-plans PR #216 merges and the dev frontend is redeployed from the
-merged commit, run a hosted browser smoke against:
+After the dev frontend is redeployed from execute-plans merge commit
+`91c039d051bf596d42d4468c8c4f5b9b8f82803d`, run a hosted browser smoke
+against:
 
 ```bash
 PANTHEON_FE_BASE_URL=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io \
