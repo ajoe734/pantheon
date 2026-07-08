@@ -1,4 +1,5 @@
 import type { StrategyWorkshop, StrategyCompleteness } from "./types";
+import { buildHeaders } from "../headers";
 
 export type { StrategyWorkshop, StrategyCompleteness };
 
@@ -97,6 +98,19 @@ export interface WorkshopMessageRequest {
   attachment_refs?: string[];
 }
 
+export interface WorkshopEvent {
+  event_id: string;
+  workshop_id: string;
+  sequence_no: number;
+  actor_type: string;
+  event_type: string;
+  private_content_ref?: string | null;
+  redacted_summary?: string | null;
+  payload_refs_json?: unknown;
+  trace_id?: string | null;
+  created_at: string;
+}
+
 function resolvedBase(baseUrl?: string): string {
   if (baseUrl) return baseUrl.replace(/\/+$/, "");
   if (typeof window !== "undefined" && window.location?.origin) {
@@ -163,13 +177,22 @@ function cardsFrom(value: unknown): WorkshopCard[] {
   return Array.isArray(list) ? (list as WorkshopCard[]) : [];
 }
 
+function eventsFrom(value: unknown): WorkshopEvent[] {
+  const root = recordFrom(value);
+  const items = root.data ?? root;
+  if (Array.isArray(items)) return items as WorkshopEvent[];
+  const data = recordFrom(items);
+  const list = data.items ?? data.events ?? data.results;
+  return Array.isArray(list) ? (list as WorkshopEvent[]) : [];
+}
+
 export async function listWorkshops(baseUrl?: string): Promise<StrategyWorkshop[]> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/workshops`;
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ method: "GET" }),
   });
   if (!res.ok) {
     const body = await parseJson(res);
@@ -186,7 +209,7 @@ export async function getWorkshop(workshopId: string, baseUrl?: string): Promise
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ method: "GET" }),
   });
   if (res.status === 404) return null;
   if (!res.ok) {
@@ -208,7 +231,7 @@ export async function postWorkshopMessage(
   const current = await fetch(getUrl, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ method: "GET" }),
   });
   if (current.status === 404) throw new Error("Workshop not found");
   if (!current.ok) {
@@ -225,12 +248,14 @@ export async function postWorkshopMessage(
   const res = await fetch(postUrl, {
     method: "POST",
     credentials: "include",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "If-Match": etag,
-      "Idempotency-Key": idempotencyKey(),
-    },
+    headers: buildHeaders({
+      method: "POST",
+      extra: {
+        "Content-Type": "application/json",
+        "If-Match": etag,
+        "Idempotency-Key": idempotencyKey(),
+      },
+    }),
     body: JSON.stringify({
       content: request.content,
       attachment_refs: request.attachment_refs ?? [],
@@ -251,7 +276,7 @@ export async function getWorkshopCompleteness(workshopId: string, baseUrl?: stri
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ method: "GET" }),
   });
   if (res.status === 404) return null;
   if (!res.ok) {
@@ -269,7 +294,7 @@ export async function getWorkshopReadiness(workshopId: string, baseUrl?: string)
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ method: "GET" }),
   });
   if (res.status === 404) return null;
   if (!res.ok) {
@@ -287,7 +312,7 @@ export async function listWorkshopCards(workshopId: string, baseUrl?: string): P
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ method: "GET" }),
   });
   if (!res.ok) {
     const body = await parseJson(res);
@@ -296,6 +321,23 @@ export async function listWorkshopCards(workshopId: string, baseUrl?: string): P
   }
   const body = await parseJson(res);
   return cardsFrom(body);
+}
+
+export async function listWorkshopEvents(workshopId: string, baseUrl?: string): Promise<WorkshopEvent[]> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/workshops/${encodeURIComponent(workshopId)}/events`;
+  const res = await fetch(url, {
+    method: "GET",
+    credentials: "include",
+    headers: buildHeaders({ method: "GET" }),
+  });
+  if (!res.ok) {
+    const body = await parseJson(res);
+    const message = recordFrom(recordFrom(body).error).message ?? `GET ${url} failed ${res.status}`;
+    throw new Error(String(message));
+  }
+  const body = await parseJson(res);
+  return eventsFrom(body);
 }
 
 /**
