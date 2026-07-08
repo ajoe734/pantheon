@@ -919,7 +919,12 @@ test.describe("AG-DYNUI-LIVE-WORKSHOP-009 hosted Strategy Workshop tab", () => {
       });
 
       await page.goto(`${AG_DYNUI_LIVE_WORKSHOP_BASE}/agora/trading-room`);
-      await page.getByRole("tab", { name: /策略工坊|Strategy Workshop/i }).click();
+      const workshopTab = page.getByRole("tab", { name: /策略工坊|Strategy Workshop/i });
+      if (await workshopTab.count()) {
+        await workshopTab.click();
+      } else {
+        await page.getByRole("button", { name: /策略工坊|Strategy Workshop/i }).click();
+      }
 
       await expect(page.getByTestId("strategy-workshop-page-session")).toBeVisible({
         timeout: 30_000,
