@@ -52,8 +52,40 @@ See:
 
 - `docs/deployment/evidence/ag-dynui-live-tabs-009/20260708T003000Z/README.md`
 
-## Closeout Requirement
+## Hosted Post-Deploy Proof
 
-After the PR merges and the dev frontend is redeployed from the merged commit,
-rerun the hosted Playwright command above and keep desktop/mobile screenshots in
-`docs/deployment/evidence/ag-dynui-live-tabs-009/`.
+The Strategy Workshop live-tab repair was ultimately deployed through the
+frontend closeout line in `ajoe734/execute-plans#218`, because the first
+frontend PR for this task was closed as superseded before merge.
+
+- Pantheon task PR: `ajoe734/pantheon#3053`
+- Pantheon task merge commit:
+  `7fc912ccf7d06deef64ccad14d8f28b441023cb7`
+- Frontend deployed PR: `ajoe734/execute-plans#218`
+- Frontend deployed merge commit:
+  `9d60297e5c200d05214df7f758ee0c20c224db02`
+- Dev FE deploy run `28909983307`: success.
+- Dev FE-BFF integration gate run `28909983328`: success.
+- `/deployment.json` on
+  `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io` reports commit
+  `9d60297e5c200d05214df7f758ee0c20c224db02`.
+
+Hosted proof command:
+
+```bash
+AG_DYNUI_LIVE_WORKSHOP_FE_013_BASE_URL=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io \
+  AG_DYNUI_LIVE_WORKSHOP_FE_013_BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io \
+  PANTHEON_AUDIT_OUT_DIR=/tmp/ag-dynui-live-tabs-013 \
+  npx playwright test e2e/agora-strategy-workshop-hosted.spec.ts --reporter=line
+```
+
+Result: `4 passed`.
+
+The deployed tab rendered the live workshop selector and selected session
+runtime, observed live BFF calls for list/detail/completeness/readiness/cards/
+events, and captured desktop/mobile evidence without exposing raw workshop UUID
+debug-list text in the visible selector rows.
+
+See:
+
+- `docs/deployment/evidence/ag-dynui-live-tabs-009/20260708T011600Z/README.md`
