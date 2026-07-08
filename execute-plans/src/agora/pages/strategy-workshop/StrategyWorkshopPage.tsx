@@ -5,9 +5,11 @@ import {
   getWorkshopCompleteness,
   getWorkshopReadiness,
   listWorkshopCards,
+  listWorkshopEvents,
   postWorkshopMessage,
   openWorkshopStream,
   type WorkshopCard,
+  type WorkshopEvent,
   type StrategyReadinessAssessment,
   type WorkshopStreamEvent,
 } from "@/lib/bff-v1/agora/workshops";
@@ -103,6 +105,45 @@ function workshopTitle(workshop: StrategyWorkshop | null): string {
   return metadataString(workshop, "strategy_name") ?? workshop?.subject?.title ?? "策略工坊";
 }
 
+function workshopListTitle(workshop: StrategyWorkshop): string {
+  return metadataString(workshop, "strategy_name") ?? workshop.subject?.title ?? "Strategy workshop";
+}
+
+function timestampValue(workshop: StrategyWorkshop): number {
+  const record = workshop as unknown as Record<string, unknown>;
+  const value = record.updated_at ?? workshop.concluded_at ?? workshop.created_at;
+  const time = Date.parse(String(value ?? ""));
+  return Number.isFinite(time) ? time : 0;
+}
+
+function workshopStatusPriority(workshop: StrategyWorkshop): number {
+  if (workshop.status === "open") return 4;
+  if (workshop.status === "in_review") return 3;
+  if (workshop.status === "concluded") return 2;
+  return 1;
+}
+
+function orderWorkshopsForTab(workshops: StrategyWorkshop[]): StrategyWorkshop[] {
+  return workshops.slice().sort((a, b) => {
+    const statusDiff = workshopStatusPriority(b) - workshopStatusPriority(a);
+    if (statusDiff !== 0) return statusDiff;
+    return timestampValue(b) - timestampValue(a);
+  });
+}
+
+function compactDateTime(value: string | undefined): string {
+  if (!value) return "time unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "time unavailable";
+  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+}
+
+function workshopListSubtitle(workshop: StrategyWorkshop): string {
+  const record = workshop as unknown as Record<string, unknown>;
+  const updatedAt = typeof record.updated_at === "string" ? record.updated_at : undefined;
+  return `${workshop.status} · ${compactDateTime(updatedAt ?? workshop.concluded_at ?? workshop.created_at)}`;
+}
+
 function researchState(workshop: StrategyWorkshop | null, readiness: StrategyReadinessAssessment | null): string {
   if (readiness?.highest_ready_gate === "trading_room") return "已達操盤室門檻";
   if (readiness?.highest_ready_gate === "full_validation") return "完成驗證 · 待裁示";
@@ -144,17 +185,27 @@ function tradingRoomDisabledReason(
 
 type ListState = "loading" | "empty" | "loaded" | "error";
 
-function WorkshopListView(): JSX.Element {
+interface WorkshopListViewProps {
+  onAddToTradingRoom?: () => void;
+}
+
+function WorkshopListView({ onAddToTradingRoom }: WorkshopListViewProps): JSX.Element {
   const [state, setState] = useState<ListState>("loading");
   const [workshops, setWorkshops] = useState<StrategyWorkshop[]>([]);
+  const [selectedWorkshopId, setSelectedWorkshopId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     listWorkshops()
       .then((items) => {
         if (cancelled) return;
-        setWorkshops(items);
-        setState(items.length === 0 ? "empty" : "loaded");
+        const ordered = orderWorkshopsForTab(items);
+        setWorkshops(ordered);
+        setSelectedWorkshopId((current) => {
+          if (current && ordered.some((workshop) => workshop.workshop_id === current)) return current;
+          return ordered[0]?.workshop_id ?? null;
+        });
+        setState(ordered.length === 0 ? "empty" : "loaded");
       })
       .catch(() => {
         if (!cancelled) setState("error");
@@ -167,23 +218,75 @@ function WorkshopListView(): JSX.Element {
   return (
     <div
       data-testid="strategy-workshop-page-list"
-      style={{ minHeight: "100%", background: "#11151c", color: "#f3efe7", padding: 24 }}
+      style={{ minHeight: "100%", height: "100%", background: "#11151c", color: "#f3efe7", padding: state === "loaded" ? 0 : 24 }}
     >
       {state === "loading" && <div data-testid="workshop-list-loading">Loading workshops...</div>}
       {state === "empty" && <div data-testid="workshop-list-empty">No workshops found.</div>}
       {state === "error" && <div data-testid="workshop-list-error">Unable to load workshops.</div>}
-      {state === "loaded" && (
-        <ul data-testid="workshop-list" style={{ display: "flex", flexDirection: "column", gap: 10, padding: 0 }}>
-          {workshops.map((ws) => (
-            <li
-              key={ws.workshop_id}
-              data-testid={`workshop-item-${ws.workshop_id}`}
-              style={{ listStyle: "none", background: "#171b22", border: "1px solid #2a303b", borderRadius: 8, padding: 12 }}
-            >
-              {ws.subject?.title ?? ws.workshop_id}
-            </li>
-          ))}
-        </ul>
+      {state === "loaded" && selectedWorkshopId && (
+        <div
+          data-testid="strategy-workshop-live-tab"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(210px, 260px) minmax(0, 1fr)",
+            gap: 0,
+            height: "100%",
+            minHeight: 0,
+          }}
+        >
+          <aside
+            data-testid="workshop-selector"
+            style={{
+              borderRight: "1px solid #2a303b",
+              background: "#171b22",
+              minHeight: 0,
+              overflow: "auto",
+              padding: 12,
+            }}
+          >
+            <div style={{ color: "#8c96a6", fontSize: 11, fontWeight: 800, margin: "0 0 10px", textTransform: "uppercase" }}>
+              Live workshops
+            </div>
+            <div data-testid="workshop-list" style={{ display: "grid", gap: 8 }}>
+              {workshops.map((ws) => {
+                const selected = ws.workshop_id === selectedWorkshopId;
+                return (
+                  <button
+                    key={ws.workshop_id}
+                    type="button"
+                    data-testid={`workshop-item-${ws.workshop_id}`}
+                    data-workshop-id={ws.workshop_id}
+                    aria-current={selected ? "page" : undefined}
+                    onClick={() => setSelectedWorkshopId(ws.workshop_id)}
+                    style={{
+                      appearance: "none",
+                      background: selected ? "rgba(232,183,80,0.11)" : "#202631",
+                      border: selected ? "1px solid rgba(232,183,80,0.45)" : "1px solid #303846",
+                      borderRadius: 8,
+                      color: "#f3efe7",
+                      cursor: "pointer",
+                      display: "grid",
+                      gap: 4,
+                      padding: 10,
+                      textAlign: "left",
+                      width: "100%",
+                    }}
+                  >
+                    <span style={{ fontSize: 12.5, fontWeight: 800, lineHeight: 1.35 }}>
+                      {workshopListTitle(ws)}
+                    </span>
+                    <span style={{ color: "#8c96a6", fontSize: 10.5, lineHeight: 1.35 }}>
+                      {workshopListSubtitle(ws)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+          <section data-testid="selected-workshop-runtime" style={{ minHeight: 0, overflow: "hidden" }}>
+            <WorkshopSessionView workshopId={selectedWorkshopId} onAddToTradingRoom={onAddToTradingRoom} />
+          </section>
+        </div>
       )}
     </div>
   );
@@ -198,6 +301,7 @@ function WorkshopSessionView({ workshopId, onAddToTradingRoom }: SessionViewProp
   const [workshop, setWorkshop] = useState<StrategyWorkshop | null>(null);
   const [completeness, setCompleteness] = useState<StrategyCompleteness | null>(null);
   const [readiness, setReadiness] = useState<StrategyReadinessAssessment | null>(null);
+  const [workshopEvents, setWorkshopEvents] = useState<WorkshopEvent[]>([]);
   const [composerValue, setComposerValue] = useState("");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "error">("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -229,6 +333,11 @@ function WorkshopSessionView({ workshopId, onAddToTradingRoom }: SessionViewProp
         if (!cancelled) dispatch({ type: "RESET", cards: items });
       })
       .catch(() => undefined);
+    listWorkshopEvents(workshopId)
+      .then((items) => {
+        if (!cancelled) setWorkshopEvents(items);
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -256,6 +365,12 @@ function WorkshopSessionView({ workshopId, onAddToTradingRoom }: SessionViewProp
       .catch(() => undefined);
   }, [workshopId]);
 
+  const refreshEvents = useCallback(() => {
+    listWorkshopEvents(workshopId)
+      .then((items) => setWorkshopEvents(items))
+      .catch(() => undefined);
+  }, [workshopId]);
+
   useEffect(() => {
     const teardown = openWorkshopStream(workshopId, (event: WorkshopStreamEvent) => {
       dispatch({ type: "SET_LAST_EVENT_ID", id: event.event_id });
@@ -276,6 +391,7 @@ function WorkshopSessionView({ workshopId, onAddToTradingRoom }: SessionViewProp
         case "workshop.version.created":
         case "workshop.version.selected":
           refreshCards();
+          refreshEvents();
           break;
         case "workshop.completeness.updated":
           refreshCompleteness();
@@ -287,13 +403,14 @@ function WorkshopSessionView({ workshopId, onAddToTradingRoom }: SessionViewProp
           refreshCards();
           refreshCompleteness();
           refreshReadiness();
+          refreshEvents();
           break;
         default:
           break;
       }
     });
     return teardown;
-  }, [workshopId, refreshCards, refreshCompleteness, refreshReadiness]);
+  }, [workshopId, refreshCards, refreshCompleteness, refreshEvents, refreshReadiness]);
 
   const orderedCards = orderWorkshopCardsForV10(cardState.cards);
   const nextQuestion =
@@ -359,6 +476,9 @@ function WorkshopSessionView({ workshopId, onAddToTradingRoom }: SessionViewProp
           {versionLabel(workshop, orderedCards)}
         </span>
         <span style={{ color: "#aeb7c4", fontSize: 11 }}>研究狀態 · {researchState(workshop, readiness)}</span>
+        <span data-testid="workshop-event-summary" style={{ color: "#aeb7c4", fontSize: 11 }}>
+          Events · {workshopEvents.length}
+        </span>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
           <span style={{ color: "#737d8e", fontSize: 11 }}>完整度</span>
           <div aria-hidden="true" style={{ width: 86, height: 6, background: "#2a303b", borderRadius: 3, overflow: "hidden" }}>
@@ -528,5 +648,5 @@ export function StrategyWorkshopPage({ workshopId, onAddToTradingRoom }: Strateg
   if (workshopId) {
     return <WorkshopSessionView workshopId={workshopId} onAddToTradingRoom={onAddToTradingRoom} />;
   }
-  return <WorkshopListView />;
+  return <WorkshopListView onAddToTradingRoom={onAddToTradingRoom} />;
 }

@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { postWorkshopMessage } from "./workshops";
+import {
+  getWorkshop,
+  getWorkshopReadiness,
+  listWorkshopCards,
+  listWorkshopEvents,
+  listWorkshops,
+  postWorkshopMessage,
+} from "./workshops";
+import { setAuthProvider } from "../headers";
 
 const BASE = "https://bff.example.test";
 
@@ -15,10 +23,42 @@ function ok(body: unknown, status = 200, headers?: HeadersInit): Response {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  setAuthProvider(undefined);
+});
+
+describe("workshop read helpers", () => {
+  it("sends shared BFF auth headers on list/detail/cards/readiness/events reads", async () => {
+    setAuthProvider(() => ({ bearerToken: "workshop-token", tenantId: "tenant-live" }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(ok({ data: [{ workshop_id: "ws-001" }] }))
+      .mockResolvedValueOnce(ok({ data: { workshop_id: "ws-001" } }))
+      .mockResolvedValueOnce(ok({ data: { highest_ready_gate: "trading_room" } }))
+      .mockResolvedValueOnce(ok({ data: [{ card_id: "card-001" }] }))
+      .mockResolvedValueOnce(ok({ data: [{ event_id: "event-001" }] }));
+    globalThis.fetch = fetchMock;
+
+    await listWorkshops(BASE);
+    await getWorkshop("ws-001", BASE);
+    await getWorkshopReadiness("ws-001", BASE);
+    await listWorkshopCards("ws-001", BASE);
+    await listWorkshopEvents("ws-001", BASE);
+
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    for (const call of fetchMock.mock.calls) {
+      const init = call[1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(init.credentials).toBe("include");
+      expect(headers.Accept).toBe("application/json");
+      expect(headers.Authorization).toBe("Bearer workshop-token");
+      expect(headers["X-Tenant-Id"]).toBe("tenant-live");
+    }
+  });
 });
 
 describe("postWorkshopMessage", () => {
   it("fetches current ETag before posting with If-Match and Idempotency-Key", async () => {
+    setAuthProvider(() => ({ bearerToken: "workshop-token", tenantId: "tenant-live" }));
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(ok({ data: { workshop_id: "ws/001" } }, 200, { ETag: 'W/"workshop:ws/001:v3"' }))
@@ -35,6 +75,8 @@ describe("postWorkshopMessage", () => {
     const init = fetchMock.mock.calls[1][1] as RequestInit;
     const headers = init.headers as Record<string, string>;
     expect(init.method).toBe("POST");
+    expect(headers.Authorization).toBe("Bearer workshop-token");
+    expect(headers["X-Tenant-Id"]).toBe("tenant-live");
     expect(headers["If-Match"]).toBe('W/"workshop:ws/001:v3"');
     expect(headers["Idempotency-Key"]).toBeTruthy();
     expect(JSON.parse(String(init.body))).toEqual({
