@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Agora Performance production tab completion
-- Status: review
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Review requested: execute-plans PR #216 merged at 91c039d051bf596d42d4468c8c4f5b9b8f82803d with integration-gate passing; Pantheon closeout PR #3055 merged at 8f457c8fb0bf5dc23aa14b30821c07bbf30614bb. Codex2 attempted done, but status gate requires reviewer approval first.
+- Next: Review approved: merged frontend and Pantheon closeout PRs verified; hosted Performance tab proof recorded with desktop/mobile screenshots and live BFF responses.
 
 ## Summary
 修正 live /agora/trading-room 的 Performance tab：目前仍是「策略執行與績效 - 即將推出」placeholder，必須接真實 BFF performance/telemetry/attribution contract 並呈現可檢查的策略績效狀態。
