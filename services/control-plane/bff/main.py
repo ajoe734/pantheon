@@ -146,6 +146,7 @@ from loop_inventory import (
     truth_label_payload,
 )
 from operations_read_model import (
+    OperationsReadModelEnvelope,
     OperationsPerformance,
     OperationsReadModelEntry,
     SourceDiagnostic,
@@ -42919,7 +42920,10 @@ def _ops_read_model_entry_for_persona(
     )
 
 
-@app.get("/bff/management/operations-read-model/{persona_id}")
+@app.get(
+    "/bff/management/operations-read-model/{persona_id}",
+    response_model=OperationsReadModelEnvelope,
+)
 async def bff_management_operations_read_model(
     persona_id: str,
     period: str = Query(default="latest"),

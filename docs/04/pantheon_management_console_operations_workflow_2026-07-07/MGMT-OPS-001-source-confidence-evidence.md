@@ -2,9 +2,13 @@
 
 Status: implementation evidence for the Wave 0 read-model contract
 
-Owner: Claude2
+Owner: Codex2
 
 Reviewer: Codex
+
+Original implementation commit: `9e6850539cb36495feafa91fa0b173da7928bd63`
+by Claude2. Codex2 took ownership after supervisor redispatch and rebased the
+task branch on `origin/dev`.
 
 ## What was implemented
 
@@ -23,10 +27,14 @@ Reviewer: Codex
   performance-attribution, portfolio-holdings, capital-pool, and
   persona-fleet sources for one persona, and returns one `data_confidence`
   verdict with explicit `diagnostics` for every missing or unresolved join.
+  The route publishes `OperationsReadModelEnvelope` as its OpenAPI
+  `response_model`, so downstream frontend client/type generation can consume
+  the shared contract instead of an untyped `{}` response schema.
 - `services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py`:
   unit coverage for the contract module plus BFF contract tests for all five
   confidence states (formal, partial, fallback, degraded, unavailable) and
-  the unknown-persona 404 path.
+  the unknown-persona 404 path. It also asserts that OpenAPI publishes the
+  operations read-model envelope and nested component schemas.
 
 ## Focus persona finding: `persona-20260528-04688755`
 
@@ -79,7 +87,8 @@ change.
 python3 -m pytest services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py -q
 ```
 
-Result: 10 passed (confirmed deterministic across repeated runs; the initial
+Result before Codex2 redispatch: 10 passed (confirmed deterministic across
+repeated runs; the initial
 "formal" case was rewritten to use isolated monkeypatched sources after
 finding that `ReadSurfaceStore.list_capital_pools()` without
 `include_market_persona_defaults=True` depends on ambient canonical-service
@@ -106,3 +115,16 @@ Result: 100 passed. `test_management_list_response_guardrail.py` fails both
 before and after this change (pre-existing `duplicate_casing` issues on
 `/bff/management/persona-fleet`, confirmed via `git stash`) — unrelated to
 this task and not touched by it.
+
+Codex2 rebase/owner validation after merging latest `origin/dev`:
+
+```sh
+python3 -m pytest \
+  services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py \
+  services/control-plane/bff/test_no_undefined_call_symbols.py \
+  services/control-plane/bff/test_route_resolution_no_shadowing.py \
+  -q
+```
+
+Result: 16 passed. This includes the typed OpenAPI envelope regression for
+`GET /bff/management/operations-read-model/{persona_id}`.

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 from enum import Enum
-from typing import Any, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -88,6 +88,11 @@ class OperationsReadModelEntry(BaseModel):
     performance: OperationsPerformance
     sources: List[SourceStatus] = Field(default_factory=list)
     diagnostics: List[SourceDiagnostic] = Field(default_factory=list)
+
+
+class OperationsReadModelEnvelope(BaseModel):
+    data: OperationsReadModelEntry
+    meta: Dict[str, Any] = Field(default_factory=dict)
 
 
 def sanitize_metric(value: Any) -> Optional[float]:

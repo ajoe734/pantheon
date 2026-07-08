@@ -68,6 +68,36 @@ def _get(client: TestClient, persona_id: str) -> Any:
     return response
 
 
+def _response_schema_ref(schema: dict[str, Any], path: str) -> str:
+    response_schema = schema["paths"][path]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    if "$ref" in response_schema:
+        return response_schema["$ref"].rsplit("/", 1)[-1]
+    if "allOf" in response_schema and response_schema["allOf"]:
+        return response_schema["allOf"][0]["$ref"].rsplit("/", 1)[-1]
+    raise AssertionError(f"{path} does not publish a component response schema: {response_schema}")
+
+
+def test_operations_read_model_publishes_typed_openapi_envelope() -> None:
+    bff_main.app.openapi_schema = None
+    schema = TestClient(bff_main.app).get("/openapi.json").json()
+    path = "/bff/management/operations-read-model/{persona_id}"
+
+    assert path in schema["paths"]
+    assert _response_schema_ref(schema, path) == "OperationsReadModelEnvelope"
+    components = schema["components"]["schemas"]
+    for component_name in (
+        "DataConfidence",
+        "OperationsIdentity",
+        "OperationsPerformance",
+        "OperationsReadModelEntry",
+        "OperationsReadModelEnvelope",
+        "SourceDiagnostic",
+        "SourceState",
+        "SourceStatus",
+    ):
+        assert component_name in components
+
+
 # ---------------------------------------------------------------------------
 # Unit coverage for the pure contract module
 # ---------------------------------------------------------------------------
