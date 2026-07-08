@@ -30,7 +30,25 @@ import type {
 } from "@/lib/bff-v1/management";
 import type { ListEnvelope } from "@/lib/bff-v1";
 import { ManagementDenseTable } from "@/management/components/dense-table";
-import { cn } from "@/lib/utils";
+import {
+  DATA_CONFIDENCE_EMPTY_COPY,
+  DATA_CONFIDENCE_LABELS,
+  DATA_CONFIDENCE_TONE,
+  aggregateDataConfidence,
+  asManagementRecord,
+  dataConfidenceFromSurface,
+  displayInteger as safeDisplayInteger,
+  displayLabel as safeDisplayLabel,
+  displayNumber as safeDisplayNumber,
+  displayPercent as safeDisplayPercent,
+  displayText as safeDisplayText,
+  displayTime as safeDisplayTime,
+  displayTitle as safeDisplayTitle,
+  firstSurface,
+  surfaceIssueMessage,
+  type ManagementDataConfidenceState,
+  cn,
+} from "@/lib/utils";
 
 type LoadState = "loading" | "ready" | "error";
 type WorkbenchTab = "paper-candidates" | "promotion-review" | "quarterly-capital" | "formula-policy";
@@ -85,61 +103,35 @@ function tabFromLocation(): WorkbenchTab {
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function nullableNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return asManagementRecord(value);
 }
 
 function textFrom(value: unknown, fallback = "-"): string {
-  const text = String(value ?? "").trim();
-  return text || fallback;
+  return safeDisplayText(value, fallback);
 }
 
 function labelFrom(value: unknown, fallback = "unknown"): string {
-  return textFrom(value, fallback).replace(/_/g, " ");
+  return safeDisplayLabel(value, fallback);
 }
 
 function titleFrom(value: unknown, fallback = "Unknown"): string {
-  return labelFrom(value, fallback).replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return safeDisplayTitle(value, fallback);
 }
 
 function formatInteger(value: unknown): string {
-  const parsed = nullableNumber(value);
-  if (parsed === null) return "-";
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(parsed);
+  return safeDisplayInteger(value);
 }
 
 function formatNumber(value: unknown, maximumFractionDigits = 2): string {
-  const parsed = nullableNumber(value);
-  if (parsed === null) return "-";
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits }).format(parsed);
+  return safeDisplayNumber(value, maximumFractionDigits);
 }
 
 function formatPercent(value: unknown): string {
-  const parsed = nullableNumber(value);
-  if (parsed === null) return "-";
-  const normalized = Math.abs(parsed) <= 1 ? parsed * 100 : parsed;
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(normalized)}%`;
+  return safeDisplayPercent(value);
 }
 
 function formatTime(value: unknown): string {
-  const text = String(value ?? "").trim();
-  if (!text) return "-";
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return text;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-  }).format(parsed);
+  return safeDisplayTime(value);
 }
 
 function statusTone(status: unknown): string {
@@ -156,6 +148,19 @@ function statusTone(status: unknown): string {
   return "bg-muted text-muted-foreground border-border";
 }
 
+function DataConfidenceBadge({ state }: { state: ManagementDataConfidenceState }) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn("whitespace-nowrap", DATA_CONFIDENCE_TONE[state])}
+      data-confidence-state={state}
+      title={DATA_CONFIDENCE_LABELS[state]}
+    >
+      {DATA_CONFIDENCE_LABELS[state]}
+    </Badge>
+  );
+}
+
 function safeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -168,12 +173,12 @@ function surfaceIssues(source: string, response: { meta?: { surfaces?: Record<st
   const surfaces = asRecord(response?.meta?.surfaces) as Record<string, ManagementSurfaceRef | undefined>;
   return Object.entries(surfaces)
     .filter(([, surface]) => {
-      const status = String(surface?.status ?? "ok").toLowerCase();
+      const status = textFrom(surface?.status, "ok").toLowerCase();
       return status !== "ok" && status !== "ready" && status !== "healthy";
     })
     .map(([key, surface]) => ({
       source: `${source} / ${labelFrom(key)}`,
-      message: textFrom(surface?.message ?? surface?.note ?? surface?.source ?? surface?.status, "degraded"),
+      message: surfaceIssueMessage(surface),
     }));
 }
 
@@ -244,6 +249,21 @@ function hasWorkbenchData(snapshot: PromotionAllocationSnapshot): boolean {
   ].some((items) => Array.isArray(items) && items.length > 0);
 }
 
+function snapshotDataConfidence(snapshot: PromotionAllocationSnapshot | null, state: LoadState): ManagementDataConfidenceState {
+  if (state === "error" || !snapshot) return "unavailable";
+  const responses = [
+    snapshot.ranking,
+    snapshot.recommendations,
+    snapshot.promotionReviews,
+    snapshot.formula,
+  ].filter(Boolean);
+  if (responses.length === 0) return "unavailable";
+  const aggregate = aggregateDataConfidence(
+    responses.map((response) => dataConfidenceFromSurface(firstSurface(response?.meta?.surfaces))),
+  );
+  return snapshot.issues.length > 0 && aggregate === "formal" ? "partial" : aggregate;
+}
+
 export function ManagementPromotionAllocationPanel({ className }: { className?: string }) {
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => tabFromLocation());
   const [state, setState] = useState<LoadState>("loading");
@@ -302,6 +322,7 @@ export function ManagementPromotionAllocationPanel({ className }: { className?: 
 
   const issueCount = snapshot?.issues.length ?? 0;
   const panelStatus = state === "error" ? "error" : issueCount > 0 ? "degraded" : "ok";
+  const confidenceState = snapshotDataConfidence(snapshot, state);
   const quarter = textFrom(
     snapshot?.recommendations?.data.quarter_window?.label
       ?? snapshot?.ranking?.data.quarter_window?.label
@@ -318,6 +339,7 @@ export function ManagementPromotionAllocationPanel({ className }: { className?: 
             <SlidersHorizontal className="h-4 w-4 text-primary" />
             <h2 className="text-base font-semibold">Promotion & Allocation</h2>
             <Badge variant="outline" className={cn("capitalize", statusTone(panelStatus))}>{panelStatus}</Badge>
+            <DataConfidenceBadge state={confidenceState} />
             <Badge variant="outline">{quarter}</Badge>
           </div>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -379,7 +401,7 @@ export function ManagementPromotionAllocationPanel({ className }: { className?: 
           <EmptyState
             icon={<ListChecks className="h-8 w-8" />}
             title="No promotion or allocation records"
-            description="The BFF returned no candidate, review, formula component, or rebalance proposal rows."
+            description={DATA_CONFIDENCE_EMPTY_COPY[confidenceState]}
             cta={{ label: "Refresh", onClick: load }}
           />
           <FormulaPolicySection formula={snapshot.formula?.data} response={snapshot.formula} />

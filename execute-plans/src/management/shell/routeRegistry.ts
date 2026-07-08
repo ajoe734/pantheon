@@ -139,6 +139,7 @@ const routeRules: RouteRule[] = [
   {
     match: (path) =>
       [
+        "/management/persona-fleet",
         "/management/portfolio-book",
         "/management/performance-attribution",
         "/management/cost-attribution",

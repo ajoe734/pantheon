@@ -1761,6 +1761,10 @@ export type ManagementPerformanceAttributionDimension =
 export interface ManagementPerformanceAttributionQuery {
   dimension?: ManagementPerformanceAttributionDimension;
   period?: string;
+  persona_id?: string;
+  runtime_id?: string;
+  source_hint?: string;
+  source_confidence?: "formal" | "partial" | "fallback" | "degraded" | "unavailable" | string;
   page_token?: string;
   page_size?: number;
 }
