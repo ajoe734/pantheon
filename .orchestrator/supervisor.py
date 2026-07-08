@@ -5434,6 +5434,46 @@ def sidecar_excluded_agent_keys(config: dict[str, Any]) -> set[str]:
     return keys
 
 
+def status_registered_agent_keys(status: dict[str, Any]) -> set[str] | None:
+    """Agent keys from ai-status.json; None means this status has no roster."""
+    if "agents" not in status:
+        return None
+    status_agents = status.get("agents")
+    if not isinstance(status_agents, list):
+        return None
+
+    keys: set[str] = set()
+    for agent in status_agents:
+        if isinstance(agent, dict):
+            values = (agent.get("name"), agent.get("display_name"), agent.get("id"))
+        else:
+            values = (agent,)
+        for raw_value in values:
+            value = str(raw_value or "").strip()
+            if not value:
+                continue
+            keys.add(value.casefold())
+            normalized = normalize_agent_id(value)
+            if normalized:
+                keys.add(normalized.casefold())
+    return keys
+
+
+def agent_registered_in_status_roster(status_agent_keys: set[str] | None, *keys: str | None) -> bool:
+    if status_agent_keys is None:
+        return True
+    for key in keys:
+        value = str(key or "").strip()
+        if not value:
+            continue
+        if value.casefold() in status_agent_keys:
+            return True
+        normalized = normalize_agent_id(value)
+        if normalized and normalized.casefold() in status_agent_keys:
+            return True
+    return False
+
+
 def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> bool:
     name = str(agent_name or "").strip()
     if not name:
@@ -8581,6 +8621,7 @@ def eligible_idle_agents_for_sidecars(
     task_resolver = task_resolver_for_config(config, task_map)
     owner_field = config.get("schema", {}).get("assignee_field", "owner")
     excluded_agent_keys = sidecar_excluded_agent_keys(config)
+    status_agent_keys = status_registered_agent_keys(status)
     agents: list[str] = []
     for agent_id, agent in (config.get("agents", {}) or {}).items():
         if agent_is_dispatch_slot(agent):
@@ -8591,6 +8632,14 @@ def eligible_idle_agents_for_sidecars(
         normalized = normalize_agent_id(agent_id)
         provider = str(agent.get("provider") or "").strip()
         provider_id = normalize_agent_id(provider)
+        if not agent_registered_in_status_roster(
+            status_agent_keys,
+            display_name,
+            normalized,
+            provider,
+            provider_id,
+        ):
+            continue
         if any(
             key and key.casefold() in excluded_agent_keys
             for key in (display_name, normalized, provider, provider_id)

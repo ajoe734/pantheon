@@ -5095,6 +5095,32 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
 
         self.assertEqual(agents, ["Gemini"])
 
+    def test_unregistered_runtime_config_agent_is_not_eligible_for_sidecars(self) -> None:
+        self.config["agents"]["qwen"] = {
+            "id": "qwen",
+            "display_name": "Qwen",
+            "provider": "qwen",
+        }
+        status = {
+            "agents": [
+                {"name": "Codex"},
+                {"name": "Claude"},
+                {"name": "Gemini"},
+            ],
+            "tasks": [],
+        }
+
+        agents = supervisor.eligible_idle_agents_for_sidecars(
+            self.config,
+            {"queue": {"events": {}}, "workers": {}},
+            status,
+            max_active_sidecars_per_agent=1,
+            provider_report={"providers": {}},
+        )
+
+        self.assertEqual(agents, ["Codex", "Claude", "Gemini"])
+        self.assertNotIn("Qwen", agents)
+
     def test_waits_full_window_before_creating_sidecars(self) -> None:
         state = {"queue": {"events": {}}, "workers": {}, "underutilization": {}}
 
