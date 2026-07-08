@@ -24,7 +24,7 @@ unrelated active task rows from the local generated board.
 
 | Wave | Task | Owner | Reviewer | Summary |
 |---|---|---|---|---|
-| 0 | `AG-DYNUI-PROD-001` | Codex | Claude | Restore source/task truth and archive continuity. |
+| 0 | `AG-DYNUI-PROD-001` | Codex | Codex2 | Restore source/task truth and archive continuity. Reviewer reassigned on 2026-07-07 because the original Claude lane was unavailable. |
 | 1 | `AG-DYNUI-PROD-002` | Claude | Codex | Rework Agora into an intentional standalone workbench shell. |
 | 1 | `AG-DYNUI-PROD-003` | Claude2 | Codex | Make default Trading Room URL enter a dynamic design-pack workflow. |
 | 1 | `AG-DYNUI-PROD-004` | Codex2 | Claude | Add production-grade error diagnostics and stale-bundle recovery. |

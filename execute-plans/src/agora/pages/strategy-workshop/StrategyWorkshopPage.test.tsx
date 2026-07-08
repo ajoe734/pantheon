@@ -8,6 +8,7 @@ vi.mock("@/lib/bff-v1/agora/workshops", () => ({
   getWorkshopCompleteness: vi.fn().mockResolvedValue(null),
   getWorkshopReadiness: vi.fn().mockResolvedValue(null),
   listWorkshopCards: vi.fn().mockResolvedValue([]),
+  listWorkshopEvents: vi.fn().mockResolvedValue([]),
   postWorkshopMessage: vi.fn().mockResolvedValue({ event_id: "ev-post-001" }),
   openWorkshopStream: vi.fn().mockReturnValue(() => undefined),
 }));
@@ -164,6 +165,7 @@ describe("StrategyWorkshopPage", () => {
     vi.mocked(workshopsModule.getWorkshopCompleteness).mockResolvedValue(null as any);
     vi.mocked(workshopsModule.getWorkshopReadiness).mockResolvedValue(null as any);
     vi.mocked(workshopsModule.listWorkshopCards).mockResolvedValue([]);
+    vi.mocked(workshopsModule.listWorkshopEvents).mockResolvedValue([]);
     vi.mocked(workshopsModule.postWorkshopMessage).mockResolvedValue({ event_id: "ev-post-001" });
     vi.mocked(workshopsModule.openWorkshopStream).mockReturnValue(() => undefined);
   });
@@ -203,6 +205,49 @@ describe("StrategyWorkshopPage", () => {
     render(<StrategyWorkshopPage />);
     await screen.findByTestId("workshop-list");
     expect(screen.getByTestId("workshop-item-ws-001")).toBeDefined();
+  });
+
+  it("auto-selects a live workshop in the tab and renders the session runtime instead of a raw id list", async () => {
+    const rawWorkshopId = "3f6d1a7e-91c9-4c25-90be-c7a3ef9776e6";
+    vi.mocked(workshopsModule.listWorkshops).mockResolvedValue([
+      {
+        workshop_id: rawWorkshopId,
+        status: "open",
+        created_at: "2026-07-08T00:00:00Z",
+        subject: { kind: "free_form", ref: rawWorkshopId },
+      } as any,
+    ]);
+    vi.mocked(workshopsModule.getWorkshop).mockResolvedValue({
+      ...baseWorkshop,
+      workshop_id: rawWorkshopId,
+      subject: { kind: "free_form", ref: rawWorkshopId, title: "Live Strategy Workshop" },
+    });
+    vi.mocked(workshopsModule.getWorkshopReadiness).mockResolvedValue(readyAssessment);
+    vi.mocked(workshopsModule.getWorkshopCompleteness).mockResolvedValue(completeness);
+    vi.mocked(workshopsModule.listWorkshopCards).mockResolvedValue([reconstructionCard]);
+    vi.mocked(workshopsModule.listWorkshopEvents).mockResolvedValue([
+      {
+        event_id: "evt-001",
+        workshop_id: rawWorkshopId,
+        sequence_no: 1,
+        actor_type: "operator",
+        event_type: "message",
+        redacted_summary: "Initial strategy request",
+        created_at: "2026-07-08T00:00:00Z",
+      },
+    ]);
+
+    render(<StrategyWorkshopPage />);
+
+    await screen.findByTestId("selected-workshop-runtime");
+    await screen.findByText("Live Strategy Workshop");
+
+    expect(workshopsModule.getWorkshop).toHaveBeenCalledWith(rawWorkshopId);
+    expect(workshopsModule.getWorkshopReadiness).toHaveBeenCalledWith(rawWorkshopId);
+    expect(workshopsModule.listWorkshopCards).toHaveBeenCalledWith(rawWorkshopId);
+    expect(workshopsModule.listWorkshopEvents).toHaveBeenCalledWith(rawWorkshopId);
+    expect(screen.getByTestId("workshop-event-summary").textContent).toContain("Events · 1");
+    expect(screen.queryByText(rawWorkshopId)).toBeNull();
   });
 
   it("renders the session view when workshopId is provided", () => {

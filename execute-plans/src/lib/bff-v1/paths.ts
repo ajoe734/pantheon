@@ -144,6 +144,11 @@ export const paths = {
   managementQuarterlyRankingDrilldown: () => `${BASE}/management/quarterly-ranking/drilldown`,
   managementQuarterlyRankingFormula: () => `${BASE}/management/quarterly-ranking/formula`,
   managementQuarterlyRankingRecommendations: () => `${BASE}/management/quarterly-ranking/recommendations`,
+  managementQuarterlyRankingRecommendationSubmit: (id: string) =>
+    `${BASE}/management/quarterly-ranking/recommendations/${enc(id)}/submit`,
+  managementPromotionReviews: () => `${BASE}/management/promotion-reviews`,
+  managementPromotionReview: (id: string) => `${BASE}/management/promotion-reviews/${enc(id)}`,
+  managementPromotionReviewDecisions: (id: string) => `${BASE}/management/promotion-reviews/${enc(id)}/decisions`,
   managementPerformanceAttribution: () => `${BASE}/management/performance-attribution`,
   managementPerformanceAttributionByStrategy: () => `${BASE}/management/performance-attribution/by-strategy`,
   managementPerformanceAttributionByPersona: () => `${BASE}/management/performance-attribution/by-persona`,

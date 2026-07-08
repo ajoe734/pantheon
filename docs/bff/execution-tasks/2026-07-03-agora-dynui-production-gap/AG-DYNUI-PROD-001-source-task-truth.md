@@ -1,9 +1,9 @@
 # AG-DYNUI-PROD-001 - Restore Agora DYNUI Source And Task Truth
 
 Owner: Codex
-Reviewer: Claude
+Reviewer: Codex2
 Depends on: none
-Updated: 2026-07-04
+Updated: 2026-07-07
 
 This artifact is the task-scoped source/task truth map for the Agora DYNUI
 production-gap fleet. It does not implement UI behavior and does not certify the
@@ -13,13 +13,14 @@ hosted route as production-complete.
 
 - The original raw design archive is still missing at the expected durable
   path: `/home/lupin/code/pantheon/AI Trading Desk Design.zip`.
-- The extracted reference directory is currently readable at
-  `/tmp/ai-trading-desk-design/`, but that path is volatile and is not a
-  canonical repository source.
+- The previously observed extracted reference directory
+  `/tmp/ai-trading-desk-design/` is no longer present on this worker as of the
+  2026-07-07 recheck. That confirms `/tmp` must not be treated as durable
+  source truth.
 - The committed continuation source is
   `docs/04/agora_design_pack_dynui_2026-06-28/`. Until the raw zip is restored
   to the expected path, downstream workers must use the committed closure pack
-  plus the readable extracted reference and must not invent design details.
+  and must not invent design details from memory or missing `/tmp` files.
 - The stale nested frontend checkout `/home/lupin/code/pantheon/.fe-ep` is not
   a deploy source for this fleet. It remains a dirty historical checkout and
   must be ignored by DYNUI production-gap workers.
@@ -32,7 +33,7 @@ hosted route as production-complete.
 | Source | Current status | Use in this fleet |
 | --- | --- | --- |
 | `/home/lupin/code/pantheon/AI Trading Desk Design.zip` | Missing on this worker and in the supervisor root checked during this task. | Exact unresolved blocker if a worker needs the raw archive. Do not claim the raw archive is restored until this file exists and lists successfully. |
-| `/tmp/ai-trading-desk-design/` | Readable during this task; contains `uploads/`, `Agora.dc.html`, and screenshots including `01-v10-mid.png`, `02-v10-mid.png`, `01-applied.png`, and `01-aifix.png`. | Helpful local reference only. It is not durable task truth because `/tmp` can be cleaned. |
+| `/tmp/ai-trading-desk-design/` | Was readable during the 2026-07-04 source-truth pass, but is absent on the 2026-07-07 recheck. | Not a continuation source. If a worker needs files from this path, reopen the raw archive blocker or recover the archive into a durable location first. |
 | `docs/04/agora_design_pack_dynui_2026-06-28/README.md` | Committed closure pack from `AG-DYNUI-SRC-001`. | Primary repository source for dynamic invariants and task graph. |
 | `docs/04/agora_design_pack_dynui_2026-06-28/source-map-and-gap-map.md` | Committed frozen source/gap map. | Canonical routing source for V10/V11/V6/V4 references, screenshots, dynamic invariants, and non-static acceptance guard. |
 | `docs/04/agora_design_pack_dynui_2026-06-28/closeout.md` | Committed closeout evidence. | Records PR #2538 merge `64036dbebb5d24b967cadf75e69b6983c582257d` and closeout publication evidence. |
@@ -55,8 +56,8 @@ fields, routes, widgets, or visual states from memory.
 
 | Checkout | Observed state | Decision |
 | --- | --- | --- |
-| `/home/lupin/code/execute-plans` | Repository `ajoe734/execute-plans`; local branch `dev` was dirty and ahead/behind `origin/dev` during this task. Remote `origin/dev` points at merge `702b236adb76a4e9a2029fce1a4b9c487f69a290` from PR #169. Remote `origin/dev` includes PR #147 (`aa071d6...`), PR #148 (`6343755...`), and PR #168 (`ffbc235...`) for the Agora Trading Room default/auth fixes. | Canonical frontend repository for new DYNUI work, but workers must create a clean task worktree/branch from the intended remote base before editing or deploying. Do not use the dirty local checkout as a task branch. |
-| `/home/lupin/code/pantheon/.fe-ep` | Dirty nested checkout on unrelated branch `task/mgmt-gap-008-detail-honesty`; it lacks the `readBffEnv` / `buildHeaders` / `authHeaders()` Trading Room auth fix visible in `execute-plans` `origin/dev`. | Historical/stale checkout only. Do not build, deploy, diff, or assign DYNUI work from this path. |
+| `/home/lupin/code/execute-plans` | Repository `ajoe734/execute-plans`; on the 2026-07-07 recheck the local checkout is a clean unrelated branch `task/fix-paper-capital-pool-mismatch-fe` at `c88eac91ce1f12c754f9e6b35cec2a6a34ab7e7a`, ahead of its upstream by one commit and not containing current `origin/dev`. Remote `origin/dev` is `4a4f256e0bc14c99820b7406de44822b6b1cbe2c` and includes PR #147 (`aa071d6...`), PR #148 (`6343755...`), and PR #168 (`ffbc235...`) for the Agora Trading Room default/auth fixes. Remote `origin/main` remains at `64a963119e85f2e91efbedbd83c4fbd97c7c2e20`. | Canonical frontend repository for new DYNUI work, but workers must create a clean task worktree/branch from the intended remote base before editing or deploying. Do not use the current local checkout as a DYNUI task branch or deploy-source proof. |
+| `/home/lupin/code/pantheon/.fe-ep` | Dirty nested checkout on unrelated branch `task/mgmt-gap-008-detail-honesty` at `821ad41bbcf1d3bc6352744a6310a80f088b696a`; its Trading Room client still lacks the `authHeaders()` / `buildHeaders()` reuse visible in `execute-plans` `origin/dev`. | Historical/stale checkout only. Do not build, deploy, diff, or assign DYNUI work from this path. |
 | Pantheon deploy scripts | Scoped search found `.fe-ep` only in docs/dispatch references, not in deploy scripts as the FE build root. | Stale nested checkout risk is assigned to fleet process: `AG-DYNUI-PROD-006` must prove hosted deploy source from a clean `execute-plans` commit and must not accept `.fe-ep` evidence. |
 
 ## Restored Archive Continuity
@@ -83,7 +84,7 @@ because no merged completion evidence was found; it is replaced by
 
 | Old task | Restored truth | Evidence | Boundary for production-gap fleet |
 | --- | --- | --- | --- |
-| `AG-DYNUI-SRC-001` | Completed; archive already existed. | Pantheon PR #2538 merge `64036db...`; closeout pack. | Raw zip is missing now, so use committed closure pack and extracted reference; do not claim raw archive restoration. |
+| `AG-DYNUI-SRC-001` | Completed; archive already existed. | Pantheon PR #2538 merge `64036db...`; closeout pack. | Raw zip and the previously observed `/tmp` extraction are missing now, so use the committed closure pack/source map; do not claim raw archive restoration. |
 | `AG-BE-DYNUI-001` | Completed backend workspace proposal/workspace foundation. | Pantheon PR #2577 merge `cb8b031...`; closeout PR #2579 merge `eac485c...`. | Does not prove durable DB persistence or hosted FE behavior. |
 | `AG-BE-DYNUI-002` | Completed backend widget revision/version/rollback foundation. | Pantheon PR #2581 merge `b3c8e654...`. | Backend foundation only; frontend/runtime production behavior remains downstream. |
 | `AG-BE-DYNUI-003` | Completed servant generator and validator integration. | Implementation PR #2585 merge `ef246b2...`; closeout PR #2587 merge `de81d70...`. | Readiness/store-backed generator caveats remain; not hosted E2E proof. |

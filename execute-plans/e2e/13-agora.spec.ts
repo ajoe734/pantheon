@@ -14,6 +14,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { installOidcDevLogin } from "./helpers/auth";
 
 const SIGNAL_ID = "signal-f13-alpha-001";
 const JOURNAL_ID = "journal-f13-decision-001";
@@ -22,6 +23,17 @@ const ASK_SESSION_ID = "ask-session-f13-001";
 const ASK_MESSAGE_ID = "ask-message-f13-assistant-001";
 const SNAPSHOT_AT = "2026-05-13T14:45:00Z";
 const ASK_SSE_AVAILABLE = process.env.F13_AGORA_ASK_SSE_AVAILABLE !== "0";
+const AG_DYNUI_LIVE_WORKSHOP_BASE = (
+  process.env.AGORA_LIVE_TABS_BASE_URL ||
+  process.env.PANTHEON_FE_BASE_URL ||
+  ""
+).replace(/\/+$/, "");
+const AG_DYNUI_RAW_UUID_PATTERN =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
+const AG_DYNUI_WORKSHOP_VIEWPORTS = [
+  { name: "desktop", size: { width: 1440, height: 960 } },
+  { name: "mobile", size: { width: 390, height: 844 } },
+] as const;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -890,4 +902,49 @@ test.describe("F13 Agora signal, ask, and journal", () => {
     });
     expect(harness.snapshotJournal().title).toBe("Raise risk watch");
   });
+});
+
+test.describe("AG-DYNUI-LIVE-WORKSHOP-009 hosted Strategy Workshop tab", () => {
+  test.skip(
+    !AG_DYNUI_LIVE_WORKSHOP_BASE,
+    "Set AGORA_LIVE_TABS_BASE_URL or PANTHEON_FE_BASE_URL to run hosted live tab proof.",
+  );
+
+  for (const viewport of AG_DYNUI_WORKSHOP_VIEWPORTS) {
+    test(`renders the live workshop runtime on ${viewport.name}`, async ({ page }, testInfo) => {
+      await page.setViewportSize(viewport.size);
+      await installOidcDevLogin(page, {
+        goto: false,
+        pageBaseUrl: AG_DYNUI_LIVE_WORKSHOP_BASE,
+      });
+
+      await page.goto(`${AG_DYNUI_LIVE_WORKSHOP_BASE}/agora/trading-room`);
+      const workshopTab = page.getByRole("tab", { name: /策略工坊|Strategy Workshop/i });
+      if (await workshopTab.count()) {
+        await workshopTab.click();
+      } else {
+        await page.getByRole("button", { name: /策略工坊|Strategy Workshop/i }).click();
+      }
+
+      await expect(page.getByTestId("strategy-workshop-page-session")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("strategy-workshop-runtime-header")).toBeVisible();
+      await expect(page.getByTestId("workshop-conversation")).toBeVisible();
+      await expect(page.getByTestId("completeness-rail")).toBeVisible();
+      await expect(page.getByTestId("servant-composer")).toBeVisible();
+      await expect(page.getByTestId("workshop-event-summary")).toContainText(/Events · \d+/);
+
+      const selectorTexts = await page.locator('[data-testid^="workshop-item-"]').allInnerTexts();
+      for (const text of selectorTexts) {
+        expect(text).not.toMatch(AG_DYNUI_RAW_UUID_PATTERN);
+      }
+
+      const screenshot = await page.screenshot({ fullPage: true });
+      await testInfo.attach(`ag-dynui-live-workshop-009-${viewport.name}`, {
+        body: screenshot,
+        contentType: "image/png",
+      });
+    });
+  }
 });

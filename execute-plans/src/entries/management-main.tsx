@@ -6,6 +6,7 @@ import { LoopTruthPanel } from "@/management/components/loop-truth";
 import { LiveEvidenceManifestPanel } from "@/management/components/live-evidence";
 import { OodaPacketPanel } from "@/management/components/ooda";
 import { ManagementPerformanceReviewPanel } from "@/management/components/performance-review";
+import { ManagementPromotionAllocationPanel } from "@/management/components/promotion-allocation";
 import { ManagementReadinessSuitePanel } from "@/management/components/readiness-suite";
 import { ManagementRouteStatus } from "@/management/shell/ManagementRouteStatus";
 import { describeManagementRoute } from "@/management/shell/routeRegistry";
@@ -22,6 +23,7 @@ function ManagementApp() {
   const showReadiness = route.panel === "readiness-suite";
   const showDecisionWorkbench = route.panel === "decision-workbench";
   const showPerformanceReview = route.panel === "performance-review";
+  const showPromotionAllocation = route.panel === "promotion-allocation";
   return (
     <div className="min-h-screen bg-background p-4 text-foreground" data-app={import.meta.env.VITE_APP_KIND}>
       <div className="mx-auto flex max-w-6xl flex-col gap-4">
@@ -33,6 +35,7 @@ function ManagementApp() {
         {showReadiness ? <ManagementReadinessSuitePanel /> : null}
         {showDecisionWorkbench ? <ManagementDecisionWorkbenchPanel /> : null}
         {showPerformanceReview ? <ManagementPerformanceReviewPanel /> : null}
+        {showPromotionAllocation ? <ManagementPromotionAllocationPanel /> : null}
       </div>
     </div>
   );

@@ -1,0 +1,127 @@
+{
+  "date": "2026-07-07T16:00:48.897Z",
+  "bffBaseUrl": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "tenantId": "pantheon-dev",
+  "workshopId": "0bb956f7-0f2a-4318-9cb3-c6feae58306d",
+  "results": [
+    {
+      "path": "/bff/agora/trading-room",
+      "status": 200,
+      "ok": true,
+      "requestId": "ag-dynui-live-readback-008-1783440048415-6e82ea82cccd4",
+      "responseRequestId": null,
+      "correlationId": null,
+      "cacheControl": null,
+      "summary": {
+        "rootKeys": [
+          "data_cutoff",
+          "position_summaries",
+          "queue_summary",
+          "risk_summary",
+          "snapshot_at",
+          "spec_version",
+          "strategies",
+          "top_decision_events",
+          "user_scope_ref"
+        ],
+        "dataType": "object",
+        "dataKeys": [
+          "data_cutoff",
+          "position_summaries",
+          "queue_summary",
+          "risk_summary",
+          "snapshot_at",
+          "spec_version",
+          "strategies",
+          "top_decision_events",
+          "user_scope_ref"
+        ],
+        "arrayCounts": {
+          "strategies": 2,
+          "top_decision_events": 0,
+          "position_summaries": 0
+        }
+      }
+    },
+    {
+      "path": "/bff/agora/trading-room/decision-events",
+      "status": 200,
+      "ok": true,
+      "requestId": "ag-dynui-live-readback-008-1783440048742-4c95ec4f3a09f",
+      "responseRequestId": null,
+      "correlationId": null,
+      "cacheControl": null,
+      "summary": {
+        "rootKeys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "dataType": "object",
+        "dataKeys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "arrayCounts": {
+          "items": 0
+        }
+      }
+    },
+    {
+      "path": "/bff/agora/workshops/0bb956f7-0f2a-4318-9cb3-c6feae58306d/cards",
+      "status": 200,
+      "ok": true,
+      "requestId": "ag-dynui-live-readback-008-1783440048759-896afd56fbd5",
+      "responseRequestId": null,
+      "correlationId": null,
+      "cacheControl": null,
+      "summary": {
+        "rootKeys": [
+          "data",
+          "meta"
+        ],
+        "dataType": "array",
+        "dataKeys": [],
+        "arrayCounts": {
+          "data": 3
+        }
+      }
+    },
+    {
+      "path": "/bff/agora/workshops/0bb956f7-0f2a-4318-9cb3-c6feae58306d/readiness",
+      "status": 200,
+      "ok": true,
+      "requestId": "ag-dynui-live-readback-008-1783440048852-4852731b5a01b",
+      "responseRequestId": null,
+      "correlationId": null,
+      "cacheControl": null,
+      "summary": {
+        "rootKeys": [
+          "data",
+          "meta"
+        ],
+        "dataType": "object",
+        "dataKeys": [
+          "assessed_at",
+          "assessment_id",
+          "assessment_version",
+          "evidence_refs",
+          "gates",
+          "highest_ready_gate",
+          "spec_version",
+          "staleness_reasons",
+          "strategy_id",
+          "strategy_spec_registry_id",
+          "workshop_id",
+          "workshop_version_id"
+        ],
+        "arrayCounts": {
+          "gates": 3,
+          "evidence_refs": 2,
+          "staleness_reasons": 0
+        }
+      }
+    }
+  ]
+}

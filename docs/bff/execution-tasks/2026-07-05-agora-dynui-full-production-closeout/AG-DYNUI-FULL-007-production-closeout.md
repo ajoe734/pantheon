@@ -120,3 +120,25 @@ Patch scope:
 
 No `services/`, `execute-plans/`, BFF route, UI, deployment, or runtime behavior
 is changed by this reconciliation patch.
+
+## 2026-07-07 Owner Finalization
+
+Gemini approved the reconciliation after PR #3044 merged to `dev` at
+`b0695ba73165beb2be90b1aed872d29d4990133f`. GitHub reported green Branch CI
+Gate and Orchestrator Sync checks for the archive-only patch.
+
+Owner finalization re-ran:
+
+```bash
+git diff --check
+python3 -m json.tool ai-task-archive/index.json >/tmp/ag-dynui-archive-index.json
+python3 -m json.tool ai-task-archive/tasks/AG-DYNUI-FULL-003.json >/tmp/ag-dynui-full-003.json
+python3 -m json.tool ai-task-archive/tasks/AG-DYNUI-FULL-005.json >/tmp/ag-dynui-full-005.json
+python3 -m json.tool ai-task-archive/tasks/AG-DYNUI-FULL-006.json >/tmp/ag-dynui-full-006.json
+python3 -m json.tool ai-task-archive/tasks/AG-DYNUI-FULL-007.json >/tmp/ag-dynui-full-007.json
+python3 -m py_compile scripts/ai_status.py
+```
+
+The remaining closeout step is the owner-only
+`AI_NAME=Codex ./scripts/ai-status.sh done AG-DYNUI-FULL-007-BOARD-RECONCILE`
+transition after this finalization note is committed and merged.
