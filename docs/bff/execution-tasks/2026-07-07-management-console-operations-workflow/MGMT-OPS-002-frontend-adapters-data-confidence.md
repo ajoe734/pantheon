@@ -67,4 +67,5 @@ Verification:
 
 ```bash
 npm test -- src/management/components/performance-review/ManagementPerformanceReviewPanel.test.tsx src/management/shell/routeRegistry.test.ts src/management/components/promotion-allocation/ManagementPromotionAllocationPanel.test.tsx
+npm run build:management
 ```
