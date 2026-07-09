@@ -4107,3 +4107,80 @@ export async function fetchManagementCostAttribution(
   }
   return response.json() as Promise<ManagementCostAttributionResponse>;
 }
+
+export interface ManagementOperationsReadModelQuery {
+  period?: string;
+}
+
+export interface ManagementOperationsReadModelResponse {
+  data: {
+    identity: {
+      persona_id: string;
+      persona_label?: string | null;
+      stage?: string | null;
+      runtime_ids: string[];
+      paper_ledger_ids: string[];
+      capital_pool_ids: string[];
+      sleeve_ids: string[];
+      strategy_ids: string[];
+      artifact_ids: string[];
+      broker_ids: string[];
+      period: string;
+      as_of: string;
+    };
+    data_confidence: "formal" | "partial" | "fallback" | "degraded" | "unavailable" | string;
+    performance: {
+      pnl?: number | null;
+      pnl_pct?: number | null;
+      drawdown_pct?: number | null;
+      risk_pct?: number | null;
+      sharpe?: number | null;
+      rank?: number | null;
+      score?: number | null;
+      performance_delta?: number | null;
+      source_contribution?: number | null;
+    };
+    sources: {
+      source_name: string;
+      source_status: "ok" | "partial" | "degraded" | "unavailable" | string;
+      source_freshness?: string | null;
+      source_row_count?: number | null;
+      source_error?: string | null;
+      coverage_ratio?: number | null;
+    }[];
+    diagnostics: {
+      source_name: string;
+      code: string;
+      message: string;
+    }[];
+  };
+  meta: Record<string, unknown>;
+}
+
+export function managementOperationsReadModelPath(
+  personaId: string,
+  query?: ManagementOperationsReadModelQuery,
+): string {
+  return withQuery(paths.managementOperationsReadModel(personaId), query);
+}
+
+export async function fetchManagementOperationsReadModel(
+  personaId: string,
+  query?: ManagementOperationsReadModelQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementOperationsReadModelResponse> {
+  const path = managementOperationsReadModelPath(personaId, query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementOperationsReadModelResponse>;
+}
+
