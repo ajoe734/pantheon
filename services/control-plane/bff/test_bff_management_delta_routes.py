@@ -1235,3 +1235,52 @@ def test_cost_attribution_cors_preflight_and_openapi() -> None:
             assert "get" in schema["paths"]["/bff/management/cost-attribution"]
         finally:
             bff_main.read_store = original
+
+
+def test_persona_league_and_quarterly_ranking_normalization() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+
+            # Test Quarterly Ranking normalization
+            response = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1"},
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            data = body["data"]
+            assert "items" in data
+            for item in data["items"]:
+                assert "period" in item
+                assert item["period"] == "quarter"
+                assert "criteria" in item
+                assert "governance_state" in item
+                assert "eligible" in item
+                assert "exclusion_reason" in item or item["exclusion_reason"] is None
+                assert "evidence_coverage" in item
+                assert "source_confidence" in item
+
+            # Test Persona League Rankings normalization
+            response = client.get(
+                "/bff/management/persona-league/rankings",
+                headers=HEADERS,
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            data = body["data"]
+            assert "items" in data
+            for block in data["items"]:
+                assert "items" in block
+                for item in block["items"]:
+                    assert "period" in item
+                    assert item["period"] == "short_cycle"
+                    assert "criteria" in item
+                    assert "eligible" in item
+                    assert "exclusion_reason" in item or item["exclusion_reason"] is None
+                    assert "evidence_coverage" in item
+                    assert "source_confidence" in item
+        finally:
+            bff_main.read_store = original

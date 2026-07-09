@@ -40255,6 +40255,63 @@ def _pm12_public_quarter_evidence_refs(
     )
 
 
+def _pm12_quarterly_ranking_governance_state(persona_id: str, quarter: str) -> str:
+    clean_quarter = str(quarter or "").strip().lower()
+    clean_persona = str(persona_id or "").strip()
+    if not clean_quarter or not clean_persona:
+        return "recommendation"
+
+    has_submission = False
+    has_decision = False
+    decision_value = None
+    applied = False
+    blocked = False
+    expired = False
+
+    for record in command_store._get_all_commands():
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        cmd_type = record.get("type")
+        cmd_status = record.get("status")
+
+        if cmd_type == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+            rec_id = str(params.get("recommendation_id") or params.get("recommendationId") or "").strip().lower()
+            if rec_id.startswith(f"pm12-{clean_quarter}-{clean_persona}-"):
+                has_submission = True
+                if cmd_status == "failed":
+                    pass
+                elif cmd_status == "blocked":
+                    blocked = True
+                elif cmd_status == "expired":
+                    expired = True
+        elif target.get("type") == ObjectType.HUMAN_GATE_ITEM.value:
+            target_id = str(target.get("id") or "").strip().lower()
+            if target_id.startswith(f"promotion_review:pm12-{clean_quarter}-{clean_persona}-"):
+                has_decision = True
+                decision_value = params.get("decision")
+                if cmd_status == "executed" or cmd_status == "applied" or params.get("applied") is True:
+                    applied = True
+                elif cmd_status == "failed":
+                    pass
+                elif cmd_status == "blocked":
+                    blocked = True
+
+    if applied:
+        return "applied receipt"
+    if has_decision:
+        if decision_value == "approve" or decision_value == "approve_with_conditions":
+            return "approved review"
+        elif decision_value == "reject":
+            return "rejected"
+    if blocked:
+        return "blocked"
+    if expired:
+        return "expired"
+    if has_submission:
+        return "submitted review"
+    return "recommendation"
+
+
 def _pm12_quarterly_ranking_items(
     rows: List[Dict[str, Any]],
     *,
@@ -40271,15 +40328,21 @@ def _pm12_quarterly_ranking_items(
     items: List[Dict[str, Any]] = []
     for rank, item in enumerate(ranked, start=1):
         score = _management_number(item.get("overall_score")) or 0.0
+        persona_id = str(item.get("persona_id") or "")
+        quarter = quarter_window["quarter"]
+        gov_state = _pm12_quarterly_ranking_governance_state(persona_id, quarter)
         items.append({
             **item,
             "rank": rank,
             "score": score,
             "score_field": "overall_score",
-            "quarter": quarter_window["quarter"],
+            "quarter": quarter,
             "quarter_window": quarter_window,
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
             "basis": "latest_available_persona_league_metrics_with_quarter_window",
+            "period": "quarter",
+            "criteria": "overall",
+            "governance_state": gov_state,
         })
     return items
 
@@ -41513,12 +41576,34 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
     scores = _pm12_persona_league_scores(row, metrics)
     tier = _pm12_tier_for_score(scores["overall_score"])
     components = dict(scores)
+
+    state = row.get("state")
+    telemetry_count = metrics.get("telemetry_coverage_count", 0)
+    active_states = {"active", "paper_running", "canary", "live"}
+    eligible = state in active_states and telemetry_count > 0
+
+    exclusion_reasons = []
+    if state not in active_states:
+        exclusion_reasons.append(f"Inactive lifecycle state: {state}")
+    if telemetry_count == 0:
+        exclusion_reasons.append("No telemetry coverage")
+    exclusion_reason = "; ".join(exclusion_reasons) if exclusion_reasons else None
+
+    evidence_coverage = min(1.0, telemetry_count / 10.0) if telemetry_count > 0 else 0.0
+
+    if telemetry_count == 0:
+        source_confidence = "unavailable"
+    elif metrics.get("pnl") is None or metrics.get("drawdown") is None:
+        source_confidence = "degraded"
+    else:
+        source_confidence = "formal"
+
     return {
         "id": row.get("id"),
         "persona_id": row.get("persona_id") or row.get("id"),
         "name": row.get("name"),
         "owner": row.get("owner"),
-        "state": row.get("state"),
+        "state": state,
         "risk": row.get("risk"),
         "archetype": row.get("archetype"),
         "tier": tier["id"],
@@ -41528,6 +41613,10 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
         "metrics": metrics,
         "components": components,
         "links": row.get("links") or {},
+        "eligible": eligible,
+        "exclusion_reason": exclusion_reason,
+        "evidence_coverage": evidence_coverage,
+        "source_confidence": source_confidence,
     }
 
 
@@ -41566,6 +41655,8 @@ def _pm12_persona_league_rankings(
                 "rank": rank,
                 "score": score,
                 "score_field": score_key,
+                "period": "short_cycle",
+                "criteria": criterion,
             })
         blocks.append({
             "id": f"persona-league-{criterion}",
