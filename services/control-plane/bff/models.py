@@ -86,6 +86,15 @@ class CommandType(str, Enum):
     TERMINATE_STALE_PAPER_MONITORING_SESSION = "TerminateStalePaperMonitoringSession"
     START_PAPER_MONITORING_SESSION = "StartPaperMonitoringSession"
     PROBE_TELEMETRY_INGEST = "ProbeTelemetryIngest"
+    OBSERVE = "Observe"
+    REQUEST_REVIEW = "RequestReview"
+    PAUSE_PAPER_RUNTIME = "PausePaperRuntime"
+    RESUME_PAPER_RUNTIME = "ResumePaperRuntime"
+    DEMOTE = "Demote"
+    PROMOTE_CANDIDATE = "PromoteCandidate"
+    REBALANCE_PROPOSAL = "RebalanceProposal"
+    APPROVED_APPLY = "ApprovedApply"
+    EMERGENCY_CONTAINMENT = "EmergencyContainment"
 
 
 class ObjectType(str, Enum):
