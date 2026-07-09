@@ -1185,4 +1185,59 @@ describe("ManagementPerformanceReviewPanel", () => {
       window.location = originalLocation;
     }
   });
+
+  it("asserts that fallback row does not render a hardcoded name like Crypto-Alt-Hunter when persona_label is null", async () => {
+    const originalLocation = window.location;
+    delete (window as any).location;
+    window.location = {
+      ...originalLocation,
+      search: "?dimension=persona&period=quarter&persona_id=persona-null-label&runtime_id=runtime-crypto&source_confidence=fallback",
+    } as any;
+
+    vi.spyOn(managementApi, "fetchManagementOperationsReadModel").mockResolvedValue({
+      data: {
+        identity: {
+          persona_id: "persona-null-label",
+          persona_label: null,
+          stage: "paper_running",
+          runtime_ids: ["runtime-crypto"],
+          paper_ledger_ids: ["paper-ledger-persona-null-label"],
+          capital_pool_ids: [],
+          sleeve_ids: [],
+          strategy_ids: [],
+          artifact_ids: [],
+          broker_ids: [],
+          period: "quarter",
+          as_of: "2026-07-03T12:00:00Z",
+        },
+        data_confidence: "fallback",
+        performance: {
+          pnl: 48000.0,
+          sharpe: 1.76,
+          drawdown_pct: 0.064,
+        },
+        sources: [
+          { source_name: "performance_attribution", source_status: "unavailable", source_row_count: 0 },
+          { source_name: "portfolio_holdings", source_status: "unavailable", source_row_count: 0 },
+          { source_name: "capital_pools", source_status: "unavailable", source_row_count: 0 },
+          { source_name: "persona_fleet_summary", source_status: "ok", source_row_count: 1 },
+        ],
+        diagnostics: [],
+      },
+      meta: { snapshot_at: "2026-07-03T12:00:00Z" },
+    } as any);
+
+    try {
+      render(<ManagementPerformanceReviewPanel />);
+
+      await screen.findByText("Focus persona-null-label");
+
+      const fallbackRow = screen.getByTestId("fallback-attribution-row");
+      expect(fallbackRow.textContent).toContain("Fleet Fallback");
+      expect(fallbackRow.textContent).not.toContain("Crypto-Alt-Hunter");
+      expect(fallbackRow.textContent).toContain("Persona label unavailable");
+    } finally {
+      window.location = originalLocation;
+    }
+  });
 });

@@ -1187,7 +1187,7 @@ function AttributionSection({
                   <tr className="border-b border-border/60 bg-status-warning/5" data-testid="fallback-attribution-row">
                     <td className="px-2 py-2 font-semibold text-status-warning">Fleet Fallback</td>
                     <td className="px-2 py-2">
-                      <div className="font-medium">{readModel?.identity.persona_label || "Crypto-Alt-Hunter"}</div>
+                      <div className="font-medium">{readModel?.identity.persona_label || "Persona label unavailable"}</div>
                       <div className="text-muted-foreground">persona_fleet_summary / {focus.personaId}</div>
                     </td>
                     <td className="px-2 py-2 font-medium text-status-warning">
