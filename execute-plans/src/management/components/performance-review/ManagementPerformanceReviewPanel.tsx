@@ -8,6 +8,7 @@ import {
   Medal,
   RefreshCw,
   TrendingUp,
+  Trophy,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,9 @@ import type {
   ManagementPerformanceAttributionRow,
   ManagementPersonaLeagueMoversResponse,
   ManagementPersonaLeagueResponse,
+  ManagementPersonaLeagueRankingsResponse,
+  ManagementPersonaLeagueRankingBlock,
+  ManagementPersonaLeagueRankingItem,
   ManagementPortfolioBookExposureItem,
   ManagementPortfolioBookExposureResponse,
   ManagementPortfolioBookPosition,
@@ -82,6 +86,7 @@ interface ReviewIssue {
 interface ManagementPerformanceReviewSnapshot {
   personaFleet?: PersonaFleetAggregate;
   personaLeague?: ManagementPersonaLeagueResponse;
+  personaLeagueRankings?: ManagementPersonaLeagueRankingsResponse;
   personaMovers?: ManagementPersonaLeagueMoversResponse;
   quarterlyRanking?: ManagementQuarterlyRankingResponse;
   attributionByPersona?: ManagementPerformanceAttributionResponse;
@@ -210,6 +215,7 @@ function allSurfaceIssues(snapshot: ManagementPerformanceReviewSnapshot): Review
   return [
     ...surfaceIssues("Persona Fleet", snapshot.personaFleet),
     ...surfaceIssues("Persona league", snapshot.personaLeague),
+    ...surfaceIssues("Persona league rankings", snapshot.personaLeagueRankings),
     ...surfaceIssues("Persona movers", snapshot.personaMovers),
     ...surfaceIssues("Quarterly ranking", snapshot.quarterlyRanking),
     ...surfaceIssues("Persona attribution", snapshot.attributionByPersona),
@@ -397,6 +403,11 @@ export async function loadManagementPerformanceReviewSnapshot(
       run: () => managementApi.fetchManagementPersonaLeague({ page_size: PERFORMANCE_REVIEW_LIMITS.personaLeague }),
     },
     {
+      key: "personaLeagueRankings",
+      source: "Persona league rankings",
+      run: () => managementApi.fetchManagementPersonaLeagueRankings({ limit: PERFORMANCE_REVIEW_LIMITS.personaLeague }),
+    },
+    {
       key: "personaMovers",
       source: "Persona movers",
       run: () => managementApi.fetchManagementPersonaLeagueMovers({ limit: PERFORMANCE_REVIEW_LIMITS.personaMovers }),
@@ -474,6 +485,7 @@ export function ManagementPerformanceReviewPanel({ className }: { className?: st
   const [state, setState] = useState<LoadState>("loading");
   const [snapshot, setSnapshot] = useState<ManagementPerformanceReviewSnapshot | null>(null);
   const [error, setError] = useState<string | undefined>();
+  const [leagueCriteria, setLeagueCriteria] = useState<string>("overall");
   const focus = useMemo(() => performanceFocusFromLocation(), []);
 
   const load = useCallback(async () => {
@@ -482,9 +494,10 @@ export function ManagementPerformanceReviewPanel({ className }: { className?: st
     try {
       const nextSnapshot = await loadManagementPerformanceReviewSnapshot(focus);
       setSnapshot(nextSnapshot);
-      const everySourceFailed = nextSnapshot.issues.length >= 11
+      const everySourceFailed = nextSnapshot.issues.length >= 12
         && !nextSnapshot.personaFleet
         && !nextSnapshot.personaLeague
+        && !nextSnapshot.personaLeagueRankings
         && !nextSnapshot.personaMovers
         && !nextSnapshot.quarterlyRanking
         && !nextSnapshot.attributionByPersona
@@ -580,6 +593,7 @@ export function ManagementPerformanceReviewPanel({ className }: { className?: st
           <ReviewSummary snapshot={snapshot} />
           <PersonaFleetSection snapshot={snapshot} focus={focus} />
           <QuarterlyRankingSection snapshot={snapshot} />
+          <PersonaLeagueSection snapshot={snapshot} criteria={leagueCriteria} setCriteria={setLeagueCriteria} />
           <AttributionSection snapshot={snapshot} focus={focus} />
           <PortfolioBookSection snapshot={snapshot} />
           <CostAttributionSection snapshot={snapshot} />
@@ -799,6 +813,25 @@ function PersonaFleetSection({
   );
 }
 
+function governanceStateTone(state: string | undefined): string {
+  switch (state) {
+    case "applied receipt":
+      return "bg-status-ok/10 border-status-ok/30 text-status-ok";
+    case "approved review":
+      return "bg-status-ok/10 border-status-ok/30 text-status-ok";
+    case "submitted review":
+      return "bg-status-warning/10 border-status-warning/30 text-status-warning";
+    case "rejected":
+      return "bg-status-error/10 border-status-error/30 text-status-error";
+    case "blocked":
+      return "bg-status-error/10 border-status-error/30 text-status-error animate-pulse";
+    case "expired":
+      return "bg-status-error/10 border-status-error/30 text-muted-foreground";
+    default:
+      return "bg-muted/10 border-border text-muted-foreground";
+  }
+}
+
 function QuarterlyRankingSection({ snapshot }: { snapshot: ManagementPerformanceReviewSnapshot }) {
   const rows = quarterlyItems(snapshot);
   if (rows.length === 0) return null;
@@ -814,33 +847,179 @@ function QuarterlyRankingSection({ snapshot }: { snapshot: ManagementPerformance
           <thead className="border-b border-border text-muted-foreground">
             <tr>
               <th className="px-2 py-2 font-medium">Rank</th>
-              <th className="px-2 py-2 font-medium">Persona</th>
-              <th className="px-2 py-2 font-medium">Tier</th>
-              <th className="px-2 py-2 font-medium">Score</th>
-              <th className="px-2 py-2 font-medium">Risk</th>
-              <th className="px-2 py-2 font-medium">Formula</th>
-              <th className="px-2 py-2 font-medium">Top Components</th>
+              <th className="px-2 py-2 font-medium">Persona / Links</th>
+              <th className="px-2 py-2 font-medium">Tier & Risk</th>
+              <th className="px-2 py-2 font-medium">Score & Criteria</th>
+              <th className="px-2 py-2 font-medium">Eligibility</th>
+              <th className="px-2 py-2 font-medium">Period & Coverage</th>
+              <th className="px-2 py-2 font-medium">Gov State</th>
+              <th className="px-2 py-2 font-medium">Confidence</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => (
-              <tr key={row.id} className="border-b border-border/60" data-testid={rowId("quarterly-ranking-row", row.persona_id, index)}>
-                <td className="px-2 py-2 font-mono">{formatInteger(row.rank)}</td>
-                <td className="px-2 py-2">
-                  <div className="font-medium">{textFrom(row.name ?? row.persona_id)}</div>
-                  <div className="text-muted-foreground">{textFrom(row.owner, "unassigned")}</div>
-                </td>
-                <td className="px-2 py-2">
-                  <Badge variant="outline">{textFrom(row.tier_label ?? row.tier)}</Badge>
-                </td>
-                <td className="px-2 py-2 font-medium">{formatNumber(row.score ?? row.overall_score)}</td>
-                <td className="px-2 py-2">
-                  <Badge variant="outline" className={statusTone(row.risk)}>{labelFrom(row.risk)}</Badge>
-                </td>
-                <td className="px-2 py-2">{textFrom(row.formula_version)}</td>
-                <td className="px-2 py-2">{componentSummary(row.components)}</td>
-              </tr>
-            ))}
+            {rows.map((row, index) => {
+              const attribHref = buildPerformanceAttributionHref({
+                personaId: row.persona_id,
+                period: "quarter",
+                sourceHint: "quarterly_ranking",
+                sourceConfidence: (row.source_confidence || "formal") as any,
+              });
+              const reviewHref = `/management/promotion-allocation?tab=promotion-review&review_id=pm12-${String(row.quarter || "current").toLowerCase()}-${row.persona_id}-promote_to_canary_candidate`;
+              return (
+                <tr key={row.id} className="border-b border-border/60" data-testid={rowId("quarterly-ranking-row", row.persona_id, index)}>
+                  <td className="px-2 py-2 font-mono">{formatInteger(row.rank)}</td>
+                  <td className="px-2 py-2">
+                    <div className="font-medium">{textFrom(row.name ?? row.persona_id)}</div>
+                    <div className="text-muted-foreground text-[10px]">{textFrom(row.owner, "unassigned")}</div>
+                    <div className="flex gap-2 mt-1 text-[10px]">
+                      <a href={`/management/persona-fleet`} className="text-primary hover:underline font-medium">Fleet</a>
+                      <span className="text-border">|</span>
+                      <a href={attribHref} className="text-primary hover:underline font-medium">Attribution</a>
+                      <span className="text-border">|</span>
+                      <a href={reviewHref} className="text-primary hover:underline font-medium">Human Review</a>
+                    </div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <div><Badge variant="outline">{textFrom(row.tier_label ?? row.tier)}</Badge></div>
+                    <div className="mt-1"><Badge variant="outline" className={statusTone(row.risk)}>{labelFrom(row.risk)}</Badge></div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <div className="font-medium">{formatNumber(row.score ?? row.overall_score)}</div>
+                    <div className="text-muted-foreground capitalize text-[10px]">criteria: {textFrom(row.criteria || "overall")}</div>
+                  </td>
+                  <td className="px-2 py-2">
+                    {row.eligible ? (
+                      <Badge variant="outline" className="bg-status-ok/10 border-status-ok/30 text-status-ok">Eligible</Badge>
+                    ) : (
+                      <div>
+                        <Badge variant="outline" className="bg-status-error/10 border-status-error/30 text-status-error">Excluded</Badge>
+                        {row.exclusion_reason && <div className="text-[10px] text-muted-foreground mt-1 max-w-[150px] truncate" title={String(row.exclusion_reason)}>{String(row.exclusion_reason)}</div>}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-2 py-2">
+                    <div className="capitalize">{textFrom(row.period || "quarter")}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">coverage: {formatPercent(row.evidence_coverage ?? 1.0)}</div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <Badge variant="outline" className={governanceStateTone(row.governance_state as string)}>
+                      {labelFrom(row.governance_state as string, "recommendation")}
+                    </Badge>
+                  </td>
+                  <td className="px-2 py-2">
+                    <DataConfidenceBadge state={row.source_confidence as any || "formal"} source="quarterly_ranking" />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </ManagementDenseTable>
+    </PanelSection>
+  );
+}
+
+function PersonaLeagueSection({
+  snapshot,
+  criteria,
+  setCriteria,
+}: {
+  snapshot: ManagementPerformanceReviewSnapshot;
+  criteria: string;
+  setCriteria: (c: string) => void;
+}) {
+  const blocks = snapshot.personaLeagueRankings?.data.items ?? [];
+  if (blocks.length === 0) return null;
+
+  const currentBlock = blocks.find((b) => b.criteria === criteria) || blocks[0];
+  const rows = currentBlock.items ?? [];
+
+  return (
+    <PanelSection
+      title="Persona League Rankings"
+      icon={<Trophy className="h-4 w-4 text-primary" />}
+      summary={`Short-cycle operations ranking. Formula version: ${currentBlock.formula_version}`}
+    >
+      <div className="flex flex-wrap gap-2 mb-3 border-b border-border/40 pb-2">
+        {blocks.map((block) => (
+          <button
+            key={block.criteria}
+            onClick={() => setCriteria(block.criteria)}
+            className={cn(
+              "px-3 py-1 text-xs rounded-md border transition-all",
+              criteria === block.criteria
+                ? "bg-primary border-primary text-primary-foreground font-medium"
+                : "border-border/60 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+            )}
+          >
+            {block.label}
+          </button>
+        ))}
+      </div>
+      <ManagementDenseTable minWidth={920} testId="performance-review-table-persona-league">
+        <table className="w-full min-w-[920px] text-left text-xs">
+          <thead className="border-b border-border text-muted-foreground">
+            <tr>
+              <th className="px-2 py-2 font-medium">Rank</th>
+              <th className="px-2 py-2 font-medium">Persona / Links</th>
+              <th className="px-2 py-2 font-medium">Tier & Risk</th>
+              <th className="px-2 py-2 font-medium">Score & Criteria</th>
+              <th className="px-2 py-2 font-medium">Eligibility</th>
+              <th className="px-2 py-2 font-medium">Period & Coverage</th>
+              <th className="px-2 py-2 font-medium">Confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => {
+              const attribHref = buildPerformanceAttributionHref({
+                personaId: row.persona_id,
+                period: "quarter",
+                sourceHint: "persona_league",
+                sourceConfidence: (row.source_confidence || "formal") as any,
+              });
+              const reviewHref = `/management/promotion-allocation?tab=promotion-review&review_id=pm12-current-${row.persona_id}-promote_to_canary_candidate`;
+              return (
+                <tr key={row.id} className="border-b border-border/60" data-testid={rowId("persona-league-row", row.persona_id, index)}>
+                  <td className="px-2 py-2 font-mono">{formatInteger(row.rank)}</td>
+                  <td className="px-2 py-2">
+                    <div className="font-medium">{textFrom(row.name ?? row.persona_id)}</div>
+                    <div className="text-muted-foreground text-[10px]">{textFrom(row.owner, "unassigned")}</div>
+                    <div className="flex gap-2 mt-1 text-[10px]">
+                      <a href={`/management/persona-fleet`} className="text-primary hover:underline font-medium">Fleet</a>
+                      <span className="text-border">|</span>
+                      <a href={attribHref} className="text-primary hover:underline font-medium">Attribution</a>
+                      <span className="text-border">|</span>
+                      <a href={reviewHref} className="text-primary hover:underline font-medium">Human Review</a>
+                    </div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <div><Badge variant="outline">{textFrom(row.tier_label ?? row.tier)}</Badge></div>
+                    <div className="mt-1"><Badge variant="outline" className={statusTone(row.risk)}>{labelFrom(row.risk)}</Badge></div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <div className="font-medium">{formatNumber(row.score ?? row.overall_score)}</div>
+                    <div className="text-muted-foreground text-[10px] capitalize">criteria: {textFrom(row.criteria || criteria)}</div>
+                  </td>
+                  <td className="px-2 py-2">
+                    {row.eligible ? (
+                      <Badge variant="outline" className="bg-status-ok/10 border-status-ok/30 text-status-ok">Eligible</Badge>
+                    ) : (
+                      <div>
+                        <Badge variant="outline" className="bg-status-error/10 border-status-error/30 text-status-error">Excluded</Badge>
+                        {row.exclusion_reason && <div className="text-[10px] text-muted-foreground mt-1 max-w-[150px] truncate" title={String(row.exclusion_reason)}>{String(row.exclusion_reason)}</div>}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-2 py-2">
+                    <div className="capitalize">{textFrom(row.period || "short_cycle")}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">coverage: {formatPercent(row.evidence_coverage ?? 1.0)}</div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <DataConfidenceBadge state={row.source_confidence as any || "formal"} source="persona_league" />
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </ManagementDenseTable>

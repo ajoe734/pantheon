@@ -8,6 +8,7 @@ import type {
   ManagementPerformanceAttributionResponse,
   ManagementPersonaLeagueMoversResponse,
   ManagementPersonaLeagueResponse,
+  ManagementPersonaLeagueRankingsResponse,
   ManagementPortfolioBookExposureResponse,
   ManagementPortfolioBookPositionsResponse,
   ManagementQuarterlyRankingResponse,
@@ -58,6 +59,13 @@ function quarterlyItem(index: number, name = `Persona ${index}`) {
     },
     formula_version: "v2026.3",
     basis: "weighted_score",
+    eligible: true,
+    exclusion_reason: null,
+    evidence_coverage: 0.8,
+    source_confidence: "formal",
+    period: "quarter",
+    criteria: "overall",
+    governance_state: "recommendation",
   };
 }
 
@@ -85,6 +93,62 @@ const personaLeagueResponse = {
     surfaces: { management_persona_league: surfaceOk },
   },
 } as ManagementPersonaLeagueResponse;
+
+const personaLeagueRankingsResponse = {
+  data: {
+    id: "management-persona-league-rankings",
+    items: [
+      {
+        id: "persona-league-overall",
+        ranking_id: "persona-league-overall",
+        criteria: "overall",
+        label: "Overall Performance",
+        formula_version: "pm12-default-v1",
+        weights: { pnl_quality: 0.42, drawdown_control: 0.24, execution: 0.18, evidence: 0.16 },
+        items: [
+          {
+            id: "persona-alpha",
+            persona_id: "persona-alpha",
+            name: "Alpha Persona",
+            owner: "research",
+            state: "active",
+            risk: "ok",
+            archetype: "macro",
+            tier: "champion",
+            tier_id: "tier-champion",
+            tier_label: "Champion",
+            rank: 1,
+            score: 94,
+            overall_score: 94,
+            metrics: { telemetry_coverage_count: 5 },
+            components: { overall_score: 94 },
+            eligible: true,
+            exclusion_reason: null,
+            evidence_coverage: 0.5,
+            source_confidence: "formal",
+            period: "short_cycle",
+            criteria: "overall",
+          },
+        ],
+        ranked_count: 1,
+      },
+    ],
+    summary: {
+      persona_count: 12,
+      criteria: ["overall"],
+    },
+  },
+  page_info: { next_page_token: null, total: 1, page_size: 1 },
+  meta: { surfaces: { management_persona_league_rankings: surfaceOk } },
+} as ManagementPersonaLeagueRankingsResponse;
+
+const emptyPersonaLeagueRankingsResponse = {
+  ...personaLeagueRankingsResponse,
+  data: {
+    ...personaLeagueRankingsResponse.data,
+    items: [],
+  },
+} as ManagementPersonaLeagueRankingsResponse;
 
 const personaFleetResponse = {
   data: {
@@ -849,6 +913,7 @@ const operationsReadModelFallbackResponse = {
 function mockHappyPath() {
   vi.spyOn(managementClient.personaFleet, "list").mockResolvedValue(personaFleetResponse);
   vi.spyOn(managementApi, "fetchManagementPersonaLeague").mockResolvedValue(personaLeagueResponse);
+  vi.spyOn(managementApi, "fetchManagementPersonaLeagueRankings").mockResolvedValue(personaLeagueRankingsResponse);
   vi.spyOn(managementApi, "fetchManagementPersonaLeagueMovers").mockResolvedValue(personaMoversResponse);
   vi.spyOn(managementApi, "fetchManagementQuarterlyRanking").mockResolvedValue(quarterlyRankingResponse);
   vi.spyOn(managementApi, "fetchManagementPerformanceAttributionByPersona").mockResolvedValue(personaAttributionResponse);
@@ -869,6 +934,7 @@ function mockHappyPath() {
 function mockEmptyPath() {
   vi.spyOn(managementClient.personaFleet, "list").mockResolvedValue(emptyPersonaFleetResponse);
   vi.spyOn(managementApi, "fetchManagementPersonaLeague").mockResolvedValue(emptyPersonaLeagueResponse);
+  vi.spyOn(managementApi, "fetchManagementPersonaLeagueRankings").mockResolvedValue(emptyPersonaLeagueRankingsResponse);
   vi.spyOn(managementApi, "fetchManagementPersonaLeagueMovers").mockResolvedValue(emptyPersonaMoversResponse);
   vi.spyOn(managementApi, "fetchManagementQuarterlyRanking").mockResolvedValue(emptyQuarterlyRankingResponse);
   vi.spyOn(managementApi, "fetchManagementPerformanceAttributionByPersona").mockResolvedValue(emptyAttributionResponse);
@@ -927,6 +993,9 @@ describe("ManagementPerformanceReviewPanel", () => {
       });
       expect(managementApi.fetchManagementPersonaLeague).toHaveBeenCalledWith({
         page_size: PERFORMANCE_REVIEW_LIMITS.personaLeague,
+      });
+      expect(managementApi.fetchManagementPersonaLeagueRankings).toHaveBeenCalledWith({
+        limit: PERFORMANCE_REVIEW_LIMITS.personaLeague,
       });
     });
     expect(managementApi.fetchManagementPersonaLeagueMovers).toHaveBeenCalledWith({
@@ -1060,6 +1129,7 @@ describe("ManagementPerformanceReviewPanel", () => {
     const failure = new Error("bff offline");
     vi.spyOn(managementClient.personaFleet, "list").mockRejectedValue(failure);
     vi.spyOn(managementApi, "fetchManagementPersonaLeague").mockRejectedValue(failure);
+    vi.spyOn(managementApi, "fetchManagementPersonaLeagueRankings").mockRejectedValue(failure);
     vi.spyOn(managementApi, "fetchManagementPersonaLeagueMovers").mockRejectedValue(failure);
     vi.spyOn(managementApi, "fetchManagementQuarterlyRanking").mockRejectedValue(failure);
     vi.spyOn(managementApi, "fetchManagementPerformanceAttributionByPersona").mockRejectedValue(failure);
