@@ -827,6 +827,89 @@ const emptyTradingRankingsResponse = {
   },
 } as ManagementTradingPulseRankingsResponse;
 
+const operationsReadModelFormalResponse = {
+  data: {
+    identity: {
+      persona_id: "persona-alpha",
+      persona_label: "Alpha Persona",
+      stage: "paper_running",
+      runtime_ids: ["runtime-alpha"],
+      paper_ledger_ids: ["ledger-alpha"],
+      capital_pool_ids: ["pool-growth"],
+      sleeve_ids: [],
+      strategy_ids: ["strategy-carry"],
+      artifact_ids: [],
+      broker_ids: ["broker-alpha"],
+      period: "quarter",
+      as_of: "2026-07-03T12:00:00Z",
+    },
+    data_confidence: "formal",
+    performance: {
+      pnl: 124000,
+      sharpe: 1.8,
+      drawdown_pct: 0.04,
+      score: 95,
+    },
+    sources: [
+      { source_name: "performance_attribution", source_status: "ok", source_row_count: 1 },
+      { source_name: "portfolio_holdings", source_status: "ok", source_row_count: 2 },
+      { source_name: "capital_pools", source_status: "ok", source_row_count: 1 },
+      { source_name: "persona_fleet_summary", source_status: "ok", source_row_count: 1 },
+    ],
+    diagnostics: [],
+  },
+  meta: { snapshot_at: "2026-07-03T12:00:00Z" },
+};
+
+const operationsReadModelFallbackResponse = {
+  data: {
+    identity: {
+      persona_id: "persona-20260528-04688755",
+      persona_label: "Crypto-Alt-Hunter",
+      stage: "paper_running",
+      runtime_ids: ["runtime-crypto"],
+      paper_ledger_ids: ["paper-ledger-persona-20260528-04688755"],
+      capital_pool_ids: [],
+      sleeve_ids: [],
+      strategy_ids: [],
+      artifact_ids: [],
+      broker_ids: [],
+      period: "quarter",
+      as_of: "2026-07-03T12:00:00Z",
+    },
+    data_confidence: "fallback",
+    performance: {
+      pnl: 48000.0,
+      sharpe: 1.76,
+      drawdown_pct: 0.064,
+    },
+    sources: [
+      { source_name: "performance_attribution", source_status: "unavailable", source_row_count: 0 },
+      { source_name: "portfolio_holdings", source_status: "unavailable", source_row_count: 0 },
+      { source_name: "capital_pools", source_status: "unavailable", source_row_count: 0 },
+      { source_name: "persona_fleet_summary", source_status: "ok", source_row_count: 1 },
+    ],
+    diagnostics: [
+      {
+        source_name: "performance_attribution",
+        code: "MISSING_ATTRIBUTION_MATCH",
+        message: "No performance-attribution row matched persona persona-20260528-04688755 in period quarter.",
+      },
+      {
+        source_name: "portfolio_holdings",
+        code: "MISSING_HOLDINGS_MATCH",
+        message: "No holdings source returned a matching row for persona persona-20260528-04688755.",
+      },
+      {
+        source_name: "persona_fleet_summary",
+        code: "FORMAL_ATTRIBUTION_MISSING_USING_FLEET_FALLBACK",
+        message: "Performance is synthesized from the persona-fleet summary because no formal attribution or holdings row matched this persona; treat as fallback, not formal evidence.",
+      },
+    ],
+  },
+  meta: { snapshot_at: "2026-07-03T12:00:00Z" },
+};
+
 function mockHappyPath() {
   vi.spyOn(managementClient.personaFleet, "list").mockResolvedValue(personaFleetResponse);
   vi.spyOn(managementApi, "fetchManagementPersonaLeague").mockResolvedValue(personaLeagueResponse);
@@ -840,6 +923,12 @@ function mockHappyPath() {
   vi.spyOn(managementApi, "fetchManagementPortfolioBookPositions").mockResolvedValue(portfolioPositionsResponse);
   vi.spyOn(managementClient.tradingPulse, "list").mockResolvedValue(tradingPulseResponse);
   vi.spyOn(managementClient.tradingPulse, "rankings").mockResolvedValue(tradingRankingsResponse);
+  vi.spyOn(managementApi, "fetchManagementOperationsReadModel").mockImplementation((personaId) => {
+    if (personaId === "persona-20260528-04688755") {
+      return Promise.resolve(operationsReadModelFallbackResponse as any);
+    }
+    return Promise.resolve(operationsReadModelFormalResponse as any);
+  });
 }
 
 function mockEmptyPath() {
@@ -855,6 +944,32 @@ function mockEmptyPath() {
   vi.spyOn(managementApi, "fetchManagementPortfolioBookPositions").mockResolvedValue(emptyPositionsResponse);
   vi.spyOn(managementClient.tradingPulse, "list").mockResolvedValue(emptyTradingPulseResponse);
   vi.spyOn(managementClient.tradingPulse, "rankings").mockResolvedValue(emptyTradingRankingsResponse);
+  vi.spyOn(managementApi, "fetchManagementOperationsReadModel").mockResolvedValue({
+    data: {
+      identity: {
+        persona_id: "empty",
+        runtime_ids: [],
+        paper_ledger_ids: [],
+        capital_pool_ids: [],
+        sleeve_ids: [],
+        strategy_ids: [],
+        artifact_ids: [],
+        broker_ids: [],
+        period: "quarter",
+        as_of: "2026-07-03T12:00:00Z",
+      },
+      data_confidence: "unavailable",
+      performance: {},
+      sources: [
+        { source_name: "performance_attribution", source_status: "unavailable", source_row_count: 0 },
+        { source_name: "portfolio_holdings", source_status: "unavailable", source_row_count: 0 },
+        { source_name: "capital_pools", source_status: "unavailable", source_row_count: 0 },
+        { source_name: "persona_fleet_summary", source_status: "unavailable", source_row_count: 0 },
+      ],
+      diagnostics: [],
+    },
+    meta: {},
+  } as any);
 }
 
 describe("ManagementPerformanceReviewPanel", () => {
@@ -1029,5 +1144,45 @@ describe("ManagementPerformanceReviewPanel", () => {
 
     await screen.findByText("Performance review unavailable");
     expect(screen.getByText("Every performance review source failed.")).toBeTruthy();
+  });
+
+  it("renders fallback attribution drilldown with confidence banner, source statuses, and actionable diagnostics for focus persona persona-20260528-04688755 when formal attribution is absent", async () => {
+    const originalLocation = window.location;
+    delete (window as any).location;
+    window.location = {
+      ...originalLocation,
+      search: "?dimension=persona&period=quarter&persona_id=persona-20260528-04688755&runtime_id=runtime-crypto&source_confidence=fallback",
+    } as any;
+
+    try {
+      render(<ManagementPerformanceReviewPanel />);
+
+      await screen.findByText("Focus persona-20260528-04688755");
+
+      const banner = await screen.findByTestId("attribution-confidence-banner");
+      expect(banner.textContent).toContain("FALLBACK");
+      expect(banner.textContent).toContain("Do not treat as formal evidence");
+
+      const metaPanel = screen.getByTestId("attribution-metadata-panel");
+      expect(metaPanel.textContent).toContain("persona-20260528-04688755");
+      expect(metaPanel.textContent).toContain("runtime-crypto");
+
+      const fallbackRow = screen.getByTestId("fallback-attribution-row");
+      expect(fallbackRow.textContent).toContain("Fleet Fallback");
+      expect(fallbackRow.textContent).toContain("$48,000");
+
+      const coveragePanel = screen.getByTestId("attribution-source-coverage-panel");
+      expect(coveragePanel.textContent).toContain("performance attribution");
+      expect(coveragePanel.textContent).toContain("unavailable");
+
+      const diagnosticsPanel = screen.getByTestId("attribution-diagnostics-panel");
+      expect(diagnosticsPanel.textContent).toContain("MISSING_ATTRIBUTION_MATCH");
+      expect(diagnosticsPanel.textContent).toContain("MISSING_HOLDINGS_MATCH");
+
+      expect(screen.getByTestId("actionable-missing-holdings")).toBeTruthy();
+      expect(screen.getByTestId("actionable-missing-holdings").textContent).toContain("Action Required");
+    } finally {
+      window.location = originalLocation;
+    }
   });
 });

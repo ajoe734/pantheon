@@ -35,6 +35,7 @@ import type {
   ManagementTradingPulseRankingsResponse,
   ManagementTradingPulseResponse,
   ManagementTradingPulseRuntimeRow,
+  ManagementOperationsReadModelResponse,
 } from "@/lib/bff-v1/management";
 import { ManagementDenseTable } from "@/management/components/dense-table";
 import {
@@ -95,6 +96,7 @@ interface ManagementPerformanceReviewSnapshot {
   portfolioPositions?: ManagementPortfolioBookPositionsResponse;
   tradingPulse?: ManagementTradingPulseResponse;
   tradingRankings?: ManagementTradingPulseRankingsResponse;
+  operationsReadModel?: ManagementOperationsReadModelResponse;
   issues: ReviewIssue[];
 }
 
@@ -354,7 +356,7 @@ function performanceFocusFromLocation(): ManagementPerformanceReviewFocus {
   const sourceConfidence = normalizeConfidenceState(params.get("source_confidence"));
   const mode = textFrom(params.get("mode"), "");
   return {
-    personaId: textFrom(params.get("persona_id"), "") || undefined,
+    personaId: textFrom(params.get("persona_id") || params.get("persona"), "") || undefined,
     runtimeId: textFrom(params.get("runtime_id"), "") || undefined,
     period: textFrom(params.get("period"), REVIEW_PERIOD),
     sourceHint: textFrom(params.get("source_hint"), "") || undefined,
@@ -457,6 +459,14 @@ export async function loadManagementPerformanceReviewSnapshot(
       run: () => managementClient.tradingPulse.rankings({ limit: PERFORMANCE_REVIEW_LIMITS.tradingRankings }),
     },
   ];
+
+  if (focus.personaId) {
+    tasks.push({
+      key: "operationsReadModel",
+      source: "Operations Read Model",
+      run: () => managementApi.fetchManagementOperationsReadModel(focus.personaId!, { period }),
+    });
+  }
 
   const results = await Promise.all(tasks.map(settleTask));
   const snapshot: ManagementPerformanceReviewSnapshot = { issues: [] };
@@ -584,7 +594,7 @@ export function ManagementPerformanceReviewPanel({ className }: { className?: st
           <PersonaFleetSection snapshot={snapshot} focus={focus} />
           <QuarterlyRankingSection snapshot={snapshot} />
           <PersonaLeagueSection snapshot={snapshot} criteria={leagueCriteria} setCriteria={setLeagueCriteria} />
-          <AttributionSection snapshot={snapshot} />
+          <AttributionSection snapshot={snapshot} focus={focus} />
           <PortfolioBookSection snapshot={snapshot} />
           <CostAttributionSection snapshot={snapshot} />
           <TradingPulseSection snapshot={snapshot} />
@@ -1032,11 +1042,250 @@ function componentSummary(components: Record<string, unknown> | undefined): stri
   return entries.map(([key, value]) => `${labelFrom(key)} ${formatNumber(value)}`).join(" / ");
 }
 
-function AttributionSection({ snapshot }: { snapshot: ManagementPerformanceReviewSnapshot }) {
+function AttributionSection({
+  snapshot,
+  focus,
+}: {
+  snapshot: ManagementPerformanceReviewSnapshot;
+  focus: ManagementPerformanceReviewFocus;
+}) {
   const personaRows = personaAttributionItems(snapshot);
   const poolRows = poolAttributionItems(snapshot);
-  if (personaRows.length === 0 && poolRows.length === 0) return null;
+
+  if (personaRows.length === 0 && poolRows.length === 0 && !focus.personaId) return null;
+
   const summary = snapshot.attributionByPersona?.data.summary ?? snapshot.attributionByPool?.data.summary;
+  const readModel = snapshot.operationsReadModel?.data;
+
+  if (focus.personaId) {
+    const matchedFormalRows = personaRows.filter(
+      (row) => String(row.dimension_key || "").toLowerCase() === String(focus.personaId || "").toLowerCase()
+    );
+
+    return (
+      <PanelSection
+        title="Performance Attribution Drilldown"
+        icon={<LineChart className="h-4 w-4" />}
+        summary={focus.diagnostic ? "Fallback / degraded diagnostic context active." : "Formal attribution context active."}
+      >
+        {/* Confidence Banner */}
+        <div
+          className={cn(
+            "p-4 rounded-lg border flex flex-col gap-1 mb-4",
+            readModel?.data_confidence === "formal" ? "bg-status-success/15 border-status-success/30 text-status-success" :
+            readModel?.data_confidence === "partial" ? "bg-status-warning/15 border-status-warning/30 text-status-warning" :
+            readModel?.data_confidence === "fallback" ? "bg-status-warning/15 border-status-warning/30 text-status-warning" :
+            "bg-status-failed/15 border-status-failed/30 text-status-failed"
+          )}
+          data-testid="attribution-confidence-banner"
+          data-confidence={readModel?.data_confidence}
+        >
+          <div className="flex items-center gap-2 font-bold text-sm">
+            <AlertTriangle className="h-4 w-4" />
+            Confidence Level: {labelFrom(readModel?.data_confidence).toUpperCase()}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            {readModel?.data_confidence === "formal" && "Formal Performance Attribution: All matching data sources (attribution, holdings, capital pools, runtimes) are present and verified."}
+            {readModel?.data_confidence === "partial" && "Partial Performance Attribution: Some matching data is present, but complete telemetry or holdings history is missing."}
+            {readModel?.data_confidence === "fallback" && "Fallback Performance Summary: Synthesized from Persona Fleet summary because formal attribution and holdings are missing. Do not treat as formal evidence."}
+            {readModel?.data_confidence === "degraded" && "Degraded Performance Diagnostics: One or more data sources are reporting errors or mismatched records."}
+            {readModel?.data_confidence === "unavailable" && "No Performance Attribution Available: The selected persona has no matching runtime bindings or recorded activity."}
+          </div>
+        </div>
+
+        {/* Focus Metadata Panel */}
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4 mb-4" data-testid="attribution-metadata-panel">
+          <div className="bg-background p-3 rounded-lg border border-border">
+            <div className="text-xs text-muted-foreground font-medium">Focus Persona</div>
+            <div className="text-sm font-semibold mt-1 font-mono">{focus.personaId}</div>
+            {readModel?.identity.persona_label && (
+              <div className="text-xs text-muted-foreground mt-0.5">{readModel.identity.persona_label}</div>
+            )}
+          </div>
+          <div className="bg-background p-3 rounded-lg border border-border">
+            <div className="text-xs text-muted-foreground font-medium">Runtime IDs</div>
+            <div className="text-sm font-semibold mt-1 font-mono truncate" title={readModel?.identity.runtime_ids.join(", ")}>
+              {readModel?.identity.runtime_ids.join(", ") || "-"}
+            </div>
+          </div>
+          <div className="bg-background p-3 rounded-lg border border-border">
+            <div className="text-xs text-muted-foreground font-medium">Period / Source Timestamp</div>
+            <div className="text-sm font-semibold mt-1">
+              {readModel?.identity.period} / {readModel ? formatTime(readModel.identity.as_of) : "-"}
+            </div>
+          </div>
+          <div className="bg-background p-3 rounded-lg border border-border">
+            <div className="text-xs text-muted-foreground font-medium">Review Readiness</div>
+            <div className="text-sm font-semibold mt-1">
+              {readModel?.data_confidence === "formal" ? (
+                <span className="text-status-success font-medium">Ready for Review</span>
+              ) : (
+                <span className="text-status-warning font-medium">Review Not Recommended</span>
+              )}
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">
+              {readModel?.data_confidence === "formal"
+                ? "Enough evidence for review (formal match)"
+                : "Evidence degraded or missing. Verification required."}
+            </div>
+          </div>
+        </div>
+
+        {/* Split Table Sections */}
+        {matchedFormalRows.length > 0 ? (
+          <div className="mb-4">
+            <h4 className="text-xs font-semibold mb-2">Formal Contribution Rows (Match Count: {matchedFormalRows.length})</h4>
+            <ManagementDenseTable minWidth={740} testId="performance-review-table-persona-attribution-formal">
+              <table className="w-full min-w-[740px] text-left text-xs">
+                <thead className="border-b border-border text-muted-foreground">
+                  <tr>
+                    <th className="px-2 py-2 font-medium">Rank</th>
+                    <th className="px-2 py-2 font-medium">Label</th>
+                    <th className="px-2 py-2 font-medium">PnL</th>
+                    <th className="px-2 py-2 font-medium">Contribution</th>
+                    <th className="px-2 py-2 font-medium">Notional</th>
+                    <th className="px-2 py-2 font-medium">Trades</th>
+                    <th className="px-2 py-2 font-medium">Telemetry</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {matchedFormalRows.map((row, idx) => (
+                    <tr key={row.id} className="border-b border-border/60" data-testid={rowId("formal-attribution-row", row.dimension_key, idx)}>
+                      <td className="px-2 py-2 font-mono">{formatInteger(row.rank)}</td>
+                      <td className="px-2 py-2">
+                        <div className="font-medium">{textFrom(row.label)}</div>
+                        <div className="text-muted-foreground">{labelFrom(row.dimension)} / {textFrom(row.dimension_key)}</div>
+                      </td>
+                      <td className="px-2 py-2 font-medium">{formatMoney(row.total_pnl ?? row.metrics.total_pnl)}</td>
+                      <td className="px-2 py-2">{formatPercent(row.pnl_contribution_pct ?? row.metrics.pnl_contribution_pct)}</td>
+                      <td className="px-2 py-2">{formatMoney(row.metrics.total_notional)}</td>
+                      <td className="px-2 py-2">{formatInteger(row.metrics.total_trades)}</td>
+                      <td className="px-2 py-2">{formatTime(row.metrics.latest_telemetry_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ManagementDenseTable>
+          </div>
+        ) : (
+          <div className="mb-4">
+            <h4 className="text-xs font-semibold mb-2">Fallback Summary Rows (Match Count: 0 formal matches, using 1 fleet fallback)</h4>
+            <ManagementDenseTable minWidth={740} testId="performance-review-table-persona-attribution-fallback">
+              <table className="w-full min-w-[740px] text-left text-xs">
+                <thead className="border-b border-border text-muted-foreground">
+                  <tr>
+                    <th className="px-2 py-2 font-medium">Source</th>
+                    <th className="px-2 py-2 font-medium">Label</th>
+                    <th className="px-2 py-2 font-medium">PnL</th>
+                    <th className="px-2 py-2 font-medium">Sharpe</th>
+                    <th className="px-2 py-2 font-medium">Max Drawdown</th>
+                    <th className="px-2 py-2 font-medium">Performance Delta</th>
+                    <th className="px-2 py-2 font-medium">Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b border-border/60 bg-status-warning/5" data-testid="fallback-attribution-row">
+                    <td className="px-2 py-2 font-semibold text-status-warning">Fleet Fallback</td>
+                    <td className="px-2 py-2">
+                      <div className="font-medium">{readModel?.identity.persona_label || "Crypto-Alt-Hunter"}</div>
+                      <div className="text-muted-foreground">persona_fleet_summary / {focus.personaId}</div>
+                    </td>
+                    <td className="px-2 py-2 font-medium text-status-warning">
+                      {readModel?.performance.pnl !== undefined && readModel?.performance.pnl !== null
+                        ? formatMoney(readModel.performance.pnl)
+                        : "source returned null"}
+                    </td>
+                    <td className="px-2 py-2">
+                      {readModel?.performance.sharpe !== undefined && readModel?.performance.sharpe !== null
+                        ? formatNumber(readModel.performance.sharpe)
+                        : "source returned null"}
+                    </td>
+                    <td className="px-2 py-2">
+                      {readModel?.performance.drawdown_pct !== undefined && readModel?.performance.drawdown_pct !== null
+                        ? formatPercent(readModel.performance.drawdown_pct)
+                        : "source returned null"}
+                    </td>
+                    <td className="px-2 py-2">
+                      {readModel?.performance.performance_delta !== undefined && readModel?.performance.performance_delta !== null
+                        ? formatNumber(readModel.performance.performance_delta)
+                        : "source returned null"}
+                    </td>
+                    <td className="px-2 py-2">
+                      {readModel?.performance.score !== undefined && readModel?.performance.score !== null
+                        ? formatNumber(readModel.performance.score)
+                        : "source returned null"}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </ManagementDenseTable>
+          </div>
+        )}
+
+        {/* Source Statuses & Coverage */}
+        <div className="mb-4" data-testid="attribution-source-coverage-panel">
+          <h4 className="text-xs font-semibold mb-2">Source Statuses & Coverage</h4>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {readModel?.sources.map((src) => (
+              <div key={src.source_name} className="p-3 bg-muted/40 rounded-lg border border-border flex flex-col justify-between" data-testid={`source-status-${src.source_name}`}>
+                <div className="text-xs font-medium text-muted-foreground truncate">{labelFrom(src.source_name)}</div>
+                <div className="flex items-center justify-between mt-2">
+                  <Badge variant="outline" className={statusTone(src.source_status)}>
+                    {src.source_status}
+                  </Badge>
+                  <span className="text-xs font-mono">{src.source_row_count ?? 0} rows</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Diagnostics List */}
+        {readModel?.diagnostics && readModel.diagnostics.length > 0 ? (
+          <div className="mb-2" data-testid="attribution-diagnostics-panel">
+            <h4 className="text-xs font-semibold mb-2 text-status-failed">Diagnostics & Data Quality States</h4>
+            <div className="grid gap-2">
+              {readModel.diagnostics.map((diag) => {
+                const isHoldings = diag.code === "MISSING_HOLDINGS_MATCH";
+                const isAttribution = diag.code === "MISSING_ATTRIBUTION_MATCH";
+                return (
+                  <div
+                    key={diag.code}
+                    className={cn(
+                      "p-3 rounded-lg border text-xs",
+                      isHoldings ? "bg-status-failed/10 border-status-failed/30 text-status-failed" : "bg-muted/60 border-border"
+                    )}
+                    data-testid={`diagnostic-card-${diag.code}`}
+                  >
+                    <div className="font-semibold flex items-center gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {diag.code}: {labelFrom(diag.source_name)}
+                    </div>
+                    <div className="mt-1 text-muted-foreground">{diag.message}</div>
+                    {isHoldings && (
+                      <div className="mt-2 text-[11px] font-medium text-status-failed bg-status-failed/10 p-1.5 rounded" data-testid="actionable-missing-holdings">
+                        <strong>Action Required:</strong> Missing portfolio holdings for this persona. Please check if the active runtime binding has registered holdings to the ledger, or verify if the capital pool binding is active.
+                      </div>
+                    )}
+                    {isAttribution && (
+                      <div className="mt-2 text-[11px] text-muted-foreground bg-muted p-1.5 rounded">
+                        <strong>Recommendation:</strong> Verify if the paper runtime has completed its daily run and written back telemetry to the BFF database.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground p-3 bg-muted/20 border border-border rounded-lg" data-testid="attribution-diagnostics-none">
+            No data-quality diagnostics triggered.
+          </div>
+        )}
+      </PanelSection>
+    );
+  }
+
   return (
     <PanelSection
       title="Performance Attribution"
@@ -1089,20 +1338,39 @@ function AttributionTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => (
-              <tr key={row.id} className="border-b border-border/60" data-testid={rowId("attribution-row", row.dimension_key, index)}>
-                <td className="px-2 py-2 font-mono">{formatInteger(row.rank)}</td>
-                <td className="px-2 py-2">
-                  <div className="font-medium">{textFrom(row.label)}</div>
-                  <div className="text-muted-foreground">{labelFrom(row.dimension)} / {textFrom(row.dimension_key)}</div>
-                </td>
-                <td className="px-2 py-2 font-medium">{formatMoney(row.total_pnl ?? row.metrics.total_pnl)}</td>
-                <td className="px-2 py-2">{formatPercent(row.pnl_contribution_pct ?? row.metrics.pnl_contribution_pct)}</td>
-                <td className="px-2 py-2">{formatMoney(row.metrics.total_notional)}</td>
-                <td className="px-2 py-2">{formatInteger(row.metrics.total_trades)}</td>
-                <td className="px-2 py-2">{formatTime(row.metrics.latest_telemetry_at)}</td>
-              </tr>
-            ))}
+            {rows.map((row, index) => {
+              const pnl = row.total_pnl ?? row.metrics.total_pnl;
+              const contribution = row.pnl_contribution_pct ?? row.metrics.pnl_contribution_pct;
+              const notional = row.metrics.total_notional;
+              const trades = row.metrics.total_trades;
+
+              const isPnlNan = pnl === null || isNaN(pnl as number);
+              const isNotionalNan = notional === null || isNaN(notional as number);
+              const isTradesNan = trades === null || isNaN(trades as number);
+
+              return (
+                <tr key={row.id} className="border-b border-border/60" data-testid={rowId("attribution-row", row.dimension_key, index)}>
+                  <td className="px-2 py-2 font-mono">{formatInteger(row.rank)}</td>
+                  <td className="px-2 py-2">
+                    <div className="font-medium">{textFrom(row.label)}</div>
+                    <div className="text-muted-foreground">{labelFrom(row.dimension)} / {textFrom(row.dimension_key)}</div>
+                  </td>
+                  <td className="px-2 py-2 font-medium">
+                    {isPnlNan ? <span className="text-status-failed" title="PnL returned NaN or null">source returned null</span> : formatMoney(pnl)}
+                  </td>
+                  <td className="px-2 py-2">
+                    {contribution === null || isNaN(contribution as number) ? "-" : formatPercent(contribution)}
+                  </td>
+                  <td className="px-2 py-2">
+                    {isNotionalNan ? <span className="text-muted-foreground">source returned null</span> : formatMoney(notional)}
+                  </td>
+                  <td className="px-2 py-2">
+                    {isTradesNan ? <span className="text-muted-foreground">source returned null</span> : formatInteger(trades)}
+                  </td>
+                  <td className="px-2 py-2">{formatTime(row.metrics.latest_telemetry_at)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </ManagementDenseTable>

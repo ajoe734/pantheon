@@ -153,6 +153,7 @@ export const paths = {
   managementPerformanceAttributionByStrategy: () => `${BASE}/management/performance-attribution/by-strategy`,
   managementPerformanceAttributionByPersona: () => `${BASE}/management/performance-attribution/by-persona`,
   managementPerformanceAttributionByPool: () => `${BASE}/management/performance-attribution/by-pool`,
+  managementOperationsReadModel: (personaId: string) => `${BASE}/management/operations-read-model/${enc(personaId)}`,
 
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,
