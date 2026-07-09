@@ -146,6 +146,7 @@ from loop_inventory import (
     truth_label_payload,
 )
 from operations_read_model import (
+    DataConfidence,
     OperationsReadModelEnvelope,
     OperationsPerformance,
     OperationsReadModelEntry,
@@ -5003,7 +5004,6 @@ def _validate_quarterly_ranking_recommendation_submit(
             f"Missing fields: {sorted(missing)}",
             precondition_failed="quarterly_ranking_recommendation",
         )
-
     action_id = str(
         params.get("recommendation_action_id")
         or params.get("recommendationActionId")
@@ -5017,6 +5017,275 @@ def _validate_quarterly_ranking_recommendation_submit(
             f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
             precondition_failed="recommendation_action_id",
         )
+
+
+def _enforce_ops_console_preconditions(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    required_bindings: Optional[List[str]] = None,
+) -> None:
+    entity_type = str(params.get("entity_type") or params.get("entityType") or "").strip().lower()
+    persona_id = ""
+    runtime_id = ""
+
+    if entity_type == "persona":
+        persona_id = (
+            params.get("persona_id")
+            or params.get("personaId")
+            or params.get("entity_id")
+            or params.get("entityId")
+            or ""
+        ).strip()
+    elif entity_type == "runtime":
+        runtime_id = (
+            params.get("runtime_id")
+            or params.get("runtimeId")
+            or params.get("entity_id")
+            or params.get("entityId")
+            or ""
+        ).strip()
+
+    if not persona_id:
+        persona_id = (params.get("persona_id") or params.get("personaId") or "").strip()
+    if not runtime_id:
+        runtime_id = (params.get("runtime_id") or params.get("runtimeId") or "").strip()
+
+    if persona_id:
+        persona = read_store.get_persona(persona_id)
+        if not persona:
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Persona not found",
+                f"Persona {persona_id} does not exist",
+            )
+        
+        read_model = _ops_read_model_entry_for_persona(persona_id)
+        if read_model:
+            confidence = read_model.data_confidence
+            if isinstance(confidence, str):
+                confidence_str = confidence
+            elif hasattr(confidence, "value"):
+                confidence_str = confidence.value
+            else:
+                confidence_str = str(confidence)
+            
+            if confidence_str.lower() in ("unavailable", "unverifiable"):
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    f"Action blocked due to {confidence_str} source confidence for persona {persona_id}",
+                    "Source confidence must be formal, partial, fallback, or degraded",
+                    precondition_failed="source_confidence",
+                )
+            
+            if required_bindings:
+                if "runtime" in required_bindings:
+                    if not read_model.identity.runtime_ids:
+                        raise _bff_error(
+                            422,
+                            ErrorCode.VALIDATION_FAILED,
+                            f"Persona {persona_id} must have an active runtime binding",
+                            "No active runtime binding found for this persona",
+                            precondition_failed="runtime_binding_missing",
+                        )
+                if "capital" in required_bindings:
+                    if not read_model.identity.capital_pool_ids and not read_model.identity.paper_ledger_ids:
+                        raise _bff_error(
+                            422,
+                            ErrorCode.VALIDATION_FAILED,
+                            f"Persona {persona_id} must have a capital pool or paper ledger binding",
+                            "No active capital or ledger binding found for this persona",
+                            precondition_failed="capital_binding_missing",
+                        )
+
+    runtime_id = (
+        params.get("runtime_id")
+        or params.get("runtimeId")
+        or ""
+    ).strip()
+    if runtime_id:
+        binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
+        if not binding:
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Runtime not found",
+                f"Runtime {runtime_id} does not exist",
+            )
+        if required_bindings and "paper" in required_bindings:
+            stage = str(binding.get("deployment_stage") or binding.get("stage") or "").strip().lower()
+            if stage != "paper":
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    f"Runtime {runtime_id} stage is {stage}, not paper",
+                    "Action is restricted to paper runtimes only",
+                    precondition_failed="stage_mismatch",
+                )
+
+
+def _validate_observe(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Observe action requires operator, reviewer, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    _enforce_ops_console_preconditions(params, identity)
+
+
+def _validate_request_review(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "RequestReview action requires operator or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    persona_id = params.get("persona_id") or params.get("personaId")
+    if not persona_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing persona_id for RequestReview",
+            "persona_id must be provided to request a review",
+            precondition_failed="missing_persona",
+        )
+    _enforce_ops_console_preconditions(params, identity)
+
+
+def _validate_pause_paper_runtime(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "PausePaperRuntime action requires operator or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    runtime_id = params.get("runtime_id") or params.get("runtimeId")
+    if not runtime_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing runtime_id for PausePaperRuntime",
+            "runtime_id must be provided",
+            precondition_failed="missing_runtime",
+        )
+    _enforce_ops_console_preconditions(params, identity, required_bindings=["paper"])
+
+
+def _validate_resume_paper_runtime(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ResumePaperRuntime action requires operator, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    runtime_id = params.get("runtime_id") or params.get("runtimeId")
+    if not runtime_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing runtime_id for ResumePaperRuntime",
+            "runtime_id must be provided",
+            precondition_failed="missing_runtime",
+        )
+    _enforce_ops_console_preconditions(params, identity, required_bindings=["paper"])
+
+
+def _validate_demote(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Demote action requires operator, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    persona_id = params.get("persona_id") or params.get("personaId")
+    if not persona_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing persona_id for Demote",
+            "persona_id must be provided",
+            precondition_failed="missing_persona",
+        )
+    _enforce_ops_console_preconditions(params, identity)
+
+
+def _validate_promote_candidate(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "PromoteCandidate action requires operator, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    persona_id = params.get("persona_id") or params.get("personaId")
+    if not persona_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing persona_id for PromoteCandidate",
+            "persona_id must be provided",
+            precondition_failed="missing_persona",
+        )
+    _enforce_ops_console_preconditions(params, identity)
+
+
+def _validate_rebalance_proposal(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "RebalanceProposal action requires operator or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    _enforce_ops_console_preconditions(params, identity)
+
+
+def _validate_approved_apply(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ApprovedApply action requires operator, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    _enforce_ops_console_preconditions(params, identity)
+
+
+def _validate_emergency_containment(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "EmergencyContainment action requires operator, reviewer, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    
+    if params.get("allocation_increase") or params.get("promote") or params.get("action") in ("promote", "increase_allocation"):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Emergency containment cannot promote or increase allocation",
+            "Emergency actions must reduce or pause risk, they cannot increase risk exposure",
+            precondition_failed="emergency_containment_invalid_action",
+        )
+
+    _enforce_ops_console_preconditions(params, identity)
 
 
 _VALIDATORS = {
@@ -5048,6 +5317,15 @@ _VALIDATORS = {
     CommandType.HUMAN_GATE_REVOKE: _validate_human_gate_decision,
     CommandType.HUMAN_GATE_EXTEND_TTL: _validate_human_gate_decision,
     CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _validate_quarterly_ranking_recommendation_submit,
+    CommandType.OBSERVE: _validate_observe,
+    CommandType.REQUEST_REVIEW: _validate_request_review,
+    CommandType.PAUSE_PAPER_RUNTIME: _validate_pause_paper_runtime,
+    CommandType.RESUME_PAPER_RUNTIME: _validate_resume_paper_runtime,
+    CommandType.DEMOTE: _validate_demote,
+    CommandType.PROMOTE_CANDIDATE: _validate_promote_candidate,
+    CommandType.REBALANCE_PROPOSAL: _validate_rebalance_proposal,
+    CommandType.APPROVED_APPLY: _validate_approved_apply,
+    CommandType.EMERGENCY_CONTAINMENT: _validate_emergency_containment,
 }
 
 # --------------------------------------------------------------------------- #

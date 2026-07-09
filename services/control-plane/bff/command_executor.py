@@ -1050,6 +1050,15 @@ _EXECUTORS = {
     CommandType.HUMAN_GATE_REVOKE: _execute_bff_action_adapter,
     CommandType.HUMAN_GATE_EXTEND_TTL: _execute_bff_action_adapter,
     CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _execute_bff_action_adapter,
+    CommandType.OBSERVE: _execute_bff_action_adapter,
+    CommandType.REQUEST_REVIEW: _execute_bff_action_adapter,
+    CommandType.PAUSE_PAPER_RUNTIME: _execute_bff_action_adapter,
+    CommandType.RESUME_PAPER_RUNTIME: _execute_bff_action_adapter,
+    CommandType.DEMOTE: _execute_bff_action_adapter,
+    CommandType.PROMOTE_CANDIDATE: _execute_bff_action_adapter,
+    CommandType.REBALANCE_PROPOSAL: _execute_bff_action_adapter,
+    CommandType.APPROVED_APPLY: _execute_bff_action_adapter,
+    CommandType.EMERGENCY_CONTAINMENT: _execute_bff_action_adapter,
 }
 
 
