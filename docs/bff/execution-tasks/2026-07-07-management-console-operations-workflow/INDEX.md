@@ -6,6 +6,10 @@ Source plan:
 
 - `docs/04/pantheon_management_console_operations_workflow_2026-07-07/MANAGEMENT_CONSOLE_OPERATIONS_WORKFLOW_PLAN.md`
 
+Follow-up gap packets:
+
+- `docs/bff/execution-tasks/2026-07-10-persona-fleet-mutation-evolution-gap/INDEX.md` - Persona Fleet recent mutation links and Evolution Journal fallback semantics.
+
 ## Dispatch Command
 
 For local validation without mutating status:
