@@ -72,3 +72,11 @@ def test_capability_suffix_is_preserved_in_claims():
         "assistant.kernel.debug",
         "assistant.kernel.repair",
     ]
+
+
+def test_runtime_control_internal_legacy_token_works():
+    ctx = _ctx("runtime-control-internal")
+    assert ctx.actor_id == "runtime-control-internal"
+    assert "operator" in ctx.roles
+    assert ctx.mfa_verified is False
+

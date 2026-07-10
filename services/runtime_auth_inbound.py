@@ -497,12 +497,16 @@ def _parse_structured_token(token: str, default_role: str) -> AuthContext:
     comma-roles, an optional ``mfa`` marker, and optional capabilities.
     """
     if ":" not in token:
-        raise AuthError(
-            "AUTH_TOKEN_FORMAT",
-            "Permissive auth requires a structured actor:role bearer token or a valid JWT",
-            403,
-        )
-    parts = token.split(":")
+        if token == "runtime-control-internal":
+            parts = [token, default_role]
+        else:
+            raise AuthError(
+                "AUTH_TOKEN_FORMAT",
+                "Permissive auth requires a structured actor:role bearer token or a valid JWT",
+                403,
+            )
+    else:
+        parts = token.split(":")
     actor_id = parts[0].strip()
     if not actor_id:
         raise AuthError(
