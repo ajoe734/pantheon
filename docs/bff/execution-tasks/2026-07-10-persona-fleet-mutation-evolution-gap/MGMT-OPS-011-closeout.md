@@ -31,7 +31,7 @@ Close the Persona Fleet mutation/evolution gap with merged implementation, hoste
     - **Evidence Archive**: `ajoe734/pantheon` PR #3079, #3080 (Merged. Commit SHA: `f241716cb2d3d000211e2bf59bce4579e68f7038`, `48f9772633c09ffa6d86adb0389db9fcad5eed9b`).
     - **E2E Playwright Specification**: `ajoe734/execute-plans` PR #236 (Merged. Commit SHA: `493c022f0467802551c8dd4c621d329fbbbbef3b`).
   - **MGMT-OPS-011 (Mutation / Evolution Gap Closeout & Spec Fix)**:
-    - **E2E OODA Stage Specification Update**: `ajoe734/execute-plans` PR #242 (Merged. Commit SHA: `cc48b8e8f85f317b2b6ab0c9ca85e3cb7be1f0bf`).
+    - **E2E OODA Stage Specification Update**: `ajoe734/execute-plans` PR #242 (Merged. Commit SHA: `cc48b8eb2060648d90bf4004b7848815200e145b`).
 
 - [x] **Confirm the live Persona Fleet -> Evolution Journal path preserves links and semantics.**
   - Clicking `最近 MUTATION` hyperlink correctly redirects the operator based on the data confidence level.
