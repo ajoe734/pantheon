@@ -20,7 +20,7 @@ Close the Persona Fleet mutation/evolution gap with merged implementation, hoste
 
 ## Required Work & Verification Status
 
-- [x] **Verify `MGMT-OPS-008`, `MGMT-OPS-009`, and `MGMT-OPS-010` are merged with evidence.**
+- [x] **Verify `MGMT-OPS-008`, `MGMT-OPS-009`, `MGMT-OPS-010`, and `MGMT-OPS-011` are merged with evidence.**
   - **MGMT-OPS-008 (Contract Layer)**:
     - **BFF/Adapter**: `ajoe734/pantheon` PR #3075, #3076, #3077 (Merged. Commit SHA: `d2453d17904a0a876b4d53f5018c17622609fb85`, `252d6f39bcd0577d911487974d6c001d94057379`, `75c6771b5cea618cdc6eadc32236c6d592d78efa`).
     - **Frontend DTO Mapper**: `ajoe734/execute-plans` PR #234 (Merged. Commit SHA: `37a07c790c974601c998f6f9d1378ee5f3ef7924`).
@@ -30,6 +30,8 @@ Close the Persona Fleet mutation/evolution gap with merged implementation, hoste
   - **MGMT-OPS-010 (Hosted Click-Map & Smoke Regression)**:
     - **Evidence Archive**: `ajoe734/pantheon` PR #3079, #3080 (Merged. Commit SHA: `f241716cb2d3d000211e2bf59bce4579e68f7038`, `48f9772633c09ffa6d86adb0389db9fcad5eed9b`).
     - **E2E Playwright Specification**: `ajoe734/execute-plans` PR #236 (Merged. Commit SHA: `493c022f0467802551c8dd4c621d329fbbbbef3b`).
+  - **MGMT-OPS-011 (Mutation / Evolution Gap Closeout & Spec Fix)**:
+    - **E2E OODA Stage Specification Update**: `ajoe734/execute-plans` PR #242 (Merged. Commit SHA: `cc48b8e8f85f317b2b6ab0c9ca85e3cb7be1f0bf`).
 
 - [x] **Confirm the live Persona Fleet -> Evolution Journal path preserves links and semantics.**
   - Clicking `最近 MUTATION` hyperlink correctly redirects the operator based on the data confidence level.
@@ -49,7 +51,7 @@ Close the Persona Fleet mutation/evolution gap with merged implementation, hoste
 Hosted smoke regression tests were run against the target dev frontend deployment:
 - **Dev FE Host**: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
 - **Dev BFF Target**: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
-- **Frontend Active Commit**: `493c022f0467802551c8dd4c621d329fbbbbef3b`
+- **Frontend Active Commit**: `cc48b8eb2060648d90bf4004b7848815200e145b`
 - **BFF Active Commit**: `48f9772633c09ffa6d86adb0389db9fcad5eed9b`
 
 ### Verification Command and Output
