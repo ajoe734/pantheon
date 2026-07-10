@@ -1,34 +1,13 @@
 # Task Brief: MGMT-OPS-009
 
-This file is generated from the 2026-07-10 Persona Fleet mutation/evolution gap
-packet for task-scoped execution context.
+Generated in the worker workspace because the supervisor root did not have a task brief file.
 
 ## Task
 - Title: Persona Fleet and Evolution Journal link semantics
-- Status: todo
-- Owner: Codex
-- Reviewer: Claude2
-- Phase: Management Console Operations / Mutation Evolution Wave 1 frontend
-- Next: Fix Persona Fleet recent mutation links and Evolution Journal focus/fallback rendering without deleting useful hyperlinks.
+- Status: review_approved
+- Owner: Antigravity
+- Reviewer: Claude
+- Next: Reviewed execute-plans PR #235: personaFleetMutationHref, fallback card labeling, and Evolution Journal focus banner all satisfy MGMT-OPS-009 acceptance. 31 unit tests (incl. 4 new) + full 1189-test suite + tsc --noEmit all clean. Non-blocking note: focus banner text is now hardcoded zh-TW instead of using t(). Hosted click-map evidence is MGMT-OPS-010 scope. Owner: wait for PR #235 integration-gate + merge into dev before running done.
 
 ## Summary
 修正 Persona Fleet 最近 MUTATION 點到 Evolution Journal 的語義：有正式 id 就進正式 entry，沒有正式 id 就進 persona fallback summary；頁面不得顯示 mutation:nan，也不得把日期顯示成 Action。
-
-## Dependencies
-- MGMT-OPS-008
-
-## Artifacts
-- execute-plans:src/management/pages/oversight/personaFleetLinks.ts
-- execute-plans:src/management/pages/oversight/evolutionJournalFocus.ts
-- execute-plans:src/management/pages/oversight/_core.tsx
-- execute-plans:e2e
-- docs/bff/execution-tasks/2026-07-10-persona-fleet-mutation-evolution-gap/MGMT-OPS-009-persona-fleet-evolution-links.md
-
-## Relevant Canonical Files
-- docs/04/pantheon_management_console_mutation_evolution_gap_2026-07-10/PERSONA_FLEET_MUTATION_EVOLUTION_GAP.md
-- docs/bff/execution-tasks/2026-07-10-persona-fleet-mutation-evolution-gap/INDEX.md
-
-## Working Rules
-- Do not remove links as a substitute for fixing wrong targets.
-- Do not create a new aggregate OODA page.
-- Tests must fail if fallback pages show fake formal mutation text.
