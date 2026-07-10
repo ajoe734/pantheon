@@ -613,10 +613,10 @@ def _strict_two_man_race_item(
 
 def test_release_gate_aggregate_defaults_to_current_run_audit_dir(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     historical = tmp_path / ".lovable" / "audits" / "historical"
     current_run.mkdir(parents=True)
@@ -671,10 +671,10 @@ def test_release_gate_aggregate_defaults_to_current_run_audit_dir(tmp_path: Path
 
 def test_release_gate_counts_generated_summary_files_as_current_run_evidence(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -717,10 +717,10 @@ def test_release_gate_counts_generated_summary_files_as_current_run_evidence(tmp
 
 def test_release_gate_ignores_step_outcome_evidence_outside_current_run(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     historical = tmp_path / ".lovable" / "audits" / "historical"
     current_run.mkdir(parents=True)
@@ -874,10 +874,10 @@ def test_release_gate_ignores_step_outcome_evidence_outside_current_run(tmp_path
 
 def test_release_gate_surfaces_live_preflight_remediation_when_strict_probes_do_not_run(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     (current_run / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
@@ -988,34 +988,12 @@ def test_release_gate_surfaces_live_preflight_remediation_when_strict_probes_do_
     assert "smoke-secret" not in json.dumps(summary)
 
 
-def test_integration_gate_uploads_only_current_run_audits() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    workflow = repo_root / "execute-plans" / ".github" / "workflows" / "pantheon-integration-gate.yml"
-    text = workflow.read_text(encoding="utf-8")
-    upload_step = _workflow_step(workflow, "integration-gate", "Upload evidence")
-    upload_paths = _upload_artifact_paths(upload_step)
-
-    assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
-    assert ".lovable/audits/current-run" in text
-    assert ".lovable/audits/*.md" not in text
-    assert ".lovable/audits/historical" not in text
-    assert upload_step["uses"] == "actions/upload-artifact@v4"
-    assert upload_paths == [".lovable/audits/current-run", "playwright-report", "test-results"]
-    _assert_current_run_is_only_uploaded_audit_path(upload_paths)
-    assert "Strict SSE live soak" in text
-    assert "scripts/probe_bff_sse_stream.py" in text
-    assert "--strict-live-evidence" in text
-    assert "--soak-seconds 75" in text
-    assert "--reconnect-attempts 7" in text
-    assert "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json" in text
-
-
 def test_release_gate_accepts_authenticated_approval_race_evidence(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     (current_run / "bff-authenticated-live-smoke-2026-06-14.md").write_text(
@@ -1075,10 +1053,10 @@ def test_release_gate_accepts_authenticated_approval_race_evidence(tmp_path: Pat
 
 def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
@@ -1146,10 +1124,10 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
 
 def test_release_gate_rejects_strict_sse_soak_when_observed_duration_is_short(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
@@ -1217,10 +1195,10 @@ def test_release_gate_rejects_strict_sse_soak_when_observed_duration_is_short(tm
 
 def test_release_gate_rejects_strict_sse_soak_without_cookie_browser_path(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
@@ -1286,10 +1264,10 @@ def test_release_gate_rejects_strict_sse_soak_without_cookie_browser_path(tmp_pa
 
 def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
@@ -1357,10 +1335,10 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
@@ -1431,10 +1409,10 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
 
 def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_lineage(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
@@ -1502,10 +1480,10 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
 
 def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
@@ -1573,10 +1551,10 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
@@ -1669,7 +1647,7 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "--soak-min-heartbeats 2" in text
     assert "--reconnect-attempts 7" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
-    assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
+    assert "node scripts/aggregate_bff_release_gate.mjs" in text
     assert "scripts/verify_bff_live_evidence_artifact.py" in text
     assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
     assert "path: |" in text
@@ -1723,7 +1701,7 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "--soak-min-heartbeats 2" in text
     assert "--reconnect-attempts 7" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
-    assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
+    assert "node scripts/aggregate_bff_release_gate.mjs" in text
     assert "scripts/verify_bff_live_evidence_artifact.py" in text
     assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
     assert "path: |" in text
@@ -1738,10 +1716,10 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
 
 def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -1855,10 +1833,10 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
 
 def test_release_gate_rejects_strict_auth_when_smoke_preflight_hash_mismatches(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     _write_strict_live_preflight(current_run, smoke_hash="other-smoke-hash")
@@ -1912,10 +1890,10 @@ def test_release_gate_rejects_strict_auth_when_smoke_preflight_hash_mismatches(t
 
 def test_release_gate_rejects_strict_rbac_when_preflight_inventory_hash_mismatches(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
     _write_strict_live_preflight(
@@ -1972,10 +1950,10 @@ def test_release_gate_rejects_strict_rbac_when_preflight_inventory_hash_mismatch
 
 def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -2073,10 +2051,10 @@ def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_pa
 
 def test_release_gate_rejects_approval_race_without_safe_error_envelope(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -2166,10 +2144,10 @@ def test_release_gate_rejects_approval_race_without_safe_error_envelope(tmp_path
 
 def test_release_gate_rejects_approval_race_with_unlinked_target_detail(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -2258,10 +2236,10 @@ def test_release_gate_rejects_approval_race_with_unlinked_target_detail(tmp_path
 
 def test_release_gate_rejects_two_man_race_with_replayed_detail(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -2354,10 +2332,10 @@ def test_release_gate_rejects_two_man_race_with_replayed_detail(tmp_path: Path) 
 
 def test_release_gate_rejects_two_man_race_with_unlinked_target_detail(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -2447,10 +2425,10 @@ def test_release_gate_rejects_two_man_race_with_unlinked_target_detail(tmp_path:
 
 def test_release_gate_rejects_two_man_race_with_duplicate_signature_link(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -2539,10 +2517,10 @@ def test_release_gate_rejects_two_man_race_with_duplicate_signature_link(tmp_pat
 
 def test_release_gate_rejects_strict_rbac_matrix_without_required_family_coverage(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -2638,10 +2616,10 @@ def test_release_gate_rejects_strict_rbac_matrix_without_required_family_coverag
 
 def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_detail(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -2731,10 +2709,10 @@ def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_detail(tmp_path: 
 
 def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -2829,10 +2807,10 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
 
 def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proofs(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -2922,10 +2900,10 @@ def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proof
 
 def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_write_marker(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -3035,10 +3013,10 @@ def test_release_gate_rejects_strict_rbac_matrix_with_noncanonical_error_shape(
     expected_note: str,
 ) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -3140,10 +3118,10 @@ def test_release_gate_rejects_strict_rbac_matrix_with_noncanonical_error_shape(
 
 def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -3233,10 +3211,10 @@ def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_pat
 
 def test_release_gate_rejects_strict_dry_run_without_required_family_coverage(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -3333,10 +3311,10 @@ def test_release_gate_rejects_strict_dry_run_without_required_family_coverage(tm
 
 def test_release_gate_rejects_strict_dry_run_with_unlinked_readback_target(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -3427,10 +3405,10 @@ def test_release_gate_rejects_strict_dry_run_with_unlinked_readback_target(tmp_p
 
 def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proofs(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -3520,10 +3498,10 @@ def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proof
 
 def test_release_gate_rejects_strict_dry_run_with_noncanonical_error_shape(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -3624,10 +3602,10 @@ def test_release_gate_rejects_strict_dry_run_with_noncanonical_error_shape(tmp_p
 
 def test_release_gate_rejects_strict_dry_run_without_x_dry_run_request_header(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 
@@ -3719,10 +3697,10 @@ def test_release_gate_rejects_strict_dry_run_without_x_dry_run_request_header(tm
 
 def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path) -> None:
     if shutil.which("node") is None:
-        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+        pytest.skip("node is required to execute aggregate_bff_release_gate.mjs")
 
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    script = repo_root / "scripts" / "aggregate_bff_release_gate.mjs"
     current_run = tmp_path / ".lovable" / "audits" / "current-run"
     current_run.mkdir(parents=True)
 

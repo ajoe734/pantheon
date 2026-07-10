@@ -60,6 +60,12 @@ Use repository `ajoe734/execute-plans` and local checkout
 not create, revive, mirror to, or assign new work to `front-ai-trading-system`;
 that name is legacy-only and must not be used for current development.
 
+`execute-plans` is a separate repository and must never be materialized as an
+`execute-plans/` directory inside a Pantheon checkout. Do not copy, mirror, or
+commit frontend source, frontend tests, or frontend build configuration here.
+Frontend artifacts named `execute-plans/...` in cross-repository task packets
+refer to paths in `ajoe734/execute-plans`, not paths under this repository.
+
 Do not ask the operator to press Lovable publish for Pantheon dev frontend
 delivery. Do not wait on Lovable connector authorization, Lovable publish
 status, or `https://pantheon-dev.lovable.app` before continuing Pantheon dev

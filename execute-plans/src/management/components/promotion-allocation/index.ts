@@ -1,1 +1,0 @@
-export { ManagementPromotionAllocationPanel } from "./ManagementPromotionAllocationPanel";
