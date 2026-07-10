@@ -54807,9 +54807,126 @@ def _project_persona_fleet_list_row(
         "current_research_projects": current_research_projects,
     }
 
+    # Fetch all evolution decisions to check if there is a formal mutation/evolution entry for this persona
+    all_decisions = list(read_store.list_evolution_decisions() or [])
+    if persona_id == "persona-alpha":
+        print(f"DEBUG ALPHA DECISIONS: {id(read_store)} {all_decisions}")
+
+    binding_ids = set()
+    if binding:
+        bid = str(binding.get("id") or binding.get("binding_id") or "").strip()
+        if bid:
+            binding_ids.add(bid)
+
+    capital_pool_ids = set()
+    if binding:
+        pid = str(binding.get("capital_pool_id") or "").strip()
+        if pid:
+            capital_pool_ids.add(pid)
+    elif league_entry:
+        pid = str(league_entry.get("capital_pool_id") or "").strip()
+        if pid:
+            capital_pool_ids.add(pid)
+
+    runtime_ids = set()
+    if runtime:
+        rid = str(runtime.get("runtime_id") or runtime.get("runtime_binding_id") or runtime.get("id") or "").strip()
+        if rid:
+            runtime_ids.add(rid)
+
+    artifact_ids = set()
+    if runtime:
+        art_id = str(runtime.get("artifact_id") or "").strip()
+        if art_id:
+            artifact_ids.add(art_id)
+
+    incident_ids = {
+        str(incident.get("incident_id") or incident.get("id") or "").strip()
+        for incident in active_incidents
+        if str(incident.get("incident_id") or incident.get("id") or "").strip()
+    }
+
+    def _is_valid_formal_id(val: Any) -> bool:
+        if val is None:
+            return False
+        s = str(val).strip()
+        if not s:
+            return False
+        if s.lower() in {"nan", "null", "undefined", "none", "", "na"}:
+            return False
+        import re
+        if re.match(r'^\d{4}[-/]\d{2}[-/]\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)?$', s):
+            return False
+        return True
+
+    matched_decisions = [
+        decision
+        for decision in all_decisions
+        if str(decision.get("target_id") or "").strip() == persona_id
+        or (str(decision.get("artifact_id") or "").strip() in artifact_ids)
+        or (str(decision.get("incident_ref") or decision.get("linked_incident_id") or "").strip() in incident_ids)
+    ]
+
+    matched_decisions = [
+        d for d in matched_decisions if _is_valid_formal_id(d.get("decision_id") or d.get("id"))
+    ]
+
+    matched_decisions = _sort_records_latest_first(matched_decisions, ("updated_at", "created_at", "occurred_at"))
+
+    last_mutation_label = None
+    last_mutation_at = None
+    last_mutation_kind = "unavailable"
+    mutation_entry_id = None
+    evolution_entry_id = None
+    evolution_href = None
+    mutation_confidence = "unavailable"
+    mutation_diagnostics = []
+
+    if matched_decisions:
+        latest_decision = matched_decisions[0]
+        decision_id = latest_decision.get("decision_id") or latest_decision.get("id")
+        last_mutation_kind = "formal_mutation"
+        mutation_entry_id = decision_id
+        evolution_entry_id = decision_id
+        last_mutation_at = latest_decision.get("updated_at") or latest_decision.get("created_at") or updated_at
+        if last_mutation_at:
+            last_mutation_label = str(last_mutation_at)[:10]
+        evolution_href = f"/management/evolution-journal?persona={persona_id}&mutation_review={decision_id}"
+        mutation_confidence = "formal"
+        mutation_diagnostics = []
+
+    if last_mutation_kind == "unavailable":
+        if updated_at:
+            last_mutation_kind = "fleet_summary"
+            mutation_entry_id = None
+            evolution_entry_id = None
+            last_mutation_at = updated_at
+            last_mutation_label = str(updated_at)[:10]
+            evolution_href = f"/management/evolution-journal?persona={persona_id}&source=fleet_summary"
+            mutation_confidence = "fallback"
+            mutation_diagnostics = ["No formal mutation entry id declared for this persona row."]
+        else:
+            mutation_diagnostics = ["No recent-change data or fleet summary available for this persona."]
+
     return {
         "id": persona_id,
         "persona_id": persona_id,
+        "last_mutation_label": last_mutation_label,
+        "lastMutationLabel": last_mutation_label,
+        "last_mutation_at": last_mutation_at,
+        "lastMutationAt": last_mutation_at,
+        "last_mutation_kind": last_mutation_kind,
+        "lastMutationKind": last_mutation_kind,
+        "mutation_entry_id": mutation_entry_id,
+        "mutationEntryId": mutation_entry_id,
+        "evolution_entry_id": evolution_entry_id,
+        "evolutionEntryId": evolution_entry_id,
+        "evolution_href": evolution_href,
+        "evolutionHref": evolution_href,
+        "mutation_confidence": mutation_confidence,
+        "mutationConfidence": mutation_confidence,
+        "mutation_diagnostics": mutation_diagnostics,
+        "mutationDiagnostics": mutation_diagnostics,
         "name": persona.get("name") or persona_id,
         "owner": raw_metadata.get("owner") or raw_metadata.get("owner_id") or "pathreon-management",
         "mode": deployment_stage,
