@@ -254,7 +254,7 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          node execute-plans/scripts/aggregate-release-gate.mjs \
+          node scripts/aggregate_bff_release_gate.mjs \
             --audit-dir "$PANTHEON_AUDIT_OUT_DIR"
 
       - name: Verify live evidence artifact
