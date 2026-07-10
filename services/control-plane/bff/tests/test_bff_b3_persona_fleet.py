@@ -91,7 +91,8 @@ def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolutio
 
             alpha = next(item for item in body["data"]["items"] if item["id"] == "persona-alpha")
             assert alpha["name"] == "Alpha Persona"
-            assert alpha["capital_pool_id"] == "pool-main"
+            assert alpha["capital_pool_id"] is None
+            assert alpha["legacy_paper_capital_pool_id"] == "pool-main"
             assert alpha["health"] in {"healthy", "degraded", "critical"}
             assert alpha["governance_required"] is True
             assert "data_source_summary" in alpha
@@ -237,5 +238,113 @@ def test_legacy_management_fleet_alias_is_not_registered() -> None:
             resp = client.get("/bff/management/fleet", headers=OPERATOR_HEADERS)
 
             assert resp.status_code == 404, resp.text
+        finally:
+            bff_main.read_store = original
+
+
+def test_persona_fleet_mutation_evolution_contract() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+
+            # 1. Fallback-only state test
+            # persona-tw-equity is in the default mock database
+            bff_main.read_store.list_evolution_decisions = lambda **kwargs: []
+
+            resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            tw = next(item for item in body["data"]["items"] if item["id"] == "persona-tw-equity")
+            
+            # Since persona-tw-equity has no formal decisions in mock db, it must be fallback
+            assert tw["last_mutation_kind"] == "fleet_summary"
+            assert tw["mutation_entry_id"] is None
+            assert tw["evolution_entry_id"] is None
+            assert tw["mutation_confidence"] == "fallback"
+            assert any("No formal mutation entry id declared" in diag for diag in tw["mutation_diagnostics"])
+            assert tw["evolution_href"] == "/management/evolution-journal?persona=persona-tw-equity&source=fleet_summary"
+
+            # 2. Formal mutation state test
+            # Let's mock a formal decision matching persona-alpha
+            decisions = [
+                {
+                    "id": "evo-dec-alpha",
+                    "decision_id": "evo-dec-alpha",
+                    "target_id": "persona-alpha",
+                    "action_type": "retrain",
+                    "risk_level": "medium",
+                    "status": "approved",
+                    "created_at": "2026-06-05T12:00:00Z",
+                    "updated_at": "2026-06-05T12:00:00Z",
+                }
+            ]
+            bff_main.read_store.list_evolution_decisions = lambda **kwargs: decisions
+
+            resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            alpha = next(item for item in resp.json()["data"]["items"] if item["id"] == "persona-alpha")
+
+            assert alpha["last_mutation_kind"] == "formal_mutation"
+            assert alpha["mutation_entry_id"] == "evo-dec-alpha"
+            assert alpha["evolution_entry_id"] == "evo-dec-alpha"
+            assert alpha["mutation_confidence"] == "formal"
+            assert alpha["last_mutation_label"] == "2026-06-05"
+            assert alpha["last_mutation_at"] == "2026-06-05T12:00:00Z"
+            assert alpha["evolution_href"] == "/management/evolution-journal?persona=persona-alpha&mutation_review=evo-dec-alpha"
+
+            # 3. Invalid/nan ID test
+            # Let's insert a decision with nan ID that is newer than evo-dec-alpha
+            decisions_nan = [
+                {
+                    "id": "nan",
+                    "decision_id": "nan",
+                    "target_id": "persona-alpha",
+                    "action_type": "retrain",
+                    "risk_level": "medium",
+                    "status": "approved",
+                    "created_at": "2026-06-06T12:00:00Z",
+                    "updated_at": "2026-06-06T12:00:00Z",
+                },
+                {
+                    "id": "evo-dec-alpha",
+                    "decision_id": "evo-dec-alpha",
+                    "target_id": "persona-alpha",
+                    "action_type": "retrain",
+                    "risk_level": "medium",
+                    "status": "approved",
+                    "created_at": "2026-06-05T12:00:00Z",
+                    "updated_at": "2026-06-05T12:00:00Z",
+                }
+            ]
+            bff_main.read_store.list_evolution_decisions = lambda **kwargs: decisions_nan
+
+            resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
+            alpha_nan = next(item for item in resp.json()["data"]["items"] if item["id"] == "persona-alpha")
+            
+            # Since the latest decision is 'nan', it must be ignored/bypassed and fall back to the valid formal decision
+            assert alpha_nan["last_mutation_kind"] == "formal_mutation"
+            assert alpha_nan["mutation_entry_id"] == "evo-dec-alpha"
+
+            # 4. If all matched decisions are invalid
+            decisions_all_nan = [
+                {
+                    "id": "nan",
+                    "decision_id": "nan",
+                    "target_id": "persona-alpha",
+                    "action_type": "retrain",
+                    "risk_level": "medium",
+                    "status": "approved",
+                    "created_at": "2026-06-05T12:00:00Z",
+                    "updated_at": "2026-06-05T12:00:00Z",
+                }
+            ]
+            bff_main.read_store.list_evolution_decisions = lambda **kwargs: decisions_all_nan
+
+            resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
+            alpha_fallback = next(item for item in resp.json()["data"]["items"] if item["id"] == "persona-alpha")
+            assert alpha_fallback["last_mutation_kind"] == "fleet_summary"
+            assert alpha_fallback["mutation_entry_id"] is None
+
         finally:
             bff_main.read_store = original
