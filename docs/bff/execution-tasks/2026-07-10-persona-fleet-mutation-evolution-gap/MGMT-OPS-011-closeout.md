@@ -22,7 +22,7 @@ Close the Persona Fleet mutation/evolution gap with merged implementation, hoste
 
 - [x] **Verify `MGMT-OPS-008`, `MGMT-OPS-009`, and `MGMT-OPS-010` are merged with evidence.**
   - **MGMT-OPS-008 (Contract Layer)**:
-    - **BFF/Adapter**: `ajoe734/pantheon` PR #3075, #3076, #3077 (Merged. Commit SHA: `d2453d1797c2763f0dcf5796df37b4c09d5757d5`, `252d6f39bcd0577d911487974d6c001d94057379`, `75c6771b5cea618cdc6eadc32236c6d592d78efa`).
+    - **BFF/Adapter**: `ajoe734/pantheon` PR #3075, #3076, #3077 (Merged. Commit SHA: `d2453d17904a0a876b4d53f5018c17622609fb85`, `252d6f39bcd0577d911487974d6c001d94057379`, `75c6771b5cea618cdc6eadc32236c6d592d78efa`).
     - **Frontend DTO Mapper**: `ajoe734/execute-plans` PR #234 (Merged. Commit SHA: `37a07c790c974601c998f6f9d1378ee5f3ef7924`).
   - **MGMT-OPS-009 (Frontend Navigation & Fallback Semantics)**:
     - **Docs/Briefs**: `ajoe734/pantheon` PR #3078 (Merged. Commit SHA: `166b1f4630c45d3cc3f3fe1bf3cdc4693b6b596f`).
