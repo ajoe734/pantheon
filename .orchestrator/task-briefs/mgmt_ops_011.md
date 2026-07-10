@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: Reopened: (1) PR #3075 commit SHA in closeout doc is wrong (doc: d2453d1797c2763f0dcf5796df37b4c09d5757d5, actual merge commit: d2453d17904a0a876b4d53f5018c17622609fb85) — fix in both closeout.md and its archive copy. (2) evidence/04-target-capital-pool.png and evidence/05-target-ranking.png are byte-identical (same md5), both stuck on 'Loading Promotion allocation...' — neither proves the Capital Pool or League Rank link lands on a correct rendered target page; re-capture both distinctly and re-check the rest of the evidence set for the same duplicate-loading issue before resubmitting.
+- Next: Reopened: evidence/03-target-ooda-stage.png is byte-identical (md5 67098a04...) to evidence/09-target-formal-mutation.png. It shows the Evolution Journal 'evo-dec-formal' formal-mutation detail page, not an OODA stage target page, so it does not prove the OODA badge link lands on the correct target. Screenshots 04/05 are now correctly distinct (previous finding fixed) but 03 still needs a genuine, distinct re-capture of the OODA badge click-through before resubmitting.
 
 ## Summary
 彙整 MGMT-OPS-008/009/010 的 PR、merge commit、dev publish、hosted click-map evidence，確認 Persona Fleet 最近 mutation 連結仍存在且目標頁語義正確。
