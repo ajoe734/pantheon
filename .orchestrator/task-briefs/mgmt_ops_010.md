@@ -6,7 +6,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Title: Hosted click-map regression for Persona Fleet links
 - Status: review_approved
 - Owner: Antigravity
-- Reviewer: Claude
+- Reviewer: Codex
 - Next: Ownership updated
 
 ## Summary
