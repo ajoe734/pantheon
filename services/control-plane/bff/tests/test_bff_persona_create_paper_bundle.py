@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+import main as bff_main
+from read_store import ReadSurfaceStore
+
+OPERATOR_TOKEN = "Bearer op-2:operator"
+HEADERS = {"Authorization": OPERATOR_TOKEN}
+
+
+def _fresh_client(td: str) -> TestClient:
+    bff_main.read_store = ReadSurfaceStore(
+        os.path.join(td, "read_surfaces.json"),
+        allow_local_snapshot_fallback=True,
+    )
+    bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
+    bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+    bff_main._STRATEGY_BFF_OVERLAY.clear()
+    bff_main._PERSONA_BFF_OVERLAY.clear()
+    bff_main._COMMAND_AUTH_CONTEXT.clear()
+    return TestClient(bff_main.app)
+
+
+def test_bff_management_create_paper_bundle_validation() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+
+            # Missing Idempotency-Key header is rejected or name is missing
+            missing_name = client.post(
+                "/bff/management/personas/create-paper-bundle",
+                json={},
+                headers={**HEADERS, "Idempotency-Key": "bundle-001"},
+            )
+            assert missing_name.status_code == 422, missing_name.text
+
+            # Empty name is rejected
+            empty_name = client.post(
+                "/bff/management/personas/create-paper-bundle",
+                json={"name": "  "},
+                headers={**HEADERS, "Idempotency-Key": "bundle-002"},
+            )
+            assert empty_name.status_code == 422, empty_name.text
+        finally:
+            bff_main.read_store = original
+
+
+def test_bff_management_create_paper_bundle_success() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            
+            payload = {
+                "name": "Alpha Trader",
+                "archetype": "mean_reversion",
+                "risk": "medium",
+                "mandate": "Trade TW equities using daily pricing",
+                "market": "TW",
+            }
+            
+            resp = client.post(
+                "/bff/management/personas/create-paper-bundle",
+                json=payload,
+                headers={**HEADERS, "Idempotency-Key": "bundle-create-123"},
+            )
+            
+            assert resp.status_code == 201, resp.text
+            body = resp.json()
+            assert "data" in body
+            assert "meta" in body
+            
+            data = body["data"]
+            meta = body["meta"]
+            persona_id = data["id"]
+            
+            # Acceptance verification
+            assert data["state"] == "paper_running"
+            assert data["capitalMode"] == "paper"
+            assert data["deploymentStage"] == "paper"
+            assert data["paperLedgerId"].startswith("paper-ledger-")
+            assert data["runtimeId"].startswith("runtime-")
+            assert data["runtimeBindingId"].endswith("-paper")
+            assert "capitalPoolId" not in data
+            
+            assert meta["create_flow"] == "one_shot_paper_running"
+            assert meta["live_capital_side_effects"] is False
+            assert meta["human_review_required_for_live"] is True
+            
+            # Idempotency check with the same key
+            dup_resp = client.post(
+                "/bff/management/personas/create-paper-bundle",
+                json=payload,
+                headers={**HEADERS, "Idempotency-Key": "bundle-create-123"},
+            )
+            assert dup_resp.status_code == 201
+            assert dup_resp.json()["data"]["id"] == persona_id
+            
+            # Query the created persona detail to verify data sources and bindings
+            bff_main._PERSONA_BFF_OVERLAY.clear()
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=False,
+            )
+            
+            detail_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+            assert detail_resp.status_code == 200, detail_resp.text
+            detail = detail_resp.json()["data"]
+            
+            assert detail["state"] == "paper_running"
+            assert detail["mandate"] == "Trade TW equities using daily pricing"
+            assert detail["archetype"] == "mean_reversion"
+            
+            # Check TW required data sources are set correctly
+            assert "sourceHealthBindings" in detail or "required_data_sources" in bff_main.read_store.get_persona(persona_id)
+            persona_raw = bff_main.read_store.get_persona(persona_id)
+            assert persona_raw is not None
+            assert len(persona_raw.get("required_data_sources", [])) > 0
+            
+            # Ensure paper ledger is isolated
+            ledger = persona_raw["metadata"].get("paper_ledger")
+            assert ledger is not None
+            assert ledger["persona_id"] == persona_id
+            assert ledger["is_isolated"] is True
+            
+        finally:
+            bff_main.read_store = original
