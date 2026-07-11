@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 9
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9`
+Parent: `PPL-ALLOC-006`
+Owner: Codex
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -77,10 +77,10 @@ Request changes if any UI path:
 ## Review And Composition
 
 Owned here: support-only absorption matrix, evidence checklist, and reviewer
-decision rules.  
+decision rules.
 Not changing: L1/L2 truth, BFF/frontend implementation, route contracts,
 runtime/registry/governance behavior, dependency ownership, or parent
-lifecycle.  
+lifecycle.
 Composes with: parent `PPL-ALLOC-006`, `PPL-ALLOC-003` binding reads,
 `PPL-ALLOC-004` allocation semantics, `PPL-ALLOC-008` emergency containment,
 and the preceding PPL-ALLOC-006 BFF handoff packets.
@@ -92,6 +92,6 @@ and the preceding PPL-ALLOC-006 BFF handoff packets.
 - `docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/PPL-ALLOC-006-fe-promotion-allocation-workbench.md`
 - `services/control-plane/bff/main.py`
 - `services/control-plane/bff/test_bff_promotion_review_governance.py`
-- `services/control-plane/bff/test_bff_persona_allocation_policy.py`
+- `services/control-plane/bff/tests/test_bff_persona_allocation_policy.py`
 - `services/control-plane/bff/test_bff_rebalance_proposals.py`
 - `execute-plans` PR `#251` metadata and head `436aa32eaa24b4f048ae0b08c8a46686ceb56659`
