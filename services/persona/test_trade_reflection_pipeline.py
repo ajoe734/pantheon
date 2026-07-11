@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import jsonschema
 import pytest
 
 from services.persona.trade_reflection_pipeline import (
@@ -61,16 +65,35 @@ def test_snapshot_is_stable_and_detached_from_input():
     assert snapshot["a"]["value"] == 3
 
 
-def test_partial_reflection_marks_unknowns_counterfactuals_and_candidate_only():
+def test_partial_reflection_marks_unknowns_and_candidate_only():
     artifact = TradeReflectionPipeline(Provider()).process(
         request(missing_refs=("attribution://episode-1",))
     )
     assert artifact["evidence_coverage"] == "partial"
     assert artifact["unknowns"] == ["missing canonical ref: attribution://episode-1"]
-    assert artifact["counterfactuals"][0]["is_counterfactual"] is True
-    assert artifact["hindsight_guard"]["outcome_is_not_decision_quality"] is True
-    assert artifact["lesson_candidates"][0]["review_state"] == "proposed"
-    assert artifact["lesson_candidates"][0]["mutation_authority"] is False
+    assert artifact["counterfactuals"][0]["estimated_impact"] == "unknown"
+    assert artifact["lesson_candidates"][0]["expiry"]
+    assert artifact["review_state"] == "proposed"
+
+
+@pytest.mark.parametrize(
+    ("trigger", "episode_ids"),
+    [
+        ("episode_closed", ("episode-1",)),
+        ("scheduled_pattern", ("episode-1", "episode-2")),
+    ],
+)
+def test_process_output_conforms_to_reflection_schema(trigger, episode_ids):
+    schema_path = Path(__file__).with_name("persona_trade_reflection.schema.json")
+    schema = json.loads(schema_path.read_text())
+    artifact = TradeReflectionPipeline(Provider()).process(
+        request(trigger=trigger, trade_episode_ids=episode_ids)
+    )
+
+    jsonschema.validate(instance=artifact, schema=schema)
+    assert set(artifact["expected_vs_actual"]) == {
+        "thesis", "entry_quality", "exit_quality", "sizing", "timing", "risk_adherence"
+    }
 
 
 def test_retry_is_idempotent_after_success_and_dead_letters_terminal_failure():
