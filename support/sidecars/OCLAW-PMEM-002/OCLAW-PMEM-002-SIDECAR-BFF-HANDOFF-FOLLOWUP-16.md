@@ -1,6 +1,6 @@
 # OCLAW-PMEM-002 BFF / Frontend Handoff Follow-up 16
 
-Status: support-only stop-rule dispatch receipt; not canonical truth or runtime proof
+Status: review-approved support-only stop-rule dispatch receipt; not canonical truth or runtime proof
 Parent task: `OCLAW-PMEM-002`
 Sidecar task: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-16`
 Owner: Codex2
@@ -68,16 +68,17 @@ readiness, an agent id, or an aggregate sync report.
 
 ## Reviewer Checklist
 
-- [ ] Remote baseline and parent-branch identity are reproducible.
-- [ ] The parent diff contains no authoritative reconcile-result implementation.
-- [ ] The four stop-rule inputs remain unchanged.
-- [ ] No desired-only surface is represented as observed reconcile truth.
-- [ ] No canonical route, schema, lifecycle, storage owner, or runtime behavior
+- [x] Remote baseline and parent-branch identity are reproducible.
+- [x] The parent diff contains no authoritative reconcile-result implementation.
+- [x] The four stop-rule inputs remain unchanged.
+- [x] No desired-only surface is represented as observed reconcile truth.
+- [x] No canonical route, schema, lifecycle, storage owner, or runtime behavior
   is invented or changed.
-- [ ] Frontend dispatch remains gated on a merged governed BFF projection.
-- [ ] Approval is support-only and does not satisfy parent acceptance or hosted
+- [x] Frontend dispatch remains gated on a merged governed BFF projection.
+- [x] Approval is support-only and does not satisfy parent acceptance or hosted
   proof.
 
-Reviewer `Codex` should approve this only as an unchanged-state support receipt.
-The parent owner decides whether to assign the missing BFF implementation or
-defer it.
+Reviewer `Codex` approved commit `64940b97b` only as an unchanged-state support
+receipt. This approval does not change parent acceptance, runtime proof, or
+frontend proof. The parent owner decides whether to assign the missing BFF
+implementation or defer it.
