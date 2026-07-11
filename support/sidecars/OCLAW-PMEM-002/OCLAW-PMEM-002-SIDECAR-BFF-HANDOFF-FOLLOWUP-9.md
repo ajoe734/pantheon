@@ -65,8 +65,8 @@ queued, reconciling, blocked, failed, drifted, or unavailable attempt.
 
 ## BFF Owner Assignment
 
-**Repository:** `ajoe734/pantheon`  
-**Merge target:** `dev`  
+**Repository:** `ajoe734/pantheon`
+**Merge target:** `dev`
 **Composition:** parent `OCLAW-PMEM-002` owner selects the authoritative
 attempt/result write owner and the governed projection route.
 
@@ -91,8 +91,8 @@ and one sanitized representative response.
 
 ## Conditional Frontend Assignment
 
-**Repository:** `ajoe734/execute-plans`  
-**Merge target:** `main`  
+**Repository:** `ajoe734/execute-plans`
+**Merge target:** `main`
 **Start condition:** the Pantheon projection is merged and its versioned
 contract or sanitized response is available.
 
