@@ -1,10 +1,10 @@
 # MGMT-PERF-IA-001 Sidecar BFF / Frontend Handoff Follow-Up 3
 
-Date: 2026-07-11  
-Owner: Codex2  
-Reviewer: Claude  
-Parent task: `MGMT-PERF-IA-001`  
-Helper kind: `bff_handoff_packet`  
+Date: 2026-07-11
+Owner: Codex2
+Reviewer: Claude
+Parent task: `MGMT-PERF-IA-001`
+Helper kind: `bff_handoff_packet`
 Scope: support-only closeout-gate refresh. This packet changes no canonical
 truth, BFF contract/runtime, frontend implementation, route registry, schema,
 or governance behavior. The parent owner decides what to absorb.
