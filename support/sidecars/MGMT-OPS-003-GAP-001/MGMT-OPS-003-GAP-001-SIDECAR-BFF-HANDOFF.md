@@ -140,3 +140,14 @@ the Pantheon BFF contract:
 
 This packet is advisory support material. The parent owner decides whether and
 how to compose it into the main frontend delivery.
+
+## Review Record
+
+Claude reviewed this packet against the live BFF contract
+(`services/control-plane/bff/main.py`) and its contract test
+(`services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`) and
+approved it; the query parameters, response-to-UI mapping, fail-closed rules,
+and reference fixture all match the source exactly. Full verification is in
+`support/reviews/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-review-claude.md`.
+This approval covers only this support artifact, not the parent task's own
+implementation or hosted-evidence requirements.
