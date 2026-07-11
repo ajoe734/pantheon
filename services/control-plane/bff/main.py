@@ -25,8 +25,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.params import Param as FastAPIParam
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+def _resolve_param(val: Any) -> Any:
+    if isinstance(val, FastAPIParam):
+        if val.default is ... or type(val.default).__name__ == "PydanticUndefined":
+            return None
+        return val.default
+    return val
 
 sys.path.insert(0, os.path.dirname(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -6289,12 +6297,6 @@ def _dataset_surface_status(
             {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
         )
 
-    # Normalize state properties: freshness, coverage, missing_bindings, observed_time
-    surface["observed_time"] = snapshot_at or utc_now()
-    surface["freshness"] = surface.get("staleness", {}).get("served_from") or source or "unknown"
-    surface["coverage"] = 1.0 if has_data is not False and source not in ("missing", "unavailable") else 0.0
-    surface["missing_bindings"] = True if has_data is False or source == "missing" else False
-
     return surface
 
 
@@ -6311,10 +6313,6 @@ def _composed_dataset_surface_status(
             "status": "ok",
             "source": source,
             "note": "Composed from governed market-persona read-model defaults.",
-            "observed_time": snapshot_at or utc_now(),
-            "freshness": source,
-            "coverage": 1.0,
-            "missing_bindings": False,
         }
     return surface
 
@@ -6395,13 +6393,27 @@ def _composed_surface_status(
             {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
         )
 
-    # Normalize state properties
-    surface["observed_time"] = snapshot_at or utc_now()
-    surface["freshness"] = surface.get("staleness", {}).get("served_from") or "bff_composed"
-    surface["coverage"] = 1.0 if available else 0.0
-    surface["missing_bindings"] = not available
-
     return surface
+
+
+def _performance_ranking_source_surface(
+    surface: Dict[str, Any],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    """Add the cross-center confidence vocabulary without changing global envelopes."""
+    normalized = dict(surface)
+    source = str(normalized.get("source") or "unknown")
+    status = str(normalized.get("status") or "unavailable")
+    normalized["observed_time"] = snapshot_at
+    normalized["freshness"] = (
+        normalized.get("staleness", {}).get("served_from")
+        if isinstance(normalized.get("staleness"), dict)
+        else None
+    ) or source
+    normalized["coverage"] = 0.0 if status == "unavailable" or source == "missing" else 1.0
+    normalized["missing_bindings"] = status == "unavailable" or source == "missing"
+    return normalized
 
 
 def _extract_ids_from_item(item: Dict[str, Any], keys: List[str]) -> List[str]:
@@ -6448,6 +6460,24 @@ def _filter_by_common_identifiers(
     as_of: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     # 合併 query 參數值
+    persona_id = _resolve_param(persona_id)
+    persona = _resolve_param(persona)
+    runtime_id = _resolve_param(runtime_id)
+    runtime = _resolve_param(runtime)
+    strategy_id = _resolve_param(strategy_id)
+    strategy = _resolve_param(strategy)
+    capital_pool_id = _resolve_param(capital_pool_id)
+    pool = _resolve_param(pool)
+    sleeve_id = _resolve_param(sleeve_id)
+    sleeve = _resolve_param(sleeve)
+    artifact_id = _resolve_param(artifact_id)
+    artifact = _resolve_param(artifact)
+    broker_id = _resolve_param(broker_id)
+    broker = _resolve_param(broker)
+    stage = _resolve_param(stage)
+    period = _resolve_param(period)
+    as_of = _resolve_param(as_of)
+
     p_id = persona_id or persona
     r_id = runtime_id or runtime
     s_id = strategy_id or strategy
@@ -30140,6 +30170,27 @@ async def bff_management_portfolio_book(
     as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: composed portfolio-book summary for Management Console PM-12."""
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+    persona_id = _resolve_param(persona_id)
+    persona = _resolve_param(persona)
+    runtime_id = _resolve_param(runtime_id)
+    runtime = _resolve_param(runtime)
+    strategy_id = _resolve_param(strategy_id)
+    strategy = _resolve_param(strategy)
+    capital_pool_id = _resolve_param(capital_pool_id)
+    pool = _resolve_param(pool)
+    sleeve_id = _resolve_param(sleeve_id)
+    sleeve = _resolve_param(sleeve)
+    artifact_id = _resolve_param(artifact_id)
+    artifact = _resolve_param(artifact)
+    broker_id = _resolve_param(broker_id)
+    broker = _resolve_param(broker)
+    stage = _resolve_param(stage)
+    period = _resolve_param(period)
+    as_of = _resolve_param(as_of)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
@@ -30327,6 +30378,29 @@ async def bff_management_portfolio_book_pools(
     as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 portfolio-book capital pool summaries."""
+    status = _resolve_param(status)
+    risk_policy_ref = _resolve_param(risk_policy_ref)
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+    persona_id = _resolve_param(persona_id)
+    persona = _resolve_param(persona)
+    runtime_id = _resolve_param(runtime_id)
+    runtime = _resolve_param(runtime)
+    strategy_id = _resolve_param(strategy_id)
+    strategy = _resolve_param(strategy)
+    capital_pool_id = _resolve_param(capital_pool_id)
+    pool = _resolve_param(pool)
+    sleeve_id = _resolve_param(sleeve_id)
+    sleeve = _resolve_param(sleeve)
+    artifact_id = _resolve_param(artifact_id)
+    artifact = _resolve_param(artifact)
+    broker_id = _resolve_param(broker_id)
+    broker = _resolve_param(broker)
+    stage = _resolve_param(stage)
+    period = _resolve_param(period)
+    as_of = _resolve_param(as_of)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
@@ -30464,6 +30538,29 @@ async def bff_management_portfolio_book_exposure(
     as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 portfolio-book exposure and risk-budget rollup."""
+    status = _resolve_param(status)
+    risk_policy_ref = _resolve_param(risk_policy_ref)
+    capital_pool_id = _resolve_param(capital_pool_id)
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+    persona_id = _resolve_param(persona_id)
+    persona = _resolve_param(persona)
+    runtime_id = _resolve_param(runtime_id)
+    runtime = _resolve_param(runtime)
+    strategy_id = _resolve_param(strategy_id)
+    strategy = _resolve_param(strategy)
+    pool = _resolve_param(pool)
+    sleeve_id = _resolve_param(sleeve_id)
+    sleeve = _resolve_param(sleeve)
+    artifact_id = _resolve_param(artifact_id)
+    artifact = _resolve_param(artifact)
+    broker_id = _resolve_param(broker_id)
+    broker = _resolve_param(broker)
+    stage = _resolve_param(stage)
+    period = _resolve_param(period)
+    as_of = _resolve_param(as_of)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
@@ -30655,6 +30752,20 @@ async def bff_management_portfolio_book_holdings(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: PM-12 global holdings table composed from runtime and telemetry surfaces."""
+    capital_pool_id = _resolve_param(capital_pool_id)
+    persona_id = _resolve_param(persona_id)
+    runtime_id = _resolve_param(runtime_id)
+    deployment_stage = _resolve_param(deployment_stage)
+    broker_id = _resolve_param(broker_id)
+    status = _resolve_param(status)
+    source_status = _resolve_param(source_status)
+    stale_telemetry = _resolve_param(stale_telemetry)
+    risk_state = _resolve_param(risk_state)
+    q = _resolve_param(q)
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
@@ -30992,6 +31103,20 @@ async def bff_management_portfolio_book_positions(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: PM-12 global positions table composed from runtime and telemetry surfaces."""
+    capital_pool_id = _resolve_param(capital_pool_id)
+    persona_id = _resolve_param(persona_id)
+    runtime_id = _resolve_param(runtime_id)
+    deployment_stage = _resolve_param(deployment_stage)
+    broker_id = _resolve_param(broker_id)
+    status = _resolve_param(status)
+    source_status = _resolve_param(source_status)
+    stale_telemetry = _resolve_param(stale_telemetry)
+    risk_state = _resolve_param(risk_state)
+    q = _resolve_param(q)
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+
     holdings_payload = await bff_management_portfolio_book_holdings(
         capital_pool_id=capital_pool_id,
         persona_id=persona_id,
@@ -43370,6 +43495,13 @@ async def bff_management_persona_league(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: PM-12 persona-league table composed from persona-side read surfaces."""
+    state = _resolve_param(state)
+    archetype = _resolve_param(archetype)
+    q = _resolve_param(q)
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
@@ -43494,8 +43626,11 @@ async def bff_management_persona_league_rankings(
         "meta": {
             "snapshot_at": snapshot_at,
             "surfaces": {
-                "persona_league_rankings": rankings_surface,
-                **source_surfaces,
+                name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+                for name, surface in {
+                    "persona_league_rankings": rankings_surface,
+                    **source_surfaces,
+                }.items()
             },
             "composition_sources": [
                 "GET /bff/management/persona-league",
@@ -43517,6 +43652,13 @@ async def bff_management_persona_league_movers(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: PM-12 persona-league movement list computed from league rows."""
+    state = _resolve_param(state)
+    archetype = _resolve_param(archetype)
+    q = _resolve_param(q)
+    direction = _resolve_param(direction)
+    limit = _resolve_param(limit)
+    authorization = _resolve_param(authorization)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
@@ -43851,6 +43993,16 @@ async def bff_management_quarterly_ranking(
         unavailable_message="Quarterly ranking aggregate unavailable.",
         degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
     )
+    quarterly_surfaces = {
+        name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+        for name, surface in {
+            "quarterly_ranking": quarterly_surface,
+            "formula": formula_surface,
+            "evidence_refs": evidence_surface,
+            "knowledge_evidence": evidence_surface,
+            **source_surfaces,
+        }.items()
+    }
     top_item = ranked_items[0] if ranked_items else None
     summary = {
         "quarter": quarter_window["quarter"],
@@ -43881,13 +44033,7 @@ async def bff_management_quarterly_ranking(
         },
         "meta": {
             **_snapshot_meta(snapshot_at),
-            "surfaces": {
-                "quarterly_ranking": quarterly_surface,
-                "formula": formula_surface,
-                "evidence_refs": evidence_surface,
-                "knowledge_evidence": evidence_surface,
-                **source_surfaces,
-            },
+            "surfaces": quarterly_surfaces,
             "composition_sources": [
                 "GET /bff/management/persona-league",
                 "GET /bff/management/persona-league/rankings",
@@ -44311,11 +44457,14 @@ def _pm12_performance_attribution_response(
         degraded_message="Performance attribution is degraded because one or more source surfaces are degraded.",
     )
     surfaces = {
-        surface_key: attribution_surface,
-        **source_surfaces,
+        name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+        for name, surface in {
+            surface_key: attribution_surface,
+            **source_surfaces,
+        }.items()
     }
     if surface_key != "performance_attribution":
-        surfaces["performance_attribution"] = attribution_surface
+        surfaces["performance_attribution"] = _performance_ranking_source_surface(attribution_surface, snapshot_at=snapshot_at)
     summary = {
         "period": period_key,
         "dimensions": dimensions,
