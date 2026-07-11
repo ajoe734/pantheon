@@ -67,3 +67,13 @@ clarity, not blocking this review.
 
 ## Verdict
 Reopened — blocking finding above must be fixed before re-review.
+
+## Round 2 verification and verdict
+
+The owner changed quarterly smoothing so the multiplicative 25% ceiling only
+applies when `current_weight > 0`, and added regression coverage for fresh
+canary and live entrants. Independent reviewer verification confirmed the
+zero-weight bootstrap path is nonzero and remains bounded by the stage/tier
+cap.
+
+Verdict: approved and returned to Codex for finalization.
