@@ -46,7 +46,7 @@ still test the serialization actually emitted by the deployed frontend.
   BFF identity. Do not combine summary, rows, or incidents from different
   filter states or timestamps.
 - `data.summary.holding_count`, `page_info.total`, and
-  `meta.summary/source_coverage` describe the complete filtered set, while
+  `data.summary.source_coverage` describe the complete filtered set, while
   `data.items` is the current page. A `page_size`-limited row count must not be
   presented as the filtered total.
 - `meta.incidents` is computed from the complete filtered holding set before
