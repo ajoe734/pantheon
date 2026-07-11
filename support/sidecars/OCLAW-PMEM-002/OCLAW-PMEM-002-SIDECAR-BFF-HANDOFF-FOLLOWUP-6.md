@@ -22,8 +22,8 @@ not be treated as delivered or composed until its task PR is merged and audited.
 
 ## Dispatch A — Durable Result And BFF Projection
 
-**Owner:** parent reconciler owner plus Pantheon BFF owner  
-**Repository:** `ajoe734/pantheon`  
+**Owner:** parent reconciler owner plus Pantheon BFF owner
+**Repository:** `ajoe734/pantheon`
 **Dependency:** authoritative reconcile attempt/result storage chosen by parent
 
 Deliver a persona-scoped, governed read model. A dedicated
@@ -58,8 +58,8 @@ Dispatch A is incomplete if it only expands
 
 ## Dispatch B — `execute-plans` Operator Consumption
 
-**Owner:** frontend owner assigned by parent  
-**Repository:** `ajoe734/execute-plans` (never a directory in Pantheon)  
+**Owner:** frontend owner assigned by parent
+**Repository:** `ajoe734/execute-plans` (never a directory in Pantheon)
 **Dependency:** Dispatch A contract merged and available from the dev BFF
 
 Implement the operator journey against the governed BFF projection:
