@@ -19,8 +19,8 @@ governance behavior, registry state, or frontend source.
 
 The parent resume gate remains unmet:
 
-- current `origin/dev` and this task branch both resolve to
-  `3979ccad9217c747ddcab9d8cc9e9a35586ee1ae`;
+- current `origin/dev` resolves to
+  `6f86cd46ff6f1a416f9150ee3d3991340e7fa798`;
 - `origin/task/MGMT-PERF-IA-002` remains
   `d0d4d0497d6f2fc81161e82301fa9c8e48f5a65c`;
 - parent PR `#3127` remains open at that contaminated head;
@@ -32,6 +32,11 @@ The parent resume gate remains unmet:
 
 No clean replacement branch or PR, focused contract-test output, sanitized
 merged response capture, or explicit per-gap deferral record was found.
+
+The finalization recheck on `2026-07-11` also confirmed that the parent branch
+still differs from the updated `origin/dev` across 48 paths and parent PR
+`#3127` remains open. The reviewer approval is recorded in
+`support/reviews/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-23-review-antigravity.md`.
 
 ## 2. Handoff Result
 
