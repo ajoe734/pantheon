@@ -138,3 +138,32 @@ and repository route/test references for quarterly recommendations, governance
 ledger/review queue, rebalances, governed apply, source confidence, and live
 wiring. `current-work.md` and the complete `ai-activity-log.jsonl` were not
 scanned.
+
+## 8. Fact-Check Notes
+
+Cross-checked the routes cited in §1 against
+`services/control-plane/bff/main.py` and the BFF test suite; none are
+fabricated:
+
+- `GET /bff/management/quarterly-ranking/recommendations` (line 44208) and
+  `POST .../{recommendation_id}/submit` (line 42621);
+- `GET /bff/management/governance-ledger` (covered by
+  `test_bff_management_delta_routes.py`);
+- `GET /api/v1/operator/governance/review-queue` (line 19163);
+- `GET /bff/rebalances`, `GET /bff/rebalances/{rebalance_id}`, and
+  `POST /bff/rebalances/{rebalance_id}/apply` (line 24515).
+
+The minimum identity chain in §2 (`recommendation_id -> ranking_snapshot_id
+/evidence_ref -> review_id/decision_id -> proposal_or_rebalance_id ->
+precondition_result_refs -> apply_command_id -> apply_receipt_id`) and its
+missing-link consequences are consistent with the fail-closed rules already
+recorded in the original `MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF.md` (§5).
+
+`git show --stat 6f41cd968` confirms the reviewed commit touches only this one
+new file (140 insertions, 0 deletions elsewhere); `mutates canonical: false`
+in the packet header holds.
+
+These are fact-check notes only, not a reviewer sign-off. Formal approval of
+this sidecar task, and any decision on which slice the parent
+`MGMT-PERF-IA-005` absorbs, is left to the parent owner / chair-review per
+§6.
