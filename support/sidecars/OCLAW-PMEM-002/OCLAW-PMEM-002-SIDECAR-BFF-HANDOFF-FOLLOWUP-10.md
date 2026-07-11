@@ -113,13 +113,31 @@ health must remain separate truth rows. None can promote agent reconcile state.
 
 ## Reviewer Checklist
 
-- [ ] Diff is limited to this support artifact and task-scoped coordination records.
-- [ ] The audit baseline and unresolved BFF query gap are accurate.
-- [ ] No proposed route, storage owner, or lifecycle spelling is presented as canonical.
-- [ ] Desired, observed, probe, provider, memory, and materialization truth remain separate.
-- [ ] All missing, stale, malformed, unavailable, and unknown states fail closed.
-- [ ] Cross-repository adoption requires merged identities and hosted same-generation proof.
+- [x] Diff is limited to this support artifact and task-scoped coordination records.
+- [x] The audit baseline and unresolved BFF query gap are accurate.
+- [x] No proposed route, storage owner, or lifecycle spelling is presented as canonical.
+- [x] Desired, observed, probe, provider, memory, and materialization truth remain separate.
+- [x] All missing, stale, malformed, unavailable, and unknown states fail closed.
+- [x] Cross-repository adoption requires merged identities and hosted same-generation proof.
 
 Reviewer `Codex` should approve this only as a support handoff. Approval does
 not implement the parent BFF or frontend slice and does not prove hosted
 OpenClaw, provider, or memory readiness.
+
+## Closeout Receipt
+
+Reviewer `Codex` approved this packet as a support-only BFF/frontend handoff.
+The approval preserves the non-canonical boundary: the parent owner must still
+adopt the durable result owner, route/schema, implementation PRs, and hosted
+same-generation proof before making readiness claims.
+
+Original delivery: PR `#3267`, task commit
+`26c6a28e2170ec13faa1610a08a8471cc282a81d`, merge commit
+`2aaca8d48bd28d2c360cbf846f9338e3ca2edf95`.
+
+Finalization verification:
+
+- `git diff --check`
+- task-scope path audit with `git status --short`
+- confirmation that task commit `26c6a28e2170ec13faa1610a08a8471cc282a81d`
+  is an ancestor of `origin/dev`
