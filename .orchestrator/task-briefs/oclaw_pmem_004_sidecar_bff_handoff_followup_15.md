@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare OCLAW-PMEM-004 BFF and frontend handoff packet
-- Status: review
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Antigravity
-- Next: Support-only go/no-go handoff packet is committed at 5371c1fe5; please review scope discipline, accuracy, and parent absorption usefulness.
+- Next: Owner closeout recorded; merge the task PR into dev, then finalize status as done.
 
 ## Summary
 平行支援 OCLAW-PMEM-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
