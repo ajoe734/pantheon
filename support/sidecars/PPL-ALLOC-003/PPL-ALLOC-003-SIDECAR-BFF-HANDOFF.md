@@ -1,12 +1,12 @@
 # PPL-ALLOC-003 BFF and Frontend Handoff Packet (Sidecar)
 
-**Parent Task**: `PPL-ALLOC-003` — Capital binding read model  
-**Parent Owner**: Gemini2  
-**Parent Reviewer**: Claude  
-**Sidecar Task**: `PPL-ALLOC-003-SIDECAR-BFF-HANDOFF`  
-**Sidecar Owner**: Codex2  
-**Sidecar Reviewer**: Codex  
-**Helper Kind**: `bff_handoff_packet`  
+**Parent Task**: `PPL-ALLOC-003` — Capital binding read model
+**Parent Owner**: Gemini2
+**Parent Reviewer**: Claude
+**Sidecar Task**: `PPL-ALLOC-003-SIDECAR-BFF-HANDOFF`
+**Sidecar Owner**: Codex2
+**Sidecar Reviewer**: Codex
+**Helper Kind**: `bff_handoff_packet`
 **Generated**: 2026-07-11
 
 > Support artifact only. This packet does not change canonical truth or the
