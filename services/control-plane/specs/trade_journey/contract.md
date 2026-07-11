@@ -84,15 +84,23 @@ The overall `status` of a `TradeJourney` is calculated deterministically from in
 
 | Overall Status | Condition |
 |---|---|
-| `incomplete` | Missing required intermediate stages or events without terminal status. |
+| `incomplete` | Missing required intermediate stages or events without terminal status, or **conflicting mutually-exclusive terminal states detected** (e.g., failed or cancelled stage exists alongside succeeded execution/reconciliation stages). Raises a data-quality incident. |
 | `waiting_human` | Any stage status is `waiting_human`. |
 | `blocked` | Any stage status is `blocked`. |
 | `executing` | Stage `order_submission` is `succeeded`, but `fill_management` is active. |
 | `partially_filled` | Stage `fill_management` is `partially_succeeded` and execution timer expired. |
-| `completed` | All stages up to `reconciliation` are `succeeded`. |
-| `completed_with_variance` | All stages up to `ledger_booking` are `succeeded`, but `reconciliation` status is `failed` (variance detected). |
+| `completed` | All stages up to `reconciliation` are `succeeded`, or reconciliation was previously `completed_with_variance` but has been closed/resolved by a valid `CorrectionEvent`. |
+| `completed_with_variance` | All stages up to `ledger_booking` are `succeeded`, but `reconciliation` status is `failed` (variance detected) and no `CorrectionEvent` has resolved it yet. |
 | `failed` | `risk_evaluation` or `order_submission` or `broker_acknowledgement` is `rejected` or `failed`. |
 | `cancelled` | Overall workflow received a valid operator or broker cancel command. |
+
+### 4.3 Correction Events & Revision Semantics
+- **Correction Event**: A correction event (`CorrectionEvent`) is an explicit record triggered when an operator or authorized service resolves a detected reconciliation variance. It provides the mechanism to close a `completed_with_variance` journey back to `completed`.
+- **Late-Arriving Events & Immutable Snapshots**: Late-arriving events **MUST NOT** overwrite historical events or existing snapshots directly. Instead, when a late-arriving event or correction event is processed:
+  1. The read model recalculates the journey's snapshot based on the full timeline.
+  2. The `revision` of the `TradeJourney` is incremented.
+  3. The `revision` of any modified stages (such as `reconciliation`) is incremented.
+- **Data-Quality Incidents**: A single journey is forbidden from exhibiting mutually-exclusive terminal indicators (e.g., failing upstream risk validation while simultaneously showing succeeded reconciliation). If such a conflict is detected during rollup computation, the status rolls up to `incomplete` and a data-quality incident is raised.
 
 ---
 
