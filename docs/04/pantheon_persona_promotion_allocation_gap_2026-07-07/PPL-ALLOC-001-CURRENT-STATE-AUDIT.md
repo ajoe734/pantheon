@@ -25,8 +25,8 @@ The frontend repository `ajoe734/execute-plans` has been audited to verify route
 | `/management/rebalance/:id` | **Rebalance Approval Detail** | `Route path="rebalance/:id" element={<LegacyPromotionAllocationRedirect tab="quarterly-capital" idParamName="rebalance_id" />}` | **Redirect** to `/management/promotion-allocation?tab=quarterly-capital&rebalance_id=:id`. |
 | `/management/ranking` | **Formula Diagnostics Only** | `Route path="ranking" element={<LegacyPromotionAllocationRedirect tab="formula-policy" />}` | **Redirect** to `/management/promotion-allocation?tab=formula-policy`. Demoted to formula diagnostics. |
 | `/management/readiness/capital-binding-live` | **Readiness Gate Only** | `Route path="readiness/capital-binding-live" element={<LegacyPromotionAllocationRedirect tab="quarterly-capital" />}` | **Redirect** to `/management/promotion-allocation?tab=quarterly-capital`. |
-| `/management/persona-league` | **Legacy Route** | `Route path="persona-league" element={<LegacyPromotionAllocationRedirect tab="real-ranking" />}` | **Redirect** to `/management/promotion-allocation?tab=real-ranking`. |
-| `/management/quarterly-ranking` | **Legacy Route** | `Route path="quarterly-ranking" element={<LegacyPromotionAllocationRedirect tab="paper-candidates" />}` | **Redirect** to `/management/promotion-allocation?tab=paper-candidates`. |
+| `/management/persona-league` | **Legacy Route** | `Route path="persona-league" element={<PersonaLeagueRoute />}` | **Legacy Route**. (still-live legacy page, not yet redirected; redirect is future work for `PPL-ALLOC-007`). |
+| `/management/quarterly-ranking` | **Legacy Route** | `Route path="quarterly-ranking" element={<QuarterlyRankingRoute />}` | **Legacy Route**. (still-live legacy page, not yet redirected; redirect is future work for `PPL-ALLOC-007`). |
 | `/management/rebalance` & `/rebalances` | **Legacy List Routes** | `Route path="rebalance"` & `rebalances` element = redirect | **Redirect** to `/management/promotion-allocation?tab=quarterly-capital`. |
 
 ---
