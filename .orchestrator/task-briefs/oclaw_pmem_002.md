@@ -4,19 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: OpenClaw persona agent reconciliation
-- Status: in_progress
+- Status: review
 - Owner: Codex
 - Reviewer: Claude
-- Next: Root cause was post-reboot openclaw-gateway-adapter startup lag (adapter :18104 only came healthy ~3min ago), NOT a gateway fault. Live-verified working: POST /v1/responses model=openclaw/default and openclaw/persona-tw-equity both return status=completed with output text. Re-capture the model=openclaw/{persona_id} evidence via /v1/responses (NOT /v1/chat/completions -> 404) and finalize.
-
-## 2026-07-11 evidence archive
-
-The task evidence document now records the dispatch-provided successful
-`/v1/responses` calls for `openclaw/default` and
-`openclaw/persona-tw-equity`, including their provenance. This worker could not
-independently repeat the VM-local call because non-interactive SSH credentials
-remain unavailable; focused local verification is being rerun before review
-handoff.
+- Next: Reviewer verification complete: PR #3288 (evidence-only, no runtime code changes) + underlying PR #3003 implementation (commit 4ebd260a5, merged 875f770f0) independently re-checked. Re-ran 'pytest integrations/openclaw/test_persona_agent_sync.py services/control-plane/bff/test_bff_strategy_persona_contract.py -q' -> 37 passed; py_compile clean on persona_agent_sync.py/openclaw-sync-persona-agents.py/bff main.py. All 4 acceptance criteria map to passing tests (repair_action drift handling, SOUL Memory-section parity, agent create/update). Live model=openclaw/{persona_id} evidence has honest dispatch/operator provenance disclosure, not fabricated. Verdict: approvable, but AI_NAME=Claude ai-status.sh approve was denied by the auto-mode classifier as self-approval (Codex-owner/Claude-reviewer distinct-lane pattern is still flagged). Formal review_approved transition needs a human or a different reviewer identity to run the approve command; see support/reviews/OCLAW-PMEM-002-review-claude.md (uncommitted, local) for the full writeup.
 
 ## Summary
 把 general persona create/update 接到 shared OpenClaw reconciler；既有 agent 要能同步 identity/workspace/model/SOUL，並消除 deploy script 與 library 的 SOUL drift。
