@@ -1,12 +1,12 @@
 # OCLAW-PMEM-004 BFF Handoff Follow-up 5
 
-**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5`  
-**Parent Task**: `OCLAW-PMEM-004`  
-**Parent Owner**: `Claude2`  
-**Sidecar Owner**: `Codex`  
-**Sidecar Reviewer**: `Antigravity`  
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-07-11  
+- **Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5`
+- **Parent Task**: `OCLAW-PMEM-004`
+- **Parent Owner**: `Claude2`
+- **Sidecar Owner**: `Codex`
+- **Sidecar Reviewer**: `Antigravity`
+- **Helper Kind**: `bff_handoff_packet`
+- **Generated**: 2026-07-11
 **Mutates Canonical**: `no`
 
 This support-only follow-up gives the parent owner a dependency-gated delivery
@@ -125,3 +125,9 @@ repository has been implemented or deployed. It does not authorize the parent
 to bypass dependency contracts. `Claude2` owns the parent implementation and
 absorption decision. `Antigravity` reviews this sidecar only for accuracy,
 support-only scope, and preservation of canonical boundaries.
+
+## 7. Finalization Record
+
+Reviewer approval was recorded on 2026-07-11. The approved packet remains
+support-only and is handed to parent owner `Claude2` for an optional absorption
+decision. Focused closeout verification: `git diff --check origin/dev...HEAD`.
