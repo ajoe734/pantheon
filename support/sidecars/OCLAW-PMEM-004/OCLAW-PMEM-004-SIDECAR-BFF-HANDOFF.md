@@ -5,7 +5,7 @@
 **Parent Owner**: `Claude2`  
 **Parent Reviewer**: `Codex`  
 **Sidecar Owner**: `Codex`  
-**Sidecar Reviewer**: `Antigravity`  
+**Sidecar Reviewer**: `Claude`
 **Helper Kind**: `bff_handoff_packet`  
 **Generated**: 2026-07-11  
 **Mutates Canonical**: `no`
@@ -35,7 +35,7 @@ workspace cache is not canonical memory.
 | Persona runtime profile | `GET /bff/personas/{persona_id}/runtime-profile`; `services/persona/runtime_profile.py` | Reuse the profile projection. Do not recreate model-routing resolution in BFF or the browser. |
 | Persona memory | `GET /bff/personas/{persona_id}/memory` currently calls an optional `list_memory_updates_for_persona` reader | Replace the disconnected optional read with a Memory Plane client/facade or return a precise unavailable surface. Do not silently return an authoritative empty list when the source cannot be read. |
 | Canonical retrieval | `GET /api/memory/retrieve`; `integrations/openclaw/persona_memory_bridge.py` | Preserve canonical entry IDs, scope, retrieval/materialization timestamps, and source status in the operator-safe projection. Workspace files remain derived cache. |
-| Provider readiness | `GET /bff/assistant/provider/readiness` through `assistant/routes.py` and `openclaw_ops_client.py` | Reuse the adapter-backed probe, but project auth and live-smoke evidence separately. |
+| Provider readiness | `GET /bff/assistant/providers` (optionally `?auth_probe=true`) through `assistant/routes.py`; the normal list callback uses `_assistant_provider_list()` / `OpenClawOpsClient().list_assistant_providers()`, with `_assistant_provider_readiness()` / `get_assistant_readiness()` as the configured single-provider fallback | Reuse the adapter-backed probe, but project auth and live-smoke evidence separately. |
 | Provider usage/quota | Existing assistant provider usage summary and tests in `tests/test_management_nl_assistant_provider.py` | Keep `quota.source`; unknown/not-configured quota must remain visibly unknown, not zero or healthy. |
 | Reauth | `POST /bff/assistant/provider/reauth`, `GET /bff/assistant/provider/reauth/{session_id}`, `POST .../{session_id}/code` | Reuse the role/MFA-gated, redacted flow. Poll terminal state and rerun readiness after completion. Never expose credentials or provider tokens. |
 
@@ -192,4 +192,3 @@ The parent owner should compose this packet with the accepted outputs of
 and DTO names in parent-owned tests. The sidecar reviewer should check that this
 remains support-only, preserves Memory Plane authority, and never treats mount
 or reauth completion as provider usability.
-
