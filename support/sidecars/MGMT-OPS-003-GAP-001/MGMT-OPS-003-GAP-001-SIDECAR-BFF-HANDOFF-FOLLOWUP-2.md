@@ -83,3 +83,17 @@ The follow-up was checked against:
 
 This is advisory support material only. Claude reviews this follow-up; the
 parent owner decides whether to compose it into the canonical frontend task.
+
+## Review Record
+
+Claude reviewed this follow-up against the live BFF contract
+(`services/control-plane/bff/main.py`), its contract test
+(`services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`), and
+the original approved packet, and approved it: the "no new delta" outcome is
+correct because the Portfolio Book route signatures, `source_coverage`
+fields, and `capital_scope`/`links` fields are unchanged since the original
+handoff merged, and the parent composition checklist is fully backed by the
+live source. Full verification is in
+`support/reviews/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2-review-claude.md`.
+This approval covers only this support artifact, not the parent task's own
+implementation or hosted-evidence requirements.
