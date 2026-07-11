@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-07T13:40:53Z",
+  "updated_at": "2026-07-11T11:20:34Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -149,11 +149,12 @@
         "AG-DYNUI-PROD-001",
         "AG-DYNUI-PROD-006",
         "PPL-ALLOC-001",
-        "PPL-ALLOC-009"
+        "PPL-ALLOC-009",
+        "MGMT-OPS-003-GAP-003"
       ],
       "branch": "task/ASST-OCGW-001",
-      "next": "Lock current-state page inventory and acceptance before implementation.",
-      "last_update": "2026-07-07T13:40:53Z"
+      "next": "Run the hosted Portfolio Book to Human Review workflow on desktop and mobile.",
+      "last_update": "2026-07-11T11:20:34Z"
     },
     {
       "name": "Codex2",
@@ -171,11 +172,13 @@
         "MGMT-LOAD-004",
         "OCLAW-PMEM-002",
         "AG-DYNUI-PROD-004",
-        "PPL-ALLOC-005"
+        "PPL-ALLOC-005",
+        "MGMT-OPS-003-GAP-001",
+        "MGMT-OPS-003-GAP-004"
       ],
       "branch": "task/ASST-OCGW-004",
-      "next": "Replace generic persona create UI with Create Paper Persona flow.",
-      "last_update": "2026-07-07T13:40:53Z"
+      "next": "Implement the Portfolio Book incident, filter, stage, and confidence UI in execute-plans.",
+      "last_update": "2026-07-11T11:20:34Z"
     },
     {
       "name": "Copilot",
@@ -189,11 +192,12 @@
       "current_task_ids": [
         "LOOP-AUTO-SRC-001",
         "LOOP-AUTO-SRC-002",
-        "LOOP-AUTO-SRC-005"
+        "LOOP-AUTO-SRC-005",
+        "MGMT-OPS-003-GAP-002"
       ],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
-      "last_update": "2026-06-09T15:28:07Z"
+      "next": "Repair or quarantine missing runtime identity and telemetry truth without hiding rows.",
+      "last_update": "2026-07-11T11:20:34Z"
     },
     {
       "name": "Claude2",
@@ -4118,6 +4122,266 @@
       "helper_kind": "persona_promotion_allocation_execution_slice",
       "wave": 3,
       "fleet_lane": "production-closeout"
+    },
+    {
+      "id": "MGMT-OPS-003-GAP-001",
+      "title": "Frontend Portfolio monitor closure",
+      "summary_zh": "在 execute-plans 補齊 Portfolio Book incidents、六類 filters、資金 stage 與 source-confidence 顯示。",
+      "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 frontend",
+      "owner": "Codex2",
+      "reviewer": "Copilot",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "execute-plans:src/management/pages/oversight/PortfolioBook.tsx",
+        "execute-plans:src/lib/v5/management/portfolio.ts",
+        "execute-plans:e2e",
+        "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-001-frontend-monitor.md"
+      ],
+      "acceptance": [
+        "all BFF incidents and source issues are operator visible",
+        "stage broker runtime source-status stale-telemetry and risk-state filters round trip through the URL",
+        "paper canary live and unknown scopes are explicit and accessible",
+        "degraded or missing data never renders as formal attribution or fully covered",
+        "execute-plans PR is merged to main deployed to dev and reviewed with current hosted evidence"
+      ],
+      "next": "Implement the Portfolio Book incident, filter, stage, and confidence UI in execute-plans.",
+      "last_update": "2026-07-11T11:20:34Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/MGMT_OPS_003_HOSTED_GAP.md",
+        "packet": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/INDEX.md",
+        "review_checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+        "trigger": "2026-07-11 hosted plan-to-live verification",
+        "frontend_repo": "ajoe734/execute-plans",
+        "backend_repo": "ajoe734/pantheon",
+        "dev_frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+        "dev_bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "mgmt_ops_003_hosted_gap_closure",
+      "review_contract": {
+        "mode": "fail_closed_hosted_delta",
+        "checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+        "approval_forbidden_without": [
+          "merged_pr_and_merge_sha",
+          "deployed_sha_ancestry",
+          "authenticated_api_capture",
+          "desktop_and_mobile_hosted_evidence",
+          "ui_to_api_count_and_label_comparison",
+          "console_and_network_failure_counts"
+        ],
+        "request_changes_when": [
+          "any_gap_matrix_row_is_not_pass",
+          "ui_confidence_exceeds_source_truth",
+          "incident_or_filter_is_hidden",
+          "evidence_is_mock_only_or_stale",
+          "tested_sha_differs_from_deployed_sha"
+        ]
+      },
+      "wave": 0,
+      "target_repo": "execute-plans",
+      "merge_target": "main"
+    },
+    {
+      "id": "MGMT-OPS-003-GAP-002",
+      "title": "Runtime binding and telemetry truth",
+      "summary_zh": "修復或隔離 dev runtime 的 persona、broker、ledger、capital scope 與 telemetry 缺口，不得靠隱藏資料改善指標。",
+      "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 runtime truth",
+      "owner": "Copilot",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/runtime-manager",
+        "services/persona",
+        "services/telemetry",
+        "docs/deployment/evidence",
+        "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-002-runtime-data-quality.md"
+      ],
+      "acceptance": [
+        "every missing binding and telemetry gap is repaired or explicitly quarantined",
+        "reconciliation is idempotent audited and never drops unresolved rows",
+        "formal attribution is impossible while required joins are degraded",
+        "before and after hosted counts are captured from authenticated BFF responses",
+        "Pantheon PR is merged to dev deployed and independently sampled by the reviewer"
+      ],
+      "next": "Repair or quarantine missing runtime identity and telemetry truth without hiding rows.",
+      "last_update": "2026-07-11T11:20:34Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/MGMT_OPS_003_HOSTED_GAP.md",
+        "packet": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/INDEX.md",
+        "review_checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+        "trigger": "2026-07-11 hosted plan-to-live verification",
+        "frontend_repo": "ajoe734/execute-plans",
+        "backend_repo": "ajoe734/pantheon",
+        "dev_frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+        "dev_bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "mgmt_ops_003_hosted_gap_closure",
+      "review_contract": {
+        "mode": "fail_closed_hosted_delta",
+        "checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+        "approval_forbidden_without": [
+          "merged_pr_and_merge_sha",
+          "deployed_sha_ancestry",
+          "authenticated_api_capture",
+          "desktop_and_mobile_hosted_evidence",
+          "ui_to_api_count_and_label_comparison",
+          "console_and_network_failure_counts"
+        ],
+        "request_changes_when": [
+          "any_gap_matrix_row_is_not_pass",
+          "ui_confidence_exceeds_source_truth",
+          "incident_or_filter_is_hidden",
+          "evidence_is_mock_only_or_stale",
+          "tested_sha_differs_from_deployed_sha"
+        ]
+      },
+      "wave": 0,
+      "target_repo": "pantheon",
+      "merge_target": "dev"
+    },
+    {
+      "id": "MGMT-OPS-003-GAP-003",
+      "title": "Hosted Portfolio workflow E2E",
+      "summary_zh": "以同一份 live BFF response 驗證 Portfolio Book 到 Persona Fleet、績效歸因與 Human Review 的 desktop/mobile workflow。",
+      "phase": "MGMT-OPS-003 Hosted Gap / Wave 1 hosted E2E",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-OPS-003-GAP-001",
+        "MGMT-OPS-003-GAP-002"
+      ],
+      "artifacts": [
+        "execute-plans:e2e",
+        "execute-plans:hosted-dev-evidence",
+        "docs/deployment/evidence/mgmt-ops-003-gap",
+        "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-003-hosted-workflow-e2e.md"
+      ],
+      "acceptance": [
+        "hosted desktop and mobile workflow reaches Human Review with preserved context",
+        "UI counts and labels are asserted against captured live BFF responses",
+        "paper canary live and unknown behavior is exercised",
+        "console exceptions failed required requests lazy chunk failures and fallback data are zero",
+        "frontend and BFF deployed commit identities are recorded"
+      ],
+      "next": "Run the hosted Portfolio Book to Human Review workflow on desktop and mobile.",
+      "last_update": "2026-07-11T11:20:34Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/MGMT_OPS_003_HOSTED_GAP.md",
+        "packet": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/INDEX.md",
+        "review_checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+        "trigger": "2026-07-11 hosted plan-to-live verification",
+        "frontend_repo": "ajoe734/execute-plans",
+        "backend_repo": "ajoe734/pantheon",
+        "dev_frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+        "dev_bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "mgmt_ops_003_hosted_gap_closure",
+      "review_contract": {
+        "mode": "fail_closed_hosted_delta",
+        "checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+        "approval_forbidden_without": [
+          "merged_pr_and_merge_sha",
+          "deployed_sha_ancestry",
+          "authenticated_api_capture",
+          "desktop_and_mobile_hosted_evidence",
+          "ui_to_api_count_and_label_comparison",
+          "console_and_network_failure_counts"
+        ],
+        "request_changes_when": [
+          "any_gap_matrix_row_is_not_pass",
+          "ui_confidence_exceeds_source_truth",
+          "incident_or_filter_is_hidden",
+          "evidence_is_mock_only_or_stale",
+          "tested_sha_differs_from_deployed_sha"
+        ]
+      },
+      "wave": 1,
+      "target_repo": "pantheon+execute-plans"
+    },
+    {
+      "id": "MGMT-OPS-003-GAP-004",
+      "title": "Independent hosted difference closeout",
+      "summary_zh": "由獨立 reviewer 逐列核對 gap matrix、API、畫面、desktop/mobile 與部署 SHA；任何差異未關閉就退件。",
+      "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 review gate",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-OPS-003-GAP-001",
+        "MGMT-OPS-003-GAP-002",
+        "MGMT-OPS-003-GAP-003"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/archive",
+        "docs/deployment/evidence/mgmt-ops-003-gap",
+        "execute-plans:hosted-dev-evidence",
+        "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-004-review-closeout.md",
+        "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md"
+      ],
+      "acceptance": [
+        "every hosted gap matrix row has a pass verdict and direct evidence",
+        "reviewer personally reruns authenticated API desktop and mobile probes",
+        "reviewer records console and failed-request counts",
+        "stale mock-only or mismatched-SHA evidence is rejected",
+        "MGMT-PERF-IA-003 receives a behavior-preserving handoff"
+      ],
+      "next": "Perform independent fail-closed plan-to-hosted difference closeout.",
+      "last_update": "2026-07-11T11:20:34Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/MGMT_OPS_003_HOSTED_GAP.md",
+        "packet": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/INDEX.md",
+        "review_checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+        "trigger": "2026-07-11 hosted plan-to-live verification",
+        "frontend_repo": "ajoe734/execute-plans",
+        "backend_repo": "ajoe734/pantheon",
+        "dev_frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+        "dev_bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "mgmt_ops_003_hosted_gap_closure",
+      "review_contract": {
+        "mode": "fail_closed_hosted_delta",
+        "checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+        "approval_forbidden_without": [
+          "merged_pr_and_merge_sha",
+          "deployed_sha_ancestry",
+          "authenticated_api_capture",
+          "desktop_and_mobile_hosted_evidence",
+          "ui_to_api_count_and_label_comparison",
+          "console_and_network_failure_counts"
+        ],
+        "request_changes_when": [
+          "any_gap_matrix_row_is_not_pass",
+          "ui_confidence_exceeds_source_truth",
+          "incident_or_filter_is_hidden",
+          "evidence_is_mock_only_or_stale",
+          "tested_sha_differs_from_deployed_sha"
+        ]
+      },
+      "wave": 2,
+      "target_repo": "pantheon+execute-plans"
     }
   ],
   "handoffs": [
