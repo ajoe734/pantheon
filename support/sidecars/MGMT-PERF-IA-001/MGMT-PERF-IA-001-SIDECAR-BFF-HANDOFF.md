@@ -1,7 +1,7 @@
 # MGMT-PERF-IA-001 BFF and Frontend Handoff Packet
 
 Date: 2026-07-11
-Sidecar owner: Codex2
+Sidecar owner: Codex
 Sidecar reviewer: Claude
 Parent task: `MGMT-PERF-IA-001`
 Helper kind: `bff_handoff_packet`
@@ -90,7 +90,7 @@ command-palette entry, breadcrumb, and legacy alias:
 | Field | Requirement |
 |---|---|
 | Canonical route and tab | One destination owner for Performance, Rankings, and Governance Decisions. |
-| Accepted context | Typed allowlist such as `persona_id`, `pool_id`, `strategy_id`, `period`, `quarter`, and governance record ID; final names must follow `MGMT-PERF-IA-002`. |
+| Accepted context | Typed allowlist covering persona, runtime, strategy, capital pool, period/quarter, snapshot, and governance record identity; final parameter names must follow `MGMT-PERF-IA-002`. |
 | BFF dependency | Name the read route(s) used by the destination, including whether the tab fans out to several reads. |
 | Context mapping | Explicit legacy-key-to-canonical-key mapping, including incompatible or dropped keys. |
 | Redirect behavior | Replace history, preserve allowed context, retain hash/tab intent where valid, and terminate after one canonical redirect. |
@@ -99,7 +99,7 @@ command-palette entry, breadcrumb, and legacy alias:
 
 Suggested canonical tab semantics for parent composition:
 
-- Performance: `overview`, `attribution`, `exposure-holdings`.
+- Performance: `overview`, `attribution`, `exposure` (the `exposure` tab may compose exposure, holdings, and positions as separate reads).
 - Rankings: `rolling`, `quarterly`.
 - Governance Decisions: `recommendations`, `capital`, `policy`.
 
@@ -134,4 +134,3 @@ Parent/reviewer checks for absorbing this packet:
    partial/degraded/unavailable tests.
 4. Reviewer verifies this packet was used as support material only and that no
    proposed field was treated as canonical merely because it appears here.
-
