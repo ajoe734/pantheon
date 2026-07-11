@@ -10664,6 +10664,7 @@ class ReadSurfaceStore:
         strategy_family: Optional[str] = None,
         traits: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        required_data_sources: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         timestamp = created_at or _utc_now_rfc3339()
         clean_metadata = json.loads(json.dumps(metadata or {}))
@@ -10689,6 +10690,7 @@ class ReadSurfaceStore:
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": actor_id,
+            "required_data_sources": json.loads(json.dumps(required_data_sources or [])),
             "metadata": clean_metadata,
             "canonicalWriteAuthority": "persona_registry_service",
             "persistenceMode": "bff_local_dev_store",
