@@ -14,7 +14,8 @@
     "trade_episode_id",
     "persona_id",
     "environment",
-    "producer"
+    "producer",
+    "sequence_number"
   ],
   "properties": {
     "event_id": {
@@ -79,6 +80,11 @@
     "payload": {
       "type": "object",
       "additionalProperties": true
+    },
+    "sequence_number": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonically increasing sequence number for event ordering and late replay."
     }
   },
   "additionalProperties": false

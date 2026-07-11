@@ -73,7 +73,11 @@
         "reflection_pending",
         "reflected",
         "force_closed",
-        "reflection_failed"
+        "reflection_failed",
+        "rejected",
+        "cancelled",
+        "aborted",
+        "unresolved"
       ]
     },
     "decision_id": {
@@ -273,6 +277,11 @@
       "items": {
         "type": "string"
       }
+    },
+    "last_event_sequence": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "The sequence number of the last event applied to this projection."
     }
   },
   "additionalProperties": false

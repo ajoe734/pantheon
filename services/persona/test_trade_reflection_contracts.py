@@ -126,3 +126,69 @@ def test_validate_valid_lesson_candidate_with_governance_receipt() -> None:
     }
 
     jsonschema.validate(instance=valid_lesson, schema=schema)
+
+
+def test_reflection_schema_negative_cases() -> None:
+    schema = load_schema(REFLECTION_SCHEMA_PATH)
+    if jsonschema is None:
+        pytest.skip("jsonschema library not available")
+
+    # Case 1: Invalid review_state
+    invalid_reflection = {
+        "reflection_id": str(uuid.uuid4()),
+        "trade_episode_id": str(uuid.uuid4()),
+        "persona_id": "persona-macro",
+        "reflection_version": 1,
+        "trigger": "episode_closed",
+        "facts_snapshot_ref": "fact-snap-123",
+        "facts_snapshot_hash": "sha256-abc123xyz789",
+        "expected_vs_actual": {
+            "thesis": "matched",
+            "entry_quality": "good",
+            "exit_quality": "fair",
+            "sizing": "appropriate",
+            "timing": "slightly late exit",
+            "risk_adherence": "strict"
+        },
+        "counterfactuals": [],
+        "attribution": "process",
+        "mistakes": [],
+        "what_worked": [],
+        "unknowns": [],
+        "followups": [],
+        "lesson_candidates": [],
+        "model": "claude-3-5-sonnet",
+        "provider": "anthropic",
+        "prompt_template": "episode-close-reflection-v1",
+        "version": "1.0.0",
+        "generated_at": "2026-07-11T13:00:00Z",
+        "evidence_coverage": "complete",
+        "review_state": "invalid_review_state"
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=invalid_reflection, schema=schema)
+
+
+def test_lesson_candidate_schema_negative_cases() -> None:
+    schema = load_schema(LESSON_SCHEMA_PATH)
+    if jsonschema is None:
+        pytest.skip("jsonschema library not available")
+
+    # Case 1: Missing proposed_change
+    invalid_lesson = {
+        "lesson_candidate_id": str(uuid.uuid4()),
+        "reflection_id": str(uuid.uuid4()),
+        "trade_episode_ids": [str(uuid.uuid4())],
+        "persona_id": "persona-macro",
+        "scope": "portfolio",
+        # proposed_change is missing
+        "confidence": 0.85,
+        "review_state": "endorsed",
+        "created_at": "2026-07-11T13:00:00Z",
+        "updated_at": "2026-07-11T14:30:00Z",
+        "expiry": "2026-09-11T00:00:00Z"
+    }
+    with pytest.raises(jsonschema.ValidationError) as exc_info:
+        jsonschema.validate(instance=invalid_lesson, schema=schema)
+    assert "proposed_change" in str(exc_info.value)
+

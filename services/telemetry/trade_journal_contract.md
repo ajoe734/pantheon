@@ -47,7 +47,7 @@ reflection_pending → reflection_failed → reflection_pending (audited retry)
 2. **Reversals**: If a position reverses (e.g. long to short), the current episode MUST be closed and a new episode created. Shared P&L across a reversal is forbidden.
 3. **Aborted Intents**: Intentions that are rejected or cancelled without any fills are marked as `aborted` episodes to facilitate decision quality reflections, but carry zero execution quantities or P&L.
 4. **Interventions**: Risk liquidations, manual exits, or kill-switch actions must mark the exit actor (e.g., `exit_actor="risk_system"`) and the cause.
-5. **Duplicate / Late Arrivals**: Events that arrive out-of-order or late are integrated using event sequence and canonical timestamps.
+5. **Duplicate / Late Arrivals**: Events that arrive out-of-order or late are integrated using event sequence and canonical timestamps. Each `TradeJournalEvent` carries a required `sequence_number` (integer ≥ 0) metadata field. Replay/projection processors use this to detect duplicates, sequence late arrivals, and perform idempotent updates. `TradeEpisodeProjection` tracks the state by recording the `last_event_sequence` of the last successfully processed event.
 
 ---
 

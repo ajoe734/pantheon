@@ -102,7 +102,8 @@ def test_validate_valid_trade_episode_projection() -> None:
             "source_system": "lean-telemetry"
         },
         "reflection_summary": None,
-        "memory_governance_refs": []
+        "memory_governance_refs": [],
+        "last_event_sequence": 100
     }
 
     jsonschema.validate(instance=valid_projection, schema=schema)
@@ -176,7 +177,104 @@ def test_validate_trade_journal_events(event_type: str, payload: dict[str, Any])
         "persona_id": "persona-macro",
         "environment": "paper",
         "producer": "trade-journal-service",
+        "sequence_number": 42,
         "payload": payload
     }
 
     jsonschema.validate(instance=event, schema=schema)
+
+
+def test_projection_schema_negative_cases() -> None:
+    schema = load_schema(PROJECTION_SCHEMA_PATH)
+    if jsonschema is None:
+        pytest.skip("jsonschema library not available")
+
+    # Case 1: Invalid status value
+    invalid_projection = {
+        "trade_episode_id": str(uuid.uuid4()),
+        "environment": "paper",
+        "persona_id": "persona-macro",
+        "strategy_id": "strategy-quant-01",
+        "artifact_id": "art-01",
+        "artifact_version": "1.0.0",
+        "runtime_binding_id": str(uuid.uuid4()),
+        "capital_pool_id": "pool-a",
+        "instrument_id": "SPY",
+        "side": "long",
+        "status": "invalid_status_value_here",
+        "coverage": {
+            "state": "complete",
+            "missing_refs": [],
+            "as_of": "2026-07-11T12:15:00Z",
+            "source_system": "lean-telemetry"
+        }
+    }
+    with pytest.raises(jsonschema.ValidationError) as exc_info:
+        jsonschema.validate(instance=invalid_projection, schema=schema)
+    assert "invalid_status_value_here" in str(exc_info.value) or "enum" in str(exc_info.value)
+
+    # Case 2: Negative last_event_sequence value
+    invalid_projection_seq = {
+        "trade_episode_id": str(uuid.uuid4()),
+        "environment": "paper",
+        "persona_id": "persona-macro",
+        "strategy_id": "strategy-quant-01",
+        "artifact_id": "art-01",
+        "artifact_version": "1.0.0",
+        "runtime_binding_id": str(uuid.uuid4()),
+        "capital_pool_id": "pool-a",
+        "instrument_id": "SPY",
+        "side": "long",
+        "status": "open",
+        "coverage": {
+            "state": "complete",
+            "missing_refs": [],
+            "as_of": "2026-07-11T12:15:00Z",
+            "source_system": "lean-telemetry"
+        },
+        "last_event_sequence": -5
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=invalid_projection_seq, schema=schema)
+
+
+def test_event_schema_negative_cases() -> None:
+    schema = load_schema(EVENT_SCHEMA_PATH)
+    if jsonschema is None:
+        pytest.skip("jsonschema library not available")
+
+    # Case 1: Missing sequence_number
+    invalid_event = {
+        "event_id": str(uuid.uuid4()),
+        "schema_version": "1.0",
+        "event_type": "trade_episode.opened",
+        "occurred_at": "2026-07-11T12:00:00Z",
+        "ingested_at": "2026-07-11T12:00:05Z",
+        "trace_id": str(uuid.uuid4()),
+        "trade_episode_id": str(uuid.uuid4()),
+        "persona_id": "persona-macro",
+        "environment": "paper",
+        "producer": "trade-journal-service"
+        # sequence_number is required but missing
+    }
+    with pytest.raises(jsonschema.ValidationError) as exc_info:
+        jsonschema.validate(instance=invalid_event, schema=schema)
+    assert "sequence_number" in str(exc_info.value)
+
+    # Case 2: Invalid sequence_number type (string instead of integer)
+    invalid_event_seq_type = {
+        "event_id": str(uuid.uuid4()),
+        "schema_version": "1.0",
+        "event_type": "trade_episode.opened",
+        "occurred_at": "2026-07-11T12:00:00Z",
+        "ingested_at": "2026-07-11T12:00:05Z",
+        "trace_id": str(uuid.uuid4()),
+        "trade_episode_id": str(uuid.uuid4()),
+        "persona_id": "persona-macro",
+        "environment": "paper",
+        "producer": "trade-journal-service",
+        "sequence_number": "not_an_integer"
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=invalid_event_seq_type, schema=schema)
+
