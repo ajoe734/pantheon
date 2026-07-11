@@ -108,9 +108,11 @@ The overall `status` of a `TradeJourney` is calculated deterministically from in
 
 ### 5.1 Required Correlation Fields
 Every message passing through the trading system must include the `CorrelationEnvelope` carrying:
-- `journey_id`, `correlation_id`, `trace_id`
+- `journey_id` (required from `signal_generation` onward; absent/omitted for pre-signal stages 1–6), `correlation_id`, `trace_id`
 - `tenant_id`, `environment` (`paper`, `broker_sandbox`, `canary`, `live`)
 - Upstream identifiers: `research_journey_id`, `strategy_lifecycle_id` (if available)
+
+Pre-signal stages 1–6 (from `research_rationale` through `deployment_runtime`) do not carry a `journey_id` since it has not yet been minted.
 
 ### 5.2 Redaction Behavior
 Sensitive data (e.g., broker account numbers, sub-venue identifiers, internal risk limit thresholds) must be redacted at the BFF boundary for users without administrative capabilities:
