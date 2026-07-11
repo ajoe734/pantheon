@@ -18,6 +18,15 @@ import runtime_state
 import supervisor
 
 
+class SupervisorStallWindowConfigTests(unittest.TestCase):
+    def test_repo_configs_allow_long_running_worker_commands(self) -> None:
+        for relative_path in (".orchestrator/config.json", ".orchestrator/config.example.json"):
+            config = json.loads((ROOT / relative_path).read_text(encoding="utf-8"))
+            stall_after = int(config["supervisor"]["stall_after_seconds"])
+            self.assertGreaterEqual(stall_after, 900, relative_path)
+            self.assertGreaterEqual(stall_after * 2, 1800, relative_path)
+
+
 class SupervisorQuotaGuardrailTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory(prefix="supervisor-guardrails-")
