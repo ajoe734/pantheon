@@ -10,7 +10,7 @@
 
 ## 1. Management Page Inventory & Route Mapping
 
-The frontend repository `ajoe734/execute-plans` has been audited to verify route mapping against the required inventory. Currently, all legacy or diagnostic routes redirect correctly to the primary workflow tabs under `/management/promotion-allocation` as defined in [App.tsx](https://github.com/ajoe734/execute-plans/blob/main/src/App.tsx).
+The frontend repository `ajoe734/execute-plans` has been audited to verify route mapping against the required inventory. Currently, legacy or diagnostic routes redirect correctly to the primary workflow tabs under `/management/promotion-allocation` as defined in [App.tsx](https://github.com/ajoe734/execute-plans/blob/main/src/App.tsx), except for `/management/persona-league` and `/management/quarterly-ranking` which remain live pending PPL-ALLOC-007.
 
 | Surface / Route | Target State | Current App.tsx Route Implementation | Audit Result |
 | :--- | :--- | :--- | :--- |
