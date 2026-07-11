@@ -1,8 +1,8 @@
 # MGMT-OPS-003-GAP-002 - Runtime Binding And Telemetry Truth
 
-Owner: Copilot
+Owner: Codex
 
-Reviewer: Codex2
+Reviewer: Claude
 
 Repository: `ajoe734/pantheon`
 
@@ -52,3 +52,40 @@ than suppress diagnostics.
 - `services/telemetry`
 - `scripts`
 - `docs/deployment/evidence`
+
+## Implementation Checkpoint
+
+The task branch now contains a read-only, fail-closed reconciliation path in
+`services/runtime-manager/runtime_truth_reconciler.py` and
+`services/runtime-manager/reconcile_runtime_truth.py`.
+
+- Runtime bindings are the driving rows, so missing plan, persona binding,
+  capital-pool, or telemetry joins remain visible in the report.
+- Identity fields are proposed for repair only when the runtime, deployment
+  plan, persona-capital binding, and telemetry sources agree. The reconciler
+  does not write another service's store.
+- Conflicting or insufficient evidence produces an explicit quarantine record
+  with issue codes and evidence references.
+- A repair proposal remains ineligible for formal attribution until the
+  authoritative write owner applies it and a fresh source capture reconciles
+  without issues.
+- The snapshot hash is the idempotency key and the append-only audit contains
+  one entry per distinct snapshot.
+
+Focused verification on 2026-07-11:
+
+```text
+pytest -q services/runtime-manager/test_runtime_truth_reconciler.py
+7 passed
+
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py
+46 passed, 4 deprecation warnings
+```
+
+## Hosted Evidence Boundary
+
+Authenticated before/after counts, deployed SHA ancestry, and independent raw
+source sampling are intentionally not claimed by this implementation
+checkpoint. They must be captured after the Pantheon PR merges and that merge
+SHA is deployed to the dev BFF. Until then, unresolved hosted rows remain
+quarantined and formal attribution remains fail-closed.
