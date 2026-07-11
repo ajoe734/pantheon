@@ -1,8 +1,8 @@
 # MGMT-OPS-003 - Portfolio Capital And Risk Monitor
 
-Owner: Gemini2
+Owner: Codex2
 
-Reviewer: Codex2
+Reviewer: Codex
 
 Wave: 1
 
@@ -45,6 +45,23 @@ coverage, stale data, and risk incidents.
 ## Artifacts
 
 - `services/control-plane/bff`
-- `execute-plans:src/management/pages`
-- `execute-plans:src/lib`
-- `execute-plans:e2e`
+- Frontend integration now lives outside this repository after the embedded
+  `execute-plans` mirror removal; do not restore the deleted mirror here.
+
+## Implementation Notes
+
+- BFF Portfolio Book holdings and positions now expose normalized identity,
+  capital scope, source status, row-level incidents, coverage counters, and
+  filters for broker, source status, stale telemetry, and risk state.
+- Performance attribution rows expose `data_confidence` so missing or degraded
+  holdings remain visible without being treated as formal attribution.
+- This publish restores the pantheon-owned BFF contract and task evidence from
+  PR #3065 on top of current `dev` without reintroducing the deleted embedded
+  frontend mirror.
+
+## Local Validation
+
+- `python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -q`
+  - 46 passed.
+- Frontend tests for the former embedded `execute-plans` paths are not runnable
+  in this repository after `REPO-BOUNDARY-EXECUTE-PLANS` removed the mirror.

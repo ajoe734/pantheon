@@ -35,7 +35,7 @@ archived operations workflow plan as the source of truth.
 |---|---|---|---|---|
 | 0 | `MGMT-OPS-001` | Claude2 | Codex2 | Lock the shared operations read model and source-confidence contract. |
 | 1 | `MGMT-OPS-002` | Codex2 | Claude2 | Normalize frontend adapters and data-confidence UI rules across the pages. |
-| 1 | `MGMT-OPS-003` | Gemini2 | Codex2 | Turn Portfolio Book into the capital, exposure, and risk monitor. |
+| 1 | `MGMT-OPS-003` | Codex2 | Codex | Turn Portfolio Book into the capital, exposure, and risk monitor. |
 | 1 | `MGMT-OPS-004` | Antigravity2 | Claude2 | Fix Performance Attribution drilldown, fallback labeling, and diagnostics. |
 | 2 | `MGMT-OPS-005` | Gemini | Codex2 | Reframe Persona League and Quarterly Ranking as governed ranking inputs. |
 | 2 | `MGMT-OPS-006` | Antigravity | Claude2 | Wire governed operator actions through Human Review and auditable receipts. |
