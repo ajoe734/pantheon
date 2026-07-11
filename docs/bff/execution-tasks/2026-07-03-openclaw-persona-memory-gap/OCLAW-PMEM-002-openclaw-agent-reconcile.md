@@ -1,6 +1,6 @@
 # OCLAW-PMEM-002 - OpenClaw Persona Agent Reconciliation
 
-Owner: Codex2
+Owner: Codex
 Reviewer: Claude
 Parent: `OCLAW-PMEM-000`
 Depends on: `OCLAW-PMEM-001`
@@ -43,13 +43,15 @@ model drift.
   `python3 -m pytest integrations/openclaw/test_persona_agent_sync.py services/control-plane/bff/test_bff_strategy_persona_contract.py -q`
   (`37 passed`), followed by `python3 -m py_compile` for the reconciler,
   deploy driver, and BFF module, plus `git diff --check`.
-- The live response acceptance remains open. The public dev host resolves, but
-  this background worker cannot reach the gateway VM: the `pantheon-gcp` SSH
-  alias still points to the retired address, no current VM private key is
-  installed, and `gcloud compute` credential refresh requires an interactive
-  login. No gateway token was exposed or copied as a workaround.
-- Repair action: restore non-interactive operator access to the current dev VM
-  (or refresh the worker's gcloud application credentials), then reconcile one
-  registry persona and capture a real `/v1/responses` result using
-  `model=openclaw/{persona_id}`. Until that evidence is attached, this task is
-  not ready for review or `done`.
+- Dispatch-provided dev verification confirms the adapter recovered after the
+  post-reboot startup delay on port `18104`. `POST /v1/responses` completed
+  successfully with output text for both `model=openclaw/default` and the
+  reconciled registry persona `model=openclaw/persona-tw-equity`. The rejected
+  `/v1/chat/completions` probe (`404`) is not the supported acceptance path.
+- This worker independently confirmed that the implementation and focused
+  tests are durable, but could not repeat the VM-local request: direct SSH to
+  `35.201.239.38` was rejected for lack of a private key, `gcloud compute ssh`
+  required interactive reauthentication, and public access to port `18104`
+  timed out as expected. No gateway token was exposed or copied as a
+  workaround. The live response claim above therefore retains its explicit
+  dispatch/operator provenance for reviewer assessment.
