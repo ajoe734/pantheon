@@ -73,7 +73,15 @@ further sidecar dispatch until the parent produces material evidence.
 Approval of this packet does not approve the parent implementation, authorize
 frontend wiring, or authorize live-capital operations.
 
-## 5. Sidecar Verification
+## 5. Closeout Record
+
+Reviewer and parent owner `Antigravity` approved this support packet and chose
+Option 1. This sidecar is therefore complete as a decision handoff only. The
+remaining rebuild, focused contract tests, and any later frontend release
+handoff stay owned by parent task `MGMT-PERF-IA-002`; they are not delivered by
+this sidecar.
+
+## 6. Sidecar Verification
 
 ```bash
 git fetch origin dev task/MGMT-PERF-IA-002
