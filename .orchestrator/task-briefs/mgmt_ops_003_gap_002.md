@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Antigravity
 - Reviewer: Codex2
-- Next: REQUEST_CHANGES: deployment identity remains contradictory (README deployed SHA e3d3d88487; hosted-summary/browser claim 3373bc3d2; evidence branch HEAD bf3362dcb). Attach reviewer-rerunnable authenticated raw runtime, persona binding, deployment, capital-pool, and telemetry samples plus reconciliation input/output and append-only audit proving idempotency. Preserve all 19 unresolved holdings and their incidents/quarantine reasons. Focused verification: 53 passed.
+- Next: REQUEST_CHANGES: reconciliation evidence does not account for every hosted gap. Hosted capture reports 19 runtimes, 14 telemetry runtimes, and 19 unresolved holdings, but reconciliation-snapshot/report contains only 8 runtime bindings and 8 records; README claim that the report preserves all 19 holdings is unsupported. Capture all 19 driving runtime rows (or provide an explicit, auditable 19-holding-to-runtime mapping), reconcile every one, preserve unresolved incident/quarantine reasons, and rerun twice to show one append-only audit entry with a replayed=true report. Reviewer verification: 53 passed; deployed e3d3d88487 is ancestor of dev.
 
 ## Summary
 修復或隔離 dev runtime 的 persona、broker、ledger、capital scope 與 telemetry 缺口，不得靠隱藏資料改善指標。
