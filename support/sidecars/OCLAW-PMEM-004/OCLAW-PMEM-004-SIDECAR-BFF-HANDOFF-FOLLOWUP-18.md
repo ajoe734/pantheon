@@ -1,12 +1,12 @@
 # OCLAW-PMEM-004 BFF Handoff Follow-up 18
 
-**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-18`  
-**Parent Task**: `OCLAW-PMEM-004`  
-**Parent Owner**: `Claude2`  
-**Sidecar Owner**: `Codex`  
-**Sidecar Reviewer**: `Antigravity`  
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-07-11  
+**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-18`<br />
+**Parent Task**: `OCLAW-PMEM-004`<br />
+**Parent Owner**: `Claude2`<br />
+**Sidecar Owner**: `Codex`<br />
+**Sidecar Reviewer**: `Antigravity`<br />
+**Helper Kind**: `bff_handoff_packet`<br />
+**Generated**: 2026-07-11<br />
 **Mutates Canonical**: `no`
 
 This support-only packet adds a delta and absorption ledger to the BFF and
