@@ -127,4 +127,3 @@ its stronger acceptance claims are framed as gaps, not as implemented truth.
 After review, return it to parent owner `Antigravity` for selective absorption.
 Approval of this packet does not approve the parent runtime branch or authorize
 any live-capital action.
-
