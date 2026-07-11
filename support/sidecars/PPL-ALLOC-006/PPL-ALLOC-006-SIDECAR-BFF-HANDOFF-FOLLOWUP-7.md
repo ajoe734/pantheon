@@ -108,6 +108,21 @@ The parent owner decides which ready consumer rules to absorb and must keep
 the unresolved ledger entries unavailable until their owning tasks provide
 evidence.
 
+## Finalization Checkpoint
+
+Reviewer approval remains valid after closeout re-verification. The ledger and
+its Claude review record are merged into `dev`; `PPL-ALLOC-003` and
+`PPL-ALLOC-004` have since reached `done`, so the parent may now cite their
+evidence when absorbing the corresponding gates. `PPL-ALLOC-008` remains
+blocked, and emergency containment therefore remains unavailable as specified
+above. This dependency progress does not change this packet's support-only
+boundary or authorize any frontend, BFF, runtime, registry, governance, or
+canonical-truth change.
+
+Closeout verification confirmed both support artifacts are non-empty, commits
+`3d88b399d` and `0b84e7ee8` are ancestors of `origin/dev`, and each commit
+changes exactly one support Markdown file.
+
 ## Sources Reviewed
 
 - `support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF.md`
