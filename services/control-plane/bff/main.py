@@ -128,6 +128,7 @@ from models import (
 from action_catalog import get_action_catalog, get_catalog_entry
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
+from persona_allocation_policy import calculate_target_allocations, validate_emergency_lines
 from session_lifecycle_store import SessionLifecycleStore
 from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
@@ -24313,6 +24314,49 @@ async def bff_ranking_formula_action(
 
 # -- Rebalances BFF ----------------------------------------------------------
 
+@app.post("/bff/management/allocation-policy/evaluate")
+async def bff_evaluate_persona_allocation_policy(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Calculate stage-aware targets without changing any capital binding."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "rows is required", "Allocation evaluation requires a rows array")
+    lines = calculate_target_allocations(rows)
+    return {
+        "data": {
+            "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+            "lines": lines,
+            "applied": False,
+        },
+        "meta": {"snapshot_at": utc_now(), "policy": "persona-real-allocation-v1"},
+    }
+
+
+def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    required = ("ranking_snapshot_id", "simulation", "constraints", "rollback_target")
+    missing = [field for field in required if not payload.get(field)]
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or not lines:
+        missing.append("lines")
+    line_fields = ("persona_id", "stage", "capital_scope", "current_weight", "target_weight", "delta", "cap_reasons", "evidence_refs")
+    if not missing:
+        for index, line in enumerate(lines):
+            absent = [field for field in line_fields if field not in line]
+            if absent:
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid proposal line", f"lines[{index}] missing: {', '.join(absent)}")
+    if missing:
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "incomplete rebalance proposal", f"Missing proposal fields: {', '.join(missing)}")
+    if payload.get("emergency"):
+        try:
+            validate_emergency_lines(lines)
+        except ValueError as exc:
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid emergency proposal", str(exc)) from exc
+    return lines
+
 @app.get("/bff/rebalances")
 async def bff_list_rebalances(
     status: Optional[str] = None,
@@ -24363,6 +24407,9 @@ async def bff_create_rebalance(
             "Rebalance must specify a capital_pool_id",
             precondition_failed="capital_pool_id",
         )
+    proposal_lines = payload.get("lines")
+    if proposal_lines is not None:
+        proposal_lines = _validate_rebalance_proposal_payload(payload)
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
@@ -24407,6 +24454,17 @@ async def bff_create_rebalance(
         created_at=submitted_at,
         params=payload.get("params"),
         reason=payload.get("reason"),
+        proposal={
+            "proposal_type": "emergency_containment" if payload.get("emergency") else "quarterly_rebalance",
+            "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+            "lines": proposal_lines,
+            "simulation": payload.get("simulation"),
+            "constraints": payload.get("constraints"),
+            "rollback_target": payload.get("rollback_target"),
+            "approval_ref": payload.get("approval_ref"),
+            "audit_refs": list(payload.get("audit_refs") or []),
+            "applied": False,
+        } if proposal_lines is not None else None,
     )
     result = _project_final_command_response(
         command_id=command_id,
@@ -24419,6 +24477,39 @@ async def bff_create_rebalance(
     combined["rebalance_id"] = rebalance["rebalance_id"]
     _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": combined}
     return combined
+
+
+@app.post("/bff/rebalances/{rebalance_id}/apply", status_code=202)
+async def bff_apply_rebalance_proposal(
+    rebalance_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Authorize proposal application; execution remains a separate command."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    rebalance = read_store.get_rebalance(rebalance_id)
+    if not rebalance:
+        raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Rebalance not found", f"Rebalance {rebalance_id} does not exist")
+    increases_live = any(
+        line.get("stage") == "live_running" and float(line.get("target_weight") or 0) > float(line.get("current_weight") or 0)
+        for line in rebalance.get("lines") or []
+    )
+    approval_ref = payload.get("approval_ref") or rebalance.get("approval_ref")
+    if increases_live and not approval_ref:
+        raise _bff_error(409, ErrorCode.PRECONDITION_FAILED, "human approval required", "A human approval reference is required before applying a live capital increase", precondition_failed="approval_ref")
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    return _capital_bff_action_command(
+        entity_type=ObjectType.REBALANCE,
+        entity_id=rebalance_id,
+        action_id="apply",
+        resolved_key=resolved_key,
+        identity=identity,
+        payload={**payload, "approval_ref": approval_ref, "rollback_target": rebalance.get("rollback_target")},
+        command_type=CommandType.REBALANCE_ACTION,
+    )
 
 
 @app.get("/bff/rebalances/{rebalance_id}")
