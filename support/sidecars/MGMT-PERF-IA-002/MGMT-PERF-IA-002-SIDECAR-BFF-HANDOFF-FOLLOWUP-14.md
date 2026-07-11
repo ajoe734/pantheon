@@ -71,6 +71,11 @@ confirms only duplicate-dispatch suppression; it does not approve the parent
 implementation or PR, change its blocker, authorize frontend work, or
 authorize a live-capital operation.
 
+Reviewer approval was recorded with the notes `審查通過` and
+`重複派遣抑制確認`. The approved closeout therefore preserves this packet as a
+support-only no-material-delta record and returns no implementation change to
+the parent branch.
+
 ## 5. Verification
 
 ```bash
