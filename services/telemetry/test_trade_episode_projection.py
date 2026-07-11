@@ -334,6 +334,58 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
         self.assertEqual(proj2["status"], "closed")
         self.assertEqual(proj2["closed_at"], "2026-07-11T12:10:00Z")
 
+    def test_zero_quantity_fill_with_slippage_does_not_crash(self) -> None:
+        episode_id = str(uuid.uuid4())
+
+        # opened event carries an initial slippage value in its payload
+        opened_event = {
+            "event_id": str(uuid.uuid4()),
+            "schema_version": "1.0",
+            "event_type": "trade_episode.opened",
+            "occurred_at": "2026-07-11T12:00:00Z",
+            "trade_episode_id": episode_id,
+            "persona_id": "persona-macro",
+            "environment": "paper",
+            "sequence_number": 1,
+            "payload": {
+                "strategy_id": "strategy-quant-01",
+                "instrument_id": "SPY",
+                "requested_quantity": 100.0,
+                "slippage": 5.0,
+            },
+        }
+        self.store.project_event(opened_event)
+
+        # a fill-type event that reports zero quantity but a nonzero slippage
+        # metric must not crash episode replay; it should be a no-op for
+        # filled_quantity/vwap while still being coverage-safe.
+        degenerate_fill_event = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "created_at": "2026-07-11T12:01:00Z",
+            "trade_episode_id": episode_id,
+            "metrics": {"fill_quantity": 0.0, "slippage": 2.0},
+            "sequence_number": 2,
+        }
+
+        proj = self.store.project_event(degenerate_fill_event)
+        self.assertIsNotNone(proj)
+        self.assertEqual(proj["filled_quantity"], 0.0)
+        self.assertEqual(proj["slippage"], 5.0)
+
+        # a subsequent legitimate fill must still project correctly
+        fill_event = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "created_at": "2026-07-11T12:02:00Z",
+            "trade_episode_id": episode_id,
+            "metrics": {"fill_quantity": 50.0, "fill_price": 450.0, "slippage": 3.0},
+            "sequence_number": 3,
+        }
+        proj2 = self.store.project_event(fill_event)
+        self.assertEqual(proj2["filled_quantity"], 50.0)
+        self.assertEqual(proj2["vwap"], 450.0)
+
 
 if __name__ == "__main__":
     unittest.main()
