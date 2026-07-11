@@ -1,12 +1,12 @@
 # OCLAW-PMEM-004 BFF Handoff Follow-up 9
 
-**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9`  
-**Parent Task**: `OCLAW-PMEM-004`  
-**Parent Owner**: `Claude2`  
-**Sidecar Owner**: `Codex`  
-**Sidecar Reviewer**: `Antigravity`  
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-07-11  
+**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9`
+**Parent Task**: `OCLAW-PMEM-004`
+**Parent Owner**: `Claude2`
+**Sidecar Owner**: `Codex`
+**Sidecar Reviewer**: `Antigravity`
+**Helper Kind**: `bff_handoff_packet`
+**Generated**: 2026-07-11
 **Mutates Canonical**: `no`
 
 This support-only packet is the last-mile contract-freeze checklist for the
