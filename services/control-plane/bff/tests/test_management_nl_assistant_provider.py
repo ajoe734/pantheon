@@ -1969,6 +1969,10 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
     providers = {row["provider"]: row for row in data["providers"]}
     codex = providers["codex_cli"]
     assert codex["live_auth"] is True
+    assert codex["provider_auth"]["authenticated"] is True
+    assert codex["live_smoke"]["status"] == "not_checked"
+    assert codex["readiness"]["mount_ready_is_sufficient"] is False
+    assert codex["reauth"]["status"] == "not_started"
     assert "liveAuth" not in codex
     assert codex["quota"]["source"] == "provider_snapshot"
     assert codex["quota"]["remaining"] == 12

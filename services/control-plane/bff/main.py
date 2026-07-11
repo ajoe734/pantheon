@@ -34826,6 +34826,30 @@ def _assistant_provider_usage_summary(
         live_auth = bool(item.get("ready") is True and str(auth_status or "").lower() in {"ready", "account_session", "authorized"})
         row["live_auth"] = live_auth
         row["quota"] = _management_ai_quota_snapshot(item)
+        smoke = item.get("live_smoke") if isinstance(item.get("live_smoke"), dict) else {}
+        reauth = item.get("reauth") if isinstance(item.get("reauth"), dict) else {}
+        row["provider_auth"] = {
+            "status": auth_status or "not_checked",
+            "authenticated": str(auth_status or "").lower() in {"ready", "account_session", "authorized"},
+            "source": item.get("auth_source") or item.get("authSource") or "provider_probe",
+        }
+        row["live_smoke"] = {
+            "status": smoke.get("status") or item.get("smoke_status") or "not_checked",
+            "passed": smoke.get("passed") is True,
+            "checked_at": smoke.get("checked_at") or smoke.get("checkedAt") or item.get("last_live_smoke_at"),
+            "reason": smoke.get("reason") or item.get("smoke_reason"),
+        }
+        row["reauth"] = {
+            "status": reauth.get("status") or item.get("reauth_status") or "not_started",
+            "code_entry_required": bool(reauth.get("code_entry_required", reauth.get("codeEntryRequired", False))),
+            "readiness_recheck_required": bool(reauth.get("readiness_recheck_required", reauth.get("readinessRecheckRequired", False))),
+        }
+        row["readiness"] = {
+            "ready": item.get("ready") is True,
+            "proof": item.get("readiness_proof") or "provider_probe",
+            "mount_ready_is_sufficient": False,
+            "reason": item.get("reason"),
+        }
 
     started_by_run: Dict[str, Dict[str, Any]] = {}
     events = _management_ai_list_audit_events(limit=event_limit)
