@@ -560,17 +560,17 @@ class TradeEpisodeProjectionStore:
                         proj["status"] = "open"
                     else:
                         proj["status"] = "partially_filled"
-                
+
+                    slippage = float(metrics.get("slippage") or metrics.get("slippage_bps") or 0.0)
+                    if slippage > 0:
+                        if proj["slippage"] is None:
+                            proj["slippage"] = slippage
+                        else:
+                            proj["slippage"] = (proj["slippage"] * prev_qty + slippage * fill_qty) / new_qty
+
                 fees = float(metrics.get("fees") or metrics.get("commission") or 0.0)
                 proj["fees"] += fees
-                
-                slippage = float(metrics.get("slippage") or metrics.get("slippage_bps") or 0.0)
-                if slippage > 0:
-                    if proj["slippage"] is None:
-                        proj["slippage"] = slippage
-                    else:
-                        proj["slippage"] = (proj["slippage"] * prev_qty + slippage * fill_qty) / new_qty
-                
+
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
 
             elif event_type in ("order_canceled", "order_cancelled", "order_rejection"):
