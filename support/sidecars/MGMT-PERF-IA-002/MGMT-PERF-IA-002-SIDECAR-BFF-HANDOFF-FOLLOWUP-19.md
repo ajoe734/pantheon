@@ -95,3 +95,5 @@ Owner finalization confirms that the approved scope remains unchanged: this
 packet only records the duplicate-dispatch stop condition and resume gate. It
 does not modify or approve the parent implementation, canonical truth, BFF or
 frontend runtime, contracts, governance, or live-capital behavior.
+
+The owner-finalization record is published through follow-up PR `#3196`.
