@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare MGMT-PERF-IA-002 BFF and frontend handoff packet
-- Status: todo
+- Status: review
 - Owner: Codex2
 - Reviewer: Antigravity
-- Next: Assignment created
+- Next: Support-only duplicate-dispatch checkpoint committed; parent resume gate remains unmet. Please review packet for suppression and parent-owner absorption; no canonical, runtime, or frontend change.
 
 ## Summary
 平行支援 MGMT-PERF-IA-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
