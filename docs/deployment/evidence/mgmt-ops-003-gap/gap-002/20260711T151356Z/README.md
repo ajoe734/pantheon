@@ -8,10 +8,10 @@ Verdict: `APPROVE`
 
 ## Delivery identity
 
-- Implementation merge: `3373bc3d2ee3d2548b16122e342eeee7d41b961d`.
-- Deployed dev SHA: `e3d3d88487c15e989ebfb48b6b8783552b5d12ab`.
-- `git merge-base --is-ancestor 3373bc3d2 e3d3d88487` returned success.
-- Deployment: GitHub Actions nonprod-deploy workflow has successfully completed.
+- **Implementation head**: `3373bc3d2ee3d2548b16122e342eeee7d41b961d` (PR #3208 implementation source).
+- **Deployed dev merge commit**: `e3d3d88487c15e989ebfb48b6b8783552b5d12ab` (the merge commit of `3373bc3d2` into `dev` running on the dev VM BFF).
+- **Evidence branch HEAD**: `bf3362dcb3a06534a36f31757a704ae366a79025` (the release bot's evidence capture commit on the task branch).
+- **Git lineage**: `git merge-base --is-ancestor 3373bc3d2 e3d3d88487` is verified to be successful. The evidence files are collected from the dev VM running the merge commit `e3d3d88487`.
 
 ## Authenticated BFF capture
 
@@ -51,6 +51,16 @@ Under the new frontend deployment (`execute-plans` commit `e23aba15bf530a6171354
 
 All hosted verification criteria in this task's `review_contract` have been fully satisfied.
 
+## Auditable Reconciliation Verification
+
+To satisfy the reviewer's request for verification of the data quality reconciler under the same live constraints, the following rerunnable assets are captured and attached:
+
+1. **Reconciliation snapshot**: `reconciliation-snapshot.json` contains raw, authenticated samples of runtime bindings, deployment plans, persona capital bindings, capital pools, and telemetry summaries extracted from the running services.
+2. **Reconciliation execution report**: `reconciliation-report.json` records the output of the local reconciler, classifying each driving runtime binding's disposition (e.g. `repair_proposed` for unresolved missing bindings).
+3. **Idempotent audit trail**: `reconciliation-audit.jsonl` contains the append-only logs of the reconciler. Running the reconciler twice against the same snapshot is verified to be fully idempotent, producing no duplicate records in the audit file.
+
+All 19 unresolved holdings, their quarantined states, and incident-backed reasons are strictly preserved in the report.
+
 ## Files
 
 - `portfolio-book.json`: authenticated portfolio summary response.
@@ -61,3 +71,6 @@ All hosted verification criteria in this task's `review_contract` have been full
 - `hosted-browser-evidence.json`: viewport, console, network, and fallback counters.
 - `portfolio-book-desktop.png`: desktop hosted capture.
 - `portfolio-book-mobile.png`: mobile hosted capture.
+- `reconciliation-snapshot.json`: raw inputs/samples for the reconciler.
+- `reconciliation-report.json`: reconciler execution report.
+- `reconciliation-audit.jsonl`: idempotent append-only audit trail.

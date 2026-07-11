@@ -1,0 +1,337 @@
+{
+  "idempotency_key": "42cb506529ddbc9d8eba7de02181305dffb898d02897e1c750196d18038da718",
+  "records": [
+    {
+      "after_issue_codes": [
+        "missing_broker_identity",
+        "missing_telemetry"
+      ],
+      "before_issue_codes": [
+        "missing_broker_identity",
+        "missing_telemetry"
+      ],
+      "conflicts": {},
+      "disposition": "repair_proposed",
+      "evidence_refs": [
+        "runtime_binding:binding-persona-20260704-fe141b90-paper",
+        "deployment_plan:paper-plan-persona-20260704-fe141b90",
+        "persona_capital_binding:binding-persona-20260704-fe141b90-paper",
+        "capital_pool:paper-pool-persona-20260704-fe141b90",
+        "telemetry_runtime:runtime-persona-20260704-fe141b90-paper"
+      ],
+      "formal_attribution_allowed": false,
+      "reason": "authoritative_sources_agree_write_owner_action_required",
+      "repair_patch": {
+        "artifact_id": "paper-artifact-persona-20260704-fe141b90"
+      },
+      "runtime_binding_id": "binding-persona-20260704-fe141b90-paper",
+      "runtime_id": "runtime-persona-20260704-fe141b90-paper"
+    },
+    {
+      "after_issue_codes": [
+        "missing_broker_identity",
+        "missing_telemetry"
+      ],
+      "before_issue_codes": [
+        "missing_broker_identity",
+        "missing_telemetry"
+      ],
+      "conflicts": {},
+      "disposition": "repair_proposed",
+      "evidence_refs": [
+        "runtime_binding:binding-persona-20260704-5d946ca4-paper",
+        "deployment_plan:paper-plan-persona-20260704-5d946ca4",
+        "persona_capital_binding:binding-persona-20260704-5d946ca4-paper",
+        "capital_pool:paper-pool-persona-20260704-5d946ca4",
+        "telemetry_runtime:runtime-persona-20260704-5d946ca4-paper"
+      ],
+      "formal_attribution_allowed": false,
+      "reason": "authoritative_sources_agree_write_owner_action_required",
+      "repair_patch": {
+        "artifact_id": "paper-artifact-persona-20260704-5d946ca4"
+      },
+      "runtime_binding_id": "binding-persona-20260704-5d946ca4-paper",
+      "runtime_id": "runtime-persona-20260704-5d946ca4-paper"
+    },
+    {
+      "after_issue_codes": [
+        "missing_broker_identity",
+        "missing_telemetry"
+      ],
+      "before_issue_codes": [
+        "missing_broker_identity",
+        "missing_telemetry"
+      ],
+      "conflicts": {},
+      "disposition": "repair_proposed",
+      "evidence_refs": [
+        "runtime_binding:binding-persona-20260704-f187ac69-paper",
+        "deployment_plan:paper-plan-persona-20260704-f187ac69",
+        "persona_capital_binding:binding-persona-20260704-f187ac69-paper",
+        "capital_pool:paper-pool-persona-20260704-f187ac69",
+        "telemetry_runtime:runtime-persona-20260704-f187ac69-paper"
+      ],
+      "formal_attribution_allowed": false,
+      "reason": "authoritative_sources_agree_write_owner_action_required",
+      "repair_patch": {
+        "artifact_id": "paper-artifact-persona-20260704-f187ac69"
+      },
+      "runtime_binding_id": "binding-persona-20260704-f187ac69-paper",
+      "runtime_id": "runtime-persona-20260704-f187ac69-paper"
+    },
+    {
+      "after_issue_codes": [
+        "missing_broker_identity",
+        "missing_telemetry"
+      ],
+      "before_issue_codes": [
+        "missing_broker_identity",
+        "missing_telemetry"
+      ],
+      "conflicts": {},
+      "disposition": "repair_proposed",
+      "evidence_refs": [
+        "runtime_binding:binding-persona-20260704-99fb0bd4-paper",
+        "deployment_plan:paper-plan-persona-20260704-99fb0bd4",
+        "persona_capital_binding:binding-persona-20260704-99fb0bd4-paper",
+        "capital_pool:paper-pool-persona-20260704-99fb0bd4",
+        "telemetry_runtime:runtime-persona-20260704-99fb0bd4-paper"
+      ],
+      "formal_attribution_allowed": false,
+      "reason": "authoritative_sources_agree_write_owner_action_required",
+      "repair_patch": {
+        "artifact_id": "paper-artifact-persona-20260704-99fb0bd4"
+      },
+      "runtime_binding_id": "binding-persona-20260704-99fb0bd4-paper",
+      "runtime_id": "runtime-persona-20260704-99fb0bd4-paper"
+    },
+    {
+      "after_issue_codes": [
+        "missing_broker_identity",
+        "missing_telemetry"
+      ],
+      "before_issue_codes": [
+        "missing_broker_identity",
+        "missing_telemetry"
+      ],
+      "conflicts": {},
+      "disposition": "repair_proposed",
+      "evidence_refs": [
+        "runtime_binding:binding-persona-20260711-9fba9f55-paper",
+        "deployment_plan:paper-plan-persona-20260711-9fba9f55",
+        "persona_capital_binding:binding-persona-20260711-9fba9f55-paper",
+        "capital_pool:paper-ledger-persona-20260711-9fba9f55",
+        "telemetry_runtime:runtime-persona-20260711-9fba9f55-paper"
+      ],
+      "formal_attribution_allowed": false,
+      "reason": "authoritative_sources_agree_write_owner_action_required",
+      "repair_patch": {
+        "artifact_id": "paper-artifact-persona-20260711-9fba9f55"
+      },
+      "runtime_binding_id": "binding-persona-20260711-9fba9f55-paper",
+      "runtime_id": "runtime-persona-20260711-9fba9f55-paper"
+    },
+    {
+      "after_issue_codes": [
+        "missing_broker_identity"
+      ],
+      "before_issue_codes": [
+        "missing_broker_identity"
+      ],
+      "conflicts": {},
+      "disposition": "repair_proposed",
+      "evidence_refs": [
+        "runtime_binding:binding-tw-equity-paper",
+        "deployment_plan:plan-tw-equity-paper",
+        "persona_capital_binding:binding-tw-equity-paper",
+        "capital_pool:pool-tw-equity-paper",
+        "telemetry_runtime:runtime-tw-equity-paper"
+      ],
+      "formal_attribution_allowed": false,
+      "reason": "authoritative_sources_agree_write_owner_action_required",
+      "repair_patch": {
+        "artifact_id": "artifact-tw-equity-session-v1"
+      },
+      "runtime_binding_id": "binding-tw-equity-paper",
+      "runtime_id": "runtime-tw-equity-paper"
+    },
+    {
+      "after_issue_codes": [
+        "missing_broker_identity"
+      ],
+      "before_issue_codes": [
+        "missing_broker_identity"
+      ],
+      "conflicts": {},
+      "disposition": "repair_proposed",
+      "evidence_refs": [
+        "runtime_binding:binding-us-equity-paper",
+        "deployment_plan:plan-us-equity-paper",
+        "persona_capital_binding:binding-us-equity-paper",
+        "capital_pool:pool-us-equity-paper",
+        "telemetry_runtime:runtime-us-equity-paper"
+      ],
+      "formal_attribution_allowed": false,
+      "reason": "authoritative_sources_agree_write_owner_action_required",
+      "repair_patch": {
+        "artifact_id": "artifact-us-equity-momentum-v1"
+      },
+      "runtime_binding_id": "binding-us-equity-paper",
+      "runtime_id": "runtime-us-equity-paper"
+    },
+    {
+      "after_issue_codes": [
+        "missing_broker_identity"
+      ],
+      "before_issue_codes": [
+        "missing_broker_identity"
+      ],
+      "conflicts": {},
+      "disposition": "repair_proposed",
+      "evidence_refs": [
+        "runtime_binding:binding-crypto-paper",
+        "deployment_plan:plan-crypto-paper",
+        "persona_capital_binding:binding-crypto-paper",
+        "capital_pool:pool-crypto-paper",
+        "telemetry_runtime:runtime-crypto-paper"
+      ],
+      "formal_attribution_allowed": false,
+      "reason": "authoritative_sources_agree_write_owner_action_required",
+      "repair_patch": {
+        "artifact_id": "artifact-crypto-trend-carry-v1"
+      },
+      "runtime_binding_id": "binding-crypto-paper",
+      "runtime_id": "runtime-crypto-paper"
+    }
+  ],
+  "repair_manifest": [
+    {
+      "evidence_refs": [
+        "runtime_binding:binding-persona-20260704-fe141b90-paper",
+        "deployment_plan:paper-plan-persona-20260704-fe141b90",
+        "persona_capital_binding:binding-persona-20260704-fe141b90-paper",
+        "capital_pool:paper-pool-persona-20260704-fe141b90",
+        "telemetry_runtime:runtime-persona-20260704-fe141b90-paper"
+      ],
+      "patch": {
+        "artifact_id": "paper-artifact-persona-20260704-fe141b90"
+      },
+      "runtime_binding_id": "binding-persona-20260704-fe141b90-paper",
+      "runtime_id": "runtime-persona-20260704-fe141b90-paper"
+    },
+    {
+      "evidence_refs": [
+        "runtime_binding:binding-persona-20260704-5d946ca4-paper",
+        "deployment_plan:paper-plan-persona-20260704-5d946ca4",
+        "persona_capital_binding:binding-persona-20260704-5d946ca4-paper",
+        "capital_pool:paper-pool-persona-20260704-5d946ca4",
+        "telemetry_runtime:runtime-persona-20260704-5d946ca4-paper"
+      ],
+      "patch": {
+        "artifact_id": "paper-artifact-persona-20260704-5d946ca4"
+      },
+      "runtime_binding_id": "binding-persona-20260704-5d946ca4-paper",
+      "runtime_id": "runtime-persona-20260704-5d946ca4-paper"
+    },
+    {
+      "evidence_refs": [
+        "runtime_binding:binding-persona-20260704-f187ac69-paper",
+        "deployment_plan:paper-plan-persona-20260704-f187ac69",
+        "persona_capital_binding:binding-persona-20260704-f187ac69-paper",
+        "capital_pool:paper-pool-persona-20260704-f187ac69",
+        "telemetry_runtime:runtime-persona-20260704-f187ac69-paper"
+      ],
+      "patch": {
+        "artifact_id": "paper-artifact-persona-20260704-f187ac69"
+      },
+      "runtime_binding_id": "binding-persona-20260704-f187ac69-paper",
+      "runtime_id": "runtime-persona-20260704-f187ac69-paper"
+    },
+    {
+      "evidence_refs": [
+        "runtime_binding:binding-persona-20260704-99fb0bd4-paper",
+        "deployment_plan:paper-plan-persona-20260704-99fb0bd4",
+        "persona_capital_binding:binding-persona-20260704-99fb0bd4-paper",
+        "capital_pool:paper-pool-persona-20260704-99fb0bd4",
+        "telemetry_runtime:runtime-persona-20260704-99fb0bd4-paper"
+      ],
+      "patch": {
+        "artifact_id": "paper-artifact-persona-20260704-99fb0bd4"
+      },
+      "runtime_binding_id": "binding-persona-20260704-99fb0bd4-paper",
+      "runtime_id": "runtime-persona-20260704-99fb0bd4-paper"
+    },
+    {
+      "evidence_refs": [
+        "runtime_binding:binding-persona-20260711-9fba9f55-paper",
+        "deployment_plan:paper-plan-persona-20260711-9fba9f55",
+        "persona_capital_binding:binding-persona-20260711-9fba9f55-paper",
+        "capital_pool:paper-ledger-persona-20260711-9fba9f55",
+        "telemetry_runtime:runtime-persona-20260711-9fba9f55-paper"
+      ],
+      "patch": {
+        "artifact_id": "paper-artifact-persona-20260711-9fba9f55"
+      },
+      "runtime_binding_id": "binding-persona-20260711-9fba9f55-paper",
+      "runtime_id": "runtime-persona-20260711-9fba9f55-paper"
+    },
+    {
+      "evidence_refs": [
+        "runtime_binding:binding-tw-equity-paper",
+        "deployment_plan:plan-tw-equity-paper",
+        "persona_capital_binding:binding-tw-equity-paper",
+        "capital_pool:pool-tw-equity-paper",
+        "telemetry_runtime:runtime-tw-equity-paper"
+      ],
+      "patch": {
+        "artifact_id": "artifact-tw-equity-session-v1"
+      },
+      "runtime_binding_id": "binding-tw-equity-paper",
+      "runtime_id": "runtime-tw-equity-paper"
+    },
+    {
+      "evidence_refs": [
+        "runtime_binding:binding-us-equity-paper",
+        "deployment_plan:plan-us-equity-paper",
+        "persona_capital_binding:binding-us-equity-paper",
+        "capital_pool:pool-us-equity-paper",
+        "telemetry_runtime:runtime-us-equity-paper"
+      ],
+      "patch": {
+        "artifact_id": "artifact-us-equity-momentum-v1"
+      },
+      "runtime_binding_id": "binding-us-equity-paper",
+      "runtime_id": "runtime-us-equity-paper"
+    },
+    {
+      "evidence_refs": [
+        "runtime_binding:binding-crypto-paper",
+        "deployment_plan:plan-crypto-paper",
+        "persona_capital_binding:binding-crypto-paper",
+        "capital_pool:pool-crypto-paper",
+        "telemetry_runtime:runtime-crypto-paper"
+      ],
+      "patch": {
+        "artifact_id": "artifact-crypto-trend-carry-v1"
+      },
+      "runtime_binding_id": "binding-crypto-paper",
+      "runtime_id": "runtime-crypto-paper"
+    }
+  ],
+  "replayed": true,
+  "run_id": "29151498421",
+  "source_counts": {
+    "capital_pools": 12,
+    "deployment_plans": 8,
+    "persona_capital_bindings": 8,
+    "runtime_bindings": 8,
+    "telemetry_summaries": 14
+  },
+  "summary": {
+    "input_count": 8,
+    "quarantined": 0,
+    "repair_proposed": 8,
+    "unchanged": 0,
+    "unresolved": 8
+  }
+}

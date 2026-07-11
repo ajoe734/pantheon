@@ -2,7 +2,7 @@
   "capturedAt": "2026-07-11T15:13:56.337Z",
   "frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
   "bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
-  "deployedSha": "3373bc3d2ee3d2548b16122e342eeee7d41b961d",
+  "deployedSha": "e3d3d88487c15e989ebfb48b6b8783552b5d12ab",
   "results": [
     {
       "device": "desktop",
