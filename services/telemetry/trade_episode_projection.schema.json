@@ -1,0 +1,279 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/trade-episode-projection/v1",
+  "title": "TradeEpisodeProjection",
+  "description": "Versioned read-model projection representing a Persona's trade episode lifecycle, execution, rationale, risk, and outcomes.",
+  "type": "object",
+  "required": [
+    "trade_episode_id",
+    "environment",
+    "persona_id",
+    "strategy_id",
+    "artifact_id",
+    "artifact_version",
+    "runtime_binding_id",
+    "capital_pool_id",
+    "instrument_id",
+    "side",
+    "status",
+    "coverage"
+  ],
+  "properties": {
+    "trade_episode_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier of the trade episode."
+    },
+    "environment": {
+      "type": "string",
+      "enum": ["paper", "canary", "live", "frozen"]
+    },
+    "persona_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime_binding_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "capital_pool_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instrument_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "side": {
+      "type": "string",
+      "enum": ["long", "short"]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "approved",
+        "submitted",
+        "partially_filled",
+        "open",
+        "reducing",
+        "closed",
+        "reflection_pending",
+        "reflected",
+        "force_closed",
+        "reflection_failed"
+      ]
+    },
+    "decision_id": {
+      "type": ["string", "null"]
+    },
+    "proposal_id": {
+      "type": ["string", "null"]
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "trace_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "order_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "fill_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "position_snapshot_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "attribution_ref": {
+      "type": ["string", "null"]
+    },
+    "reflection_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "opened_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "closed_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "entry_actor": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "enum": ["persona", "operator", "algo", "system"] }
+      ]
+    },
+    "exit_actor": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "enum": ["persona", "operator", "algo", "system", "risk_system", "kill_switch"] }
+      ]
+    },
+    "exit_reason": {
+      "type": ["string", "null"]
+    },
+    "requested_quantity": {
+      "type": "number",
+      "minimum": 0
+    },
+    "filled_quantity": {
+      "type": "number",
+      "minimum": 0
+    },
+    "remaining_quantity": {
+      "type": "number",
+      "minimum": 0
+    },
+    "vwap": {
+      "type": ["number", "null"]
+    },
+    "fees": {
+      "type": "number",
+      "minimum": 0
+    },
+    "slippage": {
+      "type": ["number", "null"]
+    },
+    "rejects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "reject_id": { "type": "string" },
+          "rejected_at": { "type": "string", "format": "date-time" },
+          "reason": { "type": "string" }
+        },
+        "required": ["reason"]
+      }
+    },
+    "realized_pnl": {
+      "type": ["number", "null"]
+    },
+    "unrealized_pnl": {
+      "type": ["number", "null"]
+    },
+    "return_percent": {
+      "type": ["number", "null"]
+    },
+    "mae": {
+      "type": ["number", "null"]
+    },
+    "mfe": {
+      "type": ["number", "null"]
+    },
+    "holding_duration_seconds": {
+      "type": ["number", "null"]
+    },
+    "benchmark_delta": {
+      "type": ["number", "null"]
+    },
+    "thesis": {
+      "type": ["string", "null"]
+    },
+    "expected_catalyst": {
+      "type": ["string", "null"]
+    },
+    "invalidation_conditions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "time_horizon": {
+      "type": ["string", "null"]
+    },
+    "confidence": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "rationale_source_ref": {
+      "type": ["string", "null"]
+    },
+    "limits": {
+      "type": ["object", "null"]
+    },
+    "expected_loss": {
+      "type": ["number", "null"]
+    },
+    "stop_exit_plan": {
+      "type": ["string", "null"]
+    },
+    "approval_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["state", "missing_refs", "as_of", "source_system"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["complete", "partial", "degraded", "unavailable"]
+        },
+        "missing_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_system": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reflection_summary": {
+      "type": ["object", "null"],
+      "properties": {
+        "reflection_id": { "type": "string", "format": "uuid" },
+        "status": { "type": "string" },
+        "generated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "memory_governance_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

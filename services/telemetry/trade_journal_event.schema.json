@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/trade-journal-event/v1",
+  "title": "TradeJournalEvent",
+  "description": "Event envelope for Trade Journal state transitions, reflections, and memory governance updates.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "schema_version",
+    "event_type",
+    "occurred_at",
+    "ingested_at",
+    "trace_id",
+    "trade_episode_id",
+    "persona_id",
+    "environment",
+    "producer"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "trade_episode.opened",
+        "trade_episode.updated",
+        "trade_episode.closed",
+        "trade_episode.unresolved",
+        "trade_reflection.requested",
+        "trade_reflection.completed",
+        "trade_reflection.failed",
+        "trade_lesson.proposed",
+        "trade_lesson.reviewed",
+        "trade_lesson.merged",
+        "trade_lesson.quarantined"
+      ]
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ingested_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "trade_episode_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "persona_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "environment": {
+      "type": "string",
+      "enum": ["paper", "canary", "live", "frozen"]
+    },
+    "producer": {
+      "type": "string"
+    },
+    "causation_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "correlation_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
