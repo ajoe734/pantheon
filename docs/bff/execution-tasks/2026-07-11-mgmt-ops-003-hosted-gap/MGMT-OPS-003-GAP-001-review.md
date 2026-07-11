@@ -81,3 +81,46 @@ All required gap criteria have been successfully verified and validated through 
 **Task-ID**: MGMT-OPS-003-GAP-001  
 **Reviewer**: Antigravity  
 **Verified**: see above  
+
+## Post-Approval Closeout Addendum (Claude, 2026-07-11)
+
+After this `APPROVE` verdict, PR #253's last commit (`ba1d019`) shipped an
+undocumented `productionCount === 0 && nonProductionCount > 0` fallback in
+`PersonaFleetPage` that auto-switched the default tab to non-production
+whenever dev has zero production personas (the current dev state). This
+broke the `pantheon-dev-fe-deploy.yml` post-deploy probe on the plain
+`/management/persona-fleet` landing page (`persona fleet rows valid: false`,
+run `29155910357`), surfacing seed/test persona names by default.
+
+- Fix landed via `ajoe734/execute-plans#254`
+  (`task/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX`, owner Codex, reviewer
+  Codex2, merged `2026-07-11T14:31:00Z`, merge commit `e23aba15`): keeps
+  the production tab as default while production has zero rows, preserving
+  the documented `personaFocus`-driven auto-switch.
+- A related pagination fix for the focused-fleet view landed via
+  `ajoe734/execute-plans#256`
+  (`task/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-V2`, owner Codex,
+  reviewer Antigravity, merged `2026-07-11T14:55:38Z`, merge commit
+  `30bc432f`).
+- Post-merge deploy run
+  `https://github.com/ajoe734/execute-plans/actions/runs/29156996097`
+  (dev tip `30bc432f`, completed `2026-07-11T14:59:26Z`) confirms clean
+  hosted evidence: `persona fleet rows valid: true`,
+  `persona fleet live banner valid: true`,
+  `persona fleet has non-production rows: false`, both
+  `/bff/management/persona-fleet` requests returned `200`, and
+  `e2e/25-persona-fleet-live-linked-pages.spec.ts` passed against the
+  deployed host.
+- My own interim fix attempt, `ajoe734/execute-plans#255`
+  (`task/MGMT-OPS-003-GAP-001-fix2`), took a different code path to the
+  same goal and is superseded by `#254`; it is closed unmerged to avoid a
+  duplicate/zombie task PR.
+- Dev tip (`30bc432f`) is the currently deployed sha and satisfies the
+  "execute-plans PR is merged, deployed to dev, and reviewed with current
+  hosted evidence" acceptance criterion. No Pantheon repo behavior
+  changed; this addendum only records the post-approval evidence trail.
+
+**LLM-Agent**: Claude  
+**Task-ID**: MGMT-OPS-003-GAP-001  
+**Reviewer**: Antigravity  
+**Verified**: `gh run view 29156996097 -R ajoe734/execute-plans --log` (rows valid: true, live banner valid: true); `gh api repos/ajoe734/execute-plans/commits?sha=dev` (confirms #254/#256 merge ancestry to dev tip 30bc432f); `git ls-remote https://github.com/ajoe734/execute-plans.git dev` (tip matches deployed sha)  
