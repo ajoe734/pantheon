@@ -14,6 +14,7 @@ from read_store import ReadSurfaceStore  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-pm12:operator"}
+FOCUS_PERSONA_ID = "persona-20260528-04688755"
 
 
 def _portfolio_store(
@@ -23,6 +24,10 @@ def _portfolio_store(
     telemetry: dict[str, dict[str, Any]] | None = None,
     drift_reports: dict[str, dict[str, Any]] | None = None,
     strategy_specs: list[dict[str, Any]] | None = None,
+    extra_capital_pools: list[dict[str, Any]] | None = None,
+    extra_bindings: list[dict[str, Any]] | None = None,
+    extra_deployment_plans: list[dict[str, Any]] | None = None,
+    extra_runtime_bindings: list[dict[str, Any]] | None = None,
 ) -> TestClient:
     td = tempfile.TemporaryDirectory(prefix="bff_pm12_")
     monkeypatch.setattr(bff_main, "_BFF_PM12_TMPDIR", td, raising=False)
@@ -117,6 +122,10 @@ def _portfolio_store(
             "deployment_stage": "paper",
         },
     ]
+    capital_pools.extend(extra_capital_pools or [])
+    bindings.extend(extra_bindings or [])
+    deployment_plans.extend(extra_deployment_plans or [])
+    runtime_bindings.extend(extra_runtime_bindings or [])
     telemetry_records = telemetry if telemetry is not None else {
         "runtime-alpha": {
             "runtime_id": "runtime-alpha",
@@ -441,6 +450,159 @@ def test_portfolio_book_holdings_filters_by_stage(monkeypatch) -> None:
     assert payload["data"]["summary"]["holding_count"] == 1
     assert payload["data"]["summary"]["live_holding_count"] == 1
     assert payload["data"]["items"][0]["runtime_id"] == "runtime-alpha-live"
+
+
+def test_portfolio_book_holdings_filters_broker_source_stale_and_risk(monkeypatch) -> None:
+    client = _portfolio_store(
+        monkeypatch,
+        telemetry={
+            "runtime-alpha": {
+                "runtime_id": "runtime-alpha",
+                "source_status": "stale",
+                "collected_at": "2026-05-22T08:00:00Z",
+                "positions": [
+                    {
+                        "id": "pos-alpha-stale",
+                        "symbol": "TXF",
+                        "quantity": 1,
+                        "mark_price": 15100,
+                        "market_value": 15100,
+                        "broker_id": "broker-alpha",
+                        "marked_at": "2026-05-22T08:00:00Z",
+                    }
+                ],
+            },
+            "runtime-alpha-live": {
+                "runtime_id": "runtime-alpha-live",
+                "broker_id": "broker-other",
+                "collected_at": "2026-05-23T08:05:00Z",
+            },
+        },
+    )
+
+    response = client.get(
+        "/bff/management/portfolio-book/holdings",
+        headers=HEADERS,
+        params={
+            "broker_id": "broker-alpha",
+            "source_status": "stale",
+            "stale_telemetry": "true",
+            "risk_state": "stale_telemetry",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    summary = payload["data"]["summary"]
+    assert summary["holding_count"] == 1
+    assert summary["source_row_count"] == 1
+    assert summary["stale_row_count"] == 1
+    assert summary["source_status_counts"] == {"stale": 1}
+    row = payload["data"]["items"][0]
+    assert row["runtime_id"] == "runtime-alpha"
+    assert row["broker_id"] == "broker-alpha"
+    assert row["source_status"] == "stale"
+    assert row["risk_state"] == "stale_telemetry"
+    assert row["telemetry_stale"] is True
+    assert row["links"]["persona_fleet"] == "/management/persona-fleet?persona_id=persona-alpha"
+    assert "persona_id=persona-alpha" in row["links"]["performance_attribution"]
+    assert "target_type=portfolio_holding" in row["links"]["human_review"]
+    assert payload["meta"]["filters"]["broker_id"] == "broker-alpha"
+
+
+def test_portfolio_book_missing_focus_persona_holding_is_incident_not_formal_attribution(monkeypatch) -> None:
+    client = _portfolio_store(
+        monkeypatch,
+        extra_capital_pools=[
+            {
+                "id": "pool-focus",
+                "pool_id": "pool-focus",
+                "name": "Focus Paper Book",
+                "status": "active",
+                "risk_budget": 25.0,
+                "current_exposure": 0.0,
+                "currency": "USD",
+            }
+        ],
+        extra_bindings=[
+            {
+                "id": "binding-focus",
+                "binding_id": "binding-focus",
+                "persona_id": FOCUS_PERSONA_ID,
+                "capital_pool_id": "pool-focus",
+                "status": "active",
+                "validity": "active",
+                "role": "primary",
+                "paper_ledger_id": "paper-ledger-focus",
+            }
+        ],
+        extra_deployment_plans=[
+            {
+                "id": "plan-focus",
+                "plan_id": "plan-focus",
+                "status": "approved",
+                "target_stage": "paper",
+                "capital_pool_id": "pool-focus",
+                "strategy_id": "strategy-focus",
+                "binding_ids": ["binding-focus"],
+                "paper_ledger_id": "paper-ledger-focus",
+            }
+        ],
+        extra_runtime_bindings=[
+            {
+                "id": "rb-focus",
+                "binding_id": "rb-focus",
+                "runtime_id": "runtime-focus",
+                "plan_id": "plan-focus",
+                "status": "active",
+                "deployment_stage": "paper",
+                "paper_ledger_id": "paper-ledger-focus",
+            }
+        ],
+    )
+
+    holdings = client.get(
+        "/bff/management/portfolio-book/holdings",
+        headers=HEADERS,
+        params={"persona_id": FOCUS_PERSONA_ID},
+    )
+
+    assert holdings.status_code == 200, holdings.text
+    payload = holdings.json()
+    summary = payload["data"]["summary"]
+    assert summary["holding_count"] == 1
+    assert summary["source_row_count"] == 0
+    assert summary["telemetry_runtime_count"] == 0
+    assert summary["degraded_source_count"] == 1
+    assert summary["incident_count"] == 1
+    row = payload["data"]["items"][0]
+    assert row["persona_id"] == FOCUS_PERSONA_ID
+    assert row["source_status"] == "degraded"
+    assert row["risk_state"] == "degraded_source"
+    assert row["identity"]["paper_ledger_ids"] == ["paper-ledger-focus"]
+    assert row["capital_scope"]["scope_kind"] == "paper_ledger"
+    assert row["links"]["persona_fleet"] == f"/management/persona-fleet?persona_id={FOCUS_PERSONA_ID}"
+    incident = payload["meta"]["incidents"][0]
+    assert incident["kind"] == "degraded_source"
+    assert incident["links"]["human_review"]
+    assert {issue["code"] for issue in incident["source_issues"]} == {"MISSING_TELEMETRY"}
+
+    attribution = client.get(
+        "/bff/management/performance-attribution/by-persona",
+        headers=HEADERS,
+        params={"page_size": 20},
+    )
+
+    assert attribution.status_code == 200, attribution.text
+    rows = {
+        row["dimension_key"]: row
+        for row in attribution.json()["data"]["items"]
+        if row["dimension"] == "persona"
+    }
+    assert rows[FOCUS_PERSONA_ID]["data_confidence"] == "partial"
+    assert rows[FOCUS_PERSONA_ID]["source_status"] == "partial"
+    assert rows[FOCUS_PERSONA_ID]["metrics"]["telemetry_runtime_count"] == 0
+    assert rows[FOCUS_PERSONA_ID]["metrics"]["total_pnl"] is None
 
 
 def test_portfolio_book_holdings_requires_read_auth(monkeypatch) -> None:
