@@ -85,3 +85,18 @@ git diff --check -- \
   .orchestrator/task-briefs/mgmt_perf_ia_002_sidecar_bff_handoff_followup_17.md \
   support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17.md
 ```
+
+## 6. Closeout
+
+Antigravity approved this support-only packet in
+`support/reviews/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17-review-antigravity.md`.
+Owner closeout re-ran the evidence checks on `2026-07-11` and confirmed:
+
+- `origin/dev` remains `a09131c62feffa073e44ed2f534a1a9d8e8fd08d`;
+- the parent branch remains `d0d4d0497d6f2fc81161e82301fa9c8e48f5a65c`;
+- the parent three-dot diff still contains 48 paths; and
+- parent PR `#3127` remains open with no merge commit.
+
+The approved result is ready for parent-owner absorption. This closeout does
+not change the parent blocker or authorize another sidecar until the resume
+gate in section 3 is met.
