@@ -2,7 +2,44 @@
 
 Reviewer: Claude
 Date: 2026-07-11
-Disposition: changes requested
+Disposition: approved (re-review)
+
+## Re-review Verdict (2026-07-11)
+
+Commit `61f4010ca` ("PTJ-003: conform reflection output to canonical schema",
+merged to `dev` via PR #3303) resolves all four blocking findings below:
+
+1. `request_id`, `supporting_episode_ids` (top-level), `attempt`, and
+   `hindsight_guard` are no longer emitted by `_artifact()`.
+2. `counterfactuals[]` entries now contain only `alternative_action`,
+   `estimated_impact`, `assumptions`; `is_counterfactual`/`uncertainty` are
+   gone.
+3. `lesson_candidates[]` now set `expiry` (defaulted to now + 30 days when
+   the provider omits it) and no longer carry `review_state`/
+   `mutation_authority`.
+4. `expected_vs_actual` is normalized to all six required keys
+   (`thesis`, `entry_quality`, `exit_quality`, `sizing`, `timing`,
+   `risk_adherence`), defaulting missing ones to `null`.
+
+Verified by re-running the original repro plus the new parametrized test:
+
+```
+python3 -m pytest services/persona/test_trade_reflection_pipeline.py services/persona/test_trade_reflection_contracts.py -q
+# 13 passed
+```
+
+and directly validating live `process()` output (both `episode_closed` and
+`scheduled_pattern` triggers) against
+`services/persona/persona_trade_reflection.schema.json` with
+`jsonschema.validate()` — no schema errors. The new
+`test_process_output_conforms_to_reflection_schema` test in
+`test_trade_reflection_pipeline.py` now exercises this on every run, closing
+the CI gap noted below. No downstream code references the removed
+non-conformant fields (`hindsight_guard`, `is_counterfactual`,
+`mutation_authority`); PTJ-004/PTJ-005 have not started consuming this
+contract yet.
+
+Original findings (resolved) follow for record.
 
 ## Scope Reviewed
 
