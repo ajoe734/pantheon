@@ -2,7 +2,7 @@
 
 Reviewer: Antigravity
 Date: 2026-07-11
-Decision: **approved, awaiting human merge of execute-plans PR #250**
+Decision: **approved; execute-plans PR #250 merged**
 
 ## Scope Reviewed
 
@@ -45,7 +45,7 @@ Key points:
 | Every management sidebar item is assigned exactly once | Pass | Maintained via mapping from `MANAGEMENT_SIDEBAR_GROUPS` in `managementRouteManifest.ts` with unit tests verifying unique IDs and labels across the groups. |
 | Canonical centers and compatibility redirects share one typed manifest | Pass | `CANONICAL_CENTERS` and `LEGACY_REDIRECTS` are co-located in `managementRouteManifest.ts`. Page wrappers and redirects consistently query these objects. |
 | Legacy query context is preserved without redirect loops | Pass | Tested via `managementRouteManifest.test.ts` and `resolveLegacyRedirect` which drops non-allowlisted keys while preserving context params (persona, pool, period, etc.). |
-| Execute-plans PR is tested merged to dev and records its merge SHA | Pass | PR #250 is open, and all local and remote CI checks are green (Vitest, Playwright, build, lint). Awaiting human merge of the PR. Owner (Claude) will note the merge SHA during final closeout. |
+| Execute-plans PR is tested merged to dev and records its merge SHA | Pass | PR #250 merged to `dev` as `7d1f011074a72e36e0da24e658e0b7b75d4317de`; local and remote CI checks were green (Vitest, Playwright, build, lint). |
 
 ## Verification Commands
 
@@ -65,4 +65,4 @@ Results:
 
 ## Conclusion
 
-Implementation approved for final closeout. The task is returned to the owner (`Claude`) for finalization. Once the PR is merged by a human (per self-merge governance), the owner should execute `scripts/ai-status.sh done` with the merge SHA.
+Implementation approved and merged. The task is returned to the owner (`Codex`) for finalization with execute-plans merge SHA `7d1f011074a72e36e0da24e658e0b7b75d4317de`.
