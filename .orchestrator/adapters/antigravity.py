@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import model_rotation
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from adapters.file_inbox import FileInboxAdapter
 from common import (
@@ -141,6 +142,18 @@ class AntigravityAdapter(BaseAdapter):
 
         command = [cli]
         model = str(settings.get("model") or "").strip()
+        rotation = model_rotation.rotation_settings(self.config, provider_id)
+        rotation_slot: str | None = None
+        if rotation.get("enabled"):
+            # Pick the model whose cooldown has expired. When both are cooling the
+            # supervisor should not have dispatched at all, but fall back to the
+            # primary slot defensively rather than dropping the wake-up.
+            rotation_slot = model_rotation.active_slot(self.config, provider_id) or model_rotation.SLOT_PRIMARY
+            slot_model = model_rotation.model_for_slot(rotation, rotation_slot)
+            # An empty slot model means "use the CLI default model" (the primary
+            # slot is typically left empty so Gemini stays the default).
+            if slot_model:
+                model = slot_model
         if model:
             command.extend(["--model", model])
         print_timeout = str(settings.get("print_timeout") or "").strip()
@@ -167,6 +180,8 @@ class AntigravityAdapter(BaseAdapter):
         spawn_env["AI_NAME"] = display_name
         spawn_env["ORCH_AGENT_ID"] = request.agent_id
         spawn_env["ORCH_PROVIDER"] = provider_id
+        if rotation_slot is not None:
+            spawn_env["ORCH_MODEL_ROTATION_SLOT"] = rotation_slot
         home = _antigravity_home(self.config, provider_id)
         if home != Path.home():
             spawn_env["ANTIGRAVITY_HOME"] = str(home)

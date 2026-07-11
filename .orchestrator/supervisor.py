@@ -25,6 +25,7 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
+import model_rotation
 from adapters import build_adapter
 from approval_queue import prune_stale_approvals, resolve_approval
 from adapters.base import DeliveryRequest
@@ -2496,6 +2497,36 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 failure_kind=str(failure.get("kind") or ""),
             )
             failure_kind = str(failure.get("kind") or "")
+            rotation_outcome = maybe_rotate_provider_model(
+                config, state, request.provider, failure_kind, failure_reason
+            )
+            if rotation_outcome == "rotated":
+                clear_task_failure_streaks_for_task(state, str(request.task_id or ""))
+                schedule_queue_event_retry(
+                    config,
+                    record,
+                    provider=request.provider,
+                    reason=failure_summary.get("summary") or failure_reason,
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_retry_scheduled",
+                        "provider": request.provider,
+                        "task_id": request.task_id,
+                        "queue_event_id": event_id,
+                        "message": (
+                            f"Model rotation triggered for {request.provider} "
+                            f"({failure.get('label')}); re-dispatching on the alternate model "
+                            f"at {record.get('next_retry_at')}: "
+                            f"{failure_summary.get('summary') or failure_reason}"
+                        ),
+                        "next_retry_at": record.get("next_retry_at"),
+                        "raw_ref": raw_ref,
+                    },
+                )
+                changed = True
+                continue
             if should_pause_dispatch_for_failure_kind(failure_kind):
                 mark_provider_dispatch_paused(
                     config,
@@ -4920,6 +4951,61 @@ def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
     )
 
 
+def maybe_rotate_provider_model(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider: str | None,
+    failure_kind: str | None,
+    reason: str | None,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """Rotate a model-rotation provider off its exhausted model instead of pausing.
+
+    Returns one of:
+      - ``"disabled"``   -> provider has no model rotation; use the normal path.
+      - ``"ineligible"`` -> failure is not a model-exhaustion kind (e.g. auth); normal path.
+      - ``"rotated"``    -> the exhausted model was cooled and another model is still
+                            available; the caller should re-dispatch on the SAME provider
+                            (the adapter will pick the alternate model) and skip the
+                            dispatch pause / cross-provider reassignment.
+      - ``"exhausted"``  -> every rotation model is now cooling; the caller should apply
+                            the normal dispatch pause / reassignment.
+    """
+    provider_id = normalize_agent_id(provider or "")
+    if not provider_id or not model_rotation.rotation_enabled(config, provider_id):
+        return "disabled"
+    if str(failure_kind or "").strip().lower() not in model_rotation.ROTATION_ELIGIBLE_FAILURE_KINDS:
+        return "ineligible"
+    now = now or datetime.now(timezone.utc)
+    slot = model_rotation.active_slot(config, provider_id, now=now)
+    if slot is None:
+        return "exhausted"
+    cooled_until = model_rotation.cool_slot(config, provider_id, slot, now=now)
+    next_slot = model_rotation.active_slot(config, provider_id, now=now)
+    outcome = "rotated" if next_slot is not None else "exhausted"
+    write_activity_log(
+        config,
+        {
+            "type": "provider_model_rotated" if outcome == "rotated" else "provider_model_exhausted",
+            "provider": provider_id,
+            "cooled_slot": slot,
+            "cooled_until": cooled_until,
+            "next_slot": next_slot,
+            "message": (
+                f"Rotated {provider_id} off its {slot} model until {cooled_until}; "
+                f"switching to the {next_slot} model."
+                if outcome == "rotated"
+                else (
+                    f"All rotation models for {provider_id} are cooling "
+                    f"(last cooled {slot} until {cooled_until}); pausing dispatch."
+                )
+            ),
+        },
+    )
+    return outcome
+
+
 def mark_provider_dispatch_paused(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -7009,6 +7095,35 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 quiet=SUPERVISOR_LOG_QUIET,
             )
             failure_kind = str(failure.get("kind") or "")
+            rotation_provider = str(worker.get("provider") or worker.get("agent_id") or "")
+            rotation_retry = worker_retry_settings(config, rotation_provider)
+            rotation_budget_left = int(worker.get("retry_count", 0)) < int(rotation_retry.get("max_attempts", 5))
+            rotation_outcome = (
+                maybe_rotate_provider_model(config, state, rotation_provider, failure_kind, failure_reason)
+                if rotation_budget_left
+                else "exhausted"
+            )
+            if rotation_outcome == "rotated":
+                clear_task_failure_streaks_for_task(state, str(worker.get("task_id") or ""))
+                schedule_worker_retry(config, worker, failure_summary.get("summary") or failure_reason)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_retry_scheduled",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": (
+                            f"Model rotation triggered for {rotation_provider} "
+                            f"({failure.get('label')}); re-dispatching on the alternate model "
+                            f"at {worker.get('next_retry_at')}: {failure_summary.get('summary') or failure_reason}"
+                        ),
+                        "worker_run_id": worker["run_id"],
+                        "next_retry_at": worker.get("next_retry_at"),
+                        "raw_ref": raw_ref,
+                    },
+                )
+                changed = True
+                continue
             if should_pause_dispatch_for_failure_kind(failure_kind):
                 mark_provider_dispatch_paused(
                     config,

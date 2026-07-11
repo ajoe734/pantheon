@@ -21,6 +21,7 @@ __pycache__/
 .orchestrator/event-queue.jsonl
 .orchestrator/evidence/
 .orchestrator/github-bus-state.json
+.orchestrator/model-rotation-cooldowns.json
 .orchestrator/provider_capabilities.json
 .orchestrator/state.json
 .orchestrator/supervisor.pid
