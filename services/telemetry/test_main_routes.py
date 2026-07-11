@@ -29,6 +29,7 @@ from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.heartbeat_service import build_telemetry_event_from_runtime_heartbeat
 from services.telemetry.lineage_read import LineageReadService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
 from services.telemetry.dead_letter import TAG_WRITER_ERROR
 
 # ---------------------------------------------------------------------------
@@ -246,6 +247,7 @@ class TestMainRoutes(unittest.TestCase):
             batch_interval=0.05,
             binding_store=_StubBindingStore(),
             runtime_summary_store=RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=10_000_000_000),
+            trade_episode_projection_store=TradeEpisodeProjectionStore(),
         )
         asyncio.run_coroutine_threadsafe(svc.start(), loop).result(timeout=5)
 
@@ -555,6 +557,46 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
         data = resp.get_json()
         self.assertEqual(data["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+    def test_trade_episodes_list_and_get(self):
+        opened_event = {
+            "event_id": "00000000-0000-0000-0000-000000000003",
+            "schema_version": "1.0",
+            "event_type": "trade_episode.opened",
+            "occurred_at": "2026-07-11T12:00:00Z",
+            "ingested_at": "2026-07-11T12:00:05Z",
+            "trace_id": "00000000-0000-0000-0000-000000000001",
+            "trade_episode_id": "00000000-0000-0000-0000-000000000002",
+            "persona_id": "persona-macro",
+            "environment": "paper",
+            "producer": "trade-journal-service",
+            "sequence_number": 1,
+            "payload": {
+                "strategy_id": "strategy-quant-01",
+                "instrument_id": "SPY",
+                "side": "long",
+                "thesis": "Fed meeting catalyst",
+                "requested_quantity": 100.0,
+            }
+        }
+
+        # Ingest the event via Flask
+        resp = self.client.post("/api/telemetry/ingest", json=opened_event)
+        self.assertEqual(resp.status_code, 202)
+
+        # Verify it shows up in list
+        resp_list = self.client.get("/api/telemetry/trade-episodes?persona_id=persona-macro")
+        self.assertEqual(resp_list.status_code, 200)
+        data = resp_list.get_json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["projections"][0]["trade_episode_id"], "00000000-0000-0000-0000-000000000002")
+
+        # Verify it shows up in detail
+        resp_detail = self.client.get("/api/telemetry/trade-episodes/00000000-0000-0000-0000-000000000002")
+        self.assertEqual(resp_detail.status_code, 200)
+        proj = resp_detail.get_json()
+        self.assertEqual(proj["status"], "open")
+        self.assertEqual(proj["instrument_id"], "SPY")
 
 
 if __name__ == "__main__":

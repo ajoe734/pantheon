@@ -155,6 +155,7 @@ from .heartbeat_service import (
 from .ingest_svc import TelemetryIngestService, build_postgres_write_fn
 from .lineage_read import LineageReadService
 from .runtime_summary import RuntimeSummaryProjectionStore
+from .trade_episode_projection import TradeEpisodeProjectionStore
 from services.foundation.health import register_flask_health_routes
 from services.runtime_auth import resolve_runtime_manager_auth
 
@@ -456,6 +457,19 @@ def _build_service() -> TelemetryIngestService:
         heartbeat_stale_after_seconds=heartbeat_stale_after,
     )
 
+    trade_episode_projections_path = os.getenv(
+        "TELEMETRY_TRADE_EPISODE_PROJECTION_STORE",
+        str(Path(storage_dir) / "trade_episode_projections.json"),
+    )
+    trade_episode_events_path = os.getenv(
+        "TELEMETRY_TRADE_EPISODE_EVENTS_STORE",
+        str(Path(storage_dir) / "trade_episode_events.json"),
+    )
+    trade_episode_projection_store = TradeEpisodeProjectionStore(
+        trade_episode_projections_path,
+        trade_episode_events_path,
+    )
+
     return TelemetryIngestService(
         schema_path=schema_path if Path(schema_path).exists() else None,
         storage_dir=storage_dir,
@@ -467,6 +481,7 @@ def _build_service() -> TelemetryIngestService:
         write_fn=write_fn,
         binding_store=binding_store,
         runtime_summary_store=runtime_summary_store,
+        trade_episode_projection_store=trade_episode_projection_store,
         replay_dlq_on_start=replay_dlq_on_start,
         dlq_replay_tag_filter=dlq_replay_tag_filter,
     )
@@ -853,6 +868,73 @@ def runtime_summary(runtime_id: str):
             }
         }), 404
     return jsonify(summary), 200
+
+
+@app.route("/api/telemetry/trade-episodes", methods=["GET"])
+def trade_episodes():
+    """Return trade episode projections with filters, sorting, and pagination."""
+    persona_id = request.args.get("persona_id")
+    cursor = request.args.get("cursor")
+    try:
+        limit = int(request.args.get("limit", "20"))
+    except ValueError:
+        limit = 20
+    environment = request.args.get("environment")
+    strategy_id = request.args.get("strategy_id")
+    instrument_id = request.args.get("instrument_id")
+    side = request.args.get("side")
+    status = request.args.get("status")
+    outcome = request.args.get("outcome")
+    reflection_state = request.args.get("reflection_state")
+    coverage_state = request.args.get("coverage_state")
+    start_time = request.args.get("start_time")
+    end_time = request.args.get("end_time")
+
+    svc = _get_service()
+    result = svc.list_trade_episode_projections(
+        persona_id=persona_id,
+        cursor=cursor,
+        limit=limit,
+        environment=environment,
+        strategy_id=strategy_id,
+        instrument_id=instrument_id,
+        side=side,
+        status=status,
+        outcome=outcome,
+        reflection_state=reflection_state,
+        coverage_state=coverage_state,
+        start_time=start_time,
+        end_time=end_time,
+    )
+    return jsonify(result), 200
+
+
+@app.route("/api/telemetry/trade-episodes/<trade_episode_id>", methods=["GET"])
+def trade_episode(trade_episode_id: str):
+    """Return a single trade episode projection, supporting as-of query parameters."""
+    as_of = request.args.get("as_of")
+    as_of_sequence_str = request.args.get("as_of_sequence")
+    as_of_sequence = None
+    if as_of_sequence_str is not None:
+        try:
+            as_of_sequence = int(as_of_sequence_str)
+        except ValueError:
+            return jsonify({"error": {"code": "INVALID_AS_OF_SEQUENCE", "message": "as_of_sequence must be an integer"}}), 400
+
+    svc = _get_service()
+    projection = svc.get_trade_episode_projection(
+        trade_episode_id,
+        as_of=as_of,
+        as_of_sequence=as_of_sequence,
+    )
+    if projection is None:
+        return jsonify({
+            "error": {
+                "code": "TRADE_EPISODE_NOT_FOUND",
+                "message": f"No trade episode projection found for {trade_episode_id}",
+            }
+        }), 404
+    return jsonify(projection), 200
 
 
 @app.route("/api/telemetry/dlq", methods=["GET"])

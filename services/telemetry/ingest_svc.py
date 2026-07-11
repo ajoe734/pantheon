@@ -64,6 +64,21 @@ from .dead_letter import (
     TAG_RETRY_EXHAUSTED,
 )
 from .runtime_summary import RuntimeSummaryProjectionStore
+from .trade_episode_projection import TradeEpisodeProjectionStore
+
+TRADE_JOURNAL_EVENT_TYPES = frozenset({
+    "trade_episode.opened",
+    "trade_episode.updated",
+    "trade_episode.closed",
+    "trade_episode.unresolved",
+    "trade_reflection.requested",
+    "trade_reflection.completed",
+    "trade_reflection.failed",
+    "trade_lesson.proposed",
+    "trade_lesson.reviewed",
+    "trade_lesson.merged",
+    "trade_lesson.quarantined",
+})
 
 try:
     import jsonschema
@@ -241,6 +256,7 @@ class TelemetryIngestService:
         schema: Optional[dict[str, Any]] = None,
         binding_store: Optional[RuntimeBindingProtocol] = None,
         runtime_summary_store: Optional[RuntimeSummaryProjectionStore] = None,
+        trade_episode_projection_store: Optional[TradeEpisodeProjectionStore] = None,
         dedup_max_size: int = 500_000,
         replay_dlq_on_start: bool = False,
         dlq_replay_tag_filter: Optional[str] = None,
@@ -295,6 +311,8 @@ class TelemetryIngestService:
         # Schema
         self._schema: Optional[dict[str, Any]] = schema
         self._schema_path = schema_path
+        self._trade_journal_schema: Optional[dict[str, Any]] = None
+        self._trade_journal_schema_path = str(Path(schema_path).parent / "trade_journal_event.schema.json") if schema_path else None
         if self._schema_path and not self._schema:
             self._load_schema()
 
@@ -326,6 +344,7 @@ class TelemetryIngestService:
         # RuntimeBinding store for authoritative evidence cross-validation
         self._binding_store = binding_store
         self._runtime_summary_store = runtime_summary_store
+        self._trade_episode_projection_store = trade_episode_projection_store
 
         # Write function
         self._write_fn = write_fn or self._default_write_fn
@@ -358,17 +377,26 @@ class TelemetryIngestService:
         self._startup_dlq_replay_count = 0
 
     def _load_schema(self) -> None:
-        """Load JSON schema from file."""
-        if not self._schema_path:
-            return
-        try:
-            import json
-            with open(self._schema_path, "r") as f:
-                self._schema = json.load(f)
-            log.info(f"Loaded telemetry schema from {self._schema_path}")
-        except Exception as e:
-            log.warning(f"Failed to load telemetry schema: {e}")
-            self._schema = None
+        """Load JSON schemas from file."""
+        if self._schema_path:
+            try:
+                import json
+                with open(self._schema_path, "r") as f:
+                    self._schema = json.load(f)
+                log.info(f"Loaded telemetry schema from {self._schema_path}")
+            except Exception as e:
+                log.warning(f"Failed to load telemetry schema: {e}")
+                self._schema = None
+
+        if self._trade_journal_schema_path and Path(self._trade_journal_schema_path).exists():
+            try:
+                import json
+                with open(self._trade_journal_schema_path, "r") as f:
+                    self._trade_journal_schema = json.load(f)
+                log.info(f"Loaded trade journal schema from {self._trade_journal_schema_path}")
+            except Exception as e:
+                log.warning(f"Failed to load trade journal schema: {e}")
+                self._trade_journal_schema = None
 
     def _validate_event(self, event: dict[str, Any]) -> tuple[bool, Optional[str]]:
         """
@@ -376,6 +404,18 @@ class TelemetryIngestService:
 
         Returns (valid, error_message).
         """
+        event_type = event.get("event_type")
+        if event_type in TRADE_JOURNAL_EVENT_TYPES:
+            if not self._trade_journal_schema or not jsonschema:
+                return True, None
+            try:
+                jsonschema.validate(instance=event, schema=self._trade_journal_schema)
+                return True, None
+            except jsonschema.ValidationError as e:
+                return False, e.message
+            except jsonschema.SchemaError as e:
+                return False, f"Schema error: {e.message}"
+
         if not self._schema or not jsonschema:
             return True, None
 
@@ -397,6 +437,10 @@ class TelemetryIngestService:
 
         Returns (valid, error_message).
         """
+        event_type = event.get("event_type")
+        if event_type in TRADE_JOURNAL_EVENT_TYPES:
+            return True, None
+
         # E-1: Minimal binding identity (field presence)
         binding_id = event.get("binding_id")
         if not binding_id:
@@ -587,6 +631,18 @@ class TelemetryIngestService:
                 self._runtime_summary_store.project_event(event)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Runtime summary projection failed for event %s: %s", event_id, exc)
+
+        if self._trade_episode_projection_store is not None:
+            has_episode = (
+                event.get("trade_episode_id")
+                or event.get("payload", {}).get("trade_episode_id")
+                or event.get("metadata", {}).get("trade_episode_id")
+            )
+            if has_episode:
+                try:
+                    self._trade_episode_projection_store.project_event(event)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Trade episode projection failed for event %s: %s", event_id, exc)
         return True
 
     async def ingest_batch(self, events: list[dict[str, Any]]) -> dict[str, int]:
@@ -682,6 +738,11 @@ class TelemetryIngestService:
                 if self._runtime_summary_store is not None
                 else {"summary_count": 0, "path": None}
             ),
+            "trade_episode_projection": (
+                self._trade_episode_projection_store.stats()
+                if self._trade_episode_projection_store is not None
+                else {"projection_count": 0, "projections_path": None}
+            ),
             "startup": {
                 "dlq_loaded_from_spill": self._dlq_loaded_from_spill_count,
                 "dlq_replay_on_start": self._replay_dlq_on_start,
@@ -699,6 +760,52 @@ class TelemetryIngestService:
         if self._runtime_summary_store is None:
             return []
         return self._runtime_summary_store.list()
+
+    def get_trade_episode_projection(
+        self,
+        trade_episode_id: str,
+        *,
+        as_of: Optional[str] = None,
+        as_of_sequence: Optional[int] = None,
+    ) -> Optional[dict[str, Any]]:
+        if self._trade_episode_projection_store is None:
+            return None
+        return self._trade_episode_projection_store.get(trade_episode_id, as_of=as_of, as_of_sequence=as_of_sequence)
+
+    def list_trade_episode_projections(
+        self,
+        *,
+        persona_id: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: int = 20,
+        environment: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        instrument_id: Optional[str] = None,
+        side: Optional[str] = None,
+        status: Optional[str] = None,
+        outcome: Optional[str] = None,
+        reflection_state: Optional[str] = None,
+        coverage_state: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+    ) -> dict[str, Any]:
+        if self._trade_episode_projection_store is None:
+            return {"projections": [], "next_cursor": None, "count": 0}
+        return self._trade_episode_projection_store.list(
+            persona_id=persona_id,
+            cursor=cursor,
+            limit=limit,
+            environment=environment,
+            strategy_id=strategy_id,
+            instrument_id=instrument_id,
+            side=side,
+            status=status,
+            outcome=outcome,
+            reflection_state=reflection_state,
+            coverage_state=coverage_state,
+            start_time=start_time,
+            end_time=end_time,
+        )
 
     def has_runtime_binding_store(self) -> bool:
         return self._binding_store is not None
