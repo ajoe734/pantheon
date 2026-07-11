@@ -1,0 +1,86 @@
+{
+  "captured_at": "2026-07-11T11:48:15Z",
+  "deployed_sha": "636f989563157c78118de17b81ef8651389a7acd",
+  "implementation_sha": "18d064477a5ec88740b7da4b879735be589df97e",
+  "summary": {
+    "portfolio_book_status": "ready",
+    "source_row_count": 80,
+    "capital_pool_count": 19,
+    "active_capital_pool_count": 19,
+    "binding_count": 23,
+    "active_binding_count": 23,
+    "deployment_count": 23,
+    "approved_deployment_count": 23,
+    "runtime_count": 10,
+    "active_runtime_count": 9,
+    "paper_runtime_count": 10,
+    "live_runtime_count": 0,
+    "telemetry_runtime_count": 5,
+    "stale_row_count": 0,
+    "missing_binding_count": 0,
+    "degraded_source_count": 5,
+    "source_coverage": {
+      "source_row_count": 80,
+      "runtime_count": 10,
+      "telemetry_runtime_count": 5,
+      "stale_row_count": 0,
+      "missing_binding_count": 0,
+      "degraded_source_count": 5
+    },
+    "total_pnl": null,
+    "max_drawdown": null,
+    "average_fill_rate": null,
+    "total_trades": 3398,
+    "latest_telemetry_at": "2026-07-11T11:48:14Z"
+  },
+  "surfaces": {
+    "portfolio_book": {
+      "status": "ok",
+      "source": "bff_composed",
+      "observed_time": "2026-07-11T11:48:15Z",
+      "freshness": "bff_composed",
+      "coverage": 1.0,
+      "missing_bindings": false
+    },
+    "capital_pools": {
+      "status": "ok",
+      "source": "service_client",
+      "observed_time": "2026-07-11T11:48:15Z",
+      "freshness": "service_client",
+      "coverage": 1.0,
+      "missing_bindings": false
+    },
+    "persona_bindings": {
+      "status": "ok",
+      "source": "service_client",
+      "observed_time": "2026-07-11T11:48:15Z",
+      "freshness": "service_client",
+      "coverage": 1.0,
+      "missing_bindings": false
+    },
+    "deployment_plans": {
+      "status": "ok",
+      "source": "service_client",
+      "observed_time": "2026-07-11T11:48:15Z",
+      "freshness": "service_client",
+      "coverage": 1.0,
+      "missing_bindings": false
+    },
+    "runtime_bindings": {
+      "status": "ok",
+      "source": "service_client",
+      "observed_time": "2026-07-11T11:48:15Z",
+      "freshness": "service_client",
+      "coverage": 1.0,
+      "missing_bindings": false
+    },
+    "telemetry_summaries": {
+      "status": "ok",
+      "source": "service_client",
+      "observed_time": "2026-07-11T11:48:15Z",
+      "freshness": "service_client",
+      "coverage": 1.0,
+      "missing_bindings": false
+    }
+  }
+}
