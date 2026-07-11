@@ -36,3 +36,17 @@ def test_targets_enforce_stage_tier_caps_smoothing_and_exclusions():
     assert "missing_required_evidence" in by_id["live-b"]["exclusions"]
     assert by_id["live-a"]["requires_human_approval"] is True
 
+
+def test_fresh_real_allocation_entrants_bootstrap_to_stage_tier_caps():
+    lines = calculate_target_allocations([
+        _row("fresh-canary", "canary_running", "s", 0),
+        _row("fresh-live", "live_running", "b", 0),
+    ])
+    by_id = {line["persona_id"]: line for line in lines}
+
+    assert by_id["fresh-canary"]["target_weight"] == 0.05
+    assert by_id["fresh-live"]["target_weight"] == 0.08
+    assert by_id["fresh-canary"]["delta"] == 0.05
+    assert by_id["fresh-live"]["delta"] == 0.08
+    assert "quarterly_increase_cap_25pct" not in by_id["fresh-canary"]["cap_reasons"]
+    assert "quarterly_increase_cap_25pct" not in by_id["fresh-live"]["cap_reasons"]
