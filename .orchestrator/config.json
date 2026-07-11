@@ -579,6 +579,12 @@
         "include_directories": true,
         "print_timeout": "15m"
       },
+      "model_rotation": {
+        "enabled": true,
+        "primary": "",
+        "fallback": "Claude Sonnet 4.6 (Thinking)",
+        "cooldown_seconds": 900
+      },
       "approval": {
         "dangerously_skip_permissions": true
       },
@@ -603,6 +609,12 @@
         "home": "/home/lupin/.gemini-agy2",
         "include_directories": true,
         "print_timeout": "15m"
+      },
+      "model_rotation": {
+        "enabled": true,
+        "primary": "",
+        "fallback": "Claude Sonnet 4.6 (Thinking)",
+        "cooldown_seconds": 900
       },
       "approval": {
         "dangerously_skip_permissions": true
