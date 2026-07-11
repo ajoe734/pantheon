@@ -174,7 +174,7 @@ class ReconciliationReport:
             "records": self.records,
             "summary": {
                 "input_count": len(self.records),
-                "repaired": sum(r["disposition"] == "repaired" for r in self.records),
+                "repair_proposed": sum(r["disposition"] == "repair_proposed" for r in self.records),
                 "quarantined": sum(r["disposition"] == "quarantined" for r in self.records),
                 "unchanged": sum(r["disposition"] == "unchanged" for r in self.records),
                 "unresolved": sum(bool(r["after_issue_codes"]) for r in self.records),
@@ -232,8 +232,11 @@ class RuntimeTruthReconciler:
             disposition = "quarantined"
             reason = "authoritative_identity_conflict"
         elif patch:
-            disposition = "repaired"
-            reason = "authoritative_sources_agree"
+            # This component does not own the runtime/persona/telemetry stores.
+            # A patch is therefore a governed repair proposal until the owning
+            # service applies it and a subsequent source capture is clean.
+            disposition = "repair_proposed"
+            reason = "authoritative_sources_agree_write_owner_action_required"
         elif before:
             disposition = "quarantined"
             reason = "insufficient_authoritative_evidence"

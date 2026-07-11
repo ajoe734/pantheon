@@ -31,9 +31,10 @@ def test_missing_binding_is_repaired_only_when_authorities_agree(tmp_path):
     row = _complete()
     del row["binding"]["persona_id"]
     record = RuntimeTruthReconciler(tmp_path / "audit.jsonl").reconcile([row]).records[0]
-    assert record["disposition"] == "repaired"
+    assert record["disposition"] == "repair_proposed"
     assert record["repair_patch"]["persona_id"] == "persona-1"
     assert record["after_issue_codes"] == []
+    assert record["formal_attribution_allowed"] is True
 
 
 def test_conflict_is_quarantined_and_remains_visible(tmp_path):
