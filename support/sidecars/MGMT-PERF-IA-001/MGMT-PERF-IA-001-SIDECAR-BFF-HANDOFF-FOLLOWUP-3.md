@@ -19,29 +19,38 @@ misstating the sibling read-model work as complete.
 
 | Surface | State observed on 2026-07-11 | Required interpretation |
 |---|---|---|
-| `MGMT-PERF-IA-001` | `review_approved`; execute-plans PR #250 remains open. | Reviewer approval is complete, but the parent cannot move to `done` before its frontend PR merges and the owner performs closeout. |
-| execute-plans PR #250 | `OPEN`, merge state `UNSTABLE`; `integration-gate` is `IN_PROGRESS`; no merge commit exists. | Do not claim the route/menu manifest is merged or delivered to the target branch yet. |
+| `MGMT-PERF-IA-001` | `blocked`, owned by Claude and waiting for `Human/Ops`; execute-plans PR #250 remains open. | Prior reviewer approval does not remove the current blocker. A human/product IA-precedence decision is required before the parent can re-attempt delivery or closeout. |
+| execute-plans PR #250 | `OPEN`, merge state `UNSTABLE`; `integration-gate` run 29143828567 completed with `FAILURE`; no merge commit exists. | This is not a pending-CI state. The gate exposes a genuine conflict with `PPL-ALLOC-006`, which is concurrently expanding `src/management/pages/oversight/PromotionAllocation.tsx` as a live operator workbench while PR #250 redirects that route as legacy. |
 | Original sidecar | Archived `done`; Pantheon PR #3096 merged. | Its BFF route map and operator journey remain the base support handoff. |
 | Follow-up 2 | Archived `done`; Pantheon PR #3132 merged at `f0ede51bdd44eca1bb45e51aa91396c4a2726252`. | Its absorption matrix and residual-gap list remain valid; this packet does not replace them. |
 | This follow-up | `in_progress`, owned by Codex2 and reviewed by Claude. | Review only this support artifact and its closeout-gate accuracy. |
 
 ## Parent Closeout Gate
 
-The parent owner should close only after all of the following are true:
+The parent owner cannot proceed by merely waiting for or rerunning CI. Closeout
+requires all of the following, in order:
 
-1. execute-plans PR #250 has passed its required checks and has actually merged
+1. Human/Ops or the responsible product authority decides IA precedence:
+   sequence `MGMT-PERF-IA-001` behind `PPL-ALLOC-006`, or amend the Route
+   Migration Matrix so the live Promotion & Allocation workbench is not
+   simultaneously treated as a legacy redirect;
+2. the parent implementation and PR are updated or sequenced according to that
+   decision, then PR #250 is re-attempted;
+3. execute-plans PR #250 has passed its required checks and has actually merged
    to its target branch;
-2. the merge commit SHA is recorded in the parent closeout evidence;
-3. the merged manifest still gives each management entry one canonical owner,
+4. the merge commit SHA is recorded in the parent closeout evidence;
+5. the merged manifest still gives each management entry one canonical owner,
    preserves allowlisted redirect context, replaces browser history, and does
    not loop;
-4. parent acceptance is limited to route/menu/redirect ownership and does not
+6. parent acceptance is limited to route/menu/redirect ownership and does not
    claim BFF read-model completion; and
-5. the owner, not this sidecar, performs the formal `review_approved -> done`
+7. the owner, not this sidecar, performs the formal approved-state-to-`done`
    transition.
 
-An open PR, an in-progress or green check, reviewer approval, or merged support
-material is not a substitute for the parent merge.
+An open PR, a rerun request, reviewer approval, or merged support material is
+not a substitute for the precedence decision, a passing re-attempt, and the
+parent merge. The current failure is a cross-task product/IA conflict, not a
+flake or ordinary stale-branch condition.
 
 ## BFF / Frontend Absorption Boundary
 
@@ -67,7 +76,9 @@ center/read-model responsibilities.
 Claude should verify:
 
 - only this support artifact changed;
-- PR #250 is described as open, not merged;
+- PR #250 is described as open with a failed gate, not pending or merged;
+- the `PPL-ALLOC-006` PromotionAllocation conflict and Human/Ops precedence
+  decision are explicit;
 - the packet supplements the two merged sidecars without redefining them;
 - the parent closeout gate and owner responsibility are explicit;
 - `MGMT-PERF-IA-002` residual contract gaps remain outside the parent claim;
@@ -79,9 +90,9 @@ Recommended approval command:
 ```bash
 AI_NAME=Claude \
 REVIEW_FILE=support/sidecars/MGMT-PERF-IA-001/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md \
-REVIEW_NOTES_ZH="Follow-up 3 approved: it accurately records the still-open parent PR closeout gate, preserves the read-model boundary, and changes support material only." \
+REVIEW_NOTES_ZH="Follow-up 3 approved: it accurately records the blocked parent, failed PR gate, required IA-precedence decision, and support-only read-model boundary." \
 ./scripts/ai-status.sh approve MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3 \
-  "Support-only parent closeout-gate refresh approved for owner absorption."
+  "Support-only blocked parent and IA-precedence gate refresh approved for owner absorption."
 ```
 
 ## Validation
