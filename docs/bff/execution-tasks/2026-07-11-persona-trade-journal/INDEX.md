@@ -7,7 +7,7 @@
 
 | Wave | Task | Owner | Reviewer | Depends on | 交付 |
 |---|---|---|---|---|---|
-| 0 | `PTJ-001` | Claude2 | Codex2 | - | contract、identity、state machine、schema |
+| 0 | `PTJ-001` | Antigravity | Codex2 | - | contract、identity、state machine、schema |
 | 1 | `PTJ-002` | Gemini2 | Claude2 | PTJ-001 | telemetry/lineage episode projection 與 replay |
 | 1 | `PTJ-003` | Claude | Codex2 | PTJ-001 | reflection worker、facts snapshot、lesson candidates |
 | 2 | `PTJ-004` | Codex2 | Claude2 | PTJ-002,003 | BFF journal/reflection/pattern APIs 與 RBAC/audit |
