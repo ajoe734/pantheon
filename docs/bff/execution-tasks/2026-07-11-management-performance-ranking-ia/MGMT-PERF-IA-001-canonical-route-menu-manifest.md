@@ -1,6 +1,6 @@
 # MGMT-PERF-IA-001 - Canonical Route And Menu Manifest
 
-Owner: Claude
+Owner: Codex
 
 Reviewer: Antigravity
 
@@ -46,3 +46,16 @@ redirects.
 - `execute-plans:src/App.tsx`
 - `execute-plans:scripts/lib/management-routes.mjs`
 - `execute-plans:e2e`
+
+## Closeout Evidence
+
+- Frontend PR: `ajoe734/execute-plans#250`
+- Frontend merge commit: `7d1f011074a72e36e0da24e658e0b7b75d4317de`
+- Merged to: `execute-plans/dev` at `2026-07-11T17:05:36Z`
+- Reviewer: Antigravity (`.orchestrator/reviews/MGMT-PERF-IA-001-review-antigravity.md`)
+- Verified before approval:
+  - `npm run test src/management/navigation/managementRouteManifest.test.ts` (16/16 passed)
+  - `npm run lint` (0 errors)
+  - `npm run build` (passed)
+  - `npx playwright test e2e/26-mgmt-perf-ia-canonical-manifest.spec.ts` (8/8 passed)
+  - GitHub `integration-gate` (passed)
