@@ -84,7 +84,7 @@ def calculate_target_allocations(rows: Iterable[Dict[str, Any]]) -> List[Dict[st
         if raw_target > cap:
             cap_reasons.append(tier_reason or "stage_tier_cap")
         increase_cap = current * 1.25
-        if target > increase_cap:
+        if current > 0 and target > increase_cap:
             target = increase_cap
             cap_reasons.append("quarterly_increase_cap_25pct")
         target = round(target, 8)
