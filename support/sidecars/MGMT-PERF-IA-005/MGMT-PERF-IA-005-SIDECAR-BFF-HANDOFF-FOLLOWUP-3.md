@@ -25,13 +25,14 @@ route, authorize capital mutation, edit `execute-plans`, or approve the parent.
 | Governance history | `GET /bff/management/governance-ledger` | Available as read-only history, not as a reliable recommendation join unless a stable source record reference is present. Do not correlate by actor, label, or timestamp. |
 | Capital proposals | `GET /bff/rebalances` and `GET /bff/rebalances/{rebalance_id}` | Available as collection/detail. Empty collection is empty only when the surface metadata is healthy. A usable Governance Decisions row still requires an explicit recommendation/snapshot/review-to-rebalance link. |
 | Rebalance application | `POST /bff/rebalances/{rebalance_id}/apply` | Governed command entry exists. It requires idempotency and checks Human approval for live increases, but acceptance remains a command state; it is not an apply receipt. Keep the control disabled when eligibility, preconditions, stable approval linkage, or receipt destination is absent. |
-| Ranking policy collection | No compatible workspace collection established by this inspection | Capability unavailable. Render an honest unavailable panel; do not manufacture a default formula from ranking display fields. |
+| Ranking policy collection | `GET /bff/management/quarterly-ranking/formula` | Compatible read surface exists for formula weights, version/history, policy, governance evidence references, and `meta.surfaces` health. Render backend-authored policy only when its surface metadata is healthy; degraded, stale, redacted, fallback, or unavailable metadata remains visible and fail-closed. |
 
 The parent can therefore ship the shell, recommendation queue, and promotion
 review journey without waiting for a speculative aggregate endpoint. The
 capital tab remains read-only/capability-gated until the BFF supplies explicit
-cross-record links and receipt truth. The policy tab remains unavailable until
-a compatible backend collection is identified.
+cross-record links and receipt truth. The policy tab may consume the compatible
+formula surface, while remaining unavailable whenever its surface metadata is
+absent or unhealthy.
 
 ## 2. Adapter Contract Boundary
 
@@ -64,7 +65,7 @@ remain missing and disable downstream claims or actions.
 | Show capital proposal | explicit rebalance/proposal identity and current-versus-proposed values | Informational/unavailable; missing numeric values are not zero. |
 | Offer apply | explicit proposal-to-approval link, current eligibility and preconditions, authorized action, idempotency, and receipt destination | Disabled; role alone never creates eligibility. |
 | Show applied | durable backend apply receipt linked to the proposal/command | Approved or applying, never applied. |
-| Show policy | healthy compatible backend policy/formula collection | Unavailable; no synthesized policy. |
+| Show policy | healthy `quarterly-ranking/formula` surface metadata plus backend-authored weights/version/policy and governance evidence references | Unavailable or degraded according to backend diagnostics; no synthesized policy. |
 
 An unhealthy or absent `meta.surfaces` entry cannot be upgraded to healthy by
 the adapter. `partial`, `fallback`, `degraded`, stale, redacted, and unavailable
@@ -88,9 +89,12 @@ evidence remains visible and prevents unsafe progression where required.
 7. Offer governed apply only after all gates in §3 pass. Poll or follow the
    backend command/receipt destination; accepted/applying/failed/applied remain
    distinct.
-8. In `tab=policy`, show unavailable until a compatible collection exists.
-   Unknown tabs safely return to recommendations without discarding valid
-   canonical filters.
+8. In `tab=policy`, consume `GET /bff/management/quarterly-ranking/formula`
+   only when `meta.surfaces` reports the compatible surface healthy. Preserve
+   backend weights, version/history, policy, and governance evidence references;
+   otherwise show the reported degraded/unavailable state without synthesizing
+   a formula. Unknown tabs safely return to recommendations without discarding
+   valid canonical filters.
 
 ## 5. Focused Tests Requested From Parent Owners
 
@@ -105,7 +109,9 @@ evidence remains visible and prevents unsafe progression where required.
   applied;
 - empty healthy rebalance data and unavailable rebalance data have distinct
   presentations;
-- missing policy data cannot produce a default formula;
+- healthy formula metadata renders backend-authored weights/version/policy and
+  governance evidence references, while missing or unhealthy metadata cannot
+  produce a default formula;
 - desktop/mobile order remains status/confidence, evidence/review, impact, then
   governed action;
 - legacy Promotion Allocation redirects are loop-free and preserve only the
@@ -133,6 +139,8 @@ packets, both preceding sidecar packets, and current route implementations for:
 - governance ledger read history;
 - rebalance list/detail/create/apply boundaries and idempotency;
 - source-surface metadata and explicit no-live-mutation response fields.
+- quarterly ranking formula weights/version/policy, governance evidence
+  references, and policy surface-health gating.
 
 `current-work.md` and the complete `ai-activity-log.jsonl` were intentionally
 not scanned. Formal review remains with `Claude`; absorption remains with the
