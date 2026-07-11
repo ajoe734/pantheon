@@ -6285,6 +6285,12 @@ def _dataset_surface_status(
             {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
         )
 
+    # Normalize state properties: freshness, coverage, missing_bindings, observed_time
+    surface["observed_time"] = snapshot_at or utc_now()
+    surface["freshness"] = surface.get("staleness", {}).get("served_from") or source or "unknown"
+    surface["coverage"] = 1.0 if has_data is not False and source not in ("missing", "unavailable") else 0.0
+    surface["missing_bindings"] = True if has_data is False or source == "missing" else False
+
     return surface
 
 
@@ -6301,6 +6307,10 @@ def _composed_dataset_surface_status(
             "status": "ok",
             "source": source,
             "note": "Composed from governed market-persona read-model defaults.",
+            "observed_time": snapshot_at or utc_now(),
+            "freshness": source,
+            "coverage": 1.0,
+            "missing_bindings": False,
         }
     return surface
 
@@ -6371,18 +6381,139 @@ def _composed_surface_status(
 ) -> Dict[str, Any]:
     surface = dict(_surface_status())
     surface["source"] = "bff_composed"
-    if available:
-        return surface
+    if not available:
+        if surface.get("status") == "ok":
+            surface["status"] = "degraded"
+        if missing_message:
+            surface["message"] = missing_message
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
+        )
 
-    if surface.get("status") == "ok":
-        surface["status"] = "degraded"
-    if missing_message:
-        surface["message"] = missing_message
-    surface.setdefault(
-        "staleness",
-        {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
-    )
+    # Normalize state properties
+    surface["observed_time"] = snapshot_at or utc_now()
+    surface["freshness"] = surface.get("staleness", {}).get("served_from") or "bff_composed"
+    surface["coverage"] = 1.0 if available else 0.0
+    surface["missing_bindings"] = not available
+
     return surface
+
+
+def _extract_ids_from_item(item: Dict[str, Any], keys: List[str]) -> List[str]:
+    extracted = []
+    # 檢查 root 級別
+    for key in keys:
+        val = item.get(key)
+        if val:
+            if isinstance(val, list):
+                extracted.extend([str(v).strip() for v in val if v])
+            else:
+                extracted.append(str(val).strip())
+    # 檢查是否含有 id 欄位 (可能正是這個 entity 本身)
+    if "id" in item:
+        entity_id = str(item["id"]).strip()
+        # 看看是否符合特定 prefix 格式，例如 pool-alpha、persona-xxx 等
+        for key in keys:
+            if key == "persona_id" and "persona" in entity_id:
+                extracted.append(entity_id)
+            elif key == "capital_pool_id" and "pool" in entity_id:
+                extracted.append(entity_id)
+    return list(set(extracted))
+
+
+def _filter_by_common_identifiers(
+    items: List[Dict[str, Any]],
+    *,
+    persona_id: Optional[str] = None,
+    persona: Optional[str] = None,
+    runtime_id: Optional[str] = None,
+    runtime: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    strategy: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    pool: Optional[str] = None,
+    sleeve_id: Optional[str] = None,
+    sleeve: Optional[str] = None,
+    artifact_id: Optional[str] = None,
+    artifact: Optional[str] = None,
+    broker_id: Optional[str] = None,
+    broker: Optional[str] = None,
+    stage: Optional[str] = None,
+    period: Optional[str] = None,
+    as_of: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    # 合併 query 參數值
+    p_id = persona_id or persona
+    r_id = runtime_id or runtime
+    s_id = strategy_id or strategy
+    cp_id = capital_pool_id or pool
+    sl_id = sleeve_id or sleeve
+    art_id = artifact_id or artifact
+    bk_id = broker_id or broker
+
+    filtered = []
+    for item in items:
+        # 取出該項目內可能包含的各種 ID
+        item_persona_ids = _extract_ids_from_item(item, ["persona_id", "personaId", "persona_ids", "persona"])
+        item_runtime_ids = _extract_ids_from_item(item, ["runtime_id", "runtimeId", "runtime_ids", "runtime"])
+        item_strategy_ids = _extract_ids_from_item(item, ["strategy_id", "strategyId", "strategy_ids", "strategy"])
+        item_pool_ids = _extract_ids_from_item(item, ["capital_pool_id", "capitalPoolId", "capital_pool_ids", "pool_id", "pool_ids", "pool"])
+        item_sleeve_ids = _extract_ids_from_item(item, ["sleeve_id", "sleeveId", "sleeve_ids", "sleeve"])
+        item_artifact_ids = _extract_ids_from_item(item, ["artifact_id", "artifactId", "artifact_ids", "artifact"])
+        item_broker_ids = _extract_ids_from_item(item, ["broker_id", "brokerId", "broker_ids", "broker"])
+        
+        # 額外支援在 source_refs, target 或 links 中查找
+        source_refs = item.get("source_refs") or {}
+        if isinstance(source_refs, dict):
+            if "persona_ids" in source_refs:
+                item_persona_ids.extend(source_refs["persona_ids"])
+            if "runtime_ids" in source_refs:
+                item_runtime_ids.extend(source_refs["runtime_ids"])
+            if "strategy_ids" in source_refs:
+                item_strategy_ids.extend(source_refs["strategy_ids"])
+            if "capital_pool_ids" in source_refs:
+                item_pool_ids.extend(source_refs["capital_pool_ids"])
+        
+        target = item.get("target") or {}
+        if isinstance(target, dict):
+            t_type = target.get("type")
+            t_id = target.get("id")
+            if t_type == "persona" and t_id:
+                item_persona_ids.append(t_id)
+
+        # 進行匹配 (如果 filter parameter 有給，則 item 的 ID 必須符合)
+        if p_id and not any(str(p_id).strip() == str(val).strip() for val in item_persona_ids):
+            continue
+        if r_id and not any(str(r_id).strip() == str(val).strip() for val in item_runtime_ids):
+            continue
+        if s_id and not any(str(s_id).strip() == str(val).strip() for val in item_strategy_ids):
+            continue
+        if cp_id and not any(str(cp_id).strip() == str(val).strip() for val in item_pool_ids):
+            continue
+        if sl_id and not any(str(sl_id).strip() == str(val).strip() for val in item_sleeve_ids):
+            continue
+        if art_id and not any(str(art_id).strip() == str(val).strip() for val in item_artifact_ids):
+            continue
+        if bk_id and not any(str(bk_id).strip() == str(val).strip() for val in item_broker_ids):
+            continue
+        
+        # stage, period, as_of 匹配
+        item_stage = item.get("stage") or item.get("lifecycle_state") or item.get("status")
+        if stage and str(item_stage).strip().lower() != str(stage).strip().lower():
+            continue
+            
+        item_period = item.get("period")
+        if period and str(item_period).strip().lower() != str(period).strip().lower():
+            continue
+            
+        # as_of 可以檢查 meta 或是 item_as_of
+        item_as_of = item.get("as_of") or item.get("observed_at") or item.get("collected_at")
+        if as_of and str(item_as_of).strip() != str(as_of).strip():
+            continue
+
+        filtered.append(item)
+    return filtered
 
 
 _INCIDENT_SEVERITY_MAP = {
@@ -26365,6 +26496,55 @@ def _management_portfolio_book_entry(
         if stage
     })
 
+    persona_ids_set = {
+        str(b.get("persona_id") or "").strip()
+        for b in pool_bindings
+    }
+    persona_ids_set.add(str(pool.get("persona_id") or pool.get("persona") or "").strip())
+    persona_ids_set.discard("")
+    persona_ids = sorted(persona_ids_set)
+
+    strategy_ids_set = {
+        str(x.get("strategy_id") or "").strip()
+        for x in pool_bindings + pool_plans + pool_runtimes
+    }
+    strategy_ids_set.add(str(pool.get("strategy_id") or pool.get("strategy") or "").strip())
+    strategy_ids_set.discard("")
+    strategy_ids = sorted(strategy_ids_set)
+
+    sleeve_ids_set = {
+        str(x.get("sleeve_id") or "").strip()
+        for x in pool_bindings + pool_plans + pool_runtimes
+    }
+    sleeve_ids_set.add(str(pool.get("sleeve_id") or pool.get("sleeve") or "").strip())
+    sleeve_ids_set.discard("")
+    sleeve_ids = sorted(sleeve_ids_set)
+
+    artifact_ids_set = {
+        str(x.get("artifact_id") or "").strip()
+        for x in pool_plans + pool_runtimes
+    }
+    artifact_ids_set.add(str(pool.get("artifact_id") or pool.get("artifact") or "").strip())
+    artifact_ids_set.discard("")
+    artifact_ids = sorted(artifact_ids_set)
+
+    broker_ids_set = {
+        str(x.get("broker_id") or "").strip()
+        for x in pool_bindings + pool_plans + pool_runtimes
+    }
+    broker_ids_set.add(str(pool.get("broker_id") or pool.get("broker") or "").strip())
+    broker_ids_set.discard("")
+    broker_ids = sorted(broker_ids_set)
+
+    runtime_ids_set = {
+        _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        for runtime in pool_runtimes
+        if _management_record_id(runtime, "runtime_id", "id", "binding_id")
+    }
+    runtime_ids_set.add(str(pool.get("runtime_id") or pool.get("runtime") or "").strip())
+    runtime_ids_set.discard("")
+    runtime_ids = sorted(runtime_ids_set)
+
     return {
         "id": pool_id,
         "pool_id": pool_id,
@@ -26399,11 +26579,12 @@ def _management_portfolio_book_entry(
         "deployment_stages": deployment_stages,
         "binding_ids": sorted(pool_binding_ids),
         "deployment_ids": sorted(pool_plan_ids),
-        "runtime_ids": sorted({
-            _management_record_id(runtime, "runtime_id", "id", "binding_id")
-            for runtime in pool_runtimes
-            if _management_record_id(runtime, "runtime_id", "id", "binding_id")
-        }),
+        "runtime_ids": runtime_ids,
+        "persona_ids": persona_ids,
+        "strategy_ids": strategy_ids,
+        "sleeve_ids": sleeve_ids,
+        "artifact_ids": artifact_ids,
+        "broker_ids": broker_ids,
         "telemetry": telemetry,
     }
 
@@ -29397,6 +29578,24 @@ async def bff_management_portfolio_book(
     page_token: Optional[str] = None,
     page_size: int = Query(default=50, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    period: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: composed portfolio-book summary for Management Console PM-12."""
     identity = _extract_identity(authorization)
@@ -29410,6 +29609,20 @@ async def bff_management_portfolio_book(
     runtime_bindings = sources["runtime_bindings"]
     telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
     entries = sources["entries"]
+
+    # Apply common filters
+    entries = _filter_by_common_identifiers(
+        entries,
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage, period=period, as_of=as_of
+    )
+
     total = len(entries)
     page_items, next_page_token = _page_slice(entries, page_token, page_size)
     portfolio_telemetry = _management_telemetry_rollup(list(telemetry_by_runtime_id.values()))
@@ -29513,6 +29726,24 @@ async def bff_management_portfolio_book_pools(
     page_token: Optional[str] = None,
     page_size: int = Query(default=50, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    period: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 portfolio-book capital pool summaries."""
     identity = _extract_identity(authorization)
@@ -29524,6 +29755,20 @@ async def bff_management_portfolio_book_pools(
         risk_policy_ref=risk_policy_ref,
     )
     entries = sources["entries"]
+
+    # Apply common filters
+    entries = _filter_by_common_identifiers(
+        entries,
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage, period=period, as_of=as_of
+    )
+
     telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
     total = len(entries)
     page_items, next_page_token = _page_slice(entries, page_token, page_size)
@@ -29619,6 +29864,23 @@ async def bff_management_portfolio_book_exposure(
     page_token: Optional[str] = None,
     page_size: int = Query(default=50, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    period: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 portfolio-book exposure and risk-budget rollup."""
     identity = _extract_identity(authorization)
@@ -29630,13 +29892,28 @@ async def bff_management_portfolio_book_exposure(
         risk_policy_ref=risk_policy_ref,
     )
     entries = sources["entries"]
-    if capital_pool_id:
-        requested = {item.strip() for item in capital_pool_id.split(",") if item.strip()}
+    
+    # Resolve capital pool filter
+    resolved_pool_id = capital_pool_id or pool
+    if resolved_pool_id:
+        requested = {item.strip() for item in resolved_pool_id.split(",") if item.strip()}
         entries = [
             entry
             for entry in entries
             if str(entry.get("pool_id") or entry.get("id") or "") in requested
         ]
+
+    # Apply remaining common filters
+    entries = _filter_by_common_identifiers(
+        entries,
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage, period=period, as_of=as_of
+    )
 
     total = len(entries)
     page_entries, next_page_token = _page_slice(entries, page_token, page_size)
@@ -42978,11 +43255,42 @@ def _pm12_performance_attribution_response(
     page_size: int,
     data_id: str = "pm12-performance-attribution",
     surface_key: str = "performance_attribution",
+    # Common filters:
+    persona_id: Optional[str] = None,
+    persona: Optional[str] = None,
+    runtime_id: Optional[str] = None,
+    runtime: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    strategy: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    pool: Optional[str] = None,
+    sleeve_id: Optional[str] = None,
+    sleeve: Optional[str] = None,
+    artifact_id: Optional[str] = None,
+    artifact: Optional[str] = None,
+    broker_id: Optional[str] = None,
+    broker: Optional[str] = None,
+    stage: Optional[str] = None,
+    as_of: Optional[str] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     period_key = str(period or "").strip() or "latest"
     sources = _pm12_performance_attribution_sources()
     facts = _pm12_performance_attribution_facts(sources, period_key)
+
+    # Apply common filters to facts list
+    facts = _filter_by_common_identifiers(
+        facts,
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage, period=period_key, as_of=as_of
+    )
+
     page_entries, total, next_page_token, aggregate_metrics = _pm12_performance_attribution_page_entries(
         facts,
         dimensions=dimensions,
@@ -43334,6 +43642,23 @@ async def bff_management_performance_attribution(
     page_token: Optional[str] = None,
     page_size: int = Query(default=50, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 performance attribution by persona/strategy/pool/asset/broker/runtime/regime."""
     identity = _extract_identity(authorization)
@@ -43343,6 +43668,14 @@ async def bff_management_performance_attribution(
         period=period,
         page_token=page_token,
         page_size=page_size,
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage, as_of=as_of
     )
 
 
@@ -43361,6 +43694,23 @@ async def bff_management_performance_attribution_by_strategy(
     page_token: Optional[str] = None,
     page_size: int = Query(default=50, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 performance attribution grouped by strategy."""
     identity = _extract_identity(authorization)
@@ -43372,6 +43722,14 @@ async def bff_management_performance_attribution_by_strategy(
         page_size=page_size,
         data_id="pm12-performance-attribution-by-strategy",
         surface_key="performance_attribution_by_strategy",
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage, as_of=as_of
     )
 
 
@@ -43381,6 +43739,23 @@ async def bff_management_performance_attribution_by_persona(
     page_token: Optional[str] = None,
     page_size: int = Query(default=50, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 performance attribution grouped by persona."""
     identity = _extract_identity(authorization)
@@ -43392,6 +43767,14 @@ async def bff_management_performance_attribution_by_persona(
         page_size=page_size,
         data_id="pm12-performance-attribution-by-persona",
         surface_key="performance_attribution_by_persona",
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage, as_of=as_of
     )
 
 
@@ -43401,6 +43784,23 @@ async def bff_management_performance_attribution_by_pool(
     page_token: Optional[str] = None,
     page_size: int = Query(default=50, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 performance attribution grouped by capital pool."""
     identity = _extract_identity(authorization)
@@ -43412,6 +43812,14 @@ async def bff_management_performance_attribution_by_pool(
         page_size=page_size,
         data_id="pm12-performance-attribution-by-pool",
         surface_key="performance_attribution_by_pool",
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage, as_of=as_of
     )
 
 
