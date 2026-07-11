@@ -63,6 +63,35 @@ Request changes if repeated dispatch, successful CI, proposal creation, or
 command acceptance is treated as proof of merged delivery, hosted behavior,
 or applied capital.
 
+## Closeout Record
+
+Claude approved this no-delta checkpoint after re-verification. A fresh `gh pr
+view 251 --repo ajoe734/execute-plans --json
+state,mergeable,mergeStateStatus,headRefOid,mergeCommit,mergedAt,
+reviewDecision,statusCheckRollup,isDraft` shows the head has since moved to
+`bfbbf3e96b5296077ad67971f6cffa2ce72f5647` — a `Merge remote-tracking branch
+'origin/dev' into task/PPL-ALLOC-006-workbench` conflict-resolution commit
+authored at `2026-07-11T15:43:30Z`, after this packet's own checkpoint commit
+(`be206fa5f`, `13:51:30Z`). `mergeStateStatus` now reads `UNSTABLE` and
+`integration-gate` is `IN_PROGRESS` (re-running on the new head) rather than
+the prior `MERGEABLE`/successful state this packet cites.
+
+This head movement is a routine `dev`-sync merge, not new delivery evidence:
+the two prior feature commits (`2dc7e498`, `436aa32e`) are unchanged, no
+successor frontend PR exists, no merge into `dev` occurred, and none of
+`PPL-ALLOC-003`/`004`/`008` moved. It does not satisfy any of the six
+evidence categories this packet lists as ending the escalation. The
+fifth-repeat escalation and support-only boundary therefore still hold, but
+the packet's specific "unchanged head 436aa32e" sentence is now stale as of
+this review and must not be repeated verbatim; any Follow-Up 19 should
+re-verify head SHA and check status fresh rather than assume continuity from
+this packet, and should treat routine dev-sync merge commits on the same
+task branch as background noise rather than a new evidence category.
+
+The approval is limited to this support artifact and this correction; it
+does not approve or merge `execute-plans` PR `#251`, close a BFF query gap,
+enable writes, repair supervisor dispatch, or close parent `PPL-ALLOC-006`.
+
 ## Review And Composition
 
 Owned here: support-only evidence checkpoint and fifth-repeat supervisor
@@ -81,4 +110,5 @@ allocation semantics, and `PPL-ALLOC-008` emergency containment.
 - `support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF.md`
 - `docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/PPL-ALLOC-006-fe-promotion-allocation-workbench.md`
 - `execute-plans` PR `#251` metadata and integration check observed on
-  2026-07-11
+  2026-07-11 (initial checkpoint at `436aa32e`, reviewer re-verification at
+  `bfbbf3e9` after a routine `dev`-sync merge commit)
