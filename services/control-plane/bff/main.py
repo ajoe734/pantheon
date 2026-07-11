@@ -128,6 +128,7 @@ from models import (
 from action_catalog import get_action_catalog, get_catalog_entry
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
+from persona_allocation_policy import calculate_target_allocations, validate_emergency_lines
 from session_lifecycle_store import SessionLifecycleStore
 from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
@@ -23904,8 +23905,34 @@ async def bff_list_capital_pools(
     _require_read_role(identity)
     snapshot_at = utc_now()
     pools = read_store.list_capital_pools(status=status, risk_policy_ref=risk_policy_ref)
-    total = len(pools)
-    page_items, next_page_token = _page_slice(pools, page_token, page_size)
+    bindings = read_store.list_bindings() or []
+    bindings_by_pool: Dict[str, List[Dict[str, Any]]] = {}
+    for binding in bindings:
+        pool_id = str(binding.get("capital_pool_id") or "").strip()
+        if pool_id:
+            bindings_by_pool.setdefault(pool_id, []).append(binding)
+    normalized_pools = []
+    for pool in pools:
+        pool_id = str(pool.get("pool_id") or pool.get("id") or "").strip()
+        summaries = []
+        for binding in bindings_by_pool.get(pool_id, []):
+            summaries.append({
+                "binding_id": binding.get("binding_id") or binding.get("id"),
+                "persona_id": binding.get("persona_id"),
+                "capital_sleeve_id": _persona_fleet_record_value(
+                    binding, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+                ),
+                "current_weight": _persona_fleet_record_value(
+                    binding, "current_weight", "currentWeight", "allocation_weight", "weight"
+                ),
+                "target_weight": _persona_fleet_record_value(binding, "target_weight", "targetWeight"),
+                "binding_state": _persona_fleet_record_value(
+                    binding, "binding_state", "bindingState", "status", "validity"
+                ) or "unknown",
+            })
+        normalized_pools.append({**pool, "persona_binding_summaries": summaries, "persona_binding_count": len(summaries)})
+    total = len(normalized_pools)
+    page_items, next_page_token = _page_slice(normalized_pools, page_token, page_size)
     return {
         "data": page_items,
         "items": page_items,
@@ -24287,6 +24314,49 @@ async def bff_ranking_formula_action(
 
 # -- Rebalances BFF ----------------------------------------------------------
 
+@app.post("/bff/management/allocation-policy/evaluate")
+async def bff_evaluate_persona_allocation_policy(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Calculate stage-aware targets without changing any capital binding."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "rows is required", "Allocation evaluation requires a rows array")
+    lines = calculate_target_allocations(rows)
+    return {
+        "data": {
+            "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+            "lines": lines,
+            "applied": False,
+        },
+        "meta": {"snapshot_at": utc_now(), "policy": "persona-real-allocation-v1"},
+    }
+
+
+def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    required = ("ranking_snapshot_id", "simulation", "constraints", "rollback_target")
+    missing = [field for field in required if not payload.get(field)]
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or not lines:
+        missing.append("lines")
+    line_fields = ("persona_id", "stage", "capital_scope", "current_weight", "target_weight", "delta", "cap_reasons", "evidence_refs")
+    if not missing:
+        for index, line in enumerate(lines):
+            absent = [field for field in line_fields if field not in line]
+            if absent:
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid proposal line", f"lines[{index}] missing: {', '.join(absent)}")
+    if missing:
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "incomplete rebalance proposal", f"Missing proposal fields: {', '.join(missing)}")
+    if payload.get("emergency"):
+        try:
+            validate_emergency_lines(lines)
+        except ValueError as exc:
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid emergency proposal", str(exc)) from exc
+    return lines
+
 @app.get("/bff/rebalances")
 async def bff_list_rebalances(
     status: Optional[str] = None,
@@ -24337,6 +24407,9 @@ async def bff_create_rebalance(
             "Rebalance must specify a capital_pool_id",
             precondition_failed="capital_pool_id",
         )
+    proposal_lines = payload.get("lines")
+    if proposal_lines is not None:
+        proposal_lines = _validate_rebalance_proposal_payload(payload)
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
@@ -24381,6 +24454,17 @@ async def bff_create_rebalance(
         created_at=submitted_at,
         params=payload.get("params"),
         reason=payload.get("reason"),
+        proposal={
+            "proposal_type": "emergency_containment" if payload.get("emergency") else "quarterly_rebalance",
+            "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+            "lines": proposal_lines,
+            "simulation": payload.get("simulation"),
+            "constraints": payload.get("constraints"),
+            "rollback_target": payload.get("rollback_target"),
+            "approval_ref": payload.get("approval_ref"),
+            "audit_refs": list(payload.get("audit_refs") or []),
+            "applied": False,
+        } if proposal_lines is not None else None,
     )
     result = _project_final_command_response(
         command_id=command_id,
@@ -24393,6 +24477,39 @@ async def bff_create_rebalance(
     combined["rebalance_id"] = rebalance["rebalance_id"]
     _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": combined}
     return combined
+
+
+@app.post("/bff/rebalances/{rebalance_id}/apply", status_code=202)
+async def bff_apply_rebalance_proposal(
+    rebalance_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Authorize proposal application; execution remains a separate command."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    rebalance = read_store.get_rebalance(rebalance_id)
+    if not rebalance:
+        raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Rebalance not found", f"Rebalance {rebalance_id} does not exist")
+    increases_live = any(
+        line.get("stage") == "live_running" and float(line.get("target_weight") or 0) > float(line.get("current_weight") or 0)
+        for line in rebalance.get("lines") or []
+    )
+    approval_ref = payload.get("approval_ref") or rebalance.get("approval_ref")
+    if increases_live and not approval_ref:
+        raise _bff_error(409, ErrorCode.PRECONDITION_FAILED, "human approval required", "A human approval reference is required before applying a live capital increase", precondition_failed="approval_ref")
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    return _capital_bff_action_command(
+        entity_type=ObjectType.REBALANCE,
+        entity_id=rebalance_id,
+        action_id="apply",
+        resolved_key=resolved_key,
+        identity=identity,
+        payload={**payload, "approval_ref": approval_ref, "rollback_target": rebalance.get("rollback_target")},
+        command_type=CommandType.REBALANCE_ACTION,
+    )
 
 
 @app.get("/bff/rebalances/{rebalance_id}")
@@ -55884,6 +56001,87 @@ def _persona_fleet_paper_ledger(
     return out
 
 
+def _persona_fleet_capital_binding_projection(
+    *,
+    persona_id: str,
+    capital_mode: str,
+    deployment_stage: Any,
+    paper_ledger_id: Optional[str],
+    live_pool_id: Optional[str],
+    binding: Dict[str, Any],
+    runtime: Dict[str, Any],
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    context_metadata: Dict[str, Any],
+) -> Dict[str, Any]:
+    stage = str(deployment_stage or capital_mode or "none").strip().lower() or "none"
+    sleeve_id = None
+    if capital_mode in {"canary", "live"}:
+        sleeve_id = _persona_fleet_record_value(
+            league_entry, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+        ) or _persona_fleet_record_value(
+            raw_metadata, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+        ) or _persona_fleet_record_value(
+            context_metadata, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+        ) or _persona_fleet_record_value(
+            binding, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+        ) or _persona_fleet_record_value(
+            runtime, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+        )
+    sleeve_id = str(sleeve_id or "").strip() or None
+
+    def optional_weight(*keys: str) -> Optional[float]:
+        for record in (league_entry, binding, runtime, raw_metadata, context_metadata):
+            value = _persona_fleet_record_value(record, *keys)
+            if value in (None, "") or isinstance(value, bool):
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    current_weight = optional_weight("current_weight", "currentWeight", "allocation_weight", "weight")
+    target_weight = optional_weight("target_weight", "targetWeight", "proposed_weight")
+    raw_state = _persona_fleet_record_value(binding, "binding_state", "bindingState", "status", "validity")
+    if not raw_state:
+        raw_state = "isolated" if capital_mode == "paper" and paper_ledger_id else "missing"
+    binding_state = str(raw_state).strip().lower() or "missing"
+    if capital_mode == "paper":
+        scope = "paper_ledger"
+        scope_id = paper_ledger_id
+    elif sleeve_id:
+        scope = "canary_sleeve" if capital_mode == "canary" else "live_sleeve"
+        scope_id = sleeve_id
+    elif live_pool_id:
+        scope = "capital_pool"
+        scope_id = live_pool_id
+    else:
+        scope = "unbound"
+        scope_id = None
+    return {
+        "stage": stage,
+        "capital_scope": scope,
+        "capital_scope_id": scope_id,
+        "capital_sleeve_id": sleeve_id,
+        "current_weight": current_weight,
+        "target_weight": target_weight,
+        "binding_state": binding_state,
+        "capital_binding": {
+            "persona_id": persona_id,
+            "stage": stage,
+            "scope": scope,
+            "scope_id": scope_id,
+            "paper_ledger_id": paper_ledger_id,
+            "capital_pool_id": live_pool_id,
+            "capital_sleeve_id": sleeve_id,
+            "current_weight": current_weight,
+            "target_weight": target_weight,
+            "state": binding_state,
+        },
+    }
+
+
 def _persona_fleet_runtime_binding_id(
     *,
     runtime_id: Any,
@@ -56254,6 +56452,18 @@ def _project_persona_fleet_list_row(
         artifact_ids=artifact_ids,
         incident_ids=incident_ids,
     )
+    capital_binding_projection = _persona_fleet_capital_binding_projection(
+        persona_id=persona_id,
+        capital_mode=capital_mode,
+        deployment_stage=deployment_stage,
+        paper_ledger_id=paper_ledger_id,
+        live_pool_id=live_pool_id,
+        binding=binding,
+        runtime=runtime,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata=context_metadata,
+    )
 
     return {
         "id": persona_id,
@@ -56281,6 +56491,7 @@ def _project_persona_fleet_list_row(
         "market_scope": market_scope,
         "asset_classes": list(context_metadata.get("asset_classes") or []),
         "capital_mode": capital_mode,
+        **capital_binding_projection,
         "paper_ledger_id": paper_ledger_id,
         "paperLedgerId": paper_ledger_id,
         "paper_ledger": paper_ledger,
