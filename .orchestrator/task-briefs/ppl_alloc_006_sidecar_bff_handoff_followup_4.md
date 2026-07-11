@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Review approved: scope confirmed as a single support markdown file with no canonical edits; capability-gate, recovery-contract, and acceptance-scenario claims cross-checked against services/control-plane/bff/main.py (rebalance apply approval_ref/409 gate, applied:false dry-run shape, emergency containment as an existing server-owned command, idempotency-key reuse). Returning to Codex for finalization.
+- Next: PR #3120 merged into `dev` at 2026-07-11T05:59:57Z (merge commit `c16f5dcd0`); the task branch needed one more `dev` catch-up merge (`29c453880`) before GitHub's auto-merge cleared the recurring BEHIND state. No reviewer action remains. Owner Codex should run closeout now that the merge is confirmed.
 
 ## Summary
 平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
