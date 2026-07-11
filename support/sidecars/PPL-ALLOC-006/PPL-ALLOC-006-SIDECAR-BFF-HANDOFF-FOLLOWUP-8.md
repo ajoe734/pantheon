@@ -20,11 +20,16 @@ owner decides whether to turn any residual item into implementation work.
 
 - Pantheon PR `#3142` is merged into `dev` at `644b5a6c8`; that merge is a
   parent closeout record and does not itself contain frontend implementation.
-- The separate `execute-plans` history contains PPL-ALLOC-006 implementation,
-  including `RealRankingPanel` coverage and the fix commit `436aa32` that
-  evaluates allocation policy over the full input row set.
-- The current workbench shell routes paper candidates, real ranking, quarterly
-  capital, and formula policy through `/management/promotion-allocation`.
+- The unmerged `execute-plans` branch `task/PPL-ALLOC-006-workbench` (PR
+  `#251`) contains the richer PPL-ALLOC-006 implementation, including
+  `RealRankingPanel` coverage and fix commit `436aa32`, which evaluates
+  allocation policy over the full input row set.
+- That same unmerged branch routes paper candidates, real ranking, quarterly
+  capital, formula policy, and a read-only emergency-actions panel through
+  `/management/promotion-allocation`. `EmergencyActionsPanel.tsx` reads Human
+  Inbox containment items and links to governed decision detail; it exposes no
+  emergency mutation control. The `execute-plans` `origin/dev` shell does not
+  yet contain this richer branch implementation.
 - Existing frontend adapters expose quarterly-ranking recommendation submit
   and rebalance list/detail paths, and the BFF still exposes the ranking,
   recommendation, review, allocation-evaluate, and rebalance route families
@@ -37,12 +42,12 @@ prove every mutation-to-readback transition in the full operator journey.
 
 | Journey slice | Observed absorption | Truthful parent claim | Residual gate |
 |---|---|---|---|
-| Unified entry | Paper, real-ranking, quarterly-capital, and formula-policy tabs are present | The unified workbench is the primary inspection entry for those four surfaces | Do not claim emergency containment is present in this shell |
+| Unified entry | The unmerged PR #251 branch has paper, real-ranking, quarterly-capital, formula-policy, and read-only emergency-actions tabs | If PR #251 is absorbed, the unified workbench can be the primary inspection entry for those surfaces | Do not describe branch-only UI as merged delivery; the emergency tab is inspection-only |
 | Recommendation submit | Governed submit adapter and tests exist | A recommendation can be submitted or reported local-only/write-disabled | Preserve returned review/inbox/command ids; submission is not approval |
 | Real ranking / preview | Dedicated panel and full-input policy evaluation test exist | Current/target allocation can be evaluated as an advisory preview | Keep `applied: false`, caps, exclusions, and evidence server-owned |
 | Quarterly capital | Capital-pool and rebalance list surfaces are composed into the tab | Operators can inspect and navigate durable rebalance records | List presence alone cannot enable apply; require current detail and approval evidence |
 | Apply completion | No complete receipt-to-authoritative-readback proof was established by this audit | At most `apply submitted` after a successful command receipt | Display `applied confirmed` only after named binding/allocation readback proves the change |
-| Emergency containment | No emergency-actions tab appears in the inspected workbench shell | Capability is unavailable from this workbench | Wait for the governed PPL-ALLOC-008 helper and negative-test evidence; expose no direct fallback mutation |
+| Emergency containment | The same unmerged PR #251 branch has a read-only `EmergencyActionsPanel` backed by Human Inbox data and governed decision-detail links, with no mutation call | Operators can inspect containment records from that branch UI, but cannot initiate emergency containment there | Wait for the governed PPL-ALLOC-008 helper and negative-test evidence; expose no direct fallback mutation |
 
 ## Parent Follow-Up Contract
 
