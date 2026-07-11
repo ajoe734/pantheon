@@ -1,9 +1,9 @@
 # OCLAW-PMEM-002 BFF / Frontend Handoff Packet
 
-Status: sidecar proposal for parent-owner composition; not canonical truth  
-Parent task: `OCLAW-PMEM-002`  
-Sidecar task: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF`  
-Owner: Codex2  
+Status: sidecar proposal for parent-owner composition; not canonical truth
+Parent task: `OCLAW-PMEM-002`
+Sidecar task: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF`
+Owner: Codex2
 Reviewer: Codex
 
 ## Purpose And Boundary
