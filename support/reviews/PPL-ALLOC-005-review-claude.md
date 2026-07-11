@@ -1,119 +1,125 @@
 # PPL-ALLOC-005 Review — Frontend Create Paper Persona Flow
 
 Reviewer: Claude
-Owner: Codex
-PR reviewed: `ajoe734/execute-plans#247` (head `f3108af92d809de75987de1d13f75e00566d3095`)
+Owner: Codex2
+PR reviewed: `ajoe734/execute-plans#248` (head branch `task/PPL-ALLOC-005-v2`, replaces
+closed stale-main PR #247)
 
-## Scope reviewed
+## Round 1 — reopened
 
-- `src/lib/bff-v1/personas.ts` / `personas.test.ts`: `createPersona` now calls
-  `POST /bff/management/personas/create-paper-bundle` and throws
-  `PaperPersonaBundleIncompleteError` unless the response is
-  `state: "paper_running"` with `paperLedgerId` and `runtimeBindingId`.
-- `src/management/components/write/createEntity.ts` / `.test.ts`: removed the
-  `NOT_IMPLEMENTED` → `writeOverlay` degraded-fallback path for personas, so a
-  failed/incomplete bundle can no longer be silently reported as a local
-  "success".
-- `src/management/components/write/EntityCreateDrawer.tsx`: added
-  `onCreateFailed`, relabeled the create button/title to "Create Paper
-  Persona" for `entity === "persona"`.
-- `src/management/pages/ObjectListPage.tsx`: on `PaperPersonaBundleIncompleteError`
-  (or an error with a `details.persona_id`/`failed_step`), navigates to
+Reviewed `ajoe734/execute-plans#247` (head `f3108af9`). Reopened instead of
+approving:
+
+1. **Blocking** — PR targeted `main` (360 commits behind `dev`, the repo's
+   actual default/integration branch), so release-gate CI was red on content
+   unrelated to this diff (`main`/`dev` divergence in
+   `src/lib/bff/__tests__/client.test.ts` and the OpenAPI contract-drift
+   check).
+2. **Acceptance gap** — `PersonaOnboarding.tsx` only renamed the page copy to
+   "repair"; it never read `repair=1`/`failed_step`, never checked whether
+   the loaded persona already had a complete paper bundle, so the wizard
+   could still be re-run against an already-`paper_running` persona (e.g. via
+   `PersonaReadinessCard`'s unconditional link or a stale bookmark),
+   producing a duplicate binding/deployment-plan/runtime.
+
+Full round-1 findings and CI-failure root-causing are preserved in commit
+`9837bdc06` ("PPL-ALLOC-005: record reviewer reopen"), which carried this
+file's prior contents.
+
+## Round 2 — PR #248
+
+### Scope reviewed
+
+- `src/lib/bff-v1/personas.ts` / `personas.test.ts`: unchanged contract from
+  round 1 — `createPersona` calls `POST
+  /bff/management/personas/create-paper-bundle` and throws
+  `PaperPersonaBundleIncompleteError` unless the response is `state:
+  "paper_running"` with `paperLedgerId` and `runtimeBindingId`.
+- `src/management/components/write/createEntity.ts` / `.test.ts`: same
+  removal of the `NOT_IMPLEMENTED` → `writeOverlay` fallback for personas;
+  simplified the `createPersona` call site (the removed explicit
+  `capitalMode`/`deploymentStage`/`liveCapitalEnabled`/etc. fields are
+  already supplied by `buildEntity`'s persona defaulter in
+  `src/lib/writeIntents/createDefaults.ts:58-63`, confirmed by the
+  `objectContaining` assertion in `createEntity.test.ts` still passing).
+- `src/management/components/write/EntityCreateDrawer.tsx`: `onCreateFailed`
+  prop, "Create Paper Persona" label for `entity === "persona"`.
+- `src/management/pages/ObjectListPage.tsx`: on
+  `PaperPersonaBundleIncompleteError` (or a generic BFF error carrying
+  `details.persona_id`/`details.failed_step`), navigates to
   `.../:id/onboarding?repair=1&failed_step=...`.
-- `src/management/pages/PersonaOnboarding.tsx`: header/comment text renamed
-  from "Persona Onboarding Wizard" to "Paper Persona Setup Repair".
+- `src/management/pages/PersonaOnboarding.tsx` (new in this round): exports
+  `isCompletePaperBundle()` and `repairStepFor()`; the page now blocks
+  re-running the wizard when the loaded persona is already a complete
+  running paper bundle (`state === "paper_running"` with both IDs present)
+  and the request isn't an explicit `repair=1` + `failed_step` request —
+  showing a "Nothing to repair" card with a link back to the persona detail
+  page instead. When it is a legitimate repair, `step` now defaults to the
+  wizard step mapped from `failed_step` instead of always starting at 1.
 
-## Findings
+### Round-1 findings — verified fixed
 
-### 1. Blocking — PR targets the wrong base branch; CI is red
+1. **Base branch.** `gh pr view 248 --json baseRefName` → `dev`.
+   `mergeStateStatus` is `CLEAN`, `mergeable` is `MERGEABLE`. The
+   `integration-gate` check (`Pantheon FE-BFF Integration Gate`,
+   run `29139993234`) is green (`gh pr checks 248`).
+2. **Repair-only guard.** `isCompletePaperBundle` + the `isExplicitRepair`
+   check in `PersonaOnboarding()` now refuse to start the wizard against an
+   already-complete bundle regardless of entry point (readiness card link,
+   bookmark, etc.), which was the concrete duplicate-resource scenario from
+   round 1. `PersonaOnboarding.test.ts` unit-tests both helpers directly
+   (completeness detection across state/id combinations; failed-step →
+   wizard-step mapping, including the `null`/unknown-step fallback to step
+   1).
 
-`gh pr view 247 --repo ajoe734/execute-plans --json baseRefName` reports
-`base = main`. `main` is a stale branch (1791 commits) that diverged from
-`dev` (2151 commits, the repo's actual `default_branch` and the base of
-every other recently merged PR, e.g. #244–#246) 360 commits back at
-`e5163ad4`. `mergeStateStatus` is `UNSTABLE`.
+### New checks this round
 
-Effect: the release-gate run (`actions/runs/29139413010`) is failing on
-gates unrelated to this diff:
-
-- Gate 1 `npm run test`: `src/lib/bff/__tests__/client.test.ts` fails 4
-  cases (`paths.oodaPackets is not a function`, `paths.oodaPacket is not a
-  function`, `paths.evolutionMutationReview is not a function`). That test
-  file's `dev` copy is 220 lines with no `oodaPackets`/`evolutionReviews`
-  suites at all; the PR head's copy is 401 lines and includes those suites
-  — content this task never touched, inherited only because the branch's
-  history doesn't line up with the branch it's being merged toward.
-- Gate 2 `contract:drift`: `Pantheon Agora bundle is not reproducible`
-  (openapi hash mismatch) — same root cause.
-- Gate 7 release decision: FAIL (aggregates the above).
-
-The PR body's validation section ("npm test ... 6 passed") only reports the
-two new task-scoped test files run locally; it does not reflect the full
-suite CI actually runs, so the red gate was not caught before this went to
-review.
-
-Required change: retarget PR #247 to `dev` (or close and reopen a branch cut
-from current `dev` tip) and get the `integration-gate` check green before
-this returns to review.
-
-### 2. Acceptance gap — `PersonaOnboarding` is not actually repair-only
-
-Acceptance criterion: *"PersonaOnboarding is repair-only."* Spec
-(`PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md` §route table): *"Rename/copy as
-setup repair; use only for incomplete bundles or failed creation steps."*
-
-The PR only renames the page title/description
-(`src/management/pages/PersonaOnboarding.tsx`); it does not gate usage:
-
-- The component never reads the `repair=1` / `failed_step` query params that
-  `ObjectListPage`'s `onCreateFailed` handler now sends — it still always
-  starts at step 1 and requires the operator to re-run every step manually.
-- There is no check against the already-loaded `persona` (fetched via
-  `getPersona(id)` in the same file) to detect a persona that is already
-  `paper_running` with a valid `paperLedgerId`/`runtimeBindingId` and short-
-  circuit/redirect instead of letting the wizard re-run
-  `AdvanceLifecycle` → binding → deployment-plan → approval → `StartRuntime`
-  against an already-complete bundle.
-- `src/management/components/persona/PersonaReadinessCard.tsx` still links
-  to the same route unconditionally as a generic "open wizard" action,
-  so the route remains reachable as a general-purpose flow, not only for
-  repair.
-
-Concrete failure scenario: an operator opens
-`/management/personas/<already-complete-id>/onboarding` (e.g. via the
-readiness card, or a stale bookmark) and can re-run the full 5-step wizard
-against a persona that already has a paper ledger, deployment plan, and
-running runtime binding — creating a second binding/deployment-plan/runtime
-for the same persona. That's the exact scenario "repair-only" was meant to
-prevent.
-
-`PersonaReadinessCard.tsx` is outside this task's declared artifact scope
-(`execute-plans:src/management/pages`, `execute-plans:src/lib/bff-v1`), so
-the fix does not need to touch it, but `PersonaOnboarding.tsx` (in scope)
-should at minimum refuse/redirect when the loaded persona is already a
-complete paper bundle and no `repair=1`/`failed_step` param is present.
+- Confirmed the BFF's `create-paper-bundle` handler
+  (`services/control-plane/bff/main.py:40117`, delegating to
+  `bff_create_persona`) is synchronous/atomic — persona, binding, deployment
+  plan, and runtime binding are created in one call with no partial
+  `setup_incomplete` code path today. The frontend's defensive
+  `PaperPersonaBundleIncompleteError` check and the `details.persona_id`
+  generic-error branch in `ObjectListPage` are therefore forward-looking (for
+  the saga/outbox-based creation path tracked separately under
+  `LOOP-AUTO-DEP-*`) rather than exercised by the current backend, but they
+  match this task's declared artifact scope
+  (`execute-plans:src/management/pages`, `execute-plans:src/lib/bff-v1`) and
+  do not regress current behavior — not a blocker.
+- Ran the full `execute-plans` Vitest suite locally (clone of
+  `task/PPL-ALLOC-005-v2`, `npm ci` + `npx vitest run`): 1205/1206 passing.
+  The one failure, `useV5Live.test.tsx > serves a fresh cache hit without
+  calling the loader again`, is in a file with zero diff against `dev`
+  (`git diff origin/dev -- src/management/pages/v5/useV5Live.test.tsx
+  src/management/pages/v5/useV5Live.ts` is empty) and passed on 4/4 reruns in
+  isolation — pre-existing timing flake, unrelated to this change.
+- Ran `npm run lint`: 0 errors, only pre-existing warnings (v3-deprecation,
+  fast-refresh, exhaustive-deps); the only warnings touching this diff are
+  two pre-existing-pattern fast-refresh notices on the two newly-exported
+  helper functions in `PersonaOnboarding.tsx` (non-blocking style warning,
+  not an error).
+- Ran the three task-scoped test files directly: `personas.test.ts` (3),
+  `createEntity.test.ts` (3), `PersonaOnboarding.test.ts` (2) — 8/8 passing,
+  matching the PR body's validation section.
 
 ## Verification performed
 
-- `gh pr diff 247 --repo ajoe734/execute-plans` — full diff read.
-- `gh pr checks 247` / `gh run view 29139413010 --log-failed` — confirmed
-  Gate 1/2/7 failures and root-caused them to the `main` vs `dev`
-  divergence (`git merge-base origin/main origin/dev` → `e5163ad4`,
-  360 commits back).
-- Read `services/control-plane/bff/main.py` `bff_create_persona` /
-  `bff_create_paper_persona_bundle` (already merged via PPL-ALLOC-002) to
-  confirm the `paperLedgerId`/`runtimeBindingId` camelCase field names the
-  new `createPersona` client checks match the BFF's actual response shape.
-- Read `src/management/pages/PersonaOnboarding.tsx` and
-  `src/App.tsx` / `registry.tsx` route wiring to confirm there is no other
-  guard preventing non-repair use of the onboarding route.
+- `gh pr view 248 --repo ajoe734/execute-plans --json baseRefName,mergeStateStatus,mergeable,statusCheckRollup`
+- `gh pr diff 248 --repo ajoe734/execute-plans` — full 471-line diff read.
+- `gh pr checks 248 --repo ajoe734/execute-plans` — `integration-gate` pass.
+- Local clone of `task/PPL-ALLOC-005-v2`: `npm ci`, `npx vitest run` (full
+  suite + focused task files + isolated reruns of the one unrelated
+  failure), `npm run lint`.
+- Read `services/control-plane/bff/main.py` (`bff_create_persona`,
+  `bff_create_paper_persona_bundle`, `_persona_create_paper_refs`) to confirm
+  the create-paper-bundle contract shape and its atomic (non-partial)
+  behavior.
+- Read `src/lib/writeIntents/createDefaults.ts` to confirm the persona
+  defaulter already supplies the paper-mode fields `createEntity.ts` stopped
+  passing explicitly.
 
 ## Verdict
 
-Reopened, not approved. Required before re-review:
-
-1. Retarget/rebase PR #247 onto `dev` and get `integration-gate` green.
-2. Add an actual repair-only guard to `PersonaOnboarding.tsx` (redirect or
-   block re-running the wizard when the loaded persona already has a
-   complete paper bundle and the request isn't an explicit repair of a
-   named `failed_step`).
+**Approved.** Both round-1 blockers are fixed: PR targets `dev` with a green
+integration gate, and `PersonaOnboarding` is now actually repair-only
+(guarded, not just relabeled). No new blocking issues found.
