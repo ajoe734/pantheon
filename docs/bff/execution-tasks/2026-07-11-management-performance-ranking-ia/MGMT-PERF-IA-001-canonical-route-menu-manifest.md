@@ -1,8 +1,8 @@
 # MGMT-PERF-IA-001 - Canonical Route And Menu Manifest
 
-Owner: Claude2
+Owner: Claude
 
-Reviewer: Codex2
+Reviewer: Antigravity
 
 Wave: 0
 

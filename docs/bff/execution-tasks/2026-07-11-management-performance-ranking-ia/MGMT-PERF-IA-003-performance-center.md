@@ -1,8 +1,8 @@
 # MGMT-PERF-IA-003 - Performance Center Consolidation
 
-Owner: Antigravity2
+Owner: Claude
 
-Reviewer: Codex2
+Reviewer: Antigravity
 
 Wave: 1
 

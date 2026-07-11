@@ -1,8 +1,8 @@
 # MGMT-PERF-IA-004 - Rankings Center Consolidation
 
-Owner: Gemini2
+Owner: Antigravity
 
-Reviewer: Claude2
+Reviewer: Claude
 
 Wave: 1
 

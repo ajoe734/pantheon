@@ -27,18 +27,22 @@ PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
 The dispatcher is idempotent, preserves task progress, and does not assign any
 Qwen lane.
 
+Runtime owners are intentionally limited to the currently dispatch-enabled
+`Claude` and `Antigravity` lanes. Dependency gates serialize later work even
+though each lane owns multiple tasks.
+
 ## Execution Order
 
 | Wave | Task | Owner | Reviewer | Delivery |
 |---|---|---|---|---|
-| 0 | `MGMT-PERF-IA-001` | Claude2 | Codex2 | Canonical frontend route, menu, and redirect manifest |
-| 0 | `MGMT-PERF-IA-002` | Codex2 | Claude2 | Cross-page BFF query and source-confidence contract |
-| 1 | `MGMT-PERF-IA-003` | Antigravity2 | Codex2 | Performance Center consolidation |
-| 1 | `MGMT-PERF-IA-004` | Gemini2 | Claude2 | Rankings Center consolidation |
-| 1 | `MGMT-PERF-IA-005` | Antigravity | Codex2 | Governance Decisions consolidation |
-| 2 | `MGMT-PERF-IA-006` | Gemini | Claude2 | Entity detail, Cockpit, Fleet, and Agora integration |
-| 2 | `MGMT-PERF-IA-007` | Claude | Codex2 | Alias, dead-code, navigation, and migration cleanup |
-| 3 | `MGMT-PERF-IA-008` | Codex2 | Human/Ops | Hosted workflow acceptance and closeout |
+| 0 | `MGMT-PERF-IA-001` | Claude | Antigravity | Canonical frontend route, menu, and redirect manifest |
+| 0 | `MGMT-PERF-IA-002` | Antigravity | Claude | Cross-page BFF query and source-confidence contract |
+| 1 | `MGMT-PERF-IA-003` | Claude | Antigravity | Performance Center consolidation |
+| 1 | `MGMT-PERF-IA-004` | Antigravity | Claude | Rankings Center consolidation |
+| 1 | `MGMT-PERF-IA-005` | Claude | Antigravity | Governance Decisions consolidation |
+| 2 | `MGMT-PERF-IA-006` | Antigravity | Claude | Entity detail, Cockpit, Fleet, and Agora integration |
+| 2 | `MGMT-PERF-IA-007` | Claude | Antigravity | Alias, dead-code, navigation, and migration cleanup |
+| 3 | `MGMT-PERF-IA-008` | Antigravity | Human/Ops | Hosted workflow acceptance and closeout |
 
 ## Dependency Graph
 

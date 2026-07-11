@@ -1,8 +1,8 @@
 # MGMT-PERF-IA-006 - Contextual Integration
 
-Owner: Gemini
+Owner: Antigravity
 
-Reviewer: Claude2
+Reviewer: Claude
 
 Wave: 2
 
