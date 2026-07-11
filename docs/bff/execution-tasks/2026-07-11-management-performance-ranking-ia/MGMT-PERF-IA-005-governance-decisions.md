@@ -1,8 +1,8 @@
 # MGMT-PERF-IA-005 - Governance Decisions Consolidation
 
-Owner: Antigravity
+Owner: Claude
 
-Reviewer: Codex2
+Reviewer: Antigravity
 
 Wave: 1
 

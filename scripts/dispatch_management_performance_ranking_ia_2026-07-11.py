@@ -56,13 +56,8 @@ GENERIC_NEXT_MESSAGES = {
     "Assignment created from management performance and ranking IA packet",
 }
 PRIMARY_AGENT_NEXT_TASK = {
-    "Claude2": "MGMT-PERF-IA-001",
-    "Codex2": "MGMT-PERF-IA-002",
-    "Antigravity2": "MGMT-PERF-IA-003",
-    "Gemini2": "MGMT-PERF-IA-004",
-    "Antigravity": "MGMT-PERF-IA-005",
-    "Gemini": "MGMT-PERF-IA-006",
-    "Claude": "MGMT-PERF-IA-007",
+    "Claude": "MGMT-PERF-IA-001",
+    "Antigravity": "MGMT-PERF-IA-002",
 }
 NEXT_BY_TASK = {
     "MGMT-PERF-IA-001": "Lock the canonical management route, menu, tab, and redirect manifest.",
@@ -83,8 +78,8 @@ TASKS = [
         "MGMT-PERF-IA-001",
         "Canonical route and menu manifest",
         "建立 management sidebar、三個 canonical centers、tabs、command palette、breadcrumb 與 legacy redirects 的單一來源。",
-        "Claude2",
-        "Codex2",
+        "Claude",
+        "Antigravity",
         "Management Performance Ranking IA / Wave 0 frontend routes",
         [],
         [
@@ -105,8 +100,8 @@ TASKS = [
         "MGMT-PERF-IA-002",
         "Performance and ranking read model",
         "鎖定 performance、exposure、ranking、recommendation 與 governed apply 共用 identity、filter、source confidence 與 snapshot contract。",
-        "Codex2",
-        "Claude2",
+        "Antigravity",
+        "Claude",
         "Management Performance Ranking IA / Wave 0 BFF contract",
         [],
         [
@@ -126,8 +121,8 @@ TASKS = [
         "MGMT-PERF-IA-003",
         "Performance Center consolidation",
         "合併 Portfolio Book 與 Performance Attribution 成為 Overview、Attribution、Exposure and Holdings 三個 tabs 的正式 Performance Center。",
-        "Antigravity2",
-        "Codex2",
+        "Claude",
+        "Antigravity",
         "Management Performance Ranking IA / Wave 1 Performance Center",
         ["MGMT-PERF-IA-001", "MGMT-PERF-IA-002"],
         [
@@ -148,8 +143,8 @@ TASKS = [
         "MGMT-PERF-IA-004",
         "Rankings Center consolidation",
         "把 Persona League 與 Quarterly Ranking 合併為唯一 Rankings Center，區分 rolling operations 與 quarterly governance evidence。",
-        "Gemini2",
-        "Claude2",
+        "Antigravity",
+        "Claude",
         "Management Performance Ranking IA / Wave 1 Rankings Center",
         ["MGMT-PERF-IA-001", "MGMT-PERF-IA-002"],
         [
@@ -170,8 +165,8 @@ TASKS = [
         "MGMT-PERF-IA-005",
         "Governance Decisions consolidation",
         "把 Promotion Allocation 改成 Recommendations、Capital、Policy 的治理中心，移除內嵌排名並強制 Human Review 與 apply receipt。",
+        "Claude",
         "Antigravity",
-        "Codex2",
         "Management Performance Ranking IA / Wave 1 Governance Decisions",
         ["MGMT-PERF-IA-001", "MGMT-PERF-IA-002"],
         [
@@ -192,8 +187,8 @@ TASKS = [
         "MGMT-PERF-IA-006",
         "Contextual integration",
         "把 Cockpit、Persona Fleet、entity details、Human Inbox 與 Agora 接到 canonical centers，保留上下文且不再新增重複分析頁。",
-        "Gemini",
-        "Claude2",
+        "Antigravity",
+        "Claude",
         "Management Performance Ranking IA / Wave 2 integration",
         ["MGMT-PERF-IA-003", "MGMT-PERF-IA-004", "MGMT-PERF-IA-005"],
         [
@@ -215,7 +210,7 @@ TASKS = [
         "Migration cleanup and regression",
         "完成 legacy alias、dead page、secondary navigation、route baseline 與 mobile/desktop regression 清理。",
         "Claude",
-        "Codex2",
+        "Antigravity",
         "Management Performance Ranking IA / Wave 2 cleanup",
         ["MGMT-PERF-IA-003", "MGMT-PERF-IA-004", "MGMT-PERF-IA-005", "MGMT-PERF-IA-006"],
         [
@@ -237,7 +232,7 @@ TASKS = [
         "MGMT-PERF-IA-008",
         "Hosted acceptance and closeout",
         "彙整所有 PR、merge SHA、deploy、desktop/mobile smoke、legacy redirects 與 Human Review receipt，證明完整營運閉環。",
-        "Codex2",
+        "Antigravity",
         "Human/Ops",
         "Management Performance Ranking IA / Wave 3 closeout",
         [
@@ -303,6 +298,15 @@ def upsert_task(state: dict, task: dict) -> tuple[bool, str]:
 
 def remove_terminal_task_from_agents(state: dict, task_id: str) -> None:
     for agent in state.get("agents", []):
+        ids = agent.get("current_task_ids")
+        if isinstance(ids, list):
+            agent["current_task_ids"] = [item for item in ids if item != task_id]
+
+
+def remove_task_from_other_agents(state: dict, task_id: str, owner: str) -> None:
+    for agent in state.get("agents", []):
+        if agent.get("name") == owner:
+            continue
         ids = agent.get("current_task_ids")
         if isinstance(ids, list):
             agent["current_task_ids"] = [item for item in ids if item != task_id]
@@ -376,6 +380,7 @@ def main() -> int:
         if status_after in TERMINAL_STATUSES:
             remove_terminal_task_from_agents(state, task["id"])
         else:
+            remove_task_from_other_agents(state, task["id"], task["owner"])
             assign_agent(state, task["owner"], task["id"], timestamp, task["next"])
         if inserted:
             inserted_logs.append(

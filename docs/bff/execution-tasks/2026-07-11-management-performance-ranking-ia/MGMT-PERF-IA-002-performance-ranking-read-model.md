@@ -1,8 +1,8 @@
 # MGMT-PERF-IA-002 - Performance And Ranking Read Model
 
-Owner: Codex2
+Owner: Antigravity
 
-Reviewer: Claude2
+Reviewer: Claude
 
 Wave: 0
 
