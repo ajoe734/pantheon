@@ -253,5 +253,7 @@ class RuntimeTruthReconciler:
             "conflicts": conflicts,
             "after_issue_codes": after,
             "evidence_refs": list(row.get("evidence_refs") or []),
-            "formal_attribution_allowed": not after and disposition != "quarantined",
+            # A proposed patch is not source truth until the authoritative
+            # write owner applies it and a fresh capture reconciles cleanly.
+            "formal_attribution_allowed": disposition == "unchanged" and not after,
         }

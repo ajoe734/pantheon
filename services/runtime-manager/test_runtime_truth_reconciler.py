@@ -34,7 +34,7 @@ def test_missing_binding_is_repaired_only_when_authorities_agree(tmp_path):
     assert record["disposition"] == "repair_proposed"
     assert record["repair_patch"]["persona_id"] == "persona-1"
     assert record["after_issue_codes"] == []
-    assert record["formal_attribution_allowed"] is True
+    assert record["formal_attribution_allowed"] is False
 
 
 def test_conflict_is_quarantined_and_remains_visible(tmp_path):
