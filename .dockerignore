@@ -25,3 +25,13 @@ ai-activity-log.jsonl
 .coordination
 lean/Data
 tmp
+.worktrees
+.worktrees/**
+.fe-ep
+.fe-ep/**
+.fe-human-inbox-persona-focus
+.fe-human-inbox-persona-focus/**
+archive
+archive/**
+**/node_modules
+**/node_modules/**
