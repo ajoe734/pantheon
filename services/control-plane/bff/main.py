@@ -41100,6 +41100,78 @@ def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
     ]
 
 
+def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
+    persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
+    if not persona_id:
+        return item
+
+    enriched = dict(item)
+    try:
+        bindings = read_store.list_bindings(persona_id=persona_id) or []
+    except Exception:
+        bindings = []
+
+    try:
+        runtimes = read_store.list_runtime_bindings() or []
+        runtimes = [r for r in runtimes if str(r.get("persona_id")) == persona_id]
+    except Exception:
+        runtimes = []
+
+    strategy_ids = []
+    pool_ids = []
+    runtime_ids = []
+    sleeve_ids = []
+    artifact_ids = []
+    broker_ids = []
+
+    for b in bindings:
+        if b.get("strategy_id"):
+            strategy_ids.append(str(b["strategy_id"]))
+        if b.get("capital_pool_id"):
+            pool_ids.append(str(b["capital_pool_id"]))
+        if b.get("sleeve_id"):
+            sleeve_ids.append(str(b["sleeve_id"]))
+        if b.get("broker_id"):
+            broker_ids.append(str(b["broker_id"]))
+
+    for r in runtimes:
+        if r.get("runtime_id"):
+            runtime_ids.append(str(r["runtime_id"]))
+        if r.get("strategy_id"):
+            strategy_ids.append(str(r["strategy_id"]))
+        elif r.get("params", {}).get("strategy_id"):
+            strategy_ids.append(str(r["params"]["strategy_id"]))
+        if r.get("capital_pool_id"):
+            pool_ids.append(str(r["capital_pool_id"]))
+        if r.get("artifact_id"):
+            artifact_ids.append(str(r["artifact_id"]))
+        if r.get("broker_id"):
+            broker_ids.append(str(r["broker_id"]))
+
+    enriched["strategy_ids"] = list(set(strategy_ids))
+    enriched["capital_pool_ids"] = list(set(pool_ids))
+    enriched["runtime_ids"] = list(set(runtime_ids))
+    enriched["sleeve_ids"] = list(set(sleeve_ids))
+    enriched["artifact_ids"] = list(set(artifact_ids))
+    enriched["broker_ids"] = list(set(broker_ids))
+
+    if strategy_ids:
+        enriched["strategy_id"] = strategy_ids[0]
+    if pool_ids:
+        enriched["capital_pool_id"] = pool_ids[0]
+        enriched["pool_id"] = pool_ids[0]
+    if runtime_ids:
+        enriched["runtime_id"] = runtime_ids[0]
+    if sleeve_ids:
+        enriched["sleeve_id"] = sleeve_ids[0]
+    if artifact_ids:
+        enriched["artifact_id"] = artifact_ids[0]
+    if broker_ids:
+        enriched["broker_id"] = broker_ids[0]
+
+    return enriched
+
+
 def _pm12_quarterly_recommendation_item(
     item: Dict[str, Any],
     *,
@@ -41117,6 +41189,29 @@ def _pm12_quarterly_recommendation_item(
         if ref.get("refId") or ref.get("ref_id") or ref.get("id")
     ]
     recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
+    submission = _promotion_review_submission_projection(recommendation_id)
+    decision = _promotion_review_decision_projection(recommendation_id)
+
+    if decision:
+        review_status = "decision_accepted"
+        decision_status = str((decision or {}).get("decision_status") or "accepted")
+    elif submission:
+        review_status = "pending_human_gate"
+        decision_status = "pending"
+    else:
+        review_status = "recommended_not_submitted"
+        decision_status = "pending"
+
+    human_review_state = {
+        "status": review_status,
+        "decision_status": decision_status,
+        "submitted": bool(submission),
+        "submit_status": (submission or {}).get("submit_status") if submission else "not_submitted",
+        "decision": (decision or {}).get("decision") if decision else None,
+        "decided_at": (decision or {}).get("decided_at") if decision else None,
+        "decided_by": (decision or {}).get("decided_by") if decision else None,
+    }
+
     governance = {
         "requires_human_gate_decision": True,
         "destinations": ["human_inbox", "governance_queue", "human_gate_decision"],
@@ -41131,6 +41226,8 @@ def _pm12_quarterly_recommendation_item(
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "persona_id": persona_id,
+        "ranking_evidence_ref": f"ranking-evidence:{quarter_window['quarter'].lower()}-{persona_id}",
+        "human_review_state": human_review_state,
         "name": item.get("name"),
         "owner": item.get("owner"),
         "state": item.get("state"),
@@ -42173,13 +42270,12 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
         "evidence_coverage": evidence_coverage,
         "source_confidence": source_confidence,
     }
-
-
 def _pm12_persona_league_rankings(
     rows: List[Dict[str, Any]],
     *,
     criteria: Optional[str],
     limit: int,
+    base_items: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     requested = [
         token.strip().lower()
@@ -42190,7 +42286,8 @@ def _pm12_persona_league_rankings(
         key for key in (requested or list(_PM12_LEAGUE_RANKING_CRITERIA.keys()))
         if key in _PM12_LEAGUE_RANKING_CRITERIA
     ] or list(_PM12_LEAGUE_RANKING_CRITERIA.keys())
-    base_items = [_pm12_persona_league_ranking_item(row) for row in rows]
+    if base_items is None:
+        base_items = [_pm12_persona_league_ranking_item(row) for row in rows]
     blocks: List[Dict[str, Any]] = []
     for criterion in criteria_keys:
         score_key, label = _PM12_LEAGUE_RANKING_CRITERIA[criterion]
@@ -42224,10 +42321,12 @@ def _pm12_persona_league_rankings(
             "ranked_count": len(block_items),
         })
     return blocks
-
-
-def _pm12_persona_league_tier_payload(rows: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
-    ranking_items = [_pm12_persona_league_ranking_item(row) for row in rows]
+def _pm12_persona_league_tier_payload(
+    rows: List[Dict[str, Any]],
+    ranking_items: Optional[List[Dict[str, Any]]] = None,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    if ranking_items is None:
+        ranking_items = [_pm12_persona_league_ranking_item(row) for row in rows]
     ranking_items = sorted(
         ranking_items,
         key=lambda item: (
@@ -42620,13 +42719,52 @@ async def bff_management_persona_league_rankings(
     criteria: Optional[str] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    period: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 persona-league ranking blocks computed from league rows."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
     rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
-    blocks = _pm12_persona_league_rankings(rows, criteria=criteria, limit=limit)
+
+    # Pre-enrich and filter the base league rows represented as ranking items
+    base_items = [_pm12_persona_league_ranking_item(row) for row in rows]
+    enriched_items = [_enrich_persona_item_with_bindings(item) for item in base_items]
+    filtered_items = _filter_by_common_identifiers(
+        enriched_items,
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage or state, period=period, as_of=as_of
+    )
+
+    blocks = _pm12_persona_league_rankings(
+        rows,
+        criteria=criteria,
+        limit=limit,
+        base_items=filtered_items,
+    )
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
     rankings_surface = _aggregate_group_surface(
         "persona_league_rankings",
@@ -42736,13 +42874,50 @@ async def bff_management_persona_league_tiers(
     archetype: Optional[str] = None,
     q: str = Query(default=""),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    period: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 persona-league tier definitions and current season assignment."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
     rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
-    tiers, assignments, summary = _pm12_persona_league_tier_payload(rows)
+
+    # Pre-enrich and filter the base league rows represented as ranking items
+    base_items = [_pm12_persona_league_ranking_item(row) for row in rows]
+    enriched_items = [_enrich_persona_item_with_bindings(item) for item in base_items]
+    filtered_items = _filter_by_common_identifiers(
+        enriched_items,
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage or state, period=period, as_of=as_of
+    )
+
+    tiers, assignments, summary = _pm12_persona_league_tier_payload(
+        rows,
+        ranking_items=filtered_items,
+    )
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
     tiers_surface = _aggregate_group_surface(
         "persona_league_tiers",
@@ -42907,6 +43082,24 @@ async def bff_management_quarterly_ranking(
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    period: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 quarterly persona ranking composed from league rows and evidence."""
     identity = _extract_identity(authorization)
@@ -42915,8 +43108,22 @@ async def bff_management_quarterly_ranking(
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
     rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
-    total = len(ranked_items)
-    page_items, next_page_token = _page_slice(ranked_items, page_token, page_size)
+
+    # Enrich and apply common filters
+    enriched_items = [_enrich_persona_item_with_bindings(item) for item in ranked_items]
+    filtered_items = _filter_by_common_identifiers(
+        enriched_items,
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage or state, period=period, as_of=as_of
+    )
+    total = len(filtered_items)
+    page_items, next_page_token = _page_slice(filtered_items, page_token, page_size)
 
     public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
         identity,
@@ -42999,6 +43206,23 @@ async def bff_management_quarterly_ranking_drilldown(
     q: str = Query(default=""),
     authorization: Optional[str] = Header(default=None),
     x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    # Common filters:
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    period: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 single-persona contribution breakdown for quarterly ranking."""
     identity = _extract_identity(authorization)
@@ -43031,6 +43255,31 @@ async def bff_management_quarterly_ranking_drilldown(
             precondition_failed="personaId",
             correlation_id=correlation_id,
         )
+
+    # Enrich and apply common filters
+    enriched_item = _enrich_persona_item_with_bindings(ranking_item)
+    filtered_results = _filter_by_common_identifiers(
+        [enriched_item],
+        persona_id=resolved_persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage or state, period=period, as_of=as_of
+    )
+    if not filtered_results:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Quarterly ranking persona not found matching filter criteria",
+            f"Persona {resolved_persona_id} does not match the requested filter criteria.",
+            precondition_failed="personaId",
+            correlation_id=correlation_id,
+        )
+
+    ranking_item = filtered_results[0]
 
     public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
         identity,
@@ -43114,6 +43363,24 @@ async def bff_management_quarterly_ranking_recommendations(
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
+    # Common filters:
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
+    runtime: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
+    strategy: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
+    pool: Optional[str] = Query(default=None),
+    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
+    sleeve: Optional[str] = Query(default=None),
+    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
+    artifact: Optional[str] = Query(default=None),
+    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
+    broker: Optional[str] = Query(default=None),
+    stage: Optional[str] = Query(default=None),
+    period: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 quarterly governance recommendations without live mutations."""
     identity = _extract_identity(authorization)
@@ -43131,8 +43398,22 @@ async def bff_management_quarterly_ranking_recommendations(
         quarter_window=quarter_window,
         evidence_refs=public_evidence_refs,
     )
-    total = len(recommendations)
-    page_items, next_page_token = _page_slice(recommendations, page_token, page_size)
+
+    # Enrich and apply common filters
+    enriched_recs = [_enrich_persona_item_with_bindings(rec) for rec in recommendations]
+    filtered_recs = _filter_by_common_identifiers(
+        enriched_recs,
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage or state, period=period, as_of=as_of
+    )
+    total = len(filtered_recs)
+    page_items, next_page_token = _page_slice(filtered_recs, page_token, page_size)
 
     formula = _pm12_quarter_formula_payload()
     action_counts = {
