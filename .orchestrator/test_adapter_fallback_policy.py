@@ -488,6 +488,84 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
         self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(root / "supervisor-root"))
 
+    def _rotation_config(self, root: Path) -> dict:
+        return {
+            "paths": {
+                "status_file": str(root / "ai-status.json"),
+                "state_file": str(root / ".orchestrator" / "state.json"),
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "adapter": "antigravity",
+                }
+            },
+            "providers": {
+                "antigravity": {
+                    "delivery_mode": "antigravity",
+                    "allow_inbox_fallback": False,
+                    "antigravity": {"cli": "agy", "print_timeout": "15m"},
+                    "model_rotation": {
+                        "enabled": True,
+                        "primary": "",
+                        "fallback": "Claude Sonnet 4.6 (Thinking)",
+                        "cooldown_seconds": 900,
+                    },
+                    "approval": {"dangerously_skip_permissions": True},
+                }
+            },
+        }
+
+    def _deliver_antigravity(self, config: dict, root: Path):
+        request = DeliveryRequest(
+            agent_id="antigravity",
+            provider="antigravity",
+            delivery_mode="antigravity",
+            message="wake",
+            metadata={"workspace_path": str(root / "task-worktree")},
+        )
+        adapter = AntigravityAdapter(config=config, provider_capabilities={})
+        fake_process = mock.Mock(pid=4321)
+        with (
+            mock.patch("adapters.antigravity.command_exists", return_value="agy"),
+            mock.patch("adapters.antigravity._auth_ready", return_value=True),
+            mock.patch(
+                "adapters.antigravity.spawn_background_process",
+                return_value=(fake_process, root / "agy.log"),
+            ) as spawn,
+        ):
+            result = adapter.deliver(request)
+        return result, spawn
+
+    def test_antigravity_rotation_uses_primary_default_when_nothing_cooling(self) -> None:
+        import model_rotation
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._rotation_config(root)
+            result, spawn = self._deliver_antigravity(config, root)
+
+        self.assertTrue(result.ok)
+        # Empty primary => no --model override, so agy keeps its default (Gemini).
+        self.assertNotIn("--model", result.command)
+        self.assertEqual(spawn.call_args.kwargs["env"]["ORCH_MODEL_ROTATION_SLOT"], model_rotation.SLOT_PRIMARY)
+
+    def test_antigravity_rotation_switches_to_fallback_when_primary_cooling(self) -> None:
+        import model_rotation
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._rotation_config(root)
+            model_rotation.cool_slot(config, "antigravity", model_rotation.SLOT_PRIMARY)
+            result, spawn = self._deliver_antigravity(config, root)
+
+        self.assertTrue(result.ok)
+        self.assertIn("--model", result.command)
+        self.assertEqual(result.command[result.command.index("--model") + 1], "Claude Sonnet 4.6 (Thinking)")
+        self.assertEqual(spawn.call_args.kwargs["env"]["ORCH_MODEL_ROTATION_SLOT"], model_rotation.SLOT_FALLBACK)
+
     def test_copilot_can_disable_inbox_fallback(self) -> None:
         config = {
             "providers": {

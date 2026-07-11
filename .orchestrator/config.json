@@ -30,7 +30,8 @@
   "supervisor": {
     "poll_interval_seconds": 30,
     "heartbeat_warn_after_seconds": 360.0,
-    "stall_after_seconds": 900,
+    "stall_after_seconds": 300,
+    "adaptive_stall_detection": true,
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": true
   },
@@ -579,6 +580,12 @@
         "include_directories": true,
         "print_timeout": "15m"
       },
+      "model_rotation": {
+        "enabled": true,
+        "primary": "",
+        "fallback": "Claude Sonnet 4.6 (Thinking)",
+        "cooldown_seconds": 900
+      },
       "approval": {
         "dangerously_skip_permissions": true
       },
@@ -603,6 +610,12 @@
         "home": "/home/lupin/.gemini-agy2",
         "include_directories": true,
         "print_timeout": "15m"
+      },
+      "model_rotation": {
+        "enabled": true,
+        "primary": "",
+        "fallback": "Claude Sonnet 4.6 (Thinking)",
+        "cooldown_seconds": 900
       },
       "approval": {
         "dangerously_skip_permissions": true
