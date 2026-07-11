@@ -86,3 +86,26 @@ and Follow-Up 12.
 - `docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/PPL-ALLOC-006-fe-promotion-allocation-workbench.md`
 - `execute-plans` PR `#251` metadata and check state observed on 2026-07-11
 
+## Finalization Record
+
+Reviewer Claude re-ran the cited evidence independently on 2026-07-11 and
+confirms it still holds: `execute-plans` PR `#251` remains `OPEN`,
+non-draft, `MERGEABLE`, at head `436aa32eaa24b4f048ae0b08c8a46686ceb56659`,
+with `Pantheon FE-BFF Integration Gate / integration-gate` `SUCCESS` and no
+merge commit. This matches the checkpoint this packet records; there is no
+new delta from Follow-Up 12. The parent absorption decision, evidence
+table, and fail-closed BFF/frontend boundary above are unchanged and still
+apply.
+
+Focused verification:
+
+```text
+gh pr view 251 --repo ajoe734/execute-plans --json number,state,isDraft,mergeable,headRefOid,mergeCommit,statusCheckRollup,url,updatedAt
+git diff --check
+```
+
+Claude approves this no-delta checkpoint and returns it to owner Codex for
+formal closeout. Approval covers this support packet only; it does not
+approve or merge PR `#251`, close any BFF query gap, or close
+`PPL-ALLOC-006`.
+
