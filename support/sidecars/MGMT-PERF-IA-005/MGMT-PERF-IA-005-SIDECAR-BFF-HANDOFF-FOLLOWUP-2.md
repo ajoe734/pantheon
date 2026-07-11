@@ -5,7 +5,7 @@
 | Parent task | `MGMT-PERF-IA-005` |
 | Parent owner | `Claude` |
 | Sidecar task | `MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` |
-| Sidecar owner / reviewer | `Codex2` / `Claude` |
+| Sidecar owner / reviewer | `Codex2` / `Antigravity` |
 | Helper kind | `bff_handoff_packet` |
 | Generated | `2026-07-11` |
 | Mutates canonical | `false` |
