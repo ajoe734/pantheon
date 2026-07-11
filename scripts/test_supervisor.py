@@ -19,12 +19,12 @@ import supervisor
 
 
 class SupervisorStallWindowConfigTests(unittest.TestCase):
-    def test_repo_configs_allow_long_running_worker_commands(self) -> None:
+    def test_repo_configs_use_adaptive_stall_detection(self) -> None:
         for relative_path in (".orchestrator/config.json", ".orchestrator/config.example.json"):
             config = json.loads((ROOT / relative_path).read_text(encoding="utf-8"))
-            stall_after = int(config["supervisor"]["stall_after_seconds"])
-            self.assertGreaterEqual(stall_after, 900, relative_path)
-            self.assertGreaterEqual(stall_after * 2, 1800, relative_path)
+            supervisor_config = config["supervisor"]
+            self.assertEqual(int(supervisor_config["stall_after_seconds"]), 300, relative_path)
+            self.assertIs(supervisor_config["adaptive_stall_detection"], True, relative_path)
 
 
 class SupervisorQuotaGuardrailTests(unittest.TestCase):

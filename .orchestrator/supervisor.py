@@ -2630,6 +2630,88 @@ def pid_is_alive(pid: int | None) -> bool:
     return True
 
 
+def _proc_activity_record(pid: int, proc_root: Path) -> dict[str, Any] | None:
+    stat_path = proc_root / str(pid) / "stat"
+    try:
+        raw_stat = stat_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    closing_paren = raw_stat.rfind(")")
+    if closing_paren < 0:
+        return None
+    fields = raw_stat[closing_paren + 2 :].split()
+    if len(fields) < 20 or fields[0] == "Z":
+        return None
+    try:
+        cpu_ticks = int(fields[11]) + int(fields[12])
+        start_ticks = int(fields[19])
+    except (TypeError, ValueError):
+        return None
+
+    io_bytes = 0
+    try:
+        for line in (proc_root / str(pid) / "io").read_text(encoding="utf-8", errors="ignore").splitlines():
+            key, _, value = line.partition(":")
+            if key in {"read_bytes", "write_bytes"}:
+                io_bytes += int(value.strip())
+    except (OSError, ValueError):
+        pass
+
+    try:
+        command = (proc_root / str(pid) / "comm").read_text(encoding="utf-8", errors="ignore").strip()
+    except OSError:
+        command = ""
+    return {
+        "pid_token": f"{pid}:{start_ticks}",
+        "cpu_ticks": cpu_ticks,
+        "io_bytes": io_bytes,
+        "command": command,
+    }
+
+
+def worker_process_activity_snapshot(pid: int | None, proc_root: Path | None = None) -> dict[str, Any]:
+    """Summarize measurable activity below the worker runner process."""
+    if not pid:
+        return {"processes": [], "cpu_ticks": 0, "io_bytes": 0, "commands": []}
+    root = proc_root if proc_root is not None else Path("/proc")
+    pending = [int(pid)]
+    visited: set[int] = set()
+    records: list[dict[str, Any]] = []
+    while pending:
+        parent = pending.pop()
+        if parent in visited:
+            continue
+        visited.add(parent)
+        children_path = root / str(parent) / "task" / str(parent) / "children"
+        try:
+            children = [int(value) for value in children_path.read_text(encoding="utf-8").split()]
+        except (OSError, ValueError):
+            children = []
+        for child in children:
+            if child in visited:
+                continue
+            pending.append(child)
+            record = _proc_activity_record(child, root)
+            if record is not None:
+                records.append(record)
+    return {
+        "processes": sorted(record["pid_token"] for record in records),
+        "cpu_ticks": sum(int(record["cpu_ticks"]) for record in records),
+        "io_bytes": sum(int(record["io_bytes"]) for record in records),
+        "commands": sorted({str(record["command"]) for record in records if record["command"]}),
+    }
+
+
+def worker_process_activity_advanced(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
+    if not previous or not current.get("processes"):
+        return False
+    return bool(
+        int(current.get("cpu_ticks") or 0) > int(previous.get("cpu_ticks") or 0)
+        or int(current.get("io_bytes") or 0) > int(previous.get("io_bytes") or 0)
+        or list(current.get("processes") or []) != list(previous.get("processes") or [])
+    )
+
+
 # Worker wakeup template always embeds `auto worker 身分是：<DisplayName>` in argv;
 # scan /proc to recover the truth when state["workers"] bookkeeping drifts.
 WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
@@ -6715,6 +6797,23 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             changed = True
         update_from_log(config, worker)
         alive = pid_is_alive(worker.get("pid"))
+        process_activity_advanced = False
+        if alive and config.get("supervisor", {}).get("adaptive_stall_detection", True):
+            previous_process_activity = worker.get("process_activity_snapshot")
+            current_process_activity = worker_process_activity_snapshot(worker.get("pid"))
+            process_activity_advanced = worker_process_activity_advanced(
+                previous_process_activity if isinstance(previous_process_activity, dict) else None,
+                current_process_activity,
+            )
+            if current_process_activity != previous_process_activity:
+                worker["process_activity_snapshot"] = current_process_activity
+                changed = True
+            heartbeat_fresh = bool(worker.get("last_heartbeat_at")) and not worker_heartbeat_is_stale(config, worker, now)
+            if process_activity_advanced and heartbeat_fresh:
+                worker["last_process_activity_at"] = _isoformat_utc(now)
+                changed = True
+            else:
+                process_activity_advanced = False
         if alive and worker.get("status") in active_worker_statuses and worker.get("last_heartbeat_at"):
             if not worker_heartbeat_is_stale(config, worker, now):
                 refresh_worker_lease(config, worker, now)
@@ -7014,7 +7113,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             changed = True
 
         if alive:
-            if worker.get("status") == "stalled" and last_event_advanced:
+            if worker.get("status") == "stalled" and (last_event_advanced or process_activity_advanced):
                 worker["status"] = "running"
                 worker["last_event_at"] = worker.get("last_event_at") or utc_now()
                 write_activity_log(
@@ -7023,7 +7122,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "type": "worker_recovered",
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
-                        "message": "Worker produced new output after being marked stalled; status restored to running.",
+                        "message": "Worker produced output or measurable process activity after being marked stalled; status restored to running.",
                         "worker_run_id": worker["run_id"],
                     },
                 )
@@ -7034,14 +7133,33 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 changed = True
                 continue
             last_event = worker.get("last_event_at")
-            if last_event:
-                last_dt = datetime.fromisoformat(last_event.replace("Z", "+00:00"))
-                stalled_for_seconds = (now - last_dt).total_seconds()
+            last_event_dt = _parse_iso_utc(str(last_event or ""))
+            last_process_activity_dt = _parse_iso_utc(str(worker.get("last_process_activity_at") or ""))
+            activity_timestamps = [value for value in (last_event_dt, last_process_activity_dt) if value is not None]
+            if process_activity_advanced and last_event_dt and (now - last_event_dt).total_seconds() >= stall_after:
+                last_notice_dt = _parse_iso_utc(str(worker.get("last_stall_deferred_at") or ""))
+                if last_notice_dt is None or (now - last_notice_dt).total_seconds() >= stall_after:
+                    worker["last_stall_deferred_at"] = _isoformat_utc(now)
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_stall_deferred",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": "No provider output, but fresh heartbeat and measurable process-tree activity were observed; stall action deferred.",
+                            "worker_run_id": worker["run_id"],
+                            "process_commands": (worker.get("process_activity_snapshot") or {}).get("commands", []),
+                        },
+                    )
+                    changed = True
+            if activity_timestamps:
+                last_activity_dt = max(activity_timestamps)
+                stalled_for_seconds = (now - last_activity_dt).total_seconds()
                 if worker.get("status") == "stalled" and stalled_for_seconds >= stall_after * 2:
                     terminate_worker_pid(worker.get("pid"))
                     worker["status"] = "failed"
                     worker["last_event_at"] = utc_now()
-                    worker["last_error"] = f"Worker remained stalled for {int(stalled_for_seconds)} seconds and was terminated for redispatch."
+                    worker["last_error"] = f"Worker had no output or measurable process activity for {int(stalled_for_seconds)} seconds and was terminated for redispatch."
                     write_activity_log(
                         config,
                         {
@@ -7059,7 +7177,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     )
                     changed = True
                     continue
-                if (now - last_dt).total_seconds() >= stall_after and worker.get("status") != "stalled":
+                if stalled_for_seconds >= stall_after and worker.get("status") != "stalled":
                     worker["status"] = "stalled"
                     write_activity_log(
                         config,
@@ -7067,7 +7185,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                             "type": "worker_stalled",
                             "provider": worker.get("provider"),
                             "task_id": worker.get("task_id"),
-                            "message": f"Worker appears stalled after {int(stall_after)} seconds.",
+                            "message": f"Worker appears stalled after {int(stall_after)} seconds without output or measurable process-tree activity.",
                             "worker_run_id": worker["run_id"],
                         },
                     )

@@ -7,6 +7,7 @@ import unittest
 import os
 import json
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -6625,6 +6626,169 @@ class ChairReviewDispatchTests(unittest.TestCase):
 
 
 class PollWorkersRecoveryTests(unittest.TestCase):
+    def test_process_activity_snapshot_walks_descendants(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc_root = Path(tmpdir)
+
+            def write_process(pid: int, parent: int, children: list[int], cpu: tuple[int, int], io_bytes: tuple[int, int], command: str) -> None:
+                process_root = proc_root / str(pid)
+                task_root = process_root / "task" / str(pid)
+                task_root.mkdir(parents=True)
+                task_root.joinpath("children").write_text(" ".join(str(child) for child in children), encoding="utf-8")
+                fields = ["S", str(parent), "0", "0", "0", "0", "0", "0", "0", "0", "0", str(cpu[0]), str(cpu[1]), "0", "0", "0", "0", "1", "0", str(pid * 10)]
+                process_root.joinpath("stat").write_text(f"{pid} ({command}) " + " ".join(fields), encoding="utf-8")
+                process_root.joinpath("io").write_text(
+                    f"read_bytes: {io_bytes[0]}\nwrite_bytes: {io_bytes[1]}\n",
+                    encoding="utf-8",
+                )
+                process_root.joinpath("comm").write_text(f"{command}\n", encoding="utf-8")
+
+            write_process(100, 1, [101], (1, 1), (1, 1), "runner")
+            write_process(101, 100, [102], (10, 5), (100, 50), "agy")
+            write_process(102, 101, [], (20, 10), (200, 100), "pytest")
+
+            snapshot = supervisor.worker_process_activity_snapshot(100, proc_root)
+
+        self.assertEqual(snapshot["processes"], ["101:1010", "102:1020"])
+        self.assertEqual(snapshot["cpu_ticks"], 45)
+        self.assertEqual(snapshot["io_bytes"], 450)
+        self.assertEqual(snapshot["commands"], ["agy", "pytest"])
+
+    def test_process_activity_advance_requires_measurable_progress(self) -> None:
+        baseline = {
+            "processes": ["101:500"],
+            "cpu_ticks": 100,
+            "io_bytes": 200,
+            "commands": ["pytest"],
+        }
+        self.assertTrue(
+            supervisor.worker_process_activity_advanced(
+                baseline,
+                {**baseline, "cpu_ticks": 101},
+            )
+        )
+        self.assertTrue(
+            supervisor.worker_process_activity_advanced(
+                baseline,
+                {**baseline, "io_bytes": 201},
+            )
+        )
+        self.assertTrue(
+            supervisor.worker_process_activity_advanced(
+                baseline,
+                {**baseline, "processes": ["102:600"]},
+            )
+        )
+        self.assertFalse(supervisor.worker_process_activity_advanced(baseline, dict(baseline)))
+        self.assertFalse(supervisor.worker_process_activity_advanced(None, baseline))
+
+    def test_active_process_tree_defers_stall_despite_silent_provider_log(self) -> None:
+        now = datetime.now(timezone.utc)
+        old_event = (now - timedelta(seconds=700)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        fresh_heartbeat = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "supervisor": {"stall_after_seconds": 300, "adaptive_stall_detection": True},
+            "worker_runtime": {"heartbeat_stale_seconds": 300, "worker_lease_seconds": 1800},
+            "ready_dispatcher": {"active_worker_statuses": ["running", "stalled"]},
+            "providers": {},
+            "agents": {"antigravity": {"id": "antigravity", "display_name": "Antigravity"}},
+        }
+        baseline = {"processes": ["101:500"], "cpu_ticks": 100, "io_bytes": 200, "commands": ["pytest"]}
+        current = {**baseline, "cpu_ticks": 140, "io_bytes": 240}
+        state = {
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "task_id": "TEST-001",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-1",
+                    "pid": 1234,
+                    "last_event_at": old_event,
+                    "last_heartbeat_at": fresh_heartbeat,
+                    "process_activity_snapshot": baseline,
+                }
+            },
+        }
+        status = {"tasks": [{"id": "TEST-001", "status": "in_progress", "owner": "Antigravity", "reviewer": "Claude"}]}
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "update_from_log", side_effect=lambda *_args, **_kwargs: None),
+            mock.patch.object(supervisor, "worker_process_activity_snapshot", return_value=current),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "running")
+        self.assertEqual(worker["process_activity_snapshot"], current)
+        self.assertIsNotNone(worker.get("last_process_activity_at"))
+        terminate_worker_pid.assert_not_called()
+        self.assertIn(
+            "worker_stall_deferred",
+            [call.args[1].get("type") for call in write_activity_log.call_args_list],
+        )
+
+    def test_silent_worker_without_process_progress_is_marked_stalled(self) -> None:
+        now = datetime.now(timezone.utc)
+        old_event = (now - timedelta(seconds=301)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        fresh_heartbeat = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "supervisor": {"stall_after_seconds": 300, "adaptive_stall_detection": True},
+            "worker_runtime": {"heartbeat_stale_seconds": 300, "worker_lease_seconds": 1800},
+            "ready_dispatcher": {"active_worker_statuses": ["running", "stalled"]},
+            "providers": {},
+            "agents": {"antigravity": {"id": "antigravity", "display_name": "Antigravity"}},
+        }
+        snapshot = {"processes": ["101:500"], "cpu_ticks": 100, "io_bytes": 200, "commands": ["agy"]}
+        state = {
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "task_id": "TEST-002",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-1",
+                    "pid": 1234,
+                    "last_event_at": old_event,
+                    "last_heartbeat_at": fresh_heartbeat,
+                    "process_activity_snapshot": snapshot,
+                }
+            },
+        }
+        status = {"tasks": [{"id": "TEST-002", "status": "in_progress", "owner": "Antigravity", "reviewer": "Claude"}]}
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "update_from_log", side_effect=lambda *_args, **_kwargs: None),
+            mock.patch.object(supervisor, "worker_process_activity_snapshot", return_value=dict(snapshot)),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"]["run-1"]["status"], "stalled")
+        terminate_worker_pid.assert_not_called()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_stalled")
+
     def test_successful_chair_worker_does_not_scan_report_text_as_provider_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "chair.log"
