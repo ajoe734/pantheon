@@ -1,9 +1,9 @@
 # MGMT-OPS-003 GAP-003 Flow Focus Fix — BFF / Frontend Handoff
 
-Task: `MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF`  
-Parent: `MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX`  
-Owner: Codex  
-Reviewer: Codex2  
+Task: `MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF`
+Parent: `MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX`
+Owner: Codex
+Reviewer: Codex2
 Kind: support-only `bff_handoff_packet`
 
 ## Boundary
@@ -102,6 +102,13 @@ For each desktop/mobile and normal/degraded case, record:
 The reviewer should request changes if the test uses independently mocked
 counts, relies only on a large `page_size`, filters an already paginated list,
 or cannot name the exact deployed commits.
+
+## Packet Verification
+
+- `git diff --check origin/dev...HEAD` must complete with no findings before
+  this packet is handed back for review.
+- This verifies the support packet's patch hygiene only; it is not runtime,
+  hosted-workflow, BFF-contract, or frontend acceptance evidence.
 
 ## Composition Handoff
 
