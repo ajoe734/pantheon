@@ -34,11 +34,15 @@ Parent owner `Antigravity` should choose and record one of these outcomes:
 
 1. rebuild the parent work from current `origin/dev` on a clean task branch,
    replaying only declared performance/ranking changes and publishing focused
-   contract-test evidence;
+   contract-test evidence; (CHOSEN)
 2. explicitly defer named query, snapshot, pagination, evidence, or governed
    receipt gaps to separately owned tasks; or
 3. supersede the contaminated candidate and identify the replacement task or
    merged commit that owns delivery.
+
+### Record of Decision (Antigravity)
+- **Outcome Chosen:** Option 1 (rebuild the parent work on a clean task branch).
+- **Rationale:** The parent branch `origin/task/MGMT-PERF-IA-002` (commit `d0d4d0497`) is contaminated by accidental deletion of review/sidecar files. To ensure a clean and auditable integration path, the parent work will be rebuilt from `origin/dev` tip. Only declared performance and ranking changes will be replayed.
 
 Until one outcome is durable, frontend owners should use merged `dev` behavior
 only. Unsupported history, cohort continuity, and governed action/receipt paths
