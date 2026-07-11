@@ -4129,8 +4129,8 @@
       "summary_zh": "在 execute-plans 補齊 Portfolio Book incidents、六類 filters、資金 stage 與 source-confidence 顯示。",
       "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 frontend",
       "owner": "Codex2",
-      "reviewer": "Copilot",
-      "status": "todo",
+      "reviewer": "Antigravity",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "execute-plans:src/management/pages/oversight/PortfolioBook.tsx",
