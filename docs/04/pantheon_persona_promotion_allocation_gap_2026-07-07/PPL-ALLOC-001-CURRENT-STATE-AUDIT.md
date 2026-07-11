@@ -4,13 +4,13 @@
 - **Phase**: source-truth-page-inventory (Wave 0)
 - **Owner**: Antigravity
 - **Reviewer**: Claude
-- **Source Gap Spec**: [PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md](file:///tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-001/docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md)
+- **Source Gap Spec**: [PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md](docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md)
 
 ---
 
 ## 1. Management Page Inventory & Route Mapping
 
-The frontend repository `ajoe734/execute-plans` has been audited to verify route mapping against the required inventory. Currently, all legacy or diagnostic routes redirect correctly to the primary workflow tabs under `/management/promotion-allocation` as defined in [App.tsx](file:///home/lupin/code/execute-plans/src/App.tsx).
+The frontend repository `ajoe734/execute-plans` has been audited to verify route mapping against the required inventory. Currently, all legacy or diagnostic routes redirect correctly to the primary workflow tabs under `/management/promotion-allocation` as defined in [App.tsx](https://github.com/ajoe734/execute-plans/blob/main/src/App.tsx).
 
 | Surface / Route | Target State | Current App.tsx Route Implementation | Audit Result |
 | :--- | :--- | :--- | :--- |
@@ -35,7 +35,7 @@ The frontend repository `ajoe734/execute-plans` has been audited to verify route
 
 The BFF implementation has been audited to verify if creating a trading persona produces a complete runnable paper bundle or a partial shell.
 
-- **Verified Invariant (Proven)**: In [main.py](file:///tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-001/services/control-plane/bff/main.py#L39833-L40060), the handler `bff_create_persona` mapped to `POST /bff/personas` atomically performs the following steps:
+- **Verified Invariant (Proven)**: In [main.py](services/control-plane/bff/main.py#L39833-L40060), the handler `bff_create_persona` mapped to `POST /bff/personas` atomically performs the following steps:
   1. Sets the lifecycle state to `"paper_running"`.
   2. Generates and binds an isolated `paper_ledger_id` (`paper_ledger` with isolated flag set to `True`).
   3. Establishes a `persona_binding` to the capital pool with capital mode `"paper"`.
