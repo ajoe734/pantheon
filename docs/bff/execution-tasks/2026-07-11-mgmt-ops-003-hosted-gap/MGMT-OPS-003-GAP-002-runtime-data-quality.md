@@ -89,3 +89,19 @@ source sampling are intentionally not claimed by this implementation
 checkpoint. They must be captured after the Pantheon PR merges and that merge
 SHA is deployed to the dev BFF. Until then, unresolved hosted rows remain
 quarantined and formal attribution remains fail-closed.
+
+## Hosted Evidence Checkpoint (2026-07-11)
+
+Dev BFF deploy run `29151498421` successfully deployed
+`636f989563157c78118de17b81ef8651389a7acd`, which contains implementation
+merge `18d064477a5ec88740b7da4b879735be589df97e` by ancestry. Authenticated API
+and desktop/mobile browser captures are recorded under
+`docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T114815Z/`.
+
+The remaining verdict is `REQUEST_CHANGES`, now for a current UI-to-API
+difference rather than deployment freshness. The BFF reports 10 runtimes, 5
+telemetry runtimes, and keeps all 10 missing-binding holdings visible among 18
+degraded incident-backed rows. The hosted UI reports `Telemetry Runtime 0` and
+labels some `0/0` pool rows as covered. This task must remain fail-closed until
+the frontend incident/count/confidence work in `MGMT-OPS-003-GAP-001` is
+deployed and independently sampled.
