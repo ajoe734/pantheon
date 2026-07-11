@@ -92,6 +92,25 @@ Antigravity should review this as a support-only handoff and confirm that it
 identifies the cross-endpoint confidence contradiction without claiming a new
 canonical contract or completed repair.
 
+## Compose Handoff
+
+The parent owner should compose this packet with the parent branch evidence at
+`6d83145c6`, not copy its observations into a new sidecar-owned contract. The
+minimum parent implementation/review seam is:
+
+- BFF/runtime owner: make aggregate confidence inherit unresolved holding
+  identity and telemetry truth, while retaining every affected row;
+- frontend owner: render the resulting BFF confidence, population labels, and
+  incident links without client-side reinterpretation;
+- parent reviewer: compare summary, holdings, incidents, and attribution from
+  one authenticated capture and one deployed SHA lineage;
+- hosted-workflow owner: repeat the cross-page desktop/mobile journey only
+  after the parent repair and frontend compose commits are deployed.
+
+This sidecar does not authorize a repair mutation, data rewrite, schema field,
+frontend implementation, deployment, or acceptance verdict. Those decisions
+remain with the owning parent and downstream tasks.
+
 ## Focused Verification
 
 ```bash
