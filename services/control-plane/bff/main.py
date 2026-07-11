@@ -43626,8 +43626,11 @@ async def bff_management_persona_league_rankings(
         "meta": {
             "snapshot_at": snapshot_at,
             "surfaces": {
-                "persona_league_rankings": rankings_surface,
-                **source_surfaces,
+                name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+                for name, surface in {
+                    "persona_league_rankings": rankings_surface,
+                    **source_surfaces,
+                }.items()
             },
             "composition_sources": [
                 "GET /bff/management/persona-league",
@@ -44454,11 +44457,14 @@ def _pm12_performance_attribution_response(
         degraded_message="Performance attribution is degraded because one or more source surfaces are degraded.",
     )
     surfaces = {
-        surface_key: attribution_surface,
-        **source_surfaces,
+        name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+        for name, surface in {
+            surface_key: attribution_surface,
+            **source_surfaces,
+        }.items()
     }
     if surface_key != "performance_attribution":
-        surfaces["performance_attribution"] = attribution_surface
+        surfaces["performance_attribution"] = _performance_ranking_source_surface(attribution_surface, snapshot_at=snapshot_at)
     summary = {
         "period": period_key,
         "dimensions": dimensions,
