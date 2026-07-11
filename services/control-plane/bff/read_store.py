@@ -11601,6 +11601,7 @@ class ReadSurfaceStore:
         created_at: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
         reason: Optional[str] = None,
+        proposal: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         rebalances = self._ensure_local_overlay_records("rebalances")
         timestamp = created_at or _utc_now_rfc3339()
@@ -11622,6 +11623,8 @@ class ReadSurfaceStore:
                 "submitted_at": timestamp,
             },
         }
+        if proposal:
+            record.update(json.loads(json.dumps(proposal)))
         rebalances[rebalance_id] = record
         self._save()
         return record
