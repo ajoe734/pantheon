@@ -26721,6 +26721,295 @@ def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
     return f"{path}/{record_id}"
 
 
+_PORTFOLIO_STALE_SOURCE_STATES = {"stale", "expired", "lagging"}
+_PORTFOLIO_DEGRADED_SOURCE_STATES = {
+    "degraded",
+    "missing",
+    "partial",
+    "timeout",
+    "unavailable",
+    "unhealthy",
+}
+
+
+def _management_portfolio_stage(*records: Dict[str, Any]) -> str:
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        value = _management_first_non_empty(
+            record.get("deployment_stage"),
+            record.get("deployment_mode"),
+            record.get("target_stage"),
+            record.get("stage"),
+        )
+        if value not in (None, ""):
+            return str(value).strip().lower()
+    return "unknown"
+
+
+def _management_portfolio_broker_id(
+    position: Dict[str, Any],
+    telemetry: Dict[str, Any],
+    runtime: Dict[str, Any],
+    plan: Dict[str, Any],
+) -> str:
+    return str(
+        _management_first_non_empty(
+            _management_dict_value(position, "broker_id", "broker", "broker_ref"),
+            _management_dict_value(telemetry, "broker_id", "broker", "broker_ref"),
+            _management_dict_value(runtime, "broker_id", "broker", "broker_ref"),
+            _management_dict_value(plan, "broker_id", "broker", "broker_ref"),
+        )
+        or ""
+    )
+
+
+def _management_portfolio_ledger_id(
+    position: Dict[str, Any],
+    runtime: Dict[str, Any],
+    plan: Dict[str, Any],
+    persona_binding: Dict[str, Any],
+) -> str:
+    return str(
+        _management_first_non_empty(
+            _management_dict_value(position, "paper_ledger_id", "ledger_id"),
+            _management_dict_value(runtime, "paper_ledger_id", "ledger_id"),
+            _management_dict_value(plan, "paper_ledger_id", "ledger_id"),
+            _management_dict_value(persona_binding, "paper_ledger_id", "ledger_id"),
+        )
+        or ""
+    )
+
+
+def _management_portfolio_sleeve_id(
+    position: Dict[str, Any],
+    runtime: Dict[str, Any],
+    plan: Dict[str, Any],
+    persona_binding: Dict[str, Any],
+) -> str:
+    return str(
+        _management_first_non_empty(
+            _management_dict_value(position, "sleeve_id", "canary_sleeve_id", "capital_sleeve_id"),
+            _management_dict_value(runtime, "sleeve_id", "canary_sleeve_id", "capital_sleeve_id"),
+            _management_dict_value(plan, "sleeve_id", "canary_sleeve_id", "capital_sleeve_id"),
+            _management_dict_value(persona_binding, "sleeve_id", "canary_sleeve_id", "capital_sleeve_id"),
+        )
+        or ""
+    )
+
+
+def _management_portfolio_source_issues(
+    *,
+    runtime_id: str,
+    persona_id: str,
+    persona_binding_id: str,
+    telemetry: Dict[str, Any],
+    position_source_count: int,
+) -> List[Dict[str, Any]]:
+    issues: List[Dict[str, Any]] = []
+    if not persona_id or not persona_binding_id:
+        issues.append({
+            "source_name": "persona_bindings",
+            "code": "MISSING_PERSONA_BINDING",
+            "message": f"Runtime {runtime_id or 'unknown'} does not resolve to a persona capital binding.",
+        })
+    if not telemetry:
+        issues.append({
+            "source_name": "telemetry_summaries",
+            "code": "MISSING_TELEMETRY",
+            "message": f"Telemetry summary is unavailable for runtime {runtime_id or 'unknown'}.",
+        })
+    elif position_source_count <= 0:
+        issues.append({
+            "source_name": "portfolio_holdings",
+            "code": "MISSING_HOLDING_ROW",
+            "message": f"Telemetry for runtime {runtime_id or 'unknown'} did not include a holding or position row.",
+        })
+
+    freshness = str(
+        _management_first_non_empty(
+            telemetry.get("source_status"),
+            telemetry.get("source_state"),
+            telemetry.get("data_status"),
+            telemetry.get("freshness_status"),
+        )
+        or ""
+    ).strip().lower()
+    if bool(telemetry.get("stale")) or freshness in _PORTFOLIO_STALE_SOURCE_STATES:
+        issues.append({
+            "source_name": "telemetry_summaries",
+            "code": "STALE_TELEMETRY",
+            "message": f"Telemetry for runtime {runtime_id or 'unknown'} is stale.",
+        })
+    elif freshness in _PORTFOLIO_DEGRADED_SOURCE_STATES:
+        issues.append({
+            "source_name": "telemetry_summaries",
+            "code": "DEGRADED_TELEMETRY",
+            "message": f"Telemetry for runtime {runtime_id or 'unknown'} is degraded.",
+        })
+    return issues
+
+
+def _management_portfolio_source_status(issues: List[Dict[str, Any]]) -> str:
+    codes = {str(issue.get("code") or "") for issue in issues}
+    if "STALE_TELEMETRY" in codes:
+        return "stale"
+    if codes:
+        return "degraded"
+    return "ok"
+
+
+def _management_portfolio_risk_state(
+    *,
+    source_status: str,
+    source_issues: List[Dict[str, Any]],
+    deployment_stage: str,
+) -> str:
+    codes = {str(issue.get("code") or "") for issue in source_issues}
+    if "MISSING_PERSONA_BINDING" in codes:
+        return "missing_binding"
+    if "STALE_TELEMETRY" in codes:
+        return "stale_telemetry"
+    if source_status == "degraded":
+        return "degraded_source"
+    if deployment_stage == "live":
+        return "live_exposure"
+    if deployment_stage == "canary":
+        return "canary_exposure"
+    if deployment_stage == "paper":
+        return "paper_exposure"
+    return "unknown"
+
+
+def _management_portfolio_operator_links(
+    *,
+    persona_id: str,
+    runtime_id: str,
+    holding_id: str,
+) -> Dict[str, Optional[str]]:
+    query: Dict[str, str] = {}
+    if persona_id:
+        query["persona_id"] = persona_id
+    if runtime_id:
+        query["runtime_id"] = runtime_id
+    query_string = urlencode(query)
+    attribution_href = "/management/performance-attribution"
+    review_href = "/management/human-inbox"
+    if query_string:
+        attribution_href = f"{attribution_href}?{query_string}"
+        review_href = f"{review_href}?{query_string}"
+    return {
+        "persona_fleet": f"/management/persona-fleet?persona_id={quote(persona_id)}" if persona_id else None,
+        "performance_attribution": attribution_href if query else None,
+        "human_review": (
+            f"{review_href}&target_type=portfolio_holding&target_id={quote(holding_id)}"
+            if query_string and holding_id
+            else review_href if query else None
+        ),
+    }
+
+
+def _management_portfolio_identity(
+    *,
+    portfolio_id: str,
+    capital_pool_id: str,
+    sleeve_id: str,
+    paper_ledger_id: str,
+    persona_id: str,
+    runtime_id: str,
+    runtime_binding_id: str,
+    plan_id: str,
+    strategy_id: str,
+    artifact_id: str,
+    broker_id: str,
+    deployment_stage: str,
+) -> Dict[str, Any]:
+    stage = deployment_stage or "unknown"
+    return {
+        "portfolio_id": portfolio_id,
+        "capital_pool_id": capital_pool_id,
+        "capital_pool_ids": [capital_pool_id] if capital_pool_id else [],
+        "sleeve_id": sleeve_id or None,
+        "sleeve_ids": [sleeve_id] if sleeve_id else [],
+        "paper_ledger_id": paper_ledger_id or None,
+        "paper_ledger_ids": [paper_ledger_id] if paper_ledger_id else [],
+        "persona_id": persona_id,
+        "persona_ids": [persona_id] if persona_id else [],
+        "runtime_id": runtime_id,
+        "runtime_ids": [runtime_id] if runtime_id else [],
+        "runtime_binding_id": runtime_binding_id,
+        "runtime_binding_ids": [runtime_binding_id] if runtime_binding_id else [],
+        "deployment_plan_id": plan_id,
+        "deployment_plan_ids": [plan_id] if plan_id else [],
+        "strategy_id": strategy_id,
+        "strategy_ids": [strategy_id] if strategy_id else [],
+        "artifact_id": artifact_id,
+        "artifact_ids": [artifact_id] if artifact_id else [],
+        "broker_id": broker_id,
+        "broker_ids": [broker_id] if broker_id else [],
+        "stage": stage,
+        "deployment_stage": stage,
+    }
+
+
+def _management_portfolio_capital_scope(
+    *,
+    deployment_stage: str,
+    capital_pool_id: str,
+    sleeve_id: str,
+    paper_ledger_id: str,
+) -> Dict[str, Any]:
+    if deployment_stage == "paper":
+        scope_kind = "paper_ledger"
+        scope_id = paper_ledger_id
+    elif deployment_stage == "canary":
+        scope_kind = "canary_sleeve"
+        scope_id = sleeve_id
+    elif deployment_stage == "live":
+        scope_kind = "live_capital_pool"
+        scope_id = capital_pool_id
+    else:
+        scope_kind = "unclassified"
+        scope_id = capital_pool_id or sleeve_id or paper_ledger_id
+    return {
+        "stage": deployment_stage or "unknown",
+        "scope_kind": scope_kind,
+        "scope_id": scope_id or None,
+        "paper_ledger_id": paper_ledger_id or None,
+        "canary_sleeve_id": sleeve_id if deployment_stage == "canary" else None,
+        "live_capital_pool_id": capital_pool_id if deployment_stage == "live" else None,
+        "capital_pool_id": capital_pool_id or None,
+        "sleeve_id": sleeve_id or None,
+    }
+
+
+def _management_portfolio_incident(metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    issues = metadata.get("source_issues") if isinstance(metadata.get("source_issues"), list) else []
+    if not issues:
+        return None
+    runtime_id = str(metadata.get("runtime_id") or "")
+    holding_id = str(metadata.get("holding_id") or runtime_id or "unassigned")
+    risk_state = str(metadata.get("risk_state") or "degraded_source")
+    severity = "high" if risk_state in {"missing_binding", "degraded_source"} else "medium"
+    return {
+        "id": f"portfolio-risk-{risk_state}-{holding_id}",
+        "kind": risk_state,
+        "status": "open",
+        "severity": severity,
+        "message": "; ".join(str(issue.get("message") or issue.get("code") or "") for issue in issues if issue),
+        "risk_state": risk_state,
+        "source_status": metadata.get("source_status"),
+        "source_issues": issues,
+        "identity": metadata.get("identity") or {},
+        "source_refs": {
+            "runtime_ids": [runtime_id] if runtime_id else [],
+            "persona_ids": [metadata.get("persona_id")] if metadata.get("persona_id") else [],
+            "capital_pool_ids": [metadata.get("capital_pool_id")] if metadata.get("capital_pool_id") else [],
+        },
+        "links": metadata.get("links") or {},
+    }
+
+
 def _management_portfolio_holding_entry(
     runtime: Dict[str, Any],
     position: Dict[str, Any],
@@ -26730,6 +27019,7 @@ def _management_portfolio_holding_entry(
     persona_binding: Dict[str, Any],
     capital_pool: Dict[str, Any],
     telemetry: Dict[str, Any],
+    position_source_count: int = 1,
 ) -> Dict[str, Any]:
     summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
     instrument = _management_nested_dict(position, "instrument", "asset", "contract")
@@ -26785,6 +27075,9 @@ def _management_portfolio_holding_entry(
         )
         or ""
     )
+    broker_id = _management_portfolio_broker_id(position, telemetry, runtime, plan)
+    paper_ledger_id = _management_portfolio_ledger_id(position, runtime, plan, persona_binding)
+    sleeve_id = _management_portfolio_sleeve_id(position, runtime, plan, persona_binding)
 
     symbol = str(
         _management_first_non_empty(
@@ -26905,7 +27198,7 @@ def _management_portfolio_holding_entry(
         )
     )
     holding_id = f"{runtime_id}:{holding_key}" if runtime_id else holding_key
-    deployment_stage = str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or plan.get("target_stage") or "")
+    deployment_stage = _management_portfolio_stage(position, runtime, plan)
     status = str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown") or "unknown")
     last_mark_at = str(
         _management_first_non_empty(
@@ -26915,6 +27208,38 @@ def _management_portfolio_holding_entry(
             _management_dict_value(summary, "collected_at", "updated_at"),
         )
         or ""
+    )
+    source_issues = _management_portfolio_source_issues(
+        runtime_id=runtime_id,
+        persona_id=persona_id,
+        persona_binding_id=persona_binding_id,
+        telemetry=telemetry,
+        position_source_count=position_source_count,
+    )
+    source_status = _management_portfolio_source_status(source_issues)
+    risk_state = _management_portfolio_risk_state(
+        source_status=source_status,
+        source_issues=source_issues,
+        deployment_stage=deployment_stage,
+    )
+    identity = _management_portfolio_identity(
+        portfolio_id=holding_id,
+        capital_pool_id=capital_pool_id,
+        sleeve_id=sleeve_id,
+        paper_ledger_id=paper_ledger_id,
+        persona_id=persona_id,
+        runtime_id=runtime_id,
+        runtime_binding_id=runtime_binding_id,
+        plan_id=plan_id,
+        strategy_id=strategy_id,
+        artifact_id=artifact_id,
+        broker_id=broker_id,
+        deployment_stage=deployment_stage,
+    )
+    operator_links = _management_portfolio_operator_links(
+        persona_id=persona_id,
+        runtime_id=runtime_id,
+        holding_id=holding_id,
     )
 
     return {
@@ -26935,8 +27260,24 @@ def _management_portfolio_holding_entry(
         "strategy_id": strategy_id,
         "artifact_id": artifact_id,
         "artifact_version": artifact_version,
+        "broker_id": broker_id,
+        "paper_ledger_id": paper_ledger_id or None,
+        "sleeve_id": sleeve_id or None,
         "deployment_stage": deployment_stage,
         "status": status,
+        "identity": identity,
+        "capital_scope": _management_portfolio_capital_scope(
+            deployment_stage=deployment_stage,
+            capital_pool_id=capital_pool_id,
+            sleeve_id=sleeve_id,
+            paper_ledger_id=paper_ledger_id,
+        ),
+        "source_status": source_status,
+        "source_row_count": position_source_count,
+        "source_issues": source_issues,
+        "telemetry_available": bool(telemetry),
+        "telemetry_stale": any(issue.get("code") == "STALE_TELEMETRY" for issue in source_issues),
+        "risk_state": risk_state,
         "instrument": {
             "symbol": symbol,
             "asset_class": asset_class,
@@ -26990,6 +27331,7 @@ def _management_portfolio_holding_entry(
             "persona": _management_link("/bff/personas", persona_id),
             "strategy": _management_link("/bff/strategies", strategy_id),
             "deployment": _management_link("/bff/deployments", plan_id),
+            **operator_links,
         },
     }
 
@@ -27002,6 +27344,7 @@ def _management_portfolio_holding_metadata(
     plan: Dict[str, Any],
     persona_binding: Dict[str, Any],
     telemetry: Dict[str, Any],
+    position_source_count: int = 1,
 ) -> Dict[str, Any]:
     summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
     instrument = _management_nested_dict(position, "instrument", "asset", "contract")
@@ -27042,6 +27385,9 @@ def _management_portfolio_holding_metadata(
         )
         or ""
     )
+    broker_id = _management_portfolio_broker_id(position, telemetry, runtime, plan)
+    paper_ledger_id = _management_portfolio_ledger_id(position, runtime, plan, persona_binding)
+    sleeve_id = _management_portfolio_sleeve_id(position, runtime, plan, persona_binding)
     symbol = str(
         _management_first_non_empty(
             _management_dict_value(position, "symbol", "instrument_id", "asset_id", "contract_id"),
@@ -27126,15 +27472,53 @@ def _management_portfolio_holding_metadata(
         )
         or ""
     )
+    holding_id = f"{runtime_id}:{holding_key}" if runtime_id else holding_key
+    deployment_stage = _management_portfolio_stage(position, runtime, plan)
+    runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
+    plan_id = _management_record_id(runtime, "plan_id", "deployment_plan_id") or _management_record_id(plan, "plan_id", "id")
+    persona_binding_id = (
+        _management_record_id(runtime, "persona_capital_binding_id")
+        or _management_record_id(persona_binding, "binding_id", "id", "persona_capital_binding_id")
+    )
+    source_issues = _management_portfolio_source_issues(
+        runtime_id=runtime_id,
+        persona_id=persona_id,
+        persona_binding_id=persona_binding_id,
+        telemetry=telemetry,
+        position_source_count=position_source_count,
+    )
+    source_status = _management_portfolio_source_status(source_issues)
+    risk_state = _management_portfolio_risk_state(
+        source_status=source_status,
+        source_issues=source_issues,
+        deployment_stage=deployment_stage,
+    )
+    identity = _management_portfolio_identity(
+        portfolio_id=holding_id,
+        capital_pool_id=capital_pool_id,
+        sleeve_id=sleeve_id,
+        paper_ledger_id=paper_ledger_id,
+        persona_id=persona_id,
+        runtime_id=runtime_id,
+        runtime_binding_id=runtime_binding_id,
+        plan_id=plan_id,
+        strategy_id=strategy_id,
+        artifact_id=artifact_id,
+        broker_id=broker_id,
+        deployment_stage=deployment_stage,
+    )
     return {
-        "holding_id": f"{runtime_id}:{holding_key}" if runtime_id else holding_key,
+        "holding_id": holding_id,
         "runtime_id": runtime_id,
         "capital_pool_id": capital_pool_id,
         "persona_id": persona_id,
         "strategy_id": strategy_id,
         "artifact_id": artifact_id,
         "symbol": symbol,
-        "deployment_stage": str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or plan.get("target_stage") or ""),
+        "broker_id": broker_id,
+        "paper_ledger_id": paper_ledger_id,
+        "sleeve_id": sleeve_id,
+        "deployment_stage": deployment_stage,
         "status": str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown") or "unknown"),
         "notional": notional,
         "market_value": market_value,
@@ -27143,6 +27527,25 @@ def _management_portfolio_holding_metadata(
         "total_pnl": total_pnl,
         "last_mark_at": last_mark_at or None,
         "telemetry_available": bool(telemetry),
+        "telemetry_stale": any(issue.get("code") == "STALE_TELEMETRY" for issue in source_issues),
+        "source_status": source_status,
+        "source_row_count": position_source_count,
+        "source_issues": source_issues,
+        "risk_state": risk_state,
+        "identity": identity,
+        "capital_scope": _management_portfolio_capital_scope(
+            deployment_stage=deployment_stage,
+            capital_pool_id=capital_pool_id,
+            sleeve_id=sleeve_id,
+            paper_ledger_id=paper_ledger_id,
+        ),
+        "links": {
+            **_management_portfolio_operator_links(
+                persona_id=persona_id,
+                runtime_id=runtime_id,
+                holding_id=holding_id,
+            ),
+        },
     }
 
 
@@ -27684,6 +28087,21 @@ def _pm12_performance_attribution_page_entries(
     return page_entries, len(entries), next_page_token, _pm12_attribution_metrics(facts)
 
 
+def _pm12_attribution_data_confidence(metrics: Dict[str, Any]) -> str:
+    holding_count = int(metrics.get("holding_count") or 0)
+    runtime_count = int(metrics.get("runtime_count") or 0)
+    telemetry_runtime_count = int(metrics.get("telemetry_runtime_count") or 0)
+    if holding_count <= 0:
+        return "unavailable"
+    if telemetry_runtime_count <= 0:
+        return "partial"
+    if runtime_count and telemetry_runtime_count < runtime_count:
+        return "degraded"
+    if _management_as_float(metrics.get("total_pnl")) is None:
+        return "partial"
+    return "formal"
+
+
 def _pm12_performance_attribution_rows(
     entries: List[Dict[str, Any]],
     *,
@@ -27724,15 +28142,19 @@ def _pm12_performance_attribution_rows(
             strategies_by_id=sources["strategies_by_id"],
             pools_by_id=sources["pools_by_id"],
         )
+        data_confidence = _pm12_attribution_data_confidence(metrics)
         rows.append({
             "id": f"pm12-performance-attribution-{dimension}-{key}",
             "dimension": dimension,
             "dimension_key": key,
             "label": label,
             "period": period_key,
+            "data_confidence": data_confidence,
+            "source_status": "ok" if data_confidence == "formal" else data_confidence,
             "rank": entry.get("rank"),
             "metrics": {
                 **metrics,
+                "data_confidence": data_confidence,
                 "pnl_contribution_pct": entry.get("pnl_contribution_pct"),
                 "notional_weight": entry.get("notional_weight"),
             },
@@ -29656,9 +30078,37 @@ async def bff_management_portfolio_book(
         for runtime in runtime_bindings
         if str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").lower() == "live"
     ])
+    stale_telemetry_runtime_count = len([
+        telemetry
+        for telemetry in telemetry_by_runtime_id.values()
+        if bool(telemetry.get("stale"))
+        or str(
+            _management_first_non_empty(
+                telemetry.get("source_status"),
+                telemetry.get("source_state"),
+                telemetry.get("data_status"),
+                telemetry.get("freshness_status"),
+            )
+            or ""
+        ).strip().lower() in _PORTFOLIO_STALE_SOURCE_STATES
+    ])
+    missing_binding_count = len([
+        runtime
+        for runtime in runtime_bindings
+        if not _management_record_id(runtime, "persona_id", "persona_capital_binding_id")
+    ])
+    degraded_source_count = max(0, len(runtime_bindings) - portfolio_telemetry["runtime_count"]) + stale_telemetry_runtime_count
+    source_row_count = (
+        len(capital_pools)
+        + len(bindings)
+        + len(deployment_plans)
+        + len(runtime_bindings)
+        + portfolio_telemetry["runtime_count"]
+    )
 
     summary = {
         "portfolio_book_status": "ready" if total else "empty",
+        "source_row_count": source_row_count,
         "capital_pool_count": len(capital_pools),
         "active_capital_pool_count": active_pool_count,
         "binding_count": len(bindings),
@@ -29670,6 +30120,17 @@ async def bff_management_portfolio_book(
         "paper_runtime_count": paper_runtime_count,
         "live_runtime_count": live_runtime_count,
         "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+        "stale_row_count": stale_telemetry_runtime_count,
+        "missing_binding_count": missing_binding_count,
+        "degraded_source_count": degraded_source_count,
+        "source_coverage": {
+            "source_row_count": source_row_count,
+            "runtime_count": len(runtime_bindings),
+            "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+            "stale_row_count": stale_telemetry_runtime_count,
+            "missing_binding_count": missing_binding_count,
+            "degraded_source_count": degraded_source_count,
+        },
         "total_pnl": portfolio_telemetry["total_pnl"],
         "max_drawdown": portfolio_telemetry["max_drawdown"],
         "average_fill_rate": portfolio_telemetry["average_fill_rate"],
@@ -30063,7 +30524,11 @@ async def bff_management_portfolio_book_holdings(
     persona_id: Optional[str] = None,
     runtime_id: Optional[str] = None,
     deployment_stage: Optional[str] = None,
+    broker_id: Optional[str] = None,
     status: Optional[str] = None,
+    source_status: Optional[str] = None,
+    stale_telemetry: Optional[bool] = None,
+    risk_state: Optional[str] = None,
     q: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=50, ge=1, le=200),
@@ -30129,7 +30594,9 @@ async def bff_management_portfolio_book_holdings(
             or ""
         )
         capital_pool = pools_by_id.get(pool_id, {})
-        positions = _management_position_records(telemetry) or [{}]
+        position_records = _management_position_records(telemetry)
+        positions = position_records or [{}]
+        position_source_count = len(position_records)
         for index, position in enumerate(positions):
             metadata = _management_portfolio_holding_metadata(
                 runtime,
@@ -30138,11 +30605,13 @@ async def bff_management_portfolio_book_holdings(
                 plan=plan,
                 persona_binding=persona_binding,
                 telemetry=telemetry,
+                position_source_count=position_source_count,
             )
             holding_contexts.append({
                 "runtime": runtime,
                 "position": position,
                 "position_index": index,
+                "position_source_count": position_source_count,
                 "plan": plan,
                 "persona_binding": persona_binding,
                 "capital_pool": capital_pool,
@@ -30174,11 +30643,34 @@ async def bff_management_portfolio_book_holdings(
             context for context in holding_contexts
             if str((context.get("metadata") or {}).get("deployment_stage") or "").lower() in requested
         ]
+    if broker_id:
+        requested = {item.strip() for item in broker_id.split(",") if item.strip()}
+        holding_contexts = [
+            context for context in holding_contexts
+            if str((context.get("metadata") or {}).get("broker_id") or "") in requested
+        ]
     if status:
         requested = {item.strip().lower() for item in status.split(",") if item.strip()}
         holding_contexts = [
             context for context in holding_contexts
             if str((context.get("metadata") or {}).get("status") or "").lower() in requested
+        ]
+    if source_status:
+        requested = {item.strip().lower() for item in source_status.split(",") if item.strip()}
+        holding_contexts = [
+            context for context in holding_contexts
+            if str((context.get("metadata") or {}).get("source_status") or "").lower() in requested
+        ]
+    if stale_telemetry is not None:
+        holding_contexts = [
+            context for context in holding_contexts
+            if bool((context.get("metadata") or {}).get("telemetry_stale")) is stale_telemetry
+        ]
+    if risk_state:
+        requested = {item.strip().lower() for item in risk_state.split(",") if item.strip()}
+        holding_contexts = [
+            context for context in holding_contexts
+            if str((context.get("metadata") or {}).get("risk_state") or "").lower() in requested
         ]
     if q:
         needle = q.strip().lower()
@@ -30195,6 +30687,8 @@ async def bff_management_portfolio_book_holdings(
                     (context.get("metadata") or {}).get("persona_id"),
                     (context.get("metadata") or {}).get("strategy_id"),
                     (context.get("metadata") or {}).get("artifact_id"),
+                    (context.get("metadata") or {}).get("broker_id"),
+                    (context.get("metadata") or {}).get("risk_state"),
                 )
             )
         ]
@@ -30219,6 +30713,7 @@ async def bff_management_portfolio_book_holdings(
             persona_binding=context["persona_binding"],
             capital_pool=context["capital_pool"],
             telemetry=context["telemetry"],
+            position_source_count=int(context.get("position_source_count") or 0),
         )
         for context in page_contexts
     ]
@@ -30227,10 +30722,16 @@ async def bff_management_portfolio_book_holdings(
         for context in holding_contexts
         if isinstance(context.get("metadata"), dict)
     ]
+    incidents = [
+        incident
+        for incident in (_management_portfolio_incident(item) for item in holding_metadata)
+        if incident is not None
+    ]
     active_statuses = {"active", "running", "healthy", "bound"}
     summary = {
         "holding_count": total,
         "returned_holding_count": len(page_items),
+        "source_row_count": sum(int(item.get("source_row_count") or 0) for item in holding_metadata),
         "active_holding_count": len([
             item for item in holding_metadata if str(item.get("status") or "").lower() in active_statuses
         ]),
@@ -30250,12 +30751,36 @@ async def bff_management_portfolio_book_holdings(
             for item in holding_metadata
             if item.get("telemetry_available")
         }),
+        "stale_row_count": len([
+            item for item in holding_metadata if item.get("telemetry_stale")
+        ]),
+        "missing_binding_count": len([
+            item for item in holding_metadata
+            if any(issue.get("code") == "MISSING_PERSONA_BINDING" for issue in (item.get("source_issues") or []))
+        ]),
+        "degraded_source_count": len([
+            item for item in holding_metadata
+            if str(item.get("source_status") or "").lower() in {"degraded", "stale", "unavailable"}
+        ]),
+        "incident_count": len(incidents),
         "total_notional": _management_sum_numeric(holding_metadata, "notional"),
         "total_market_value": _management_sum_numeric(holding_metadata, "market_value"),
         "total_unrealized_pnl": _management_sum_numeric(holding_metadata, "unrealized_pnl"),
         "total_realized_pnl": _management_sum_numeric(holding_metadata, "realized_pnl"),
         "total_pnl": _management_sum_numeric(holding_metadata, "total_pnl"),
         "latest_mark_at": _management_latest_timestamp(holding_metadata, "last_mark_at"),
+        "source_status_counts": _management_count_by(holding_metadata, "source_status"),
+        "risk_state_counts": _management_count_by(holding_metadata, "risk_state"),
+        "by_stage": _management_count_by(holding_metadata, "deployment_stage"),
+        "by_broker": _management_count_by(holding_metadata, "broker_id"),
+    }
+    summary["source_coverage"] = {
+        "source_row_count": summary["source_row_count"],
+        "runtime_count": summary["runtime_count"],
+        "telemetry_runtime_count": summary["telemetry_runtime_count"],
+        "stale_row_count": summary["stale_row_count"],
+        "missing_binding_count": summary["missing_binding_count"],
+        "degraded_source_count": summary["degraded_source_count"],
     }
 
     surfaces = {
@@ -30285,10 +30810,29 @@ async def bff_management_portfolio_book_holdings(
             available=False,
             missing_message="Portfolio-book holdings composition is degraded because one or more source surfaces are unavailable.",
         )
+    elif incidents and surfaces["portfolio_book_holdings"].get("status") == "ok":
+        surfaces["portfolio_book_holdings"] = _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=False,
+            missing_message="Portfolio-book holdings composition has row-level coverage incidents.",
+        )
 
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = surfaces
     meta["total"] = total
+    meta["incidents"] = incidents
+    meta["filters"] = {
+        "capital_pool_id": capital_pool_id,
+        "persona_id": persona_id,
+        "runtime_id": runtime_id,
+        "deployment_stage": deployment_stage,
+        "broker_id": broker_id,
+        "status": status,
+        "source_status": source_status,
+        "stale_telemetry": stale_telemetry,
+        "risk_state": risk_state,
+        "q": q,
+    }
     meta["composition_sources"] = [
         "GET /bff/runtimes",
         "GET /api/v1/telemetry/{runtime_id}/summary",
@@ -30317,7 +30861,11 @@ async def bff_management_portfolio_book_positions(
     persona_id: Optional[str] = None,
     runtime_id: Optional[str] = None,
     deployment_stage: Optional[str] = None,
+    broker_id: Optional[str] = None,
     status: Optional[str] = None,
+    source_status: Optional[str] = None,
+    stale_telemetry: Optional[bool] = None,
+    risk_state: Optional[str] = None,
     q: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=50, ge=1, le=200),
@@ -30329,7 +30877,11 @@ async def bff_management_portfolio_book_positions(
         persona_id=persona_id,
         runtime_id=runtime_id,
         deployment_stage=deployment_stage,
+        broker_id=broker_id,
         status=status,
+        source_status=source_status,
+        stale_telemetry=stale_telemetry,
+        risk_state=risk_state,
         q=q,
         page_token=page_token,
         page_size=page_size,
@@ -30357,17 +30909,27 @@ async def bff_management_portfolio_book_positions(
     summary = {
         "position_count": holding_summary.get("holding_count", len(positions)),
         "returned_position_count": holding_summary.get("returned_holding_count", len(positions)),
+        "source_row_count": holding_summary.get("source_row_count", len(positions)),
         "active_position_count": holding_summary.get("active_holding_count", 0),
         "paper_position_count": holding_summary.get("paper_holding_count", 0),
         "live_position_count": holding_summary.get("live_holding_count", 0),
         "runtime_count": holding_summary.get("runtime_count", 0),
         "telemetry_runtime_count": holding_summary.get("telemetry_runtime_count", 0),
+        "stale_row_count": holding_summary.get("stale_row_count", 0),
+        "missing_binding_count": holding_summary.get("missing_binding_count", 0),
+        "degraded_source_count": holding_summary.get("degraded_source_count", 0),
+        "incident_count": holding_summary.get("incident_count", 0),
         "total_notional": holding_summary.get("total_notional"),
         "total_market_value": holding_summary.get("total_market_value"),
         "total_unrealized_pnl": holding_summary.get("total_unrealized_pnl"),
         "total_realized_pnl": holding_summary.get("total_realized_pnl"),
         "total_pnl": holding_summary.get("total_pnl"),
         "latest_mark_at": holding_summary.get("latest_mark_at"),
+        "source_status_counts": holding_summary.get("source_status_counts") or {},
+        "risk_state_counts": holding_summary.get("risk_state_counts") or {},
+        "by_stage": holding_summary.get("by_stage") or {},
+        "by_broker": holding_summary.get("by_broker") or {},
+        "source_coverage": holding_summary.get("source_coverage") or {},
     }
 
     meta = dict(holdings_payload.get("meta") or {})
@@ -54512,6 +55074,115 @@ def _persona_fleet_context_overlay(
     return context_metadata, default_context.get("persona") if isinstance(default_context.get("persona"), dict) else {}
 
 
+_PERSONA_FLEET_INVALID_MUTATION_IDS = {
+    "",
+    "n/a",
+    "na",
+    "nan",
+    "none",
+    "null",
+    "undefined",
+}
+_PERSONA_FLEET_DATE_MUTATION_ID = re.compile(
+    r"^\d{4}[-/]\d{2}[-/]\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)?$"
+)
+
+
+def _persona_fleet_mutation_id(value: Any) -> Optional[str]:
+    candidate = str(value or "").strip()
+    if candidate.lower() in _PERSONA_FLEET_INVALID_MUTATION_IDS:
+        return None
+    if _PERSONA_FLEET_DATE_MUTATION_ID.fullmatch(candidate):
+        return None
+    return candidate
+
+
+def _persona_fleet_mutation_projection(
+    *,
+    persona_id: str,
+    updated_at: Any,
+    evolution_decisions: Sequence[Dict[str, Any]],
+    artifact_ids: Set[str],
+    incident_ids: Set[str],
+) -> Dict[str, Any]:
+    matched: List[Tuple[Dict[str, Any], str]] = []
+    for decision in evolution_decisions:
+        targets_persona = str(decision.get("target_id") or "").strip() == persona_id
+        targets_artifact = str(decision.get("artifact_id") or "").strip() in artifact_ids
+        targets_incident = (
+            str(decision.get("incident_ref") or decision.get("linked_incident_id") or "").strip()
+            in incident_ids
+        )
+        if not (targets_persona or targets_artifact or targets_incident):
+            continue
+        decision_id = _persona_fleet_mutation_id(decision.get("decision_id") or decision.get("id"))
+        if decision_id:
+            matched.append((decision, decision_id))
+
+    ordered = _sort_records_latest_first(
+        [decision for decision, _ in matched],
+        ("updated_at", "created_at", "occurred_at"),
+    )
+    decision_ids = {id(decision): decision_id for decision, decision_id in matched}
+
+    if ordered:
+        latest = ordered[0]
+        decision_id = decision_ids[id(latest)]
+        changed_at = (
+            latest.get("updated_at")
+            or latest.get("created_at")
+            or latest.get("occurred_at")
+            or updated_at
+        )
+        label = str(changed_at)[:10] if changed_at else None
+        href = (
+            "/management/evolution-journal"
+            f"?persona={quote(persona_id, safe='')}"
+            f"&mutation_review={quote(decision_id, safe='')}"
+        )
+        kind = "formal_mutation"
+        confidence = "formal"
+        diagnostics: List[str] = []
+    elif updated_at:
+        decision_id = None
+        changed_at = updated_at
+        label = str(updated_at)[:10]
+        href = (
+            "/management/evolution-journal"
+            f"?persona={quote(persona_id, safe='')}&source=fleet_summary"
+        )
+        kind = "fleet_summary"
+        confidence = "fallback"
+        diagnostics = ["No formal mutation entry id declared for this persona row."]
+    else:
+        decision_id = None
+        changed_at = None
+        label = None
+        href = None
+        kind = "unavailable"
+        confidence = "unavailable"
+        diagnostics = ["No recent-change data or fleet summary available for this persona."]
+
+    return {
+        "last_mutation_label": label,
+        "lastMutationLabel": label,
+        "last_mutation_at": changed_at,
+        "lastMutationAt": changed_at,
+        "last_mutation_kind": kind,
+        "lastMutationKind": kind,
+        "mutation_entry_id": decision_id,
+        "mutationEntryId": decision_id,
+        "evolution_entry_id": decision_id,
+        "evolutionEntryId": decision_id,
+        "evolution_href": href,
+        "evolutionHref": href,
+        "mutation_confidence": confidence,
+        "mutationConfidence": confidence,
+        "mutation_diagnostics": diagnostics,
+        "mutationDiagnostics": diagnostics,
+    }
+
+
 def _build_persona_health_items(
     snapshot_at: str,
     *,
@@ -54732,88 +55403,19 @@ def _build_persona_health_items(
             if str(incident.get("incident_id") or incident.get("id") or "").strip()
         }
 
-        def _is_valid_formal_id(val: Any) -> bool:
-            if val is None:
-                return False
-            s = str(val).strip()
-            if not s:
-                return False
-            if s.lower() in {"nan", "null", "undefined", "none", "", "na"}:
-                return False
-            import re
-            if re.match(r'^\d{4}[-/]\d{2}[-/]\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)?$', s):
-                return False
-            return True
-
-        matched_decisions = [
-            decision
-            for decision in all_decisions
-            if str(decision.get("target_id") or "").strip() == persona_id
-            or (str(decision.get("artifact_id") or "").strip() in artifact_ids)
-            or (str(decision.get("incident_ref") or decision.get("linked_incident_id") or "").strip() in incident_ids)
-        ]
-
-        matched_decisions = [
-            d for d in matched_decisions if _is_valid_formal_id(d.get("decision_id") or d.get("id"))
-        ]
-
-        matched_decisions = _sort_records_latest_first(matched_decisions, ("updated_at", "created_at", "occurred_at"))
-
-        last_mutation_label = None
-        last_mutation_at = None
-        last_mutation_kind = "unavailable"
-        mutation_entry_id = None
-        evolution_entry_id = None
-        evolution_href = None
-        mutation_confidence = "unavailable"
-        mutation_diagnostics = []
-
-        if matched_decisions:
-            latest_decision = matched_decisions[0]
-            decision_id = latest_decision.get("decision_id") or latest_decision.get("id")
-            last_mutation_kind = "formal_mutation"
-            mutation_entry_id = decision_id
-            evolution_entry_id = decision_id
-            last_mutation_at = latest_decision.get("updated_at") or latest_decision.get("created_at") or updated_at
-            if last_mutation_at:
-                last_mutation_label = str(last_mutation_at)[:10]
-            evolution_href = f"/management/evolution-journal?persona={persona_id}&mutation_review={decision_id}"
-            mutation_confidence = "formal"
-            mutation_diagnostics = []
-
-        if last_mutation_kind == "unavailable":
-            if updated_at:
-                last_mutation_kind = "fleet_summary"
-                mutation_entry_id = None
-                evolution_entry_id = None
-                last_mutation_at = updated_at
-                last_mutation_label = str(updated_at)[:10]
-                evolution_href = f"/management/evolution-journal?persona={persona_id}&source=fleet_summary"
-                mutation_confidence = "fallback"
-                mutation_diagnostics = ["No formal mutation entry id declared for this persona row."]
-            else:
-                mutation_diagnostics = ["No recent-change data or fleet summary available for this persona."]
+        mutation_projection = _persona_fleet_mutation_projection(
+            persona_id=persona_id,
+            updated_at=updated_at,
+            evolution_decisions=all_decisions,
+            artifact_ids=artifact_ids,
+            incident_ids=incident_ids,
+        )
 
         item = {
             "id": persona_id,
             "persona_id": persona_id,
             "personaId": persona_id,
-            "last_mutation_label": last_mutation_label,
-            "lastMutationLabel": last_mutation_label,
-            "last_mutation_at": last_mutation_at,
-            "lastMutationAt": last_mutation_at,
-            "last_mutation_kind": last_mutation_kind,
-            "lastMutationKind": last_mutation_kind,
-            "mutation_entry_id": mutation_entry_id,
-            "mutationEntryId": mutation_entry_id,
-            "evolution_entry_id": evolution_entry_id,
-            "evolutionEntryId": evolution_entry_id,
-            "evolution_href": evolution_href,
-            "evolutionHref": evolution_href,
-            "mutation_confidence": mutation_confidence,
-            "mutationConfidence": mutation_confidence,
-            "mutation_diagnostics": mutation_diagnostics,
-            "mutationDiagnostics": mutation_diagnostics,
+            **mutation_projection,
             "name": persona.get("name") or persona_id,
             "persona_name": persona.get("name") or persona_id,
             "personaName": persona.get("name") or persona_id,
@@ -55409,6 +56011,7 @@ def _project_persona_fleet_list_row(
     context_metadata: Dict[str, Any],
     context_persona: Dict[str, Any],
     snapshot_at: str,
+    evolution_decisions: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     persona_id = _persona_id(persona)
     if not persona_id:
@@ -55605,31 +56208,6 @@ def _project_persona_fleet_list_row(
         "current_research_projects": current_research_projects,
     }
 
-    # Fetch all evolution decisions to check if there is a formal mutation/evolution entry for this persona
-    all_decisions = list(read_store.list_evolution_decisions() or [])
-
-    binding_ids = set()
-    if binding:
-        bid = str(binding.get("id") or binding.get("binding_id") or "").strip()
-        if bid:
-            binding_ids.add(bid)
-
-    capital_pool_ids = set()
-    if binding:
-        pid = str(binding.get("capital_pool_id") or "").strip()
-        if pid:
-            capital_pool_ids.add(pid)
-    elif league_entry:
-        pid = str(league_entry.get("capital_pool_id") or "").strip()
-        if pid:
-            capital_pool_ids.add(pid)
-
-    runtime_ids = set()
-    if runtime:
-        rid = str(runtime.get("runtime_id") or runtime.get("runtime_binding_id") or runtime.get("id") or "").strip()
-        if rid:
-            runtime_ids.add(rid)
-
     artifact_ids = set()
     if runtime:
         art_id = str(runtime.get("artifact_id") or "").strip()
@@ -55642,87 +56220,22 @@ def _project_persona_fleet_list_row(
         if str(incident.get("incident_id") or incident.get("id") or "").strip()
     }
 
-    def _is_valid_formal_id(val: Any) -> bool:
-        if val is None:
-            return False
-        s = str(val).strip()
-        if not s:
-            return False
-        if s.lower() in {"nan", "null", "undefined", "none", "", "na"}:
-            return False
-        import re
-        if re.match(r'^\d{4}[-/]\d{2}[-/]\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)?$', s):
-            return False
-        return True
-
-    matched_decisions = [
-        decision
-        for decision in all_decisions
-        if str(decision.get("target_id") or "").strip() == persona_id
-        or (str(decision.get("artifact_id") or "").strip() in artifact_ids)
-        or (str(decision.get("incident_ref") or decision.get("linked_incident_id") or "").strip() in incident_ids)
-    ]
-
-    matched_decisions = [
-        d for d in matched_decisions if _is_valid_formal_id(d.get("decision_id") or d.get("id"))
-    ]
-
-    matched_decisions = _sort_records_latest_first(matched_decisions, ("updated_at", "created_at", "occurred_at"))
-
-    last_mutation_label = None
-    last_mutation_at = None
-    last_mutation_kind = "unavailable"
-    mutation_entry_id = None
-    evolution_entry_id = None
-    evolution_href = None
-    mutation_confidence = "unavailable"
-    mutation_diagnostics = []
-
-    if matched_decisions:
-        latest_decision = matched_decisions[0]
-        decision_id = latest_decision.get("decision_id") or latest_decision.get("id")
-        last_mutation_kind = "formal_mutation"
-        mutation_entry_id = decision_id
-        evolution_entry_id = decision_id
-        last_mutation_at = latest_decision.get("updated_at") or latest_decision.get("created_at") or updated_at
-        if last_mutation_at:
-            last_mutation_label = str(last_mutation_at)[:10]
-        evolution_href = f"/management/evolution-journal?persona={persona_id}&mutation_review={decision_id}"
-        mutation_confidence = "formal"
-        mutation_diagnostics = []
-
-    if last_mutation_kind == "unavailable":
-        if updated_at:
-            last_mutation_kind = "fleet_summary"
-            mutation_entry_id = None
-            evolution_entry_id = None
-            last_mutation_at = updated_at
-            last_mutation_label = str(updated_at)[:10]
-            evolution_href = f"/management/evolution-journal?persona={persona_id}&source=fleet_summary"
-            mutation_confidence = "fallback"
-            mutation_diagnostics = ["No formal mutation entry id declared for this persona row."]
-        else:
-            mutation_diagnostics = ["No recent-change data or fleet summary available for this persona."]
+    mutation_projection = _persona_fleet_mutation_projection(
+        persona_id=persona_id,
+        updated_at=updated_at,
+        evolution_decisions=(
+            evolution_decisions
+            if evolution_decisions is not None
+            else list(read_store.list_evolution_decisions() or [])
+        ),
+        artifact_ids=artifact_ids,
+        incident_ids=incident_ids,
+    )
 
     return {
         "id": persona_id,
         "persona_id": persona_id,
-        "last_mutation_label": last_mutation_label,
-        "lastMutationLabel": last_mutation_label,
-        "last_mutation_at": last_mutation_at,
-        "lastMutationAt": last_mutation_at,
-        "last_mutation_kind": last_mutation_kind,
-        "lastMutationKind": last_mutation_kind,
-        "mutation_entry_id": mutation_entry_id,
-        "mutationEntryId": mutation_entry_id,
-        "evolution_entry_id": evolution_entry_id,
-        "evolutionEntryId": evolution_entry_id,
-        "evolution_href": evolution_href,
-        "evolutionHref": evolution_href,
-        "mutation_confidence": mutation_confidence,
-        "mutationConfidence": mutation_confidence,
-        "mutation_diagnostics": mutation_diagnostics,
-        "mutationDiagnostics": mutation_diagnostics,
+        **mutation_projection,
         "name": persona.get("name") or persona_id,
         "owner": raw_metadata.get("owner") or raw_metadata.get("owner_id") or "pathreon-management",
         "mode": deployment_stage,
@@ -55846,7 +56359,17 @@ def _persona_fleet_slim_list_payload(
     runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
     pools = read_store.list_capital_pools(include_market_persona_defaults=True)
     incidents = read_store.list_incidents()
+    evolution_decisions = list(read_store.list_evolution_decisions() or [])
     context_defaults = _persona_fleet_context_defaults_by_market()
+    quarter_window = _pm12_quarter_window(None, snapshot_at)
+    paper_rankings = {
+        str(item.get("persona_id") or item.get("id") or "").strip(): item
+        for item in _pm12_quarterly_ranking_items(
+            _pm12_persona_league_rows(state=None, archetype=None, q=""),
+            quarter_window=quarter_window,
+        )
+        if str(item.get("persona_id") or item.get("id") or "").strip()
+    }
 
     league_by_persona = {
         str(item.get("persona_id") or item.get("id") or ""): item
@@ -55938,8 +56461,27 @@ def _persona_fleet_slim_list_payload(
             context_metadata=context_metadata,
             context_persona=context_persona,
             snapshot_at=snapshot_at,
+            evolution_decisions=evolution_decisions,
         )
         if row is not None:
+            if row.get("capital_mode") == "paper":
+                paper_ranking = paper_rankings.get(persona_id)
+                if paper_ranking:
+                    paper_rank = _persona_fleet_optional_int(paper_ranking.get("rank"))
+                    paper_score = _management_number(
+                        paper_ranking.get("score") or paper_ranking.get("overall_score")
+                    )
+                    row["league_rank"] = paper_rank
+                    row["leagueRank"] = paper_rank
+                    row["league_score"] = paper_score
+                    row["leagueScore"] = paper_score
+                    row["rank"] = {
+                        "league_rank": paper_rank,
+                        "league_score": paper_score,
+                        "basis": "quarterly_ranking",
+                        "period": "quarter",
+                        "quarter": quarter_window["quarter"],
+                    }
             rows.append(row)
 
     rows = sorted(
