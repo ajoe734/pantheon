@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare MGMT-PERF-IA-002 BFF and frontend handoff packet
-- Status: todo
+- Status: review
 - Owner: Codex
 - Reviewer: Antigravity
-- Next: Assignment created
+- Next: Support-only Follow-up 10 committed at aecee46d9. Please verify remote SHAs, continued contaminated parent diff, and no-material-delta pause boundary; parent owner decides absorption.
 
 ## Summary
 平行支援 MGMT-PERF-IA-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
