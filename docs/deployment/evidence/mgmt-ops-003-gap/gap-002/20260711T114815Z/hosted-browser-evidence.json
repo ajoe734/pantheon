@@ -1,0 +1,54 @@
+{
+  "capturedAt": "2026-07-11T11:49:02.381Z",
+  "frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "deployedSha": "636f989563157c78118de17b81ef8651389a7acd",
+  "results": [
+    {
+      "device": "desktop",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "finalUrl": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/management/portfolio-book?nocache=636f98956315",
+      "bodyTextLength": 4962,
+      "hasFallback": false,
+      "hasRawUndefined": false,
+      "consoleErrorCount": 0,
+      "consoleErrors": [],
+      "failedRequiredRequestCount": 0,
+      "failedRequests": [],
+      "requiredStatuses": {
+        "/bff/management/portfolio-book": [],
+        "/bff/management/portfolio-book/holdings": [
+          200
+        ],
+        "/bff/management/portfolio-book/positions": []
+      },
+      "bffResponseCount": 6
+    },
+    {
+      "device": "mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "finalUrl": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/management/portfolio-book?nocache=636f98956315",
+      "bodyTextLength": 4485,
+      "hasFallback": false,
+      "hasRawUndefined": false,
+      "consoleErrorCount": 0,
+      "consoleErrors": [],
+      "failedRequiredRequestCount": 0,
+      "failedRequests": [],
+      "requiredStatuses": {
+        "/bff/management/portfolio-book": [],
+        "/bff/management/portfolio-book/holdings": [
+          200
+        ],
+        "/bff/management/portfolio-book/positions": []
+      },
+      "bffResponseCount": 6
+    }
+  ]
+}
