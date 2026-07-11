@@ -1,12 +1,12 @@
 # OCLAW-PMEM-005 BFF Handoff Follow-up 3
 
-**Sidecar Task ID**: `OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3`  
-**Parent Task**: `OCLAW-PMEM-005`  
-**Parent Owner**: `Codex`  
-**Sidecar Owner**: `Codex2`  
-**Sidecar Reviewer**: `Antigravity`  
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-07-11  
+**Sidecar Task ID**: `OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3`
+**Parent Task**: `OCLAW-PMEM-005`
+**Parent Owner**: `Codex`
+**Sidecar Owner**: `Codex2`
+**Sidecar Reviewer**: `Antigravity`
+**Helper Kind**: `bff_handoff_packet`
+**Generated**: 2026-07-11
 **Mutates Canonical**: `no`
 
 This packet is support-only. It refines the BFF query gap, operator journey,
