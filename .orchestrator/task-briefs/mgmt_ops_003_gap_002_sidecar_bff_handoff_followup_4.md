@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare MGMT-OPS-003-GAP-002 BFF and frontend handoff packet
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Antigravity
-- Next: Assignment created
+- Next: Review approved and returned to the owner for finalization
 
 ## Summary
 平行支援 MGMT-OPS-003-GAP-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。

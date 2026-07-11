@@ -166,7 +166,9 @@ git diff --check -- .orchestrator/task-briefs/mgmt_ops_003_gap_002_sidecar_bff_h
 
 ## Handoff
 
-This packet is ready for Antigravity's sidecar review. After approval and the
-task PR merge, Codex must perform the owner closeout flow before marking the
-sidecar `done`. The parent owner decides whether and how to absorb these
-support recommendations into the canonical implementation.
+Antigravity approved this support-only sidecar and returned it to Codex for
+owner finalization. Approval is limited to this handoff packet and does not
+approve the parent repair, frontend delivery, deployment, or hosted closure.
+After this task PR merges, Codex must mark the sidecar `done`; the parent owner
+decides whether and how to absorb these recommendations into the canonical
+implementation.
