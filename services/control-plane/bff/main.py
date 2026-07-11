@@ -129,6 +129,7 @@ from action_catalog import get_action_catalog, get_catalog_entry
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
 from persona_allocation_policy import calculate_target_allocations, validate_emergency_lines
+from emergency_containment_policy import validate_emergency_containment
 from session_lifecycle_store import SessionLifecycleStore
 from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
@@ -5276,15 +5277,17 @@ def _validate_emergency_containment(params: Dict[str, Any], identity: OperatorId
             "Operator does not hold the required role",
             precondition_failed="role_check",
         )
-    
-    if params.get("allocation_increase") or params.get("promote") or params.get("action") in ("promote", "increase_allocation"):
+    try:
+        validate_emergency_containment(params)
+    except (TypeError, ValueError) as exc:
+        detail = str(exc)
         raise _bff_error(
             422,
             ErrorCode.VALIDATION_FAILED,
-            "Emergency containment cannot promote or increase allocation",
-            "Emergency actions must reduce or pause risk, they cannot increase risk exposure",
+            detail[:1].upper() + detail[1:],
+            detail,
             precondition_failed="emergency_containment_invalid_action",
-        )
+        ) from exc
 
     _enforce_ops_console_preconditions(params, identity)
 
