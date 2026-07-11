@@ -60,6 +60,28 @@ Request changes if repeated dispatch, successful CI, proposal creation, or
 command acceptance is treated as proof of merged delivery, hosted behavior,
 or applied capital.
 
+## Closeout Record
+
+Claude approved this no-delta checkpoint. `gh pr view 251 --repo
+ajoe734/execute-plans --json state,mergeable,headRefOid,mergeCommit,
+statusCheckRollup,url` reconfirmed `OPEN`/`MERGEABLE`/`CLEAN` at head
+`436aa32eaa24b4f048ae0b08c8a46686ceb56659`, `mergeCommit: null`, and a
+successful `integration-gate` check — matching this packet's claims exactly.
+The approval is limited to this support artifact; it does not approve or
+merge `execute-plans` PR `#251`, close a BFF query gap, enable writes, or
+close parent `PPL-ALLOC-006`.
+
+This is the third consecutive no-delta dispatch (Follow-Up 14, then 15, then
+16) against the same unchanged PR head, even though Follow-Ups 14 and 15
+already asked the parent owner and supervisor not to request another
+no-delta sidecar. No evidence category in the Dispatch Stop Condition /
+Dispatch Suppression Handoff table changed across any of the three. The
+process generating `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-*` dispatches
+has not yet honored two prior explicit stop requests; this is now a
+repeat-dispatch pattern, not an isolated instance, and should be escalated
+to whoever owns dispatch/supervisor policy rather than answered with a
+fourth identical checkpoint.
+
 ## Review And Composition
 
 Owned here: support-only evidence checkpoint and explicit dispatch suppression
