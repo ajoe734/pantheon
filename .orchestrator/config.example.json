@@ -28,7 +28,7 @@
   "supervisor": {
     "poll_interval_seconds": 2.0,
     "heartbeat_warn_after_seconds": 10.0,
-    "stall_after_seconds": 300,
+    "stall_after_seconds": 900,
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": true
   },

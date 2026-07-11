@@ -977,7 +977,7 @@ def _execute_bff_action_adapter(
         or params.get("secondOperatorId")
         or params.get("second_operator_id")
     )
-    return {
+    result = {
         "command_id": command_id,
         "dispatch_path": "bff_action_adapter",
         "status": "admitted",
@@ -993,6 +993,11 @@ def _execute_bff_action_adapter(
         ),
         "live_capital_side_effects": False,
     }
+    if params.get("action_id") == "EmergencyContainment":
+        from emergency_containment_policy import containment_receipt_fields
+
+        result.update(containment_receipt_fields(params))
+    return result
 
 
 # Dispatch table: CommandType -> execution function
