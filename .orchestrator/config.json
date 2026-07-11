@@ -30,7 +30,8 @@
   "supervisor": {
     "poll_interval_seconds": 30,
     "heartbeat_warn_after_seconds": 360.0,
-    "stall_after_seconds": 900,
+    "stall_after_seconds": 300,
+    "adaptive_stall_detection": true,
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": true
   },
