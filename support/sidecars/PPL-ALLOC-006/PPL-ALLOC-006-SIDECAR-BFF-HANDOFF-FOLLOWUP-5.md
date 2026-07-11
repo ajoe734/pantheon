@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 5
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex2  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5`
+Parent: `PPL-ALLOC-006`
+Owner: Codex2
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -107,10 +107,10 @@ implementation PR rather than silently resolved in adapters:
 ## Review And Absorption
 
 Owned here: support-only adapter boundaries, fixture scenarios, operator-state
-assertions, and an explicit blocker list.  
+assertions, and an explicit blocker list.
 Not changing: L1/L2 truth, BFF route or schema guarantees, BFF/runtime/
 registry/governance implementation, `execute-plans` source, or parent task
-lifecycle.  
+lifecycle.
 Composes with: `PPL-ALLOC-003` binding reads, `PPL-ALLOC-004` allocation
 policy, parent `PPL-ALLOC-006`, and the preceding PPL-ALLOC-006 handoff
 packets.
