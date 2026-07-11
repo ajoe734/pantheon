@@ -25,8 +25,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.params import Param as FastAPIParam
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+def _resolve_param(val: Any) -> Any:
+    if isinstance(val, FastAPIParam):
+        if val.default is ... or type(val.default).__name__ == "PydanticUndefined":
+            return None
+        return val.default
+    return val
 
 sys.path.insert(0, os.path.dirname(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -6448,6 +6456,24 @@ def _filter_by_common_identifiers(
     as_of: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     # 合併 query 參數值
+    persona_id = _resolve_param(persona_id)
+    persona = _resolve_param(persona)
+    runtime_id = _resolve_param(runtime_id)
+    runtime = _resolve_param(runtime)
+    strategy_id = _resolve_param(strategy_id)
+    strategy = _resolve_param(strategy)
+    capital_pool_id = _resolve_param(capital_pool_id)
+    pool = _resolve_param(pool)
+    sleeve_id = _resolve_param(sleeve_id)
+    sleeve = _resolve_param(sleeve)
+    artifact_id = _resolve_param(artifact_id)
+    artifact = _resolve_param(artifact)
+    broker_id = _resolve_param(broker_id)
+    broker = _resolve_param(broker)
+    stage = _resolve_param(stage)
+    period = _resolve_param(period)
+    as_of = _resolve_param(as_of)
+
     p_id = persona_id or persona
     r_id = runtime_id or runtime
     s_id = strategy_id or strategy
@@ -30140,6 +30166,27 @@ async def bff_management_portfolio_book(
     as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: composed portfolio-book summary for Management Console PM-12."""
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+    persona_id = _resolve_param(persona_id)
+    persona = _resolve_param(persona)
+    runtime_id = _resolve_param(runtime_id)
+    runtime = _resolve_param(runtime)
+    strategy_id = _resolve_param(strategy_id)
+    strategy = _resolve_param(strategy)
+    capital_pool_id = _resolve_param(capital_pool_id)
+    pool = _resolve_param(pool)
+    sleeve_id = _resolve_param(sleeve_id)
+    sleeve = _resolve_param(sleeve)
+    artifact_id = _resolve_param(artifact_id)
+    artifact = _resolve_param(artifact)
+    broker_id = _resolve_param(broker_id)
+    broker = _resolve_param(broker)
+    stage = _resolve_param(stage)
+    period = _resolve_param(period)
+    as_of = _resolve_param(as_of)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
@@ -30327,6 +30374,29 @@ async def bff_management_portfolio_book_pools(
     as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 portfolio-book capital pool summaries."""
+    status = _resolve_param(status)
+    risk_policy_ref = _resolve_param(risk_policy_ref)
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+    persona_id = _resolve_param(persona_id)
+    persona = _resolve_param(persona)
+    runtime_id = _resolve_param(runtime_id)
+    runtime = _resolve_param(runtime)
+    strategy_id = _resolve_param(strategy_id)
+    strategy = _resolve_param(strategy)
+    capital_pool_id = _resolve_param(capital_pool_id)
+    pool = _resolve_param(pool)
+    sleeve_id = _resolve_param(sleeve_id)
+    sleeve = _resolve_param(sleeve)
+    artifact_id = _resolve_param(artifact_id)
+    artifact = _resolve_param(artifact)
+    broker_id = _resolve_param(broker_id)
+    broker = _resolve_param(broker)
+    stage = _resolve_param(stage)
+    period = _resolve_param(period)
+    as_of = _resolve_param(as_of)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
@@ -30464,6 +30534,29 @@ async def bff_management_portfolio_book_exposure(
     as_of: Optional[str] = Query(default=None, alias="asOf"),
 ):
     """BFF: PM-12 portfolio-book exposure and risk-budget rollup."""
+    status = _resolve_param(status)
+    risk_policy_ref = _resolve_param(risk_policy_ref)
+    capital_pool_id = _resolve_param(capital_pool_id)
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+    persona_id = _resolve_param(persona_id)
+    persona = _resolve_param(persona)
+    runtime_id = _resolve_param(runtime_id)
+    runtime = _resolve_param(runtime)
+    strategy_id = _resolve_param(strategy_id)
+    strategy = _resolve_param(strategy)
+    pool = _resolve_param(pool)
+    sleeve_id = _resolve_param(sleeve_id)
+    sleeve = _resolve_param(sleeve)
+    artifact_id = _resolve_param(artifact_id)
+    artifact = _resolve_param(artifact)
+    broker_id = _resolve_param(broker_id)
+    broker = _resolve_param(broker)
+    stage = _resolve_param(stage)
+    period = _resolve_param(period)
+    as_of = _resolve_param(as_of)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
@@ -30655,6 +30748,20 @@ async def bff_management_portfolio_book_holdings(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: PM-12 global holdings table composed from runtime and telemetry surfaces."""
+    capital_pool_id = _resolve_param(capital_pool_id)
+    persona_id = _resolve_param(persona_id)
+    runtime_id = _resolve_param(runtime_id)
+    deployment_stage = _resolve_param(deployment_stage)
+    broker_id = _resolve_param(broker_id)
+    status = _resolve_param(status)
+    source_status = _resolve_param(source_status)
+    stale_telemetry = _resolve_param(stale_telemetry)
+    risk_state = _resolve_param(risk_state)
+    q = _resolve_param(q)
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
@@ -30992,6 +31099,20 @@ async def bff_management_portfolio_book_positions(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: PM-12 global positions table composed from runtime and telemetry surfaces."""
+    capital_pool_id = _resolve_param(capital_pool_id)
+    persona_id = _resolve_param(persona_id)
+    runtime_id = _resolve_param(runtime_id)
+    deployment_stage = _resolve_param(deployment_stage)
+    broker_id = _resolve_param(broker_id)
+    status = _resolve_param(status)
+    source_status = _resolve_param(source_status)
+    stale_telemetry = _resolve_param(stale_telemetry)
+    risk_state = _resolve_param(risk_state)
+    q = _resolve_param(q)
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+
     holdings_payload = await bff_management_portfolio_book_holdings(
         capital_pool_id=capital_pool_id,
         persona_id=persona_id,
@@ -43370,6 +43491,13 @@ async def bff_management_persona_league(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: PM-12 persona-league table composed from persona-side read surfaces."""
+    state = _resolve_param(state)
+    archetype = _resolve_param(archetype)
+    q = _resolve_param(q)
+    page_token = _resolve_param(page_token)
+    page_size = _resolve_param(page_size)
+    authorization = _resolve_param(authorization)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
@@ -43517,6 +43645,13 @@ async def bff_management_persona_league_movers(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: PM-12 persona-league movement list computed from league rows."""
+    state = _resolve_param(state)
+    archetype = _resolve_param(archetype)
+    q = _resolve_param(q)
+    direction = _resolve_param(direction)
+    limit = _resolve_param(limit)
+    authorization = _resolve_param(authorization)
+
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
