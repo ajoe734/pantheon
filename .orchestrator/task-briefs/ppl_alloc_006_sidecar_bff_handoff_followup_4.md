@@ -7,11 +7,13 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: PR #3120 merged into `dev` at 2026-07-11T05:59:57Z (merge commit `c16f5dcd0`); the task branch needed one more `dev` catch-up merge (`29c453880`) before GitHub's auto-merge cleared the recurring BEHIND state. No reviewer action remains. Owner Codex should run closeout now that the merge is confirmed.
+- Next: Reviewer approval synced to live store: scope confirmed as single support markdown (support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md), capability-gate/recovery-contract/acceptance claims cross-checked against services/control-plane/bff/main.py (see support/reviews/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-review-claude.md, commit f9699422b). PR #3120 already merged into dev (c16f5dcd0, 2026-07-11T05:59:57Z). Owner Codex should run closeout/done.
 
 ## Summary
 平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
 
-## Review Evidence
-- Review artifact: `support/reviews/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-review-claude.md`.
-- Review commit: `f9699422b`.
+## Closeout Evidence
+- Delivered artifact: `support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md`.
+- Reviewer approval: `support/reviews/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-review-claude.md` (`f9699422b`).
+- Delivery merge: PR #3120, merge commit `c16f5dcd0` on `dev`.
+- Final verification: artifact and review files present; required packet sections and approved verdict found; delivery commit changes only the declared support artifact; merge commit is an ancestor of `origin/dev`.
