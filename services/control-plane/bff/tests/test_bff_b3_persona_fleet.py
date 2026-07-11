@@ -399,3 +399,60 @@ def test_paper_persona_fleet_rank_matches_quarterly_ranking_target() -> None:
             assert fleet_row["rank"]["period"] == "quarter"
         finally:
             bff_main.read_store = original
+
+
+def test_paper_rank_snapshot_is_captured_before_broader_fleet_reads() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            persona_id = "persona-20260528-04688755"
+            bff_main.read_store.create_persona(
+                persona_id=persona_id,
+                name="Crypto-Alt-Hunter",
+                actor_id="pantheon-dev-browser",
+                created_at="2026-06-03T08:00:00Z",
+                lifecycle_state="active",
+                metadata={
+                    "deployment_stage": "paper",
+                    "capital_mode": "paper",
+                },
+            )
+            expected_resp = client.get(
+                "/bff/management/quarterly-ranking?page_size=200",
+                headers=OPERATOR_HEADERS,
+            )
+            assert expected_resp.status_code == 200, expected_resp.text
+            expected = next(
+                item for item in expected_resp.json()["data"]["items"]
+                if item["persona_id"] == persona_id
+            )
+
+            list_personas = bff_main.read_store.list_personas
+            broader_fleet_read_seen = False
+
+            def order_sensitive_list_personas(*args, **kwargs):
+                nonlocal broader_fleet_read_seen
+                include_defaults = bool(kwargs.get("include_market_persona_defaults"))
+                if include_defaults:
+                    broader_fleet_read_seen = True
+                elif broader_fleet_read_seen:
+                    return []
+                return list_personas(*args, **kwargs)
+
+            bff_main.read_store.list_personas = order_sensitive_list_personas
+            fleet_resp = client.get(
+                "/bff/management/persona-fleet?page_size=100",
+                headers=OPERATOR_HEADERS,
+            )
+            assert fleet_resp.status_code == 200, fleet_resp.text
+            fleet_row = next(
+                item for item in fleet_resp.json()["data"]["items"]
+                if item["id"] == persona_id
+            )
+            assert broader_fleet_read_seen is True
+            assert fleet_row["league_rank"] == expected["rank"]
+            assert fleet_row["league_score"] == expected["score"]
+            assert fleet_row["rank"]["basis"] == "quarterly_ranking"
+        finally:
+            bff_main.read_store = original

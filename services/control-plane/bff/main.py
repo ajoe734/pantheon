@@ -56353,14 +56353,9 @@ def _persona_fleet_slim_list_payload(
     page_token: Optional[str],
     page_size: int,
 ) -> Dict[str, Any]:
-    personas = read_store.list_personas(include_market_persona_defaults=True)
-    league = read_store.list_persona_league(include_market_persona_defaults=True)
-    bindings = read_store.list_bindings(include_market_persona_defaults=True)
-    runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
-    pools = read_store.list_capital_pools(include_market_persona_defaults=True)
-    incidents = read_store.list_incidents()
-    evolution_decisions = list(read_store.list_evolution_decisions() or [])
-    context_defaults = _persona_fleet_context_defaults_by_market()
+    # Capture the Paper ranking projection before the broader Fleet reads. The
+    # quarterly endpoint uses this same read path; doing it first prevents a
+    # later degraded persona-service read from silently restoring league rank.
     quarter_window = _pm12_quarter_window(None, snapshot_at)
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
@@ -56370,6 +56365,14 @@ def _persona_fleet_slim_list_payload(
         )
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
+    personas = read_store.list_personas(include_market_persona_defaults=True)
+    league = read_store.list_persona_league(include_market_persona_defaults=True)
+    bindings = read_store.list_bindings(include_market_persona_defaults=True)
+    runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
+    pools = read_store.list_capital_pools(include_market_persona_defaults=True)
+    incidents = read_store.list_incidents()
+    evolution_decisions = list(read_store.list_evolution_decisions() or [])
+    context_defaults = _persona_fleet_context_defaults_by_market()
 
     league_by_persona = {
         str(item.get("persona_id") or item.get("id") or ""): item
