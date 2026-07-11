@@ -1,11 +1,17 @@
 # MGMT-OPS-003-GAP-002 Review — Claude
 
 **Task:** MGMT-OPS-003-GAP-002 — Runtime binding and telemetry truth
-**Owner:** Antigravity
-**Reviewer:** Claude (reassigned from Codex2 after repeated Codex2 terminal exits)
-**Outcome:** `REQUEST_CHANGES` — reopen with required changes
+**Owner:** Codex
+**Reviewer:** Claude
+**Latest outcome (Round 2, 2026-07-11):** `REQUEST_CHANGES` — hosted evidence
+gate not met; no further code rework required. See §6 below.
 
 ---
+
+## Round 1 (2026-07-11, superseded) — `REQUEST_CHANGES`
+
+**Owner at the time:** Antigravity (reassigned from Codex2 after repeated
+Codex2 terminal exits)
 
 ## 1. What Was Submitted For Review
 
@@ -150,3 +156,103 @@ find docs/deployment/evidence -iname "*mgmt-ops-003*" -o -iname "*gap-002*"
 No reconciliation, repair, or quarantine implementation was found for
 persona-capital binding or telemetry identity; no evidence artifacts were
 found for this task.
+
+---
+
+## Round 2 (2026-07-11) — `REQUEST_CHANGES`
+
+**Owner:** Codex
+
+The owner addressed every Round 1 required change on the code side: PRs
+`#3198`, `#3201`, `#3206` (all merged to `dev`, head `task/MGMT-OPS-003-GAP-002`)
+added `services/runtime-manager/runtime_truth_reconciler.py`,
+`services/runtime-manager/reconcile_runtime_truth.py`, and
+`services/runtime-manager/test_runtime_truth_reconciler.py`. Merge SHA
+`18d064477a5ec88740b7da4b879735be589df97e` (PR `#3206`, merged
+2026-07-11T11:37:20Z) is confirmed an ancestor of `origin/dev` after
+`git fetch origin dev`.
+
+### Runtime Truth — Code Review
+
+`build_reconciliation_rows` keeps `runtime_bindings` as the driving table, so
+missing plan/persona-binding/pool/telemetry joins stay represented as rows
+instead of disappearing from counts. `_reconcile_row` only proposes a field
+repair when every source that has a value for that field agrees
+(`_agreed_value`); any disagreement is quarantined
+(`authoritative_identity_conflict`) instead of silently picking a value. The
+reconciler does not write another service's store — it emits
+`repair_proposed` / `quarantined` / `unchanged` dispositions plus an
+append-only audit keyed by a stable content hash, so replays are idempotent
+(`test_replay_is_idempotent_and_writes_one_audit_entry`). `formal_attribution_allowed`
+is `True` only for `unchanged` rows with zero `after_issue_codes`, matching
+the "attribution stays fail-closed until joins are trustworthy" requirement.
+
+Independently re-ran rather than trusting the owner's checkpoint note:
+
+```bash
+cd services/runtime-manager && python3 -m pytest -q test_runtime_truth_reconciler.py
+# 7 passed
+
+cd services/control-plane/bff && python3 -m pytest -q test_bff_pm12_portfolio_book_contract.py
+# 46 passed, 4 deprecation warnings
+```
+
+Non-blocking observation: `grep -rn "runtime_truth_reconciler\|RuntimeTruthReconciler\|formal_attribution_allowed" services/control-plane/bff --include="*.py"` (excluding tests) returns nothing. The reconciler is a
+standalone, read-only offline tool; it is not wired into the live Portfolio
+Book request path. That is consistent with the stated design ("does not
+write another service's store"), but the fail-closed attribution guarantee
+in this task's acceptance list is enforced only inside the reconciler's own
+report today, not inside the hosted BFF response. Flagging for a follow-up
+task rather than blocking this one on it, since the task brief scopes this
+component as a read-only reconciler, not a live gate.
+
+### Hosted Evidence Gate — still not met
+
+Per `review_contract.approval_forbidden_without` and the checklist's own
+instruction ("stale evidence, or evidence from a different deployed SHA is a
+request-changes verdict"):
+
+- **`deployed_sha_ancestry`** — **FAIL**. The dev BFF's last *successful*
+  `nonprod-deploy.yml` run (`databaseId 29136741018`, 2026-07-11T02:40:42Z)
+  deployed `headSha b178a2e389b13eda8c781056267b90380b096290`, which predates
+  every commit on this task. Every deploy attempt since
+  (`29137282519` through `29150833910`, 03:00–11:22 UTC) failed with the same
+  error: `[remote-deploy] ERROR: managed deploy worktree is dirty; refusing
+  deploy without --allow-dirty` — a stray `.dockerignore` change on the
+  remote VM's managed worktree, unrelated to this task's diff.
+- **`authenticated_api_capture`**, **`desktop_and_mobile_hosted_evidence`**,
+  **`ui_to_api_count_and_label_comparison`**, **`console_and_network_failure_counts`**
+  — **NOT CHECKED**. None can be captured truthfully while the dev BFF is
+  still serving a pre-task build.
+- This matches `review_contract.request_changes_when: tested_sha_differs_from_deployed_sha`
+  exactly — the tested/merged SHA and the currently-deployed SHA are
+  different builds.
+
+### Verdict (Round 2)
+
+**`REQUEST_CHANGES`** — not a code rework request. The reconciler and its
+tests pass independent sampling at the source level; no further changes to
+`services/runtime-manager` are required by this review. The remaining gate
+is infrastructure: `nonprod-deploy.yml` cannot ship `18d064477` to the dev
+BFF until the dev VM's managed deploy worktree is cleaned (or the deploy is
+re-run with an explicit, reviewed `--allow-dirty` decision) — this sits
+outside this task's `services/` code scope and outside the `Claude`
+execution/control-plane/governance-review lane. Once the dev BFF serves a
+build with `18d064477` as an ancestor, capture the authenticated Portfolio
+Book before/after counts, desktop + mobile screenshots, and console/network
+failure counts called for by `REVIEWER_CHECKLIST.md`, attach them under
+`docs/deployment/evidence`, and resubmit for review.
+
+### Verification Performed By This Round
+
+```bash
+git fetch origin dev task/MGMT-OPS-003-GAP-002
+git merge-base --is-ancestor HEAD origin/dev   # confirms merge ancestry
+gh pr list --search "MGMT-OPS-003-GAP-002" --state all --json number,mergedAt,headRefName,baseRefName
+gh run list --workflow=nonprod-deploy.yml --limit 10 --json databaseId,status,conclusion,createdAt,headSha,event
+gh run view 29150833910 --log-failed
+curl -sS https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/healthz
+cd services/runtime-manager && python3 -m pytest -q test_runtime_truth_reconciler.py
+cd services/control-plane/bff && python3 -m pytest -q test_bff_pm12_portfolio_book_contract.py
+grep -rn "runtime_truth_reconciler\|RuntimeTruthReconciler\|formal_attribution_allowed" services/control-plane/bff --include="*.py"
+```
