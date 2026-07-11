@@ -73,6 +73,10 @@ operation.
 After review, the parent owner decides whether to absorb this checkpoint or
 pause further sidecar dispatch until material implementation evidence exists.
 
+### Record of Decision (Antigravity)
+- **Decision:** Absorb this checkpoint and pause further sidecar dispatch until material parent implementation evidence (clean parent rebuild) exists.
+- **Rationale:** Remote branch `origin/task/MGMT-PERF-IA-002` remains at commit `d0d4d0497` and contains contaminated history. No clean rebuild branch or focused PR based on current `origin/dev` tip has been pushed yet. Confirming this no-material-delta checkpoint is appropriate to align the sidecar lifecycle.
+
 ## 5. Sidecar Verification
 
 ```bash
