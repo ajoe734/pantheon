@@ -26,6 +26,98 @@ IDENTITY_FIELDS = (
 )
 
 
+def _record_id(record: Mapping[str, Any], *fields: str) -> str | None:
+    for field in fields:
+        value = _clean(record.get(field))
+        if value:
+            return value
+    return None
+
+
+def _identity_view(source: Mapping[str, Any]) -> dict[str, Any]:
+    """Translate canonical service field names into reconciliation identity."""
+    return {
+        "persona_id": source.get("persona_id"),
+        "deployment_plan_id": source.get("deployment_plan_id") or source.get("plan_id"),
+        "artifact_id": source.get("artifact_id"),
+        "strategy_id": source.get("strategy_id") or source.get("strategy_ref"),
+        "broker_id": source.get("broker_id") or source.get("broker") or source.get("broker_ref"),
+        "capital_scope_kind": (
+            source.get("capital_scope_kind")
+            or source.get("deployment_stage")
+            or source.get("deployment_mode")
+            or source.get("target_stage")
+        ),
+        "capital_scope_id": (
+            source.get("capital_scope_id")
+            or source.get("capital_pool_id")
+            or source.get("pool_id")
+            or source.get("target_pool_id")
+        ),
+    }
+
+
+def build_reconciliation_rows(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Join authoritative hosted source captures without suppressing runtimes.
+
+    ``runtime_bindings`` is deliberately the driving table. Missing plan,
+    persona-binding, pool, or telemetry records therefore remain represented
+    and are quarantined by the reconciler rather than disappearing from counts.
+    """
+    runtimes = list(snapshot.get("runtime_bindings") or [])
+    plans = list(snapshot.get("deployment_plans") or [])
+    persona_bindings = list(snapshot.get("persona_capital_bindings") or snapshot.get("bindings") or [])
+    pools = list(snapshot.get("capital_pools") or [])
+    telemetry = list(snapshot.get("telemetry_summaries") or [])
+    plans_by_id = {_record_id(x, "plan_id", "id"): x for x in plans if _record_id(x, "plan_id", "id")}
+    bindings_by_id = {
+        _record_id(x, "persona_capital_binding_id", "binding_id", "id"): x
+        for x in persona_bindings
+        if _record_id(x, "persona_capital_binding_id", "binding_id", "id")
+    }
+    pools_by_id = {_record_id(x, "capital_pool_id", "pool_id", "id"): x for x in pools if _record_id(x, "capital_pool_id", "pool_id", "id")}
+    telemetry_by_runtime = {_record_id(x, "runtime_id", "id"): x for x in telemetry if _record_id(x, "runtime_id", "id")}
+
+    rows: list[dict[str, Any]] = []
+    for runtime in runtimes:
+        runtime_id = _record_id(runtime, "runtime_id", "id", "binding_id")
+        plan_id = _record_id(runtime, "deployment_plan_id", "plan_id")
+        plan = plans_by_id.get(plan_id, {})
+        binding_id = _record_id(runtime, "persona_capital_binding_id")
+        if not binding_id:
+            binding_ids = plan.get("binding_ids") if isinstance(plan.get("binding_ids"), list) else []
+            binding_id = _clean(binding_ids[0]) if binding_ids else None
+        persona_binding = bindings_by_id.get(binding_id, {})
+        pool_id = (
+            _record_id(runtime, "capital_scope_id", "capital_pool_id", "pool_id")
+            or _record_id(plan, "capital_scope_id", "capital_pool_id", "target_pool_id", "pool_id")
+            or _record_id(persona_binding, "capital_scope_id", "capital_pool_id", "pool_id")
+        )
+        pool = pools_by_id.get(pool_id, {})
+        telemetry_row = telemetry_by_runtime.get(runtime_id, {})
+        binding = {
+            **_identity_view(runtime),
+            "runtime_binding_id": _record_id(runtime, "runtime_binding_id", "binding_id", "id"),
+        }
+        rows.append({
+            "runtime_id": runtime_id,
+            "binding": binding,
+            "runtime": _identity_view(runtime),
+            "deployment_plan": _identity_view(plan),
+            "persona_capital_binding": _identity_view(persona_binding),
+            "capital_pool": _identity_view(pool),
+            "telemetry": {"runtime_id": telemetry_row.get("runtime_id"), **_identity_view(telemetry_row), **({"stale": True} if telemetry_row.get("stale") is True or telemetry_row.get("telemetry_stale") is True else {})} if telemetry_row else {},
+            "evidence_refs": [
+                f"runtime_binding:{_record_id(runtime, 'runtime_binding_id', 'binding_id', 'id') or 'missing'}",
+                f"deployment_plan:{plan_id or 'missing'}",
+                f"persona_capital_binding:{binding_id or 'missing'}",
+                f"capital_pool:{pool_id or 'missing'}",
+                f"telemetry_runtime:{runtime_id or 'missing'}",
+            ],
+        })
+    return rows
+
+
 def _clean(value: Any) -> str | None:
     value = str(value or "").strip()
     return value or None

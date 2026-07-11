@@ -1,6 +1,6 @@
 import json
 
-from runtime_truth_reconciler import RuntimeTruthReconciler
+from runtime_truth_reconciler import RuntimeTruthReconciler, build_reconciliation_rows
 
 
 def _complete(runtime_id="runtime-1"):
@@ -67,3 +67,37 @@ def test_replay_is_idempotent_and_writes_one_audit_entry(tmp_path):
     assert second.run_id == first.run_id
     assert len(audit.read_text().splitlines()) == 1
     assert json.loads(audit.read_text())["summary"]["input_count"] == 1
+
+
+def test_hosted_source_join_keeps_unresolved_runtime_visible(tmp_path):
+    snapshot = {
+        "runtime_bindings": [
+            {"binding_id": "rb-good", "runtime_id": "rt-good", "plan_id": "plan-1", "persona_capital_binding_id": "pcb-1", "artifact_id": "art-1", "strategy_id": "strat-1", "broker_id": "paper-broker", "deployment_mode": "paper", "capital_pool_id": "pool-1"},
+            {"binding_id": "rb-gap", "runtime_id": "rt-gap", "plan_id": "plan-missing"},
+        ],
+        "deployment_plans": [{"plan_id": "plan-1", "persona_id": "persona-1", "artifact_id": "art-1", "strategy_id": "strat-1", "broker_id": "paper-broker", "target_stage": "paper", "capital_pool_id": "pool-1"}],
+        "persona_capital_bindings": [{"binding_id": "pcb-1", "persona_id": "persona-1", "strategy_id": "strat-1", "capital_pool_id": "pool-1"}],
+        "capital_pools": [{"pool_id": "pool-1"}],
+        "telemetry_summaries": [{"runtime_id": "rt-good", "plan_id": "plan-1", "persona_id": "persona-1", "artifact_id": "art-1", "strategy_id": "strat-1", "broker_id": "paper-broker", "deployment_stage": "paper", "capital_pool_id": "pool-1"}],
+    }
+    rows = build_reconciliation_rows(snapshot)
+    assert [row["runtime_id"] for row in rows] == ["rt-good", "rt-gap"]
+    report = RuntimeTruthReconciler(tmp_path / "audit.jsonl").reconcile(rows)
+    gap = report.records[1]
+    assert gap["disposition"] == "quarantined"
+    assert "missing_persona_binding" in gap["after_issue_codes"]
+    assert gap["evidence_refs"][-1] == "telemetry_runtime:rt-gap"
+
+
+def test_hosted_source_join_marks_stale_telemetry_fail_closed(tmp_path):
+    row = _complete("rt-stale")
+    snapshot = {
+        "runtime_bindings": [{"binding_id": "rb-1", "runtime_id": "rt-stale", **row["runtime"]}],
+        "deployment_plans": [{"plan_id": "plan-1", **row["deployment_plan"]}],
+        "persona_capital_bindings": [{"binding_id": "pcb-1", **row["persona_capital_binding"]}],
+        "capital_pools": [{"pool_id": "ledger-1"}],
+        "telemetry_summaries": [{**row["telemetry"], "telemetry_stale": True}],
+    }
+    record = RuntimeTruthReconciler(tmp_path / "audit.jsonl").reconcile(build_reconciliation_rows(snapshot)).records[0]
+    assert "stale_telemetry" in record["after_issue_codes"]
+    assert record["formal_attribution_allowed"] is False
