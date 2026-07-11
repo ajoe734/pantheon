@@ -20,7 +20,8 @@ governance behavior, registry state, or frontend source.
 The parent resume gate remains unmet:
 
 - current `origin/dev` and this task branch are
-  `7589f28e91312de429f9ddd25a99b3917b3a5c8b`;
+  `68b15b62d172d10fefd4b91f7296a8b36ff6c2da` and
+  `a7dccf559cffa81cdc906702ee7b7526ec7ec00e`, respectively;
 - `origin/task/MGMT-PERF-IA-002` remains
   `d0d4d0497d6f2fc81161e82301fa9c8e48f5a65c`;
 - parent PR `#3127` remains open at that contaminated head;
