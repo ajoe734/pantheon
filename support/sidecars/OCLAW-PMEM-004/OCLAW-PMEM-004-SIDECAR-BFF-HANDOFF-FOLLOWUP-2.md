@@ -1,12 +1,12 @@
 # OCLAW-PMEM-004 BFF Handoff Follow-up 2
 
-**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`  
-**Parent Task**: `OCLAW-PMEM-004`  
-**Parent Owner**: `Claude2`  
-**Sidecar Owner**: `Codex2`  
-**Sidecar Reviewer**: `Antigravity`  
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-07-11  
+**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`
+**Parent Task**: `OCLAW-PMEM-004`
+**Parent Owner**: `Claude2`
+**Sidecar Owner**: `Codex2`
+**Sidecar Reviewer**: `Claude`
+**Helper Kind**: `bff_handoff_packet`
+**Generated**: 2026-07-11
 **Mutates Canonical**: `no`
 
 This follow-up is support material for the parent owner. It validates concrete
@@ -147,6 +147,20 @@ This packet does not claim that dependencies are complete, that the current BFF
 memory response is canonical, that provider auth proves live usability, or that
 frontend work is implemented or deployed. `Claude2`, as parent owner, decides
 whether to absorb these findings and owns all canonical/runtime changes.
-`Antigravity` should review this sidecar only for handoff accuracy, support-only
-scope, Memory Plane authority, and the prohibition against mount/auth/reauth
-being treated as usability proof.
+`Claude` approved this sidecar after checking its route and function claims
+against the current BFF code and confirming the diff remains support-only.
+The parent owner still decides whether to absorb the packet; approval does not
+promote this sketch into canonical Memory Plane or BFF contract truth.
+
+## 7. Closeout Evidence
+
+Owner finalization rechecked the approved packet on 2026-07-11 with:
+
+- `git diff --check origin/dev...HEAD`
+- focused source searches for the persona-memory, runtime-profile, provider
+  readiness/usage, and reauth integration points named above
+- `git diff --name-status origin/dev...HEAD` to confirm only task-scoped support
+  artifacts changed
+
+Reviewer findings are preserved in
+`support/reviews/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2-review-claude.md`.
