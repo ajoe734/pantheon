@@ -23904,8 +23904,34 @@ async def bff_list_capital_pools(
     _require_read_role(identity)
     snapshot_at = utc_now()
     pools = read_store.list_capital_pools(status=status, risk_policy_ref=risk_policy_ref)
-    total = len(pools)
-    page_items, next_page_token = _page_slice(pools, page_token, page_size)
+    bindings = read_store.list_bindings() or []
+    bindings_by_pool: Dict[str, List[Dict[str, Any]]] = {}
+    for binding in bindings:
+        pool_id = str(binding.get("capital_pool_id") or "").strip()
+        if pool_id:
+            bindings_by_pool.setdefault(pool_id, []).append(binding)
+    normalized_pools = []
+    for pool in pools:
+        pool_id = str(pool.get("pool_id") or pool.get("id") or "").strip()
+        summaries = []
+        for binding in bindings_by_pool.get(pool_id, []):
+            summaries.append({
+                "binding_id": binding.get("binding_id") or binding.get("id"),
+                "persona_id": binding.get("persona_id"),
+                "capital_sleeve_id": _persona_fleet_record_value(
+                    binding, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+                ),
+                "current_weight": _persona_fleet_record_value(
+                    binding, "current_weight", "currentWeight", "allocation_weight", "weight"
+                ),
+                "target_weight": _persona_fleet_record_value(binding, "target_weight", "targetWeight"),
+                "binding_state": _persona_fleet_record_value(
+                    binding, "binding_state", "bindingState", "status", "validity"
+                ) or "unknown",
+            })
+        normalized_pools.append({**pool, "persona_binding_summaries": summaries, "persona_binding_count": len(summaries)})
+    total = len(normalized_pools)
+    page_items, next_page_token = _page_slice(normalized_pools, page_token, page_size)
     return {
         "data": page_items,
         "items": page_items,
@@ -55861,6 +55887,87 @@ def _persona_fleet_paper_ledger(
     return out
 
 
+def _persona_fleet_capital_binding_projection(
+    *,
+    persona_id: str,
+    capital_mode: str,
+    deployment_stage: Any,
+    paper_ledger_id: Optional[str],
+    live_pool_id: Optional[str],
+    binding: Dict[str, Any],
+    runtime: Dict[str, Any],
+    league_entry: Dict[str, Any],
+    raw_metadata: Dict[str, Any],
+    context_metadata: Dict[str, Any],
+) -> Dict[str, Any]:
+    stage = str(deployment_stage or capital_mode or "none").strip().lower() or "none"
+    sleeve_id = None
+    if capital_mode in {"canary", "live"}:
+        sleeve_id = _persona_fleet_record_value(
+            league_entry, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+        ) or _persona_fleet_record_value(
+            raw_metadata, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+        ) or _persona_fleet_record_value(
+            context_metadata, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+        ) or _persona_fleet_record_value(
+            binding, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+        ) or _persona_fleet_record_value(
+            runtime, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+        )
+    sleeve_id = str(sleeve_id or "").strip() or None
+
+    def optional_weight(*keys: str) -> Optional[float]:
+        for record in (league_entry, binding, runtime, raw_metadata, context_metadata):
+            value = _persona_fleet_record_value(record, *keys)
+            if value in (None, "") or isinstance(value, bool):
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    current_weight = optional_weight("current_weight", "currentWeight", "allocation_weight", "weight")
+    target_weight = optional_weight("target_weight", "targetWeight", "proposed_weight")
+    raw_state = _persona_fleet_record_value(binding, "binding_state", "bindingState", "status", "validity")
+    if not raw_state:
+        raw_state = "isolated" if capital_mode == "paper" and paper_ledger_id else "missing"
+    binding_state = str(raw_state).strip().lower() or "missing"
+    if capital_mode == "paper":
+        scope = "paper_ledger"
+        scope_id = paper_ledger_id
+    elif sleeve_id:
+        scope = "canary_sleeve" if capital_mode == "canary" else "live_sleeve"
+        scope_id = sleeve_id
+    elif live_pool_id:
+        scope = "capital_pool"
+        scope_id = live_pool_id
+    else:
+        scope = "unbound"
+        scope_id = None
+    return {
+        "stage": stage,
+        "capital_scope": scope,
+        "capital_scope_id": scope_id,
+        "capital_sleeve_id": sleeve_id,
+        "current_weight": current_weight,
+        "target_weight": target_weight,
+        "binding_state": binding_state,
+        "capital_binding": {
+            "persona_id": persona_id,
+            "stage": stage,
+            "scope": scope,
+            "scope_id": scope_id,
+            "paper_ledger_id": paper_ledger_id,
+            "capital_pool_id": live_pool_id,
+            "capital_sleeve_id": sleeve_id,
+            "current_weight": current_weight,
+            "target_weight": target_weight,
+            "state": binding_state,
+        },
+    }
+
+
 def _persona_fleet_runtime_binding_id(
     *,
     runtime_id: Any,
@@ -56231,6 +56338,18 @@ def _project_persona_fleet_list_row(
         artifact_ids=artifact_ids,
         incident_ids=incident_ids,
     )
+    capital_binding_projection = _persona_fleet_capital_binding_projection(
+        persona_id=persona_id,
+        capital_mode=capital_mode,
+        deployment_stage=deployment_stage,
+        paper_ledger_id=paper_ledger_id,
+        live_pool_id=live_pool_id,
+        binding=binding,
+        runtime=runtime,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata=context_metadata,
+    )
 
     return {
         "id": persona_id,
@@ -56258,6 +56377,7 @@ def _project_persona_fleet_list_row(
         "market_scope": market_scope,
         "asset_classes": list(context_metadata.get("asset_classes") or []),
         "capital_mode": capital_mode,
+        **capital_binding_projection,
         "paper_ledger_id": paper_ledger_id,
         "paperLedgerId": paper_ledger_id,
         "paper_ledger": paper_ledger,
