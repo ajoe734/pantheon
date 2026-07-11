@@ -1,9 +1,9 @@
 # MGMT-OPS-003-GAP-004 BFF / Frontend Handoff Follow-up 2
 
-Task: `MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`  
-Parent: `MGMT-OPS-003-GAP-004`  
-Owner: Codex  
-Reviewer: Codex2  
+Task: `MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`
+Parent: `MGMT-OPS-003-GAP-004`
+Owner: Codex
+Reviewer: Codex2
 Kind: support-only `bff_handoff_packet`
 
 ## Scope Boundary
