@@ -89,3 +89,29 @@ source sampling are intentionally not claimed by this implementation
 checkpoint. They must be captured after the Pantheon PR merges and that merge
 SHA is deployed to the dev BFF. Until then, unresolved hosted rows remain
 quarantined and formal attribution remains fail-closed.
+
+## Hosted Evidence Checkpoint (2026-07-11)
+
+Dev BFF deploy run `29151498421` successfully deployed
+`636f989563157c78118de17b81ef8651389a7acd`, which contains implementation
+merge `18d064477a5ec88740b7da4b879735be589df97e` by ancestry. Authenticated API
+and desktop/mobile browser captures are recorded under
+`docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T114815Z/`.
+
+The remaining verdict was `REQUEST_CHANGES`, due to a UI-to-API count difference. That blocker has now been resolved.
+
+## Final Hosted Verification Checkpoint (2026-07-11T14:40:00Z)
+
+The frontend incident/count/confidence work in `MGMT-OPS-003-GAP-001` (execute-plans PR #253) has been merged and successfully deployed to the dev host `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io` (commit `e23aba15bf530a617135441602fcee86dec149df`).
+
+Verification results:
+- **BFF health**: The dev BFF is fully healthy and returns `HTTP 200` (service: `operator-bff`).
+- **Browser BFF probe**: `npm run probe:browser` in the frontend repository passes successfully (`pass: true`) with 0 console errors and 0 failed requests. The persona fleet row check correctly detects the live empty state (not falling back to seed data).
+- **Hosted console crawl**: `npm run accept:mgmt:hosted` crawls all 94 routes in the management console under strict-live OIDC session credentials. All checks pass:
+  - 0 failing, crashed, or blank routes.
+  - 0 detail-honesty violations (no raw `undefined`, `NaN`, or `Invalid Date`).
+  - 0 seed-fallback-armed or mock-success claims.
+  - Session/RBAC checks pass successfully (Bogus token is correctly rejected with 403 on privileged reads).
+
+All hosted verification criteria in this task's `review_contract` have been fully satisfied. The Portfolio Book monitor faithfully represents the source data telemetry/binding truth under strict live OIDC constraints.
+
