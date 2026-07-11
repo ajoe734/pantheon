@@ -39863,6 +39863,11 @@ async def bff_create_persona(
     capital_mode = _persona_create_validate_paper_only(payload)
     refs = _persona_create_paper_refs(persona_id, payload)
     lifecycle_state = "paper_running"
+    market = str(payload.get("market") or "").strip().upper()
+    required_data_sources = payload.get("required_data_sources") or payload.get("requiredDataSources")
+    if not required_data_sources and market:
+        from read_store import _market_persona_required_data_sources
+        required_data_sources = _market_persona_required_data_sources({"market": market})
     # Real persona identity + trading-character traits — these flow to the
     # persona's OpenClaw agent SOUL (integrations/openclaw/persona_agent_sync).
     mandate = str(payload.get("mandate") or "").strip() or None
@@ -39950,6 +39955,7 @@ async def bff_create_persona(
             "created_at": snapshot_at,
             "updated_at": snapshot_at,
             "created_by": owner,
+            "required_data_sources": json.loads(json.dumps(required_data_sources or [])),
             "metadata": {
                 **persona_metadata,
                 "owner": owner,
@@ -39971,6 +39977,7 @@ async def bff_create_persona(
             strategy_family=strategy_family,
             traits=traits,
             metadata=persona_metadata,
+            required_data_sources=required_data_sources,
         )
         read_store.create_persona_binding(
             binding_id=refs["binding_id"],
@@ -40079,6 +40086,22 @@ async def bff_create_persona(
     }
     _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
+
+
+@app.post("/bff/management/personas/create-paper-bundle", status_code=201)
+async def bff_create_paper_persona_bundle(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: Create paper persona bundle (atomically creates persona + paper ledger + paper runtime binding + deployment plan)."""
+    return await bff_create_persona(
+        payload=payload,
+        authorization=authorization,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
 
 
 @app.get("/bff/personas/{persona_id}")
