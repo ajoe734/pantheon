@@ -1,7 +1,7 @@
 # OCLAW-PMEM-004 - BFF And Management Runtime Surfaces
 
-Owner: Claude2
-Reviewer: Codex
+Owner: Codex
+Reviewer: Claude
 Parent: `OCLAW-PMEM-000`
 Depends on: `OCLAW-PMEM-002`, `OCLAW-PMEM-003`
 
@@ -35,3 +35,33 @@ a missing read-store method instead of the Memory Plane.
   readiness after completion.
 - Tests cover BFF DTOs, degraded Memory Plane, failed provider smoke, and UI
   rendering for codex/claude/openclaw states.
+
+## Delivered BFF surfaces
+
+- `GET /bff/personas/{persona_id}/memory` retrieves through the canonical
+  Memory Plane `/api/memory/retrieve` contract. It does not fall back to BFF
+  snapshots or workspace files and returns an operator-safe `memory_source`
+  reason when the Memory Plane is unconfigured, denied, unavailable, or
+  returns an invalid response.
+- `GET /bff/assistant/providers/usage-summary` separates provider auth,
+  provider live-smoke proof, provider-reported quota source, BFF-observed
+  usage, and reauth state. Readiness explicitly records that mount readiness
+  is not sufficient provider proof.
+- Persona runtime profiles expose runtime routing and memory materialization
+  metadata independently of provider authentication state.
+
+The execute-plans rendering layer remains a cross-repository composition
+boundary. This Pantheon task delivers and verifies the BFF DTOs consumed by
+that layer; it does not materialize frontend source inside this repository.
+
+## Verification evidence
+
+Run on 2026-07-11 from `task/OCLAW-PMEM-004`:
+
+```text
+pytest -q services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py \
+  services/control-plane/bff/tests/test_management_nl_assistant_provider.py -q
+```
+
+Result: all selected tests passed. The only output was the existing FastAPI
+`on_event` deprecation warning.
