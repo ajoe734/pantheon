@@ -222,28 +222,44 @@ def test_zero_rebalance_and_formula_rows() -> None:
 def test_explicit_source_states_and_freshness() -> None:
     """Verify metadata carries explicit source states, freshness, coverage, and observed time."""
     store = _fresh_store(allow_local_snapshot_fallback=True)
+    
+    # Seed a persona to make sure performance-attribution endpoint doesn't fail 
+    store.create_persona(
+        persona_id="persona-test-1",
+        name="Test Persona 1",
+        actor_id="tester",
+        lifecycle_state="deployed",
+        metadata={},
+    )
+    
+    endpoints = [
+        ("/bff/management/quarterly-ranking", {"quarter": "2026-Q1"}),
+        ("/bff/management/performance-attribution", {}),
+        ("/bff/management/persona-league/rankings", {}),
+    ]
+    
     with _client_with_store(store) as client:
-        response = client.get(
-            "/bff/management/quarterly-ranking",
-            headers=HEADERS,
-            params={"quarter": "2026-Q1"}
-        )
-        assert response.status_code == 200, response.text
-        body = response.json()
-        meta = body["meta"]
-        assert "snapshot_at" in meta
-        assert "surfaces" in meta
-        
-        # Check source surfaces details
-        surfaces = meta["surfaces"]
-        assert "quarterly_ranking" in surfaces
-        
-        # Verify freshness, coverage, missing_bindings, and observed_time contract
-        for name, surface in surfaces.items():
-            assert "status" in surface
-            assert "observed_time" in surface
-            assert "freshness" in surface
-            assert "coverage" in surface
-            assert "missing_bindings" in surface
-            assert isinstance(surface["coverage"], float)
-            assert isinstance(surface["missing_bindings"], bool)
+        for path, params in endpoints:
+            response = client.get(
+                path,
+                headers=HEADERS,
+                params=params,
+            )
+            assert response.status_code == 200, f"Failed on {path}: {response.text}"
+            body = response.json()
+            meta = body["meta"]
+            assert "snapshot_at" in meta
+            assert "surfaces" in meta
+            
+            surfaces = meta["surfaces"]
+            assert len(surfaces) > 0, f"No surfaces returned for {path}"
+            
+            # Verify freshness, coverage, missing_bindings, and observed_time contract
+            for name, surface in surfaces.items():
+                assert "status" in surface, f"Missing status in {name} of {path}"
+                assert "observed_time" in surface, f"Missing observed_time in {name} of {path}"
+                assert "freshness" in surface, f"Missing freshness in {name} of {path}"
+                assert "coverage" in surface, f"Missing coverage in {name} of {path}"
+                assert "missing_bindings" in surface, f"Missing missing_bindings in {name} of {path}"
+                assert isinstance(surface["coverage"], float), f"coverage in {name} of {path} is not float"
+                assert isinstance(surface["missing_bindings"], bool), f"missing_bindings in {name} of {path} is not bool"

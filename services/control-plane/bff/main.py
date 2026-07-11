@@ -6297,12 +6297,6 @@ def _dataset_surface_status(
             {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
         )
 
-    # Normalize state properties: freshness, coverage, missing_bindings, observed_time
-    surface["observed_time"] = snapshot_at or utc_now()
-    surface["freshness"] = surface.get("staleness", {}).get("served_from") or source or "unknown"
-    surface["coverage"] = 1.0 if has_data is not False and source not in ("missing", "unavailable") else 0.0
-    surface["missing_bindings"] = True if has_data is False or source == "missing" else False
-
     return surface
 
 
@@ -6319,10 +6313,6 @@ def _composed_dataset_surface_status(
             "status": "ok",
             "source": source,
             "note": "Composed from governed market-persona read-model defaults.",
-            "observed_time": snapshot_at or utc_now(),
-            "freshness": source,
-            "coverage": 1.0,
-            "missing_bindings": False,
         }
     return surface
 
@@ -6403,13 +6393,27 @@ def _composed_surface_status(
             {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
         )
 
-    # Normalize state properties
-    surface["observed_time"] = snapshot_at or utc_now()
-    surface["freshness"] = surface.get("staleness", {}).get("served_from") or "bff_composed"
-    surface["coverage"] = 1.0 if available else 0.0
-    surface["missing_bindings"] = not available
-
     return surface
+
+
+def _performance_ranking_source_surface(
+    surface: Dict[str, Any],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    """Add the cross-center confidence vocabulary without changing global envelopes."""
+    normalized = dict(surface)
+    source = str(normalized.get("source") or "unknown")
+    status = str(normalized.get("status") or "unavailable")
+    normalized["observed_time"] = snapshot_at
+    normalized["freshness"] = (
+        normalized.get("staleness", {}).get("served_from")
+        if isinstance(normalized.get("staleness"), dict)
+        else None
+    ) or source
+    normalized["coverage"] = 0.0 if status == "unavailable" or source == "missing" else 1.0
+    normalized["missing_bindings"] = status == "unavailable" or source == "missing"
+    return normalized
 
 
 def _extract_ids_from_item(item: Dict[str, Any], keys: List[str]) -> List[str]:
@@ -43622,8 +43626,11 @@ async def bff_management_persona_league_rankings(
         "meta": {
             "snapshot_at": snapshot_at,
             "surfaces": {
-                "persona_league_rankings": rankings_surface,
-                **source_surfaces,
+                name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+                for name, surface in {
+                    "persona_league_rankings": rankings_surface,
+                    **source_surfaces,
+                }.items()
             },
             "composition_sources": [
                 "GET /bff/management/persona-league",
@@ -43986,6 +43993,16 @@ async def bff_management_quarterly_ranking(
         unavailable_message="Quarterly ranking aggregate unavailable.",
         degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
     )
+    quarterly_surfaces = {
+        name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+        for name, surface in {
+            "quarterly_ranking": quarterly_surface,
+            "formula": formula_surface,
+            "evidence_refs": evidence_surface,
+            "knowledge_evidence": evidence_surface,
+            **source_surfaces,
+        }.items()
+    }
     top_item = ranked_items[0] if ranked_items else None
     summary = {
         "quarter": quarter_window["quarter"],
@@ -44016,13 +44033,7 @@ async def bff_management_quarterly_ranking(
         },
         "meta": {
             **_snapshot_meta(snapshot_at),
-            "surfaces": {
-                "quarterly_ranking": quarterly_surface,
-                "formula": formula_surface,
-                "evidence_refs": evidence_surface,
-                "knowledge_evidence": evidence_surface,
-                **source_surfaces,
-            },
+            "surfaces": quarterly_surfaces,
             "composition_sources": [
                 "GET /bff/management/persona-league",
                 "GET /bff/management/persona-league/rankings",
@@ -44446,11 +44457,14 @@ def _pm12_performance_attribution_response(
         degraded_message="Performance attribution is degraded because one or more source surfaces are degraded.",
     )
     surfaces = {
-        surface_key: attribution_surface,
-        **source_surfaces,
+        name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+        for name, surface in {
+            surface_key: attribution_surface,
+            **source_surfaces,
+        }.items()
     }
     if surface_key != "performance_attribution":
-        surfaces["performance_attribution"] = attribution_surface
+        surfaces["performance_attribution"] = _performance_ranking_source_surface(attribution_surface, snapshot_at=snapshot_at)
     summary = {
         "period": period_key,
         "dimensions": dimensions,
