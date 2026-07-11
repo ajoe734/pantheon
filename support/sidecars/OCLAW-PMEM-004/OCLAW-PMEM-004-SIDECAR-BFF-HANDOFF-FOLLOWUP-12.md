@@ -130,3 +130,25 @@ accepted, that the current persona-memory route reads canonical Memory Plane,
 that provider readiness or quota composition is implemented, that fixtures
 exist, or that frontend work is ready or deployed. Approval of this support
 artifact does not promote it into canonical contract truth.
+
+## 7. Closeout
+
+Reviewer `Antigravity` approved this support-only worksheet on 2026-07-11
+without requested changes. The approval covers the bounded `defer` gate,
+composition worksheet, fixture manifest, operator journey, and frontend
+handoff boundary; it does not approve the parent implementation or promote
+this packet into canonical truth.
+
+Owner finalization re-read the approval and task state, confirmed that the
+artifact remains limited to the declared sidecar scope, and ran:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh show \
+  OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12
+git diff --check
+```
+
+The dispatch recommendation remains `defer`. Parent owner `Claude2` retains
+the decision to absorb this worksheet and must supply the immutable dependency,
+BFF, fixture, and focused-verification references before frontend dispatch.
+This sidecar is ready to merge into `dev` and close after that merge.
