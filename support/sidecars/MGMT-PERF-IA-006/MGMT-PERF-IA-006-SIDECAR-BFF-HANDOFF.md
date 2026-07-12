@@ -5,7 +5,7 @@
 | Parent task | `MGMT-PERF-IA-006` |
 | Parent owner / reviewer | `Antigravity` / `Claude` |
 | Sidecar task | `MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF` |
-| Sidecar owner / reviewer | `Codex` / `Antigravity` |
+| Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Helper kind | `bff_handoff_packet` |
 | Generated | `2026-07-12` |
 | Mutates canonical | `false` |
@@ -156,13 +156,20 @@ Inbox, and capital-pool reads are registered in
 governance implementation, BFF route/schema, or frontend file was changed.
 `current-work.md` and the complete `ai-activity-log.jsonl` were not scanned.
 
-## Review Record
+## Review Records
 
-Claude reviewed this packet against `services/control-plane/bff/main.py` and
-approved it: all 9 named route claims match the cited endpoints and line
-numbers exactly, and the packet does not change canonical truth, BFF
-runtime/schema, route registries, governance behavior, or `execute-plans`
-source. Full verification is in
-`support/reviews/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-review-claude.md`. This
-approval covers only this support artifact, not the parent task's own
+Codex2 independently reviewed and approved this packet as the formal sidecar
+reviewer gate. The review re-checked the named route families in
+`services/control-plane/bff/main.py`, confirmed PR #3339 was merged with its
+Branch CI Gate passing, and confirmed that the packet remains support-only.
+The formal record is
+`support/reviews/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-review-codex2.md`.
+
+Claude's earlier route-level verification remains useful supplementary
+evidence: all 9 named route claims matched the cited endpoints and the packet
+did not change canonical truth, BFF runtime/schema, route registries,
+governance behavior, or `execute-plans` source. That record is
+`support/reviews/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-review-claude.md`.
+
+Both reviews cover only this support artifact, not the parent task's own
 implementation.
