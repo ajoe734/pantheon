@@ -44,3 +44,16 @@ route. Also confirm the running container has the Postgres backend selected and
 the startup log names `PostgresTradingRoomStore`. Record the identifier and
 deployed merge SHA here; until then, the implementation is merge-ready but the
 live restart proof remains an environment acceptance step.
+
+## Owner finalization
+
+Reviewer approval covers implementation commit `0f210d767` with no blocking
+findings. During owner closeout, the focused repository checks completed with
+`3 passed, 1 skipped`:
+
+- `python3 -m pytest -q services/control-plane/bff/agora/trading_room/test_postgres_store.py services/control-plane/bff/tests/test_agora_workshop_dev_deploy_config.py`
+- `git diff --check`
+
+The skipped case is the environment-gated Postgres integration proof described
+above; it does not convert the outstanding live restart evidence into a local
+claim.
