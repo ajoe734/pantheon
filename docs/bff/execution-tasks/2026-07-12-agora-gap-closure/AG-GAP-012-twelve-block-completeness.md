@@ -50,7 +50,7 @@ Aggregation logic:
 The contract is formally frozen under the additive `bundle_index.v1_6.json`:
 
 - **Schema File**: [winner_branch_completeness.schema.json](file:///tmp/pantheon-worker-worktrees/pantheon/ag-gap-012/services/control-plane/specs/agora/v7/winner_branch_completeness.schema.json)
-  - `sha256`: `b75845a7ea809aee0c895be2287018276d4cf88b7d7c0a65d8d6f5143c316eb9`
+  - `sha256`: `8a85739687f5a37865ef5ae954c263f239aea4b6928400edc7a67c2f66297f35`
 - **Capability Manifest**: [capability_manifest_v1_6.json](file:///tmp/pantheon-worker-worktrees/pantheon/ag-gap-012/services/control-plane/specs/agora/v7/capability_manifest_v1_6.json)
   - `sha256`: `cc55b8dc8d41ff5a4287ab19cd83df482377e7ead072f124242b903575bda1f0`
 - **Bundle Index**: [bundle_index.v1_6.json](file:///tmp/pantheon-worker-worktrees/pantheon/ag-gap-012/services/control-plane/specs/agora/bundle_index.v1_6.json)

@@ -38,8 +38,6 @@ def create_identity_router(
         _sem_agora_inbox_payload,
         _assistant_ask_enabled,
         _assistant_build_context_pack,
-        OpenClawOpsClient,
-        OpenClawOpsClientError,
         _agora_ask_deterministic_fallback,
         _agora_action_command,
     )
@@ -557,7 +555,7 @@ def create_identity_router(
                     main._ASSISTANT_SESSION_STORE.create(_asst_session)
 
             try:
-                _ops_client = OpenClawOpsClient()
+                _ops_client = main.OpenClawOpsClient()
                 if _ops_client.configured:
                     raw = _ops_client.invoke_assistant(
                         mode=str(payload.get("mode") or "user"),
@@ -575,7 +573,7 @@ def create_identity_router(
                         provider_status = "degraded"
                 else:
                     provider_status = "degraded"
-            except (OpenClawOpsClientError, Exception):  # noqa: BLE001
+            except (main.OpenClawOpsClientError, Exception):  # noqa: BLE001
                 provider_status = "degraded"
 
             # Emit ask.message.delta — includes provider answer or empty string when degraded
