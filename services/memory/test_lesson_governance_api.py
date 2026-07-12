@@ -371,3 +371,24 @@ def test_api_promotion_stage_bypass_repro(client: TestClient, monkeypatch) -> No
     assert "Promotion to live is blocked" in resp.json()["detail"]["message"]
 
 
+def test_api_create_candidate_fail_closed_canary_live(client: TestClient) -> None:
+    # 1. Reject target_env="canary" via API -> 422
+    payload_canary = make_valid_candidate_payload({"target_env": "canary"})
+    resp = client.post("/api/memory/trade-lessons", json=payload_canary)
+    assert resp.status_code == 422
+    assert "Cannot create candidate with target_env 'canary'" in resp.json()["detail"]["message"]
+
+    # 2. Reject target_env="live" via API -> 422
+    payload_live = make_valid_candidate_payload({"target_env": "live"})
+    resp = client.post("/api/memory/trade-lessons", json=payload_live)
+    assert resp.status_code == 422
+    assert "Cannot create candidate with target_env 'live'" in resp.json()["detail"]["message"]
+
+    # 3. Reject promotion_stage="canary_approved" via API -> 422
+    payload_stage = make_valid_candidate_payload({"promotion_stage": "canary_approved"})
+    resp = client.post("/api/memory/trade-lessons", json=payload_stage)
+    assert resp.status_code == 422
+    assert "Cannot create candidate with promotion_stage 'canary_approved'" in resp.json()["detail"]["message"]
+
+
+

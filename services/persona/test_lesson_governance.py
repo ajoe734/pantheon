@@ -348,3 +348,21 @@ def test_promotion_stage_governance_bypass_repro(governance_service: LessonGover
         )
 
 
+def test_create_candidate_fail_closed_canary_live(candidate_store: TradeLessonCandidateStore) -> None:
+    # 1. Reject target_env="canary"
+    invalid_canary = make_valid_candidate({"target_env": "canary"})
+    with pytest.raises(TradeLessonCandidateError, match="Cannot create candidate with target_env 'canary'"):
+        candidate_store.create(invalid_canary)
+
+    # 2. Reject target_env="live"
+    invalid_live = make_valid_candidate({"target_env": "live"})
+    with pytest.raises(TradeLessonCandidateError, match="Cannot create candidate with target_env 'live'"):
+        candidate_store.create(invalid_live)
+
+    # 3. Reject promotion_stage="canary_approved"
+    invalid_stage = make_valid_candidate({"promotion_stage": "canary_approved"})
+    with pytest.raises(TradeLessonCandidateError, match="Cannot create candidate with promotion_stage 'canary_approved'"):
+        candidate_store.create(invalid_stage)
+
+
+

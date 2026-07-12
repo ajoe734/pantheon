@@ -144,22 +144,18 @@ class TradeLessonCandidateStore:
         if "target_env" not in candidate:
             candidate["target_env"] = "paper"
 
-        # Derive stages server-side
-        env_to_stage = {
-            "paper": "proposed",
-            "canary": "canary_approved",
-            "live": "live_approved"
-        }
+        # Enforce fail-closed creation restriction: candidate can only be created with target_env="paper" and promotion_stage="proposed"
         target_env = candidate["target_env"]
-        if target_env not in env_to_stage:
-            raise TradeLessonCandidateError(f"Invalid target environment: {target_env}")
-        
-        expected_stage = env_to_stage[target_env]
-        if "promotion_stage" not in candidate:
-            candidate["promotion_stage"] = expected_stage
-        elif candidate["promotion_stage"] != expected_stage:
+        if target_env != "paper":
             raise TradeLessonCandidateError(
-                f"promotion_stage '{candidate['promotion_stage']}' does not match target_env '{target_env}'."
+                f"Cannot create candidate with target_env '{target_env}'. New candidates must start with target_env='paper'."
+            )
+
+        if "promotion_stage" not in candidate:
+            candidate["promotion_stage"] = "proposed"
+        elif candidate["promotion_stage"] != "proposed":
+            raise TradeLessonCandidateError(
+                f"Cannot create candidate with promotion_stage '{candidate['promotion_stage']}'. New candidates must start with promotion_stage='proposed'."
             )
 
         json_errors = validate_lesson_candidate_json(candidate)
