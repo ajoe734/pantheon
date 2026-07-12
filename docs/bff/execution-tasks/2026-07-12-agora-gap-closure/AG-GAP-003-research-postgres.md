@@ -35,6 +35,12 @@ AGORA_RESEARCH_TEST_POSTGRES_DSN=<postgres-dsn> python3 -m pytest -q \
 git diff --check
 ```
 
+Owner closeout recheck on 2026-07-12 ran the same focused suite against the
+merged `dev` composition: 9 passed and the 2 real-Postgres cases skipped
+because `AGORA_RESEARCH_TEST_POSTGRES_DSN` was not present in the worker
+environment. The reviewer-approved real-Postgres run remains the acceptance
+record for those cases (11 passed at `f277ba3e9`).
+
 ## Remaining acceptance evidence
 
 The hosted restart proof is intentionally post-merge. After the task PR is
