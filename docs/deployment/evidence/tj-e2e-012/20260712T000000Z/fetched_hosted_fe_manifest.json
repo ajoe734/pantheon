@@ -1,0 +1,15 @@
+{
+  "app": "execute-plans",
+  "environment": "pantheon-dev-fe",
+  "deployedAt": "20260712T203724Z",
+  "commit": "d335a0e70811b7d49fa630ddfe323e35929613b9",
+  "sourceRef": "d335a0e70811b7d49fa630ddfe323e35929613b9",
+  "sourceBranch": "dev",
+  "feHost": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "bffHost": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "buildMode": {
+    "VITE_BFF_MODE": "live",
+    "VITE_BFF_FALLBACK": "strict",
+    "VITE_BFF_REAL_WRITES": "false"
+  }
+}

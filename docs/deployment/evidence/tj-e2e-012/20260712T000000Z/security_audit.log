@@ -1,0 +1,14 @@
+  /bff/runtimes: no-auth=401 empty=401 bearer=200
+  /bff/strategies: no-auth=401 empty=401 bearer=200
+  /bff/personas: no-auth=401 empty=401 bearer=200
+  /bff/capital-pools: no-auth=401 empty=401 bearer=200
+  /bff/deployments: no-auth=401 empty=401 bearer=200
+  /bff/approvals: no-auth=401 empty=401 bearer=200
+  /bff/incidents: no-auth=401 empty=401 bearer=200
+  /bff/v5/loop-runs: no-auth=401 empty=401 bearer=200
+  /bff/v5/sentinel/findings: no-auth=401 empty=401 bearer=200
+  /api/v1/operator/runtime-state: no-auth=401 empty=401 bearer=200
+  /bff/artifacts: no-auth=401 empty=401 bearer=200
+
+== auth boundary over 11 protected endpoints ==
+OK: every protected endpoint rejects missing/empty credentials

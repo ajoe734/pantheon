@@ -1,0 +1,8 @@
+# Management List Contract Audit
+
+Total issues: 2
+
+| New | Severity | Category | Function | Route | Line | Evidence |
+|---|---|---|---|---|---:|---|
+|  | P1 | camel-snake-duplicate | `_persona_fleet_mutation_projection` | `` | 54747 | evolutionEntryId+evolution_entry_id, evolutionHref+evolution_href, lastMutationAt+last_mutation_at, lastMutationKind+last_mutation_kind, lastMutationLabel+last_mutation_label, mutationConfidence+mutation_confidence, mutationDiagnostics+mutation_diagnostics, mutationEntryId+mutation_entry_id |
+|  | P1 | camel-snake-duplicate | `bff_management_quarterly_ranking_recommendation_submit` | `/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit` | 42346 | liveCapitalMutation+live_capital_mutation, recommendationActionId+recommendation_action_id, recommendationId+recommendation_id |

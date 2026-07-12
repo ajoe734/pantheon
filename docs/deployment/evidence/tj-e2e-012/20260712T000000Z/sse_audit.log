@@ -1,0 +1,10 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0
+rootdir: /tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012
+configfile: pytest.ini
+plugins: anyio-4.13.0
+collected 3 items
+
+services/control-plane/bff/test_tj_e2e_007_sse_attention.py ...          [100%]
+
+============================== 3 passed in 1.39s ===============================
