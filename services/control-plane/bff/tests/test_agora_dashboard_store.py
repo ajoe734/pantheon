@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import concurrent.futures
 import logging
+import os
+import uuid
 
 import pytest
 
@@ -26,6 +29,46 @@ def test_memory_store_preserves_versions_and_compare_and_swap() -> None:
     assert store.append_version("rec-1", 1, _version(3, 1)) is False
     assert store.get_identity("rec-1")["active_version"] == 2
     assert [row["version"] for row in store.list_versions("rec-1")] == [1, 2]
+
+
+def test_concurrent_same_key_creates_exactly_one_recipe() -> None:
+    store = store_module.MemoryDashboardRecipeStore()
+
+    def create(number: int) -> str:
+        identity = {**_identity(), "recipe_id": f"rec-{number}"}
+        version = {**_version(1), "recipe_id": f"rec-{number}"}
+        return store.create_recipe(identity, version, "shared-create-key")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        recipe_ids = list(executor.map(create, (1, 2)))
+
+    assert recipe_ids[0] == recipe_ids[1]
+    assert len(store.list_identities()) == 1
+    assert len(store.list_versions(recipe_ids[0])) == 1
+
+
+def test_postgres_concurrent_same_key_creates_exactly_one_recipe() -> None:
+    dsn = os.getenv("AGORA_DASHBOARD_TEST_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("AGORA_DASHBOARD_TEST_POSTGRES_DSN is not configured")
+    schema = f"agora_test_{uuid.uuid4().hex}"
+    store = store_module.PostgresDashboardRecipeStore(dsn, schema)
+
+    def create(number: int) -> str:
+        identity = {**_identity(), "recipe_id": f"rec-{number}"}
+        version = {**_version(1), "recipe_id": f"rec-{number}"}
+        return store.create_recipe(identity, version, "shared-postgres-key")
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            recipe_ids = list(executor.map(create, (1, 2)))
+
+        assert recipe_ids[0] == recipe_ids[1]
+        assert len(store.list_identities()) == 1
+        assert len(store.list_versions(recipe_ids[0])) == 1
+    finally:
+        with store._connect() as conn, conn.cursor() as cur:
+            cur.execute(f'DROP SCHEMA "{schema}" CASCADE')
 
 
 def test_factory_defaults_to_memory(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -20,7 +20,7 @@ class MemoryDashboardRecipeStore:
         self.identities: Dict[str, dict] = {}
         self.versions: Dict[tuple[str, int], dict] = {}
         self.feedback: List[dict] = []
-        self.idempotency_keys: set[str] = set()
+        self.idempotency_keys: Dict[str, str] = {}
         self._lock = threading.RLock()
 
     def list_identities(self) -> List[dict]:
@@ -41,12 +41,15 @@ class MemoryDashboardRecipeStore:
         with self._lock:
             return copy.deepcopy([v for (rid, _), v in self.versions.items() if rid == recipe_id])
 
-    def create_recipe(self, identity: dict, version: dict, idempotency_key: Optional[str] = None) -> None:
+    def create_recipe(self, identity: dict, version: dict, idempotency_key: Optional[str] = None) -> str:
         with self._lock:
+            if idempotency_key and idempotency_key in self.idempotency_keys:
+                return self.idempotency_keys[idempotency_key]
             self.identities[identity["recipe_id"]] = copy.deepcopy(identity)
             self.versions[(version["recipe_id"], version["version"])] = copy.deepcopy(version)
             if idempotency_key:
-                self.idempotency_keys.add(idempotency_key)
+                self.idempotency_keys[idempotency_key] = identity["recipe_id"]
+            return identity["recipe_id"]
 
     def append_version(self, recipe_id: str, expected_version: int, version: dict,
                        idempotency_key: Optional[str] = None) -> bool:
@@ -57,7 +60,7 @@ class MemoryDashboardRecipeStore:
             self.versions[(recipe_id, version["version"])] = copy.deepcopy(version)
             identity["active_version"] = version["version"]
             if idempotency_key:
-                self.idempotency_keys.add(idempotency_key)
+                self.idempotency_keys[idempotency_key] = recipe_id
             return True
 
     def has_idempotency_key(self, key: Optional[str]) -> bool:
@@ -129,16 +132,25 @@ class PostgresDashboardRecipeStore:
             cur.execute(f'SELECT record_json FROM "{s}".dashboard_recipe_version WHERE recipe_id=%s ORDER BY version', (recipe_id,))
             return [self._decode(row[0]) for row in cur.fetchall()]
 
-    def create_recipe(self, identity: dict, version: dict, idempotency_key: Optional[str] = None) -> None:
+    def create_recipe(self, identity: dict, version: dict, idempotency_key: Optional[str] = None) -> str:
         s = self._schema
         with self._connect() as conn, conn.cursor() as cur:
+            if idempotency_key:
+                cur.execute(f'''INSERT INTO "{s}".dashboard_recipe_idempotency
+                    (idempotency_key,recipe_id) VALUES (%s,%s)
+                    ON CONFLICT (idempotency_key) DO NOTHING RETURNING recipe_id''',
+                    (idempotency_key, identity["recipe_id"]))
+                reserved = cur.fetchone()
+                if reserved is None:
+                    cur.execute(f'SELECT recipe_id FROM "{s}".dashboard_recipe_idempotency WHERE idempotency_key=%s',
+                                (idempotency_key,))
+                    return cur.fetchone()[0]
             cur.execute(f'''INSERT INTO "{s}".dashboard_recipe_identity
                 (recipe_id,tenant_id,user_id,strategy_id,active_version,created_at) VALUES (%s,%s,%s,%s,%s,%s)''',
                 tuple(identity[k] for k in ("recipe_id", "tenant_id", "user_id", "strategy_id", "active_version", "created_at")))
             cur.execute(f'INSERT INTO "{s}".dashboard_recipe_version (recipe_id,version,record_json) VALUES (%s,%s,%s::jsonb)',
                         (version["recipe_id"], version["version"], json.dumps(version)))
-            if idempotency_key:
-                cur.execute(f'INSERT INTO "{s}".dashboard_recipe_idempotency (idempotency_key,recipe_id) VALUES (%s,%s) ON CONFLICT DO NOTHING', (idempotency_key, identity["recipe_id"]))
+            return identity["recipe_id"]
 
     def append_version(self, recipe_id: str, expected_version: int, version: dict,
                        idempotency_key: Optional[str] = None) -> bool:

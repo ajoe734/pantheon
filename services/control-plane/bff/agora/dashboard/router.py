@@ -453,24 +453,6 @@ def create_dashboard_router(
         if phase not in {"candidate_review", "monitoring", "position_monitoring", "post_trade_review"}:
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, f"Invalid phase '{phase}'", "invalid_phase")
 
-        if recipe_store.has_idempotency_key(idempotency_key):
-            for ident in recipe_store.list_identities():
-                recipe_id = ident["recipe_id"]
-                if ident.get("strategy_id") != strategy_id:
-                    continue
-                ver = get_version(recipe_id, ident["active_version"])
-                if ver and ver.get("status") == "proposal":
-                    rj = ver.get("recipe_json") or {}
-                    if rj.get("workspace") == workspace and rj.get("phase") == phase:
-                        return {
-                            "data": {
-                                "recipe_id": recipe_id,
-                                "version": ident["active_version"],
-                                "status": "proposal",
-                            },
-                            "meta": {"capability": "agora.dashboard.v2", "snapshot_at": utc_now()},
-                        }
-
         now = utc_now()
         recipe_id = f"rec_{uuid.uuid4().hex[:12]}"
         identity_scope = _identity_scope(identity)
@@ -518,17 +500,20 @@ def create_dashboard_router(
             "created_at": now,
         }
 
-        recipe_store.create_recipe(identity_record, version_record, idempotency_key)
+        recipe_id = recipe_store.create_recipe(identity_record, version_record, idempotency_key)
+        stored_identity = recipe_store.get_identity(recipe_id)
+        stored_version = get_version(recipe_id, stored_identity["active_version"])
+        stored_recipe = stored_version["recipe_json"]
 
         return {
             "data": {
                 "recipe_id": recipe_id,
-                "version": 1,
-                "status": "proposal",
-                "strategy_id": strategy_id,
-                "workspace": workspace,
-                "phase": phase,
-                "created_at": now,
+                "version": stored_identity["active_version"],
+                "status": stored_version["status"],
+                "strategy_id": stored_identity["strategy_id"],
+                "workspace": stored_recipe["workspace"],
+                "phase": stored_recipe["phase"],
+                "created_at": stored_recipe["created_at"],
             },
             "meta": {"capability": "agora.dashboard.v2", "snapshot_at": utc_now()},
         }
