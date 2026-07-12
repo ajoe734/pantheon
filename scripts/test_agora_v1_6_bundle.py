@@ -262,3 +262,75 @@ def test_winner_branch_completeness_rejects_missing_required() -> None:
     errors = list(validator.iter_errors(bad))
     assert errors
 
+
+def test_winner_branch_completeness_rejects_duplicate_dimensions() -> None:
+    schema = _load_schema("winner_branch_completeness.schema.json")
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+    
+    # 7 items, but "governance" is replaced with a duplicate "hypothesis"
+    bad = _winner_branch_completeness()
+    bad["dimensions"] = [
+        {"dimension": "hypothesis", "grade": "complete"},
+        {"dimension": "data_dependencies", "grade": "complete"},
+        {"dimension": "market_scope", "grade": "complete"},
+        {"dimension": "evaluation_plan", "grade": "complete"},
+        {"dimension": "risk_constraints", "grade": "partial"},
+        {"dimension": "execution_profile", "grade": "complete"},
+        {"dimension": "hypothesis", "grade": "complete"},  # duplicate
+    ]
+    errors = list(validator.iter_errors(bad))
+    assert errors, "Duplicate dimensions (missing governance) must fail validation"
+
+
+def test_winner_branch_completeness_rejects_incorrect_dimension_count() -> None:
+    schema = _load_schema("winner_branch_completeness.schema.json")
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+
+    # 6 items (missing governance)
+    bad_short = _winner_branch_completeness()
+    bad_short["dimensions"] = bad_short["dimensions"][:-1]
+    errors_short = list(validator.iter_errors(bad_short))
+    assert errors_short, "Fewer than 7 dimensions must fail validation"
+
+    # 8 items
+    bad_long = _winner_branch_completeness()
+    bad_long["dimensions"].append({"dimension": "governance", "grade": "complete"})
+    errors_long = list(validator.iter_errors(bad_long))
+    assert errors_long, "More than 7 dimensions must fail validation"
+
+
+def test_winner_branch_completeness_rejects_duplicate_winner_branch_blocks() -> None:
+    schema = _load_schema("winner_branch_completeness.schema.json")
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+
+    # 12 items, but "monitoring_update" is replaced with duplicate "market_scope"
+    bad = _winner_branch_completeness()
+    bad["winner_branch_blocks"][-1] = {
+        "block_name": "market_scope",
+        "grade": "confirmed",
+        "mapped_dimension": "market_scope",
+    }
+    errors = list(validator.iter_errors(bad))
+    assert errors, "Duplicate blocks (missing monitoring_update) must fail validation"
+
+
+def test_winner_branch_completeness_rejects_incorrect_block_count() -> None:
+    schema = _load_schema("winner_branch_completeness.schema.json")
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+
+    # 11 items
+    bad_short = _winner_branch_completeness()
+    bad_short["winner_branch_blocks"] = bad_short["winner_branch_blocks"][:-1]
+    errors_short = list(validator.iter_errors(bad_short))
+    assert errors_short, "Fewer than 12 blocks must fail validation"
+
+    # 13 items
+    bad_long = _winner_branch_completeness()
+    bad_long["winner_branch_blocks"].append({
+        "block_name": "monitoring_update",
+        "grade": "confirmed",
+        "mapped_dimension": "governance",
+    })
+    errors_long = list(validator.iter_errors(bad_long))
+    assert errors_long, "More than 12 blocks must fail validation"
+
