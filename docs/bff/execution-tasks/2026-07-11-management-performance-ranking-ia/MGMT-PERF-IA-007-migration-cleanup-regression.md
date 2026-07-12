@@ -1,8 +1,8 @@
 # MGMT-PERF-IA-007 - Migration Cleanup And Regression
 
-Owner: Claude
+Owner: Codex
 
-Reviewer: Antigravity
+Reviewer: Claude
 
 Wave: 2
 
@@ -48,3 +48,36 @@ centers and contextual integrations are proven.
 - `execute-plans:src/management`
 - `execute-plans:scripts/lib/management-routes.mjs`
 - `execute-plans:e2e`
+
+## Migration Decisions And Evidence
+
+- Removed the duplicate `ManagementOperationsNav` component and every render
+  site. The responsive `ManagementLayout` sidebar/drawer, center tabs,
+  breadcrumbs, and contextual actions are now the only navigation hierarchy.
+- Mounted `CapitalPoolDetail`, `RankingFormulaDetail`, and `RebalanceDetail` on
+  their canonical singular routes. Plural compatibility detail aliases now
+  preserve the query string and terminate on those canonical routes.
+- Removed the unrouted `RankingDashboardPage` implementation and its barrel
+  export. The canonical Rankings Center owns rolling and quarterly ranking.
+- Reclassified retired top-level baseline entries as compatibility aliases,
+  added redirect telemetry via the
+  `pantheon:management-legacy-redirect` browser event, and assigned alias
+  expiry review to `management-frontend` on `2026-10-01`.
+
+Execute-plans anchor commit: `2fb71a1`.
+
+Focused verification:
+
+```text
+npm test -- --run src/management/navigation/managementRouteManifest.test.ts src/management/pages/CapitalPoolDetail.test.tsx
+# 19 passed
+
+npm run build
+# passed (existing chunk-size, circular-chunk, and CSS minifier warnings)
+
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:8081 npx playwright test e2e/26-mgmt-perf-ia-canonical-manifest.spec.ts --project=chromium
+# 5 passed
+
+git diff --check
+# passed
+```
