@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-12T07:13:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 deploy repair",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed reviewer-approved support-only BFF/frontend handoff packet. PR #3381 merged to dev at 0accc33b7baa85fdcdb637e6c7eba3ddad3fc750; task commit 2697177c1. Verified git diff --check, task-scoped status/source review, and required CI checks (Commit trailers, Runtime mirror guard, Smoke acceptance). Parent owner retains absorption and delivery responsibility.",
+    "last_update": "2026-07-12T07:13:37Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T07:13:37Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-001-deploy-probe-fix-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "97ffd83e32bb3405485e8c66c63a0c56b0a4a27f",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0accc33b7baa85fdcdb637e6c7eba3ddad3fc750",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only packet ready at support/sidecars/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF.md; anchor c7e265d92. Verify no new BFF delta, production-default fail-closed behavior, personaFocus-to-q/page_size=100 handoff, and deploy-probe acceptance.",
+      "status": "done",
+      "created_at": "2026-07-12T07:07:00Z",
+      "resolved_at": "2026-07-12T07:08:06Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved support-only BFF/frontend handoff packet at anchor c7e265d92: no BFF/runtime/canonical delta; production-default fail-closed, personaFocus-to-q with page_size=100, and deploy-probe evidence match the cited task-scoped reviews. Parent owner retains absorption and delivery responsibility.",
+      "status": "done",
+      "created_at": "2026-07-12T07:08:06Z",
+      "resolved_at": "2026-07-12T07:13:38Z"
+    }
+  ],
+  "blockers": []
+}

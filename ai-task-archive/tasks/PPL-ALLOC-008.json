@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-008",
+  "archived_at": "2026-07-11T16:51:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-008",
+    "title": "Emergency containment policy",
+    "summary_zh": "實作大額虧損、hard risk breach、binding mismatch 等立即處置；只能降風險，不能晉升或加資金。",
+    "phase": "Persona Promotion Allocation / Wave 2 emergency containment",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-001",
+      "PPL-ALLOC-004",
+      "PPL-ALLOC-006"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "execute-plans:src/management/pages/v5",
+      "execute-plans:src/management/pages/oversight"
+    ],
+    "acceptance": [
+      "containment commands are role-gated/audited; tests reject emergency promotion or allocation increase; UI labels actions as containment"
+    ],
+    "next": "Closeout complete: PR #3113 merged as daeeb7733764f3e73cab15d9b4ee0efcebc1014b; emergency containment is role-gated and auditable, rejects promotion/allocation increases, and focused pytest passed 23 tests.",
+    "last_update": "2026-07-11T16:51:57Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+      "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+      "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "persona_promotion_allocation_execution_slice",
+    "wave": 2,
+    "fleet_lane": "emergency-containment",
+    "review_notes_zh": [
+      "角色閘門限制 operator/reviewer/approver/admin；containment receipt 保留 trigger、evidence_refs、rollback_ref 並明示 decrease_only/no live side effects；promotion、stage promotion、allocation increase 與非下降 target weight 均被拒絕。|聚焦驗證：python3 -m pytest -q services/control-plane/bff/tests/test_bff_emergency_containment.py services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py（21 passed）。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T16:51:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-008",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-008",
+      "git_clean_required": false,
+      "commit": "925322263937f1a74add72573476c5e96e623508",
+      "commit_subject": "Merge pull request #3247 from ajoe734/task/PPL-ALLOC-008-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "PPL-ALLOC-008-SIDECAR-BFF-HANDOFF": "add BFF handoff packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-008",
+      "ahead": 464,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "925322263937f1a74add72573476c5e96e623508",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-008",
+      "from": "Antigravity2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PPL-ALLOC-008 away from unavailable lane Antigravity2, Claude2 (disabled, paused, sidecar-only, or auth-down); owner Antigravity2 -> Antigravity, reviewer Claude2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T02:58:27Z",
+      "resolved_at": "2026-07-11T04:45:18Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-008",
+      "from": "Claude2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PPL-ALLOC-008 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T16:07:11Z",
+      "resolved_at": "2026-07-11T16:07:11Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-008",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Chair reassigned owner from Codex to Codex2: The task is blocked after an unavailable-lane handoff, Codex2 is a listed healthy rescue target, and remains distinct from reviewer Antigravity. Task returned to todo for a blocked-owner rescue dispatch.",
+      "status": "done",
+      "created_at": "2026-07-11T16:41:31Z",
+      "resolved_at": "2026-07-11T16:41:34Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-008",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T16:41:34Z",
+      "resolved_at": "2026-07-11T16:41:39Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-008",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #3113 merged to dev as daeeb7733764f3e73cab15d9b4ee0efcebc1014b. Revalidation: 24 passed. Please review role gating, audited containment receipts, and rejection of promotion/allocation increases.",
+      "status": "done",
+      "created_at": "2026-07-11T16:43:10Z",
+      "resolved_at": "2026-07-11T16:50:18Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-008",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: PR #3113 / daeeb773 verified. Role gating, auditable containment receipts, and risk-decrease-only rejection rules pass; focused pytest 21 passed. Owner Codex should run closeout finalization and mark done.",
+      "status": "done",
+      "created_at": "2026-07-11T16:50:18Z",
+      "resolved_at": "2026-07-11T16:51:58Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "PPL-ALLOC-008",
+      "owner": "Codex",
+      "waiting_for": "Claude",
+      "message": "BFF emergency containment policy is anchored at b3d89bc0a and focused suites pass (27 tests). execute-plans origin/main has Sentinel emergency_override UI, but PromotionAllocation does not yet exist; containment workbench UI must compose after PPL-ALLOC-006 rather than create a conflicting parallel surface.",
+      "status": "resolved",
+      "created_at": "2026-07-11T04:56:30Z",
+      "resolved_at": "2026-07-11T16:05:52Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-008",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Cannot begin containment implementation: required PPL-ALLOC-001 and PPL-ALLOC-004 are both todo; PPL-ALLOC-004 also depends on PPL-ALLOC-003. Await the governed ranking/allocation proposal contract before composing containment guards.",
+      "status": "resolved",
+      "created_at": "2026-07-11T16:06:37Z",
+      "resolved_at": "2026-07-11T16:41:31Z",
+      "resolution_ref": "chair_reassignment:PPL-ALLOC-008"
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-002",
+  "archived_at": "2026-07-11T14:50:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-002",
+    "title": "Performance and ranking read model",
+    "summary_zh": "鎖定 performance、exposure、ranking、recommendation 與 governed apply 共用 identity、filter、source confidence 與 snapshot contract。",
+    "phase": "Management Performance Ranking IA / Wave 0 BFF contract",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/control-plane/bff/tests",
+      "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/MGMT-PERF-IA-002-performance-ranking-read-model.md"
+    ],
+    "acceptance": [
+      "shared identity and query vocabulary covers every canonical center",
+      "formal partial fallback degraded and unavailable states are explicit",
+      "ranking evidence recommendation review and apply receipt are separate",
+      "Pantheon PR is tested merged to dev and records its merge SHA"
+    ],
+    "next": "Owner finalized approved task and closed it",
+    "last_update": "2026-07-11T14:50:43Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_performance_ranking_ia_2026-07-11",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_performance_ranking_ia_gap_2026-07-11/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/INDEX.md",
+      "trigger": "2026-07-11 complete performance ranking page and menu information architecture audit",
+      "frontend_repo": "ajoe734/execute-plans",
+      "backend_repo": "ajoe734/pantheon"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_performance_ranking_ia_execution_slice",
+    "wave": 0,
+    "fleet_lane": "performance-ranking-read-model",
+    "target_repo": "pantheon",
+    "review_notes_zh": [
+      "審查通過：source-confidence 正規化正確限縮在 performance/ranking 三個 canonical center，未污染其他 300+ BFF surface；既有 26 項合約測試通過，1 項 persona-fleet league_score 失敗已回溯確認為此任務前既存問題",
+      "建議：owner 收尾時可另開任務追蹤 league_score 既存失敗"
+    ],
+    "review_file": "support/reviews/MGMT-PERF-IA-002-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T14:50:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "cec3627bbaa6b565c9d27211783d570375671dca",
+      "commit_subject": "Merge pull request #3233 from ajoe734/task/MGMT-PERF-IA-002",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-PERF-IA-002": "review performance ranking source confidence"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e3d3d88487c15e989ebfb48b6b8783552b5d12ab",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-002",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Shared source-confidence contract normalization implemented for all three canonical centers. All contract and filter tests are updated and fully passing.",
+      "status": "done",
+      "created_at": "2026-07-11T14:13:49Z",
+      "resolved_at": "2026-07-11T14:30:17Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Reviewed merged PR #3232 + review-artifact PR #3233: source-confidence contract correctly scoped to performance/ranking centers only, tests verified, pre-existing unrelated persona-fleet failure bisected and excluded. Returning to owner for closeout.",
+      "status": "done",
+      "created_at": "2026-07-11T14:30:17Z",
+      "resolved_at": "2026-07-11T14:50:44Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "MGMT-PERF-IA-002",
+      "owner": "Codex",
+      "waiting_for": "Human/Ops",
+      "message": "Task branch merge ancestry is contaminated: HEAD differs from origin/dev across 48 unrelated files (3488 deletions), including missing persona_allocation_policy.py, so focused tests cannot collect. Recreate a clean task branch/worktree from current dev and replay only eed5e38df + d0d4d0497 scoped main.py changes; do not merge or commit unrelated deletions.",
+      "status": "resolved",
+      "created_at": "2026-07-11T06:34:55Z",
+      "resolved_at": "2026-07-11T14:09:56Z"
+    }
+  ]
+}

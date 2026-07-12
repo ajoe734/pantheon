@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-LIVE-PERFORMANCE-010",
+  "archived_at": "2026-07-08T01:23:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-LIVE-PERFORMANCE-010",
+    "title": "Agora Performance production tab completion",
+    "summary_zh": "修正 live /agora/trading-room 的 Performance tab：目前仍是「策略執行與績效 - 即將推出」placeholder，必須接真實 BFF performance/telemetry/attribution contract 並呈現可檢查的策略績效狀態。",
+    "phase": "Agora DYNUI Live Tabs Production Recovery / 2026-07-08 performance",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-LIVE-READBACK-008"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/",
+      "execute-plans/src/lib/bff-v1/",
+      "execute-plans/e2e/",
+      "services/control-plane/bff/agora/",
+      "services/control-plane/bff/main.py",
+      "docs/deployment/evidence/ag-dynui-live-tabs-010/",
+      "docs/bff/execution-tasks/2026-07-08-agora-live-tabs-production/AG-DYNUI-LIVE-PERFORMANCE-010.md"
+    ],
+    "acceptance": [
+      "Reproduce hosted Performance tab placeholder on pantheon-lupin-dev-fe without mocks",
+      "Identify canonical BFF contract for strategy performance or implement a scoped Agora performance BFF route if missing",
+      "Render real performance summary, attribution, risk/performance trend, degraded/empty states, and source metadata",
+      "Do not derive unsupported performance values client-side and do not show placeholder as acceptance",
+      "Add focused frontend/BFF contract tests and hosted Playwright coverage for Performance tab",
+      "Open PRs for changed repos, wait for CI, merge, deploy, and record commit/deploy SHA",
+      "Hosted desktop and mobile screenshots must show Performance tab loaded with no upcoming/placeholder text"
+    ],
+    "next": "Done: execute-plans PR #216 merged into dev at 91c039d051bf596d42d4468c8c4f5b9b8f82803d; Pantheon PR #3055 merged at 8f457c8fb0bf5dc23aa14b30821c07bbf30614bb and PR #3056 merged at 5a54fb4a3fd74a9188c1ffaf48da694e803a95d0; hosted Performance proof recorded with desktop/mobile screenshots and live BFF smoke JSON.",
+    "last_update": "2026-07-08T01:23:19Z",
+    "review_notes_zh": [
+      "已核對 execute-plans PR #216 merged commit 91c039d051bf596d42d4468c8c4f5b9b8f82803d 與 Pantheon PR #3055 merged commit 8f457c8fb0bf5dc23aa14b30821c07bbf30614bb。",
+      "Reviewer 在 detached execute-plans worktree 重新跑 focused Vitest、focused ESLint、npm run build；Vitest 4 files/75 tests passed，ESLint exit 0，build passed with documented existing warnings。",
+      "Hosted browser probe 與 desktop/mobile screenshot smoke passed：/agora/strategy-performance 顯示 Strategy Performance，舊 placeholder 不存在，三個 required live BFF reads 均為 200，failed requests 與 console errors 皆為 0。"
+    ],
+    "review_file": "docs/deployment/evidence/ag-dynui-live-tabs-010/20260708T003924Z/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-08T01:23:19Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "task/AG-DYNUI-LIVE-PERFORMANCE-010",
+      "git_clean_required": false,
+      "commit": "4b7fa00459b481e3f150e40b100c5210c2605cbf",
+      "commit_subject": "AG-DYNUI-LIVE-PERFORMANCE-010: wire live performance tab",
+      "commit_author": {
+        "name": "Codex2",
+        "email": "codex2@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "execute-plans Agora frontend route, BFF v1 client helper, and focused tests.",
+        "Not changing layer": "Pantheon BFF backend contract or deployment config.",
+        "Validation": "npm run build",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-DYNUI-LIVE-PERFORMANCE-010"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-LIVE-PERFORMANCE-010",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review requested: execute-plans PR #216 merged at 91c039d051bf596d42d4468c8c4f5b9b8f82803d with integration-gate passing; Pantheon closeout PR #3055 merged at 8f457c8fb0bf5dc23aa14b30821c07bbf30614bb. Codex2 attempted done, but status gate requires reviewer approval first.",
+      "status": "done",
+      "created_at": "2026-07-08T00:54:31Z",
+      "resolved_at": "2026-07-08T01:12:49Z"
+    },
+    {
+      "task_id": "AG-DYNUI-LIVE-PERFORMANCE-010",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: merged frontend and Pantheon closeout PRs verified; hosted Performance tab proof recorded with desktop/mobile screenshots and live BFF responses.",
+      "status": "done",
+      "created_at": "2026-07-08T01:12:49Z",
+      "resolved_at": "2026-07-08T01:23:19Z"
+    }
+  ],
+  "blockers": []
+}

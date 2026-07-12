@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-11T17:03:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-OPS-003-GAP-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 review gate",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-003-GAP-001",
+      "MGMT-OPS-003-GAP-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-004/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved support-only BFF/frontend handoff packet; PR #3249 merged to dev at b3b2aec4e3f522b858ef983c305ce24040f7a4c6; verified git diff --check and 46 focused Portfolio Book contract tests passed.",
+    "last_update": "2026-07-11T17:03:36Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：support-only handoff packet 未修改 canonical/runtime/frontend truth；query/filter、complete-set incident、pagination totals、desktop/mobile capture ledger 與 fail-closed parent decision boundary 均清楚。",
+      "驗證：git diff --check；pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py（46 passed）。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T17:03:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-004-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "42679c040cd8370a735dcb264a5584ce74d6fac3",
+      "commit_subject": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: add handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend hosted-evidence handoff packet and task brief.",
+        "Not changing": "canonical truth, BFF/runtime contracts, registry/governance, frontend code, or parent verdict.",
+        "Composes with": "MGMT-OPS-003-GAP-004 reviewer closeout and MGMT-PERF-IA-003 handoff.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Codex2",
+        "Verified": "git diff --check; pytest Portfolio Book contract (46 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 4,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b3b2aec4e3f522b858ef983c305ce24040f7a4c6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #3249 merged at b3b2aec4e3f522b858ef983c305ce24040f7a4c6. Support-only follow-up packet is ready for review; it classifies the remaining gap as hosted query/URL/response/UI evidence, supplies the operator capture ledger and fail-closed parent decision table, and changes no canonical/runtime/frontend layer. Verified: git diff --check and 46 Portfolio Book contract tests.",
+      "status": "done",
+      "created_at": "2026-07-11T17:00:22Z",
+      "resolved_at": "2026-07-11T17:02:08Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: support-only BFF/frontend handoff packet is internally consistent, preserves parent ownership, and passed 46 focused Portfolio Book contract tests; returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T17:02:08Z",
+      "resolved_at": "2026-07-11T17:03:37Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-001",
+  "archived_at": "2026-07-04T00:30:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-001",
+    "title": "Restore Agora DYNUI source and task truth",
+    "summary_zh": "修復 Agora DYNUI 設計來源與任務真相：確認 AI Trading Desk Design.zip 或替代 closure pack 的 canonical 位置，恢復缺失 archive/task truth，列出舊 DYNUI PR 完成與未完成的邊界，讓後續 fleet 能接續。",
+    "phase": "Agora DYNUI Production Gap / Source Truth",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-001-source-task-truth.md",
+      "ai-task-archive/tasks/",
+      ".orchestrator/task-briefs/",
+      "/home/lupin/code/execute-plans",
+      "/home/lupin/code/pantheon/.fe-ep"
+    ],
+    "acceptance": [
+      "canonical design source is recorded or exact blocker is opened",
+      "canonical frontend deploy source is recorded and stale nested checkout risk is resolved or assigned",
+      "completed vs incomplete DYNUI work is reconciled with PR and merge SHA evidence",
+      "missing archive/task truth no longer blocks downstream production-gap tasks",
+      "Do not rebuild from imagination or static screenshots.",
+      "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+      "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+      "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+      "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+    ],
+    "next": "Owner finalized after Claude approval: PR #2851 merged into dev at 0d0603fef5e2c2e64c3c68f87b673bd473ac2d70; review file /tmp/AG-DYNUI-PROD-001-review-notes.md verified source/deploy truth and all 9 reconstructed archive snapshots; GitHub checks Commit trailers, Runtime mirror guard, Smoke acceptance, and Orchestrator Sync passed.",
+    "last_update": "2026-07-04T00:30:15Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+      "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-001-source-task-truth.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "fleet_lane": "agora-dynui-production-gap",
+    "review_notes_zh": [
+      "來源與任務真相已核實",
+      "9 份重建 archive 的 PR/merge SHA 已逐一比對 GitHub 通過",
+      "index.json 計數已用實際檔案數校正"
+    ],
+    "review_file": "/tmp/AG-DYNUI-PROD-001-review-notes.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T00:30:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-001",
+      "git_clean_required": false,
+      "commit": "0d0603fef5e2c2e64c3c68f87b673bd473ac2d70",
+      "commit_subject": "Merge pull request #2851 from ajoe734/task/AG-DYNUI-PROD-001",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-DYNUI-PROD-001": "restore source truth"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-001",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c9f77a8d14c222b5b2dd81495c5b71da9b62b6d2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #2851 merged into dev at 0d0603fef5e2c2e64c3c68f87b673bd473ac2d70. Please review restored source/deploy/task truth artifact and reconstructed DYNUI archive snapshots; owner cannot mark done until review_approved.",
+      "status": "done",
+      "created_at": "2026-07-04T00:23:31Z",
+      "resolved_at": "2026-07-04T00:26:33Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Verified source/deploy truth and all 9 reconstructed archive snapshots against GitHub PR/merge evidence; approved for owner finalization",
+      "status": "done",
+      "created_at": "2026-07-04T00:26:33Z",
+      "resolved_at": "2026-07-04T00:30:16Z"
+    }
+  ],
+  "blockers": []
+}

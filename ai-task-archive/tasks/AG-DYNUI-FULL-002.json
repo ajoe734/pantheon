@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-FULL-002",
+  "archived_at": "2026-07-05T12:42:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-FULL-002",
+    "title": "Agora DYNUI FULL-002 live BFF readiness/cards contract",
+    "summary_zh": "補齊 live Strategy Workshop cards/readiness BFF，資料必須來自 scoped workshop state/store。",
+    "phase": "Agora DYNUI Full Production Recovery / Wave 1 workshop BFF",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-FULL-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/strategy_workshop/router.py",
+      "services/control-plane/bff/agora/strategy_workshop/store.py",
+      "services/control-plane/bff/agora/strategy_workshop/test_*.py",
+      "services/control-plane/specs/agora/",
+      "execute-plans/src/lib/bff-v1/agora/workshops.ts"
+    ],
+    "acceptance": [
+      "live GET /bff/agora/workshops/{id}/cards returns 200 for an existing scoped workshop",
+      "live GET /bff/agora/workshops/{id}/readiness returns 200 for an existing scoped workshop",
+      "live POST /bff/agora/workshops/{id}/readiness/reassess updates or returns a fresh readiness assessment",
+      "unknown or cross-tenant workshop ids return proper 404/403 envelopes, not INTERNAL_ERROR",
+      "backend tests cover dict and OperatorIdentity identities",
+      "OpenAPI/spec or contract snapshot updated if the route manifest requires it",
+      "post-deploy live curl proof is recorded"
+    ],
+    "next": "Completed: PR #3013 merged at ed0724eec5095bb058cb2083f6d7734b55fc0945; route manifest PR #3014 merged at f3d2d13fdf4ff700a0cb5196a517be8cc5552404; routing recovery PR #3016 merged at c7e2a152d333f0b35f61e28205fbc28ced3ea422; Antigravity review PR #3018 merged at 432a2b6ced5068f426bc4abc838455425241c87e; Codex owner closeout PR #3019 merged at a4b323179d367401964ee91ea410b29ebe262bdf. Dev BFF deployed to f3d2d13f. Live proof workshop a36df238-4167-4287-84d4-28260e452e85 returned readiness 200, cards 200 with user_strategy_description/readiness_gate, and reassess 202 with ETag v2. Antigravity review approved at 2026-07-05T12:30:29Z.",
+    "last_update": "2026-07-05T12:42:22Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_full_production_recovery_2026-07-05",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "prior_packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+      "prior_hosted_gate": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-006-hosted-e2e-publish-gate.md",
+      "live_bff_deploy_sha": "341924e2c29ee185c925b8f4291485beb08e851e"
+    },
+    "production_recovery_children": [
+      "AG-DYNUI-FULL-001",
+      "AG-DYNUI-FULL-002",
+      "AG-DYNUI-FULL-003",
+      "AG-DYNUI-FULL-004",
+      "AG-DYNUI-FULL-005",
+      "AG-DYNUI-FULL-006",
+      "AG-DYNUI-FULL-007"
+    ],
+    "wave": 1,
+    "fleet_lane": "agora-workshop-readiness-bff",
+    "review_notes_zh": [
+      "審查通過",
+      "無阻礙性發現"
+    ],
+    "review_file": "support/reviews/AG-DYNUI-FULL-002-review-antigravity.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-05T12:42:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-ag-dynui-full-002-closeout-review",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-FULL-002-CODEX-CLOSEOUT-20260705",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "0b180496451f9db6b1916a1650767b00b7605339",
+      "commit_subject": "AG-DYNUI-FULL-002: finalize live readiness BFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Validation": "git diff --check",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-DYNUI-FULL-002",
+        "Reviewer": "Antigravity"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-FULL-002-CODEX-CLOSEOUT-20260705",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a4b323179d367401964ee91ea410b29ebe262bdf",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-FULL-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-05T11:47:45Z",
+      "resolved_at": "2026-07-05T11:47:52Z"
+    },
+    {
+      "task_id": "AG-DYNUI-FULL-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented and merged PR #3013 (merge ed0724eec5095bb058cb2083f6d7734b55fc0945). Local validation: py_compile, test_agora_strategy_workshop.py 65 passed, test_workshop_stream_ag_be_sw_004.py 25 passed. Post-deploy live curl proof remains for dev BFF after deployment.",
+      "status": "done",
+      "created_at": "2026-07-05T12:09:38Z",
+      "resolved_at": "2026-07-05T12:16:46Z"
+    },
+    {
+      "task_id": "AG-DYNUI-FULL-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned AG-DYNUI-FULL-002 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-05T12:16:46Z",
+      "resolved_at": "2026-07-05T12:30:29Z"
+    },
+    {
+      "task_id": "AG-DYNUI-FULL-002",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-05T12:30:29Z",
+      "resolved_at": "2026-07-05T12:42:23Z"
+    }
+  ],
+  "blockers": []
+}

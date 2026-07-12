@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+  "archived_at": "2026-07-04T16:35:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+    "title": "Prepare OPENCLAW-PERSONA-CRON-BACKFILL acceptance packet and dependency map",
+    "summary_zh": "平行支援 OPENCLAW-PERSONA-CRON-BACKFILL，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "OpenClaw live wiring / persona cron backfill",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OPENCLAW-PERSONA-CRON-BACKFILL/OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout commit 5a2d22ecd (PR #2988) already merged into dev; this run completes the missed ai-status.sh done transition after the prior worker cycle was interrupted mid-finalize. Re-ran python3 -m pytest services/control-plane/cron/test_persona_cron_registrar.py -q -> 19 passed. Re-confirmed FOLLOWUP-5 content and reviewer approval (Claude2, 2026-07-04T16:27:30Z) still stand; no repo changes needed this cycle.",
+    "last_update": "2026-07-04T16:35:38Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OPENCLAW-PERSONA-CRON-BACKFILL",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approve FOLLOWUP-5 內容(merged PR #2986, dev commit f0bbba2bf): 獨立重新核對 canonical status root — OPENCLAW-CRON-WRITE-SCOPE 仍為 done/archived 未變；OPENCLAW-OODA-PACKET-CLOSURE 仍為 todo/owner Claude2/reviewer Codex 未變；parent OPENCLAW-PERSONA-CRON-BACKFILL 現況 status=review 且 evidence bundle(cron.list 72=68 真實 job 涵蓋 17 personas + 4 個已具名 orphan persona-diag-local-4 job、兩次 idempotent rerun registered=0 skipped=68 failed=0、force-run persona-tw-equity/persona-crypto -> cron.runs ok)與 packet 描述完全一致。獨立以 git merge-base --is-ancestor 05f51918e origin/dev 確認 PR #2985 尚未 merge 進 dev,packet 對此未 overclaim,如實記錄為 OPEN/待複查。重跑 pytest services/control-plane/cron/test_persona_cron_registrar.py -q -> 19 passed,與 packet 記錄一致。checklist 與 FOLLOWUP-2/3/4 相比未放寬也未新增項目;orphan-job 範圍界定與 registered=0 bug-fix-vs-new-registration nuance 對 Codex 的說明清楚準確。改動範圍僅 support sidecar + 已 merge 的 F5 內容,未觸及 canonical truth/runtime/registry。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T16:35:38Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/openclaw-persona-cron-backfill-sidecar-acceptance-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "5a2d22ecdb2199c40bb9f2d58b6bf75727dedf95",
+      "commit_subject": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "canonical status root at closeout time": "parent",
+        "LLM-Agent": "Claude",
+        "Task-ID": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/control-plane/cron/test_persona_cron_registrar.py -q -> 19 passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "50012158939afef195ca57d5166c98a38b7c75dc",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Re-verified on supervisor re-dispatch: OPENCLAW-PERSONA-CRON-BACKFILL, OPENCLAW-CRON-WRITE-SCOPE, and OPENCLAW-OODA-PACKET-CLOSURE are all unchanged since the merged FOLLOWUP-4 packet (PR #2982/#2984); no new delta exists so no FOLLOWUP-5 was written. Please re-confirm the existing FOLLOWUP-4 acceptance packet still stands.",
+      "status": "done",
+      "created_at": "2026-07-04T16:05:59Z",
+      "resolved_at": "2026-07-04T16:12:18Z"
+    },
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "FOLLOWUP-4 does not stand as-is: OPENCLAW-CRON-WRITE-SCOPE and OPENCLAW-OODA-PACKET-CLOSURE are confirmed unchanged, but the parent OPENCLAW-PERSONA-CRON-BACKFILL moved from in_progress/67-68 to status=review with a full 68/68 evidence bundle (PR #2985) that the prior re-dispatch note's 'no new delta' claim missed. See the packet's new Reviewer Note section (commit 3fcc6961c) for the required FOLLOWUP-5 content, including the orphan-job note and the registered=0 bug-fix-vs-new-registration nuance for Codex.",
+      "status": "done",
+      "created_at": "2026-07-04T16:12:18Z",
+      "resolved_at": "2026-07-04T16:12:18Z"
+    },
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "FOLLOWUP-5 packet authored and merged (PR #2986, dev commit f0bbba2bf): captures the parent's status=review evidence bundle (cron.list 72=68 real jobs for 17 personas + 4 named orphan persona-diag-local-4 jobs, idempotent double rerun, force-run on persona-tw-equity/persona-crypto), the orphan-job scoping note, and the registered=0 bug-fix-vs-new-registration nuance for Codex explaining the 67->68 delta traced to two registrar bugs, not a new registration action. Independently reverified PR #2985 was still OPEN/BEHIND at write time (has since been superseded by later evidence in the parent's own review). Task-brief mirror sync PR #2987 also open with auto-merge, awaiting merge. Requesting Claude2 review FOLLOWUP-5 for the same bar as prior packets: accurate delta capture, no overclaiming, no relaxation of the acceptance checklist.",
+      "status": "done",
+      "created_at": "2026-07-04T16:22:30Z",
+      "resolved_at": "2026-07-04T16:27:30Z"
+    },
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: FOLLOWUP-5 delta capture verified accurate, no overclaiming, checklist unchanged. Returned to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-07-04T16:27:30Z",
+      "resolved_at": "2026-07-04T16:35:39Z"
+    }
+  ],
+  "blockers": []
+}

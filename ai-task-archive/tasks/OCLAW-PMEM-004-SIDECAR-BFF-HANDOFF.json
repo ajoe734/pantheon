@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-11T04:39:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare OCLAW-PMEM-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 2 BFF UI surfaces",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-003"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-004/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend handoff packet approved and merged via PR #3111 at merge commit 1f29e149a228e975f2e82a22267d66c60d7e0a2a; verified git diff --check plus assistant provider route implementation and contract snapshot inspection; parent OCLAW-PMEM-004 owner decides composition.",
+    "last_update": "2026-07-11T04:39:59Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已核對修正後的 provider readiness 列與 services/control-plane/bff/assistant/routes.py:448-472、main.py:58423-58443,58643-58644 及 contract_snapshots/execute_plans_bff_routes.json 一致；其餘章節維持先前審查結果，僅支援性 handoff packet，未變更 canonical truth。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T04:39:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-004-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "2fa3db9e12262d42e3f5c6c4cad41a7cfc8e74e9",
+      "commit_subject": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF: record review approval",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped sidecar approval and closeout record.",
+        "Not changing": "canonical truth, BFF runtime, frontend, registry, or governance.",
+        "Composes with": "parent OCLAW-PMEM-004 owner integration decision.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; route implementation and contract snapshot inspection"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1f29e149a228e975f2e82a22267d66c60d7e0a2a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only packet ready at support/sidecars/OCLAW-PMEM-004/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF.md (anchor 457573b94). Review Memory Plane authority, split auth/smoke/quota semantics, reauth post-verification, and non-canonical boundary.",
+      "status": "done",
+      "created_at": "2026-07-11T04:10:13Z",
+      "resolved_at": "2026-07-11T04:12:06Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Antigravity to Claude after repeated Antigravity terminal: Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h22m41s.",
+      "status": "done",
+      "created_at": "2026-07-11T04:12:06Z",
+      "resolved_at": "2026-07-11T04:14:32Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review found one factual defect in section 2 (Existing Integration Points to Reuse), 'Provider readiness' row: it cites 'GET /bff/assistant/provider/readiness' as an existing route, but no such route exists. The actual implemented route is 'GET /bff/assistant/providers' (optional ?auth_probe=true query param, services/control-plane/bff/assistant/routes.py list_assistant_providers), backed by _assistant_provider_readiness() / OpenClawOpsClient().get_assistant_readiness() in services/control-plane/bff/main.py. Confirmed via contract_snapshots/execute_plans_bff_routes.json (only /bff/assistant/providers is listed; no provider/readiness path exists). All other cited routes (runtime-profile, persona memory, /api/memory/retrieve, persona_memory_bridge.py, reauth start/status/code) were verified accurate. Please correct that one row/citation and resubmit for review.",
+      "status": "done",
+      "created_at": "2026-07-11T04:14:32Z",
+      "resolved_at": "2026-07-11T04:14:32Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Corrected the provider readiness integration row to GET /bff/assistant/providers with optional auth_probe=true, documented the normal provider-list callback and single-provider fallback accurately, and synchronized the reviewer metadata. Focused verification: git diff --check, implementation inspection, and contract snapshot route check. Commit af6c19cc8.",
+      "status": "done",
+      "created_at": "2026-07-11T04:22:40Z",
+      "resolved_at": "2026-07-11T04:33:52Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Provider readiness correction verified against services/control-plane/bff/assistant/routes.py, main.py wiring (_assistant_provider_list/_assistant_provider_readiness), and contract_snapshots/execute_plans_bff_routes.json (only /bff/assistant/providers exists). Sidecar packet is support-only and does not mutate canonical truth. Approved; returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T04:33:52Z",
+      "resolved_at": "2026-07-11T04:40:01Z"
+    }
+  ],
+  "blockers": []
+}

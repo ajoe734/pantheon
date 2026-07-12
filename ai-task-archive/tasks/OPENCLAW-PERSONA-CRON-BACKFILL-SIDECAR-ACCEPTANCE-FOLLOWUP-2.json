@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+  "archived_at": "2026-07-04T13:53:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+    "title": "Prepare OPENCLAW-PERSONA-CRON-BACKFILL acceptance packet and dependency map",
+    "summary_zh": "平行支援 OPENCLAW-PERSONA-CRON-BACKFILL，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "OpenClaw live wiring / persona cron backfill",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OPENCLAW-PERSONA-CRON-BACKFILL/OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: PR #2975 merged into dev (commit 633651ec1). Sidecar acceptance follow-up packet for OPENCLAW-PERSONA-CRON-BACKFILL confirmed accurate against parent's current live-backfill status (67/68, docker-exec, gateway sessionTarget normalized to main); support-only scope held, no canonical/runtime edits. Verified: python3 -m pytest services/control-plane/cron/test_persona_cron_registrar.py -q (19 passed).",
+    "last_update": "2026-07-04T13:53:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OPENCLAW-PERSONA-CRON-BACKFILL",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approve: 內容與 parent OPENCLAW-PERSONA-CRON-BACKFILL 現況(67/68, docker-exec, sessionTarget normalize to main)一致；改動範圍僅 support sidecar + generated task brief,未觸及 canonical truth;pytest services/control-plane/cron/test_persona_cron_registrar.py -q = 19 passed 已重跑確認。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T13:53:27Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/openclaw-persona-cron-backfill-sidecar-acceptance-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "633651ec1d4f5061e200934a04df3f639925adc9",
+      "commit_subject": "Merge origin/dev into task/OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-2 to refresh PR #2975 (BEHIND)",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "116788d7b9f0b2b68db6be05e39f94c6836661ab",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet committed and pushed in PR #2975 (7f66bef83); validation: python3 -m pytest services/control-plane/cron/test_persona_cron_registrar.py -q = 19 passed. Please review support-only acceptance follow-up.",
+      "status": "done",
+      "created_at": "2026-07-04T13:43:58Z",
+      "resolved_at": "2026-07-04T13:45:36Z"
+    },
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance follow-up packet reviewed and approved: support-only scope confirmed, parent status cross-checked, tests re-verified (19 passed). Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-07-04T13:45:36Z",
+      "resolved_at": "2026-07-04T13:46:52Z"
+    },
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T13:46:52Z",
+      "resolved_at": "2026-07-04T13:47:42Z"
+    },
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T13:47:43Z",
+      "resolved_at": "2026-07-04T13:53:28Z"
+    }
+  ],
+  "blockers": []
+}

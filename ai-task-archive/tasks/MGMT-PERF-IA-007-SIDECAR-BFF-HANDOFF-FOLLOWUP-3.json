@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-12T12:22:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-PERF-IA-007 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-007，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 2 cleanup",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-007/MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Orphaned storm-remnant sidecar (underutilization_dispatch disabled; stuck in review with no dispatchable reviewer). Parent handles its own BFF handoff. Closing to clear the review gap.",
+    "last_update": "2026-07-12T12:22:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-007",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only packet ready at support/sidecars/MGMT-PERF-IA-007/MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md; anchor commit 486e143fe. Please verify dependency-state claims, BFF/query fail-safe preservation, operator journeys, frontend absorption gates, and canonical non-mutation.",
+      "status": "done",
+      "created_at": "2026-07-12T07:14:55Z",
+      "resolved_at": "2026-07-12T12:22:16Z"
+    }
+  ],
+  "blockers": []
+}

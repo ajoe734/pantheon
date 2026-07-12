@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "AG-GAP-002",
+  "archived_at": "2026-07-12T14:57:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-GAP-002",
+    "title": "Durable Postgres store for trading_room",
+    "summary_zh": "trading_room in-memory 單例改為可選 Postgres backend（比照 PostgresWorkshopStore），保留 no_order_route_proof 與 ETag 不變式；live 重啟持久化證明。",
+    "phase": "Agora Gap Closure 2026-07-12 / Wave 0",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-GAP-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-002-trading-room-postgres.md"
+    ],
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-002-trading-room-postgres.md"
+    ],
+    "next": "PR #3444 merged into dev at 247a80330ea9624683b84565f85462aca1f58344; reviewer-approved Trading Room Postgres backend finalized. Focused pytest: 3 passed, 1 skipped; live Postgres restart proof remains an explicit deployment environment gate.",
+    "last_update": "2026-07-12T14:57:59Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_gap_closure_2026-07-12",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "prior_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "prior_gate": "docs/bff/execution-tasks/2026-07-08-agora-live-tabs-production/AG-DYNUI-LIVE-TABS-GATE-011.md"
+    },
+    "wave": 0,
+    "fleet_lane": "agora-gap-persistence",
+    "review_notes_zh": [
+      "審查通過：Postgres JSONB state row、FOR UPDATE 並行寫入、proof/ETag 不變式與 dev 選擇均符合範圍；聚焦測試 52 passed、1 skipped，部署設定 1 passed，兩份 Compose config 通過。",
+      "真實 Postgres round-trip 與 dev restart readback 仍須在 owner closeout／環境驗收中據實記錄，不得提前宣稱 live proof。"
+    ],
+    "review_file": "docs/reviews/2026-07-12-ag-gap-002-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T14:57:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-gap-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-GAP-002",
+      "git_clean_required": false,
+      "commit": "8b085a51ef12bf47d001662061e448fd30b93179",
+      "commit_subject": "AG-GAP-002: record owner finalization evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped verification and reviewer approval evidence",
+        "Not changing": "Trading Room runtime behavior or the live restart environment gate",
+        "Composes with": "approved implementation 0f210d767 and PR #3444 into dev",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-GAP-002",
+        "Reviewer": "Codex",
+        "Verified": "focused pytest 3 passed, 1 skipped; git diff --check passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-GAP-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "247a80330ea9624683b84565f85462aca1f58344",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-GAP-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T14:38:25Z",
+      "resolved_at": "2026-07-12T14:38:38Z"
+    },
+    {
+      "task_id": "AG-GAP-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation anchored at 0f210d767; 53 passed, 1 Postgres integration skipped without TEST_DATABASE_URL; both Compose configs valid. Requesting review.",
+      "status": "done",
+      "created_at": "2026-07-12T14:46:44Z",
+      "resolved_at": "2026-07-12T14:50:10Z"
+    },
+    {
+      "task_id": "AG-GAP-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved at 0f210d767; no blocking findings. Owner must finalize through task PR; live Postgres restart evidence remains an explicit environment gate.",
+      "status": "done",
+      "created_at": "2026-07-12T14:50:10Z",
+      "resolved_at": "2026-07-12T14:58:01Z"
+    }
+  ],
+  "blockers": []
+}

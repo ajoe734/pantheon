@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-004",
+  "archived_at": "2026-07-12T00:22:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-004",
+    "title": "BFF and Management runtime surfaces",
+    "summary_zh": "把 BFF/UI 改成顯示 runtime profile、provider pool health、persona memory source、quota/usage 與 reauth 狀態；不要用 mount ready 假裝 provider 可用。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 2 BFF UI surfaces",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-002",
+      "OCLAW-PMEM-003"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/memory",
+      "frontend-checkout:src",
+      "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-004-bff-ui-runtime-surfaces.md"
+    ],
+    "acceptance": [
+      "BFF persona memory surface reads canonical Memory Plane or reports precise unavailable reason",
+      "LLM Auth panel separates provider auth, live smoke, quota source, persona dependencies, and reauth flow state",
+      "reauth code-entry UX appears when the provider flow requires code entry and rechecks readiness after completion",
+      "tests cover BFF DTOs and UI degraded states for codex/claude/openclaw"
+    ],
+    "next": "Reviewer-approved BFF and Management runtime truth surfaces merged via Pantheon PR #3308 (merge 9eb1d08d7fe7767d9ffedc7eb7fe169ae8b678f0); execute-plans PR #264 supplies UI wiring; backend verification 89 passed.",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_parent": "OCLAW-PMEM-000",
+    "helper_kind": "openclaw_persona_memory_gap_execution_slice",
+    "wave": 2,
+    "fleet_lane": "bff-management-runtime-surfaces",
+    "last_update": "2026-07-12T00:22:51Z",
+    "review_notes_zh": [
+      "持久化人員依賴欄位、三種 provider 測試覆蓋、execute-plans UI 接線皆已驗證通過",
+      "核准，交還 owner Codex 收尾"
+    ],
+    "review_file": ".orchestrator/reviews/OCLAW-PMEM-004-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T00:22:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-004",
+      "git_clean_required": false,
+      "commit": "b589f9cd2808b631f08cc25fb0ac21b3c35fb90d",
+      "commit_subject": "OCLAW-PMEM-004: record final review approval",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped review approval and closeout metadata.",
+        "Not changing": "approved BFF behavior or execute-plans UI implementation.",
+        "Composes with": "Pantheon PR #3308 and execute-plans PR #264.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OCLAW-PMEM-004",
+        "Reviewer": "Claude",
+        "Verified": "pytest -q services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py (89 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-004",
+      "ahead": 0,
+      "behind": 35,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9eb1d08d7fe7767d9ffedc7eb7fe169ae8b678f0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-004",
+      "from": "Claude2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned OCLAW-PMEM-004 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); owner Claude2 -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T02:58:08Z",
+      "resolved_at": "2026-07-11T03:00:21Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned OCLAW-PMEM-004 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T03:00:20Z",
+      "resolved_at": "2026-07-11T23:28:07Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Antigravity becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T23:28:07Z",
+      "resolved_at": "2026-07-11T23:28:18Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Chair reassigned owner from Codex to Claude: The task is blocked by Codex's dirty unrelated execute-plans checkout, not a human gate; pushed BFF anchors make a clean-worktree handoff safe, and Claude is an available fallback distinct from reviewer Antigravity. Task returned to todo for a blocked-owner rescue dispatch.",
+      "status": "done",
+      "created_at": "2026-07-11T23:49:54Z",
+      "resolved_at": "2026-07-11T23:49:58Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T23:49:58Z",
+      "resolved_at": "2026-07-11T23:50:05Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "BFF canonical persona memory and provider truth DTOs are implemented; focused suites pass and task evidence is recorded. Please review the Pantheon BFF contract and cross-repo UI composition boundary.",
+      "status": "done",
+      "created_at": "2026-07-11T23:52:57Z",
+      "resolved_at": "2026-07-12T00:01:14Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reopened: persona-dependency DTO field, claude/openclaw test coverage, and Management UI wiring in execute-plans are not delivered. See .orchestrator/reviews/OCLAW-PMEM-004-review-claude.md for full findings.",
+      "status": "done",
+      "created_at": "2026-07-12T00:01:14Z",
+      "resolved_at": "2026-07-12T00:01:14Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Addressed reviewer findings: persona dependency truth DTO with unavailable reason, codex/claude/openclaw coverage, and execute-plans Management LLM Auth wiring. Pantheon PR #3308; execute-plans PR #264. Backend suite, 36 frontend tests, and frontend build pass.",
+      "status": "done",
+      "created_at": "2026-07-12T00:08:44Z",
+      "resolved_at": "2026-07-12T00:15:00Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Round 2 re-review: persona-dependency DTO, claude/openclaw coverage, and execute-plans PR #264 UI wiring all verified. Backend suite 89 passed. Approved.",
+      "status": "done",
+      "created_at": "2026-07-12T00:15:00Z",
+      "resolved_at": "2026-07-12T00:22:52Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "OCLAW-PMEM-004",
+      "owner": "Codex",
+      "waiting_for": "Antigravity",
+      "message": "Pantheon BFF canonical memory and provider truth DTO anchors pass focused tests and are pushed. Management UI remains blocked because /home/lupin/code/execute-plans is a dirty unrelated task/PPL-ALLOC-007 checkout; need a clean execute-plans task worktree before UI implementation.",
+      "status": "resolved",
+      "created_at": "2026-07-11T23:35:22Z",
+      "resolved_at": "2026-07-11T23:49:54Z",
+      "resolution_ref": "chair_reassignment:OCLAW-PMEM-004"
+    }
+  ]
+}

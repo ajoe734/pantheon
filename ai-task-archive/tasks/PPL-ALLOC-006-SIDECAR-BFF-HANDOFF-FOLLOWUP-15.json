@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+  "archived_at": "2026-07-11T11:28:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-15.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only no-delta BFF/frontend handoff checkpoint merged via Pantheon PR #3200 at 13fd3a381da4288d54c870cfc6822acbca3b5fd9; verified git diff --check and all Branch CI Gate checks passed. execute-plans PR #251 remains OPEN/CLEAN/MERGEABLE at 436aa32e with integration-gate SUCCESS; this closeout does not merge it or close parent PPL-ALLOC-006. Hold further no-delta dispatch until packet stop-condition evidence changes.",
+    "last_update": "2026-07-11T11:28:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T11:28:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-15",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "git_clean_required": false,
+      "commit": "40d53e3b1694290bc28b5f27d81fb2a2b3f5f333",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "13fd3a381da4288d54c870cfc6822acbca3b5fd9",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: added support-only Follow-Up 15 no-delta checkpoint. execute-plans PR #251 remains OPEN/CLEAN/MERGEABLE at 436aa32e with integration-gate SUCCESS and mergedAt null. Packet preserves fail-closed operator journey and requests no further no-delta dispatch. Verification: git diff --check; gh pr view 251 --repo ajoe734/execute-plans. Commit d4ea269f0.",
+      "status": "done",
+      "created_at": "2026-07-11T11:16:17Z",
+      "resolved_at": "2026-07-11T11:25:19Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer approval confirmed: PR #251 re-verified OPEN/CLEAN/MERGEABLE at 436aa32e with integration-gate SUCCESS and mergedAt null, matching packet claims exactly. git diff --check clean. Approval limited to this support artifact; does not approve/merge PR #251 or close parent PPL-ALLOC-006. Parent owner should hold further no-delta dispatch on this lane per the packet's stop condition.",
+      "status": "done",
+      "created_at": "2026-07-11T11:25:19Z",
+      "resolved_at": "2026-07-11T11:28:40Z"
+    }
+  ],
+  "blockers": []
+}

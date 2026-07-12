@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-003",
+  "archived_at": "2026-07-12T00:21:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-003",
+    "title": "Hosted Portfolio workflow E2E",
+    "summary_zh": "以同一份 live BFF response 驗證 Portfolio Book 到 Persona Fleet、績效歸因與 Human Review 的 desktop/mobile workflow。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 1 hosted E2E",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-003-GAP-001",
+      "MGMT-OPS-003-GAP-002"
+    ],
+    "artifacts": [
+      "execute-plans:e2e",
+      "execute-plans:hosted-dev-evidence",
+      "docs/deployment/evidence/mgmt-ops-003-gap",
+      "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-003-hosted-workflow-e2e.md"
+    ],
+    "acceptance": [
+      "hosted desktop and mobile workflow reaches Human Review with preserved context",
+      "UI counts and labels are asserted against captured live BFF responses",
+      "paper canary live and unknown behavior is exercised",
+      "console exceptions failed required requests lazy chunk failures and fallback data are zero",
+      "frontend and BFF deployed commit identities are recorded"
+    ],
+    "next": "Done: hosted Portfolio workflow E2E closeout reviewed; deployed FE SHA a74e586 verified; evidence and review files merged.",
+    "last_update": "2026-07-12T00:21:58Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/MGMT_OPS_003_HOSTED_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/INDEX.md",
+      "review_checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+      "trigger": "2026-07-11 hosted plan-to-live verification",
+      "frontend_repo": "ajoe734/execute-plans",
+      "backend_repo": "ajoe734/pantheon",
+      "dev_frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+      "dev_bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "mgmt_ops_003_hosted_gap_closure",
+    "review_contract": {
+      "mode": "fail_closed_hosted_delta",
+      "checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+      "approval_forbidden_without": [
+        "merged_pr_and_merge_sha",
+        "deployed_sha_ancestry",
+        "authenticated_api_capture",
+        "desktop_and_mobile_hosted_evidence",
+        "ui_to_api_count_and_label_comparison",
+        "console_and_network_failure_counts"
+      ],
+      "request_changes_when": [
+        "any_gap_matrix_row_is_not_pass",
+        "ui_confidence_exceeds_source_truth",
+        "incident_or_filter_is_hidden",
+        "evidence_is_mock_only_or_stale",
+        "tested_sha_differs_from_deployed_sha"
+      ]
+    },
+    "wave": 1,
+    "target_repo": "pantheon+execute-plans",
+    "review_file": "docs/reviews/2026-07-12-mgmt-ops-003-gap-003-antigravity-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T00:21:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-mgmt-ops-003-gap003-reviewfile",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-003-REVIEWFILE",
+      "git_clean_required": false,
+      "commit": "21211af5de59bc0dde913cd422889613b323e033",
+      "commit_subject": "MGMT-OPS-003-GAP-003: repair review file path",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "review artifact path repair for hosted Portfolio workflow closeout.",
+        "Not changing": "frontend implementation, BFF contracts, deployment configuration, or task status files.",
+        "Composes with": "Pantheon PR #3316 closeout review artifact and execute-plans PR #263 deployment.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-OPS-003-GAP-003",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-003-REVIEWFILE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ea2a42d8033cef371cf5bc748568dd0a2f010ae6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-003",
+      "from": "Copilot",
+      "to": "Antigravity",
+      "message": "Auto-reassigned MGMT-OPS-003-GAP-003 away from unavailable lane Copilot (disabled, paused, sidecar-only, or auth-down); reviewer Copilot -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T10:55:16Z",
+      "resolved_at": "2026-07-11T11:20:48Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-003",
+      "from": "Copilot",
+      "to": "Antigravity",
+      "message": "Auto-reassigned MGMT-OPS-003-GAP-003 away from unavailable lane Copilot (disabled, paused, sidecar-only, or auth-down); reviewer Copilot -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T11:20:48Z",
+      "resolved_at": "2026-07-11T15:47:11Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-003",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Ready for independent review: blocking GAP-003-FLOW-FOCUS-FIX is done and archived; execute-plans PR #263 merged to dev at a74e58696c900112557b0c748c3f8c69629da106; dev deployment.json reports that SHA live/strict; PR gate 29172001643 success; dev deploy 29172478132 success; post-merge dev gate 29172478139 success; hosted desktop/mobile e2e/21 passed against Pantheon dev FE/BFF; Pantheon evidence PR #3311 merged as ac2384860a253ca86d9e48f9fb2f8f352f4d2378; evidence: docs/deployment/evidence/mgmt-ops-003-gap/gap-003/20260711T235934Z/README.md and hosted-summary.json.",
+      "status": "done",
+      "created_at": "2026-07-12T00:12:11Z",
+      "resolved_at": "2026-07-12T00:14:56Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-003",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved: E2E evidence verified against live dev deployment and OpenAPI spec.",
+      "status": "done",
+      "created_at": "2026-07-12T00:14:56Z",
+      "resolved_at": "2026-07-12T00:21:59Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-003",
+      "owner": "Codex",
+      "waiting_for": "Codex2",
+      "message": "Hosted SHA 12200de4 is deployed, but Persona Fleet requests /bff/management/fleet (404) instead of /bff/management/persona-fleet; desktop/mobile each log two console errors. Repair, merge, deploy, then rerun execute-plans e2e/21-portfolio-workflow-hosted.spec.ts.",
+      "status": "resolved",
+      "created_at": "2026-07-11T16:07:56Z",
+      "resolved_at": "2026-07-12T00:12:11Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-003",
+      "owner": "Codex",
+      "waiting_for": "Antigravity2",
+      "message": "Current dev 1de7e2f no longer hits old /bff/management/fleet, but targeted hosted probe /tmp/mgmt-gap003-targeted-20260711T2251Z/targeted-workflow.json shows remaining production gaps: /management/portfolio-book redirects to /management/performance?tab=overview without explicit GAP-003 closeout; Portfolio Book persona_fleet link uses persona_id and Persona Fleet does not show persona-20260711-9fba9f55; Human Inbox link preserves query but does not show target context. Waiting for MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX implementation, merge, deploy, and reviewer rerun.",
+      "status": "resolved",
+      "created_at": "2026-07-11T22:54:54Z",
+      "resolved_at": "2026-07-12T00:12:11Z"
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+  "archived_at": "2026-07-04T15:33:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+    "title": "Prepare AG-DYNUI-PROD-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Dynamic Workflow",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-002",
+      "AG-DYNUI-PROD-003",
+      "AG-DYNUI-PROD-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: PR #2980 merged into dev (HEAD d48846f23 confirmed ancestor of origin/dev). Handoff packet support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md is durable, reviewer-approved by Claude2, and hands off dependency-gate-cleared findings to parent owner Codex2/reviewer Codex. No canonical truth touched.",
+    "last_update": "2026-07-04T15:33:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up 10 核准：AG-DYNUI-PROD-005 的三個依賴（002/003/004）現已全部 done，dependency gate 完全解除；execute-plans PR #176 合併，補上 onAddToTradingRoom 路由串接。重點修正：follow-up 7-9 檢查的是 pantheon-vendored execute-plans/ mirror（已知會 drift），對照真實 ajoe734/execute-plans repo（dev 分支）後發現 WorkspaceGridEditor/WorkspaceProposalPreview/WorkspaceWidgetRevisionDrawer 早已掛載並串接完整 V11 workspace API client（含 If-Match/idempotencyKey 的 layout patch、version history、rollback、widget revision proposal apply/keep-copy），後端路由與 widget allowlist 皆對應存在。目前唯一確認仍缺的是 trading-room/stream SSE 仍為 stub，以及 Dashboard 系列元件（與此任務無關）的範疇問題待 parent owner 澄清。未修改 canonical truth 或 runtime 檔案。獨立驗證：ai-status 確認 002/003/004 為 done，gh pr view 176 確認已合併至 dev，真實 execute-plans worktree 確認元件掛載與 client 方法存在，router.py 確認 SSE 仍為 stub。"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T15:33:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-005-sidecar-bff-handoff-followup-10",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "git_clean_required": false,
+      "commit": "d48846f23e98b87505fa925be9dfed27dd6b14be",
+      "commit_subject": "Merge pull request #2980 from ajoe734/task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10": "add packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d48846f23e98b87505fa925be9dfed27dd6b14be",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Follow-up 10 packet committed and PR #2980 opened (auto-merge enabled) against dev. Key findings: AG-DYNUI-PROD-002/003/004 are all now done, clearing AG-DYNUI-PROD-005's dependency gate; execute-plans PR #176 landed the first real AG-DYNUI-PROD-005 implementation commit (onAddToTradingRoom wiring); and follow-ups 7-9's reported gaps (unmounted components, no-op grid callbacks, missing V11 workspace clients) were artifacts of grepping the stale pantheon-vendored execute-plans/ mirror -- the real ajoe734/execute-plans dev branch already has the Trading Room workspace components mounted and fully wired to a strict-BFF V11 API client with matching backend routes. Only confirmed remaining gap: the trading-room SSE stream stub. Please review and approve or reopen.",
+      "status": "done",
+      "created_at": "2026-07-04T15:30:23Z",
+      "resolved_at": "2026-07-04T15:32:03Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only AG-DYNUI-PROD-005 follow-up 10 approved; corrects prior mirror-based gap analysis and confirms dependency gate is fully cleared.",
+      "status": "done",
+      "created_at": "2026-07-04T15:32:03Z",
+      "resolved_at": "2026-07-04T15:33:40Z"
+    }
+  ],
+  "blockers": []
+}

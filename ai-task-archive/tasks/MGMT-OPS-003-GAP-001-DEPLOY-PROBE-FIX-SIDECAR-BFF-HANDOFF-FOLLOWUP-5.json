@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-07-12T10:23:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 deploy repair",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3401 merged approved handoff at e6db345565deebc8c57dff05bfc0e090e889b7b4; publication closeout PR #3402 merged at 765fd40f087829bc428bb73714e7c1015cfe9158. Verified git diff --check, task-only diff, cited source existence/claims, commit trailers, runtime mirror guard, and smoke acceptance.",
+    "last_update": "2026-07-12T10:23:21Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T10:23:21Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-001-deploy-probe-fix-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "7e5e4ddfa88648196ffc322fcf8a354ef6100384",
+      "commit_subject": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-5: HF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only closeout identity record.",
+        "Not changing": "canonical truth, runtime implementation, deployment automation, or parent lifecycle.",
+        "Composes with": "merged PR #3401 and synchronized dev tip.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check; PR #3401 merged to dev"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "765fd40f087829bc428bb73714e7c1015cfe9158",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend handoff packet anchored at 221ec7d66. Please verify no new BFF contract claim, production-default fail-closed behavior, personaFocus-to-q page_size=100 boundary, and historical versus current deployment identity separation.",
+      "status": "done",
+      "created_at": "2026-07-12T10:13:20Z",
+      "resolved_at": "2026-07-12T10:17:02Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved support-only handoff at 221ec7d66: no new BFF contract claim; production default remains fail-closed; personaFocus maps to q with page_size=100 and refresh dependency; historical run/commit evidence remains separated from current deployment identity. Verified git diff --check, task-only diff, and cited source existence/claims. Owner Codex2 must finalize through task PR and merge before done.",
+      "status": "done",
+      "created_at": "2026-07-12T10:17:02Z",
+      "resolved_at": "2026-07-12T10:23:22Z"
+    }
+  ],
+  "blockers": []
+}

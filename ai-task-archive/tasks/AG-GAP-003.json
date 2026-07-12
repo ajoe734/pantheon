@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "AG-GAP-003",
+  "archived_at": "2026-07-12T15:26:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-GAP-003",
+    "title": "Durable Postgres store for research",
+    "summary_zh": "research plans/runs/artifacts 與 candidate pools 落 Postgres（目前純 in-memory）；保留 plan-first 治理與 scope 隔離。",
+    "phase": "Agora Gap Closure 2026-07-12 / Wave 0",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-GAP-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-003-research-postgres.md"
+    ],
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-003-research-postgres.md"
+    ],
+    "next": "PR #3446 merged as 5266361ffbbaf1087c29d0d8bfa3b64d6d4e5cbf; focused verification recorded in 535a16b6c; hosted restart evidence pending",
+    "last_update": "2026-07-12T15:26:01Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_gap_closure_2026-07-12",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "prior_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "prior_gate": "docs/bff/execution-tasks/2026-07-08-agora-live-tabs-production/AG-DYNUI-LIVE-TABS-GATE-011.md"
+    },
+    "wave": 0,
+    "fleet_lane": "agora-gap-persistence",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T15:26:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-gap-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-GAP-003",
+      "git_clean_required": false,
+      "commit": "535a16b6c5f34c2e7a9503246c4b8386285ee34e",
+      "commit_subject": "AG-GAP-003: record owner closeout verification",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "AG-GAP-003 task-scoped verification record.",
+        "Not changing": "research runtime behavior or hosted deployment evidence.",
+        "Composes with": "reviewer-approved f277ba3e9 and PR #3446 into dev.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-GAP-003",
+        "Reviewer": "Codex",
+        "Verified": "focused pytest 9 passed, 2 skipped; py_compile; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-GAP-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "bde4c10026782d5190b8fff13bd0d0a4363d9f9e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-GAP-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T14:38:28Z",
+      "resolved_at": "2026-07-12T14:38:55Z"
+    },
+    {
+      "task_id": "AG-GAP-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review commits 9947cb7ba, 98dfe0291, e10fe93e8: durable Postgres aggregates/idempotency, dev activation, and task record. Focused validation 9 passed. Hosted restart proof is explicitly post-merge.",
+      "status": "done",
+      "created_at": "2026-07-12T14:44:43Z",
+      "resolved_at": "2026-07-12T14:50:37Z"
+    },
+    {
+      "task_id": "AG-GAP-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested: Postgres candidate review is broken because add_candidate_review requires review_id, but the route never creates one; every review raises KeyError before persistence. Also list_candidate_reviews does not filter by stored subject_id and can return another member's reviews because review payloads omit artifact_id. Add real Postgres parity/integration coverage (not only factory stubs) proving review write/read isolation and restart persistence; make score replacement transactional and update mutations atomic or concurrency-safe before re-review. Focused baseline rerun: 9 passed.",
+      "status": "done",
+      "created_at": "2026-07-12T14:50:37Z",
+      "resolved_at": "2026-07-12T14:50:37Z"
+    },
+    {
+      "task_id": "AG-GAP-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewer fixes anchored at f277ba3e9: review_id persistence and subject_id isolation fixed; JSONB patches/member updates concurrency-safe; score replacement transactional; real Postgres restart/isolation coverage plus focused suite 11 passed. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-07-12T14:55:06Z",
+      "resolved_at": "2026-07-12T14:57:35Z"
+    },
+    {
+      "task_id": "AG-GAP-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Re-review approved at f277ba3e9: review_id persistence and subject_id isolation verified; JSONB patches/member updates are concurrency-safe; score replacement is transactional. Verified with real Postgres: 11 passed plus git diff --check. Owner Codex2 must finalize via task PR merge and hosted restart/readback evidence before done.",
+      "status": "done",
+      "created_at": "2026-07-12T14:57:35Z",
+      "resolved_at": "2026-07-12T15:26:02Z"
+    }
+  ],
+  "blockers": []
+}

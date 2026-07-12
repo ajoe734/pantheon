@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-12T07:32:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 deploy repair",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PRs #3383 and #3384 merged; reviewer-approved support-only BFF/frontend reconciliation packet finalized at 46c6e33d5. Verified git diff --check, referenced task-scoped evidence files, commit trailers, runtime mirror guard, and smoke acceptance; canonical/runtime layers unchanged; parent owner Codex retains current deployment identity verification and blocker reconciliation.",
+    "last_update": "2026-07-12T07:32:10Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：509c13b30 僅新增 support packet；BFF route/contract 無修改，personaFocus 明確保留為 frontend route state；歷史部署證據與當前部署 identity gate 分離，parent blocker 僅由 parent owner 在核對現況後調和。驗證：git diff --check origin/dev...HEAD；四個 task-scoped source artifacts 均存在且 identifiers 一致。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T07:32:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-001-deploy-probe-fix-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "46c6e33d529c2142b9b850dbe55d30fb1e021da6",
+      "commit_subject": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: x",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "finalized support-only BFF and frontend handoff packet status",
+        "Not changing": "canonical truth, runtime implementation, or parent lifecycle",
+        "Composes with": "parent owner Codex deployment evidence reconciliation",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check; referenced task-scoped source files exist"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5e34d4eb07acbcfb93166b63518dbd8a4421b744",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only reconciliation handoff ready at support/sidecars/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md; review anchor 509c13b30. Verify no BFF contract mutation and that stale parent blocker is reconciled only after current deployment identity is checked.",
+      "status": "done",
+      "created_at": "2026-07-12T07:26:06Z",
+      "resolved_at": "2026-07-12T07:27:14Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "APPROVED: support-only reconciliation packet preserves the BFF contract boundary and requires current deployment identity verification before parent blocker reconciliation.",
+      "status": "done",
+      "created_at": "2026-07-12T07:27:14Z",
+      "resolved_at": "2026-07-12T07:32:12Z"
+    }
+  ],
+  "blockers": []
+}

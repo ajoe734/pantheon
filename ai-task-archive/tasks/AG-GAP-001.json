@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "task_id": "AG-GAP-001",
+  "archived_at": "2026-07-12T14:38:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-GAP-001",
+    "title": "Enable and prove durable workshop Postgres backend on dev",
+    "summary_zh": "確認/落地 dev BFF 的 AGORA_WORKSHOP_STORE_BACKEND=postgres（版本化 deploy config），加 startup backend log；live 證明 workshop 重啟後仍在。",
+    "phase": "Agora Gap Closure 2026-07-12 / Wave 0",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-001-workshop-postgres-live.md"
+    ],
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-001-workshop-postgres-live.md"
+    ],
+    "next": "Closeout complete: PR #3427 implementation and PR #3434 evidence merged; dev run 29196187981 proved Postgres selection, credential-safe startup logging, and workshop 0ad19a18-dc7e-416a-8447-71a7473ed920 survived operator-bff restart. Focused validation: 7 passed, 62 deselected; bash -n and diff check passed. Final evidence commit 87c16a08517e7d43ec4e5e4f8dd81b3588e9dbd4; PR #3434 merge 828327dd598923e5acfdd0d0380167a9a5493121.",
+    "last_update": "2026-07-12T14:38:22Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_gap_closure_2026-07-12",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "prior_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "prior_gate": "docs/bff/execution-tasks/2026-07-08-agora-live-tabs-production/AG-DYNUI-LIVE-TABS-GATE-011.md"
+    },
+    "wave": 0,
+    "fleet_lane": "agora-gap-persistence",
+    "review_notes_zh": [
+      "PR #3427 已合併至 dev（19fdca5400618b23f6100435d85809b3ac64499f），root/BFF-only dev deploy 均固定 Postgres backend；startup log 不含 DSN；7 個 focused tests、bash -n 與 diff-check 通過。PR #3434 已合併（828327dd598923e5acfdd0d0380167a9a5493121）；dev deploy run 29196187981 成功，workshop 0ad19a18-dc7e-416a-8447-71a7473ed920 在 operator-bff restart 後可讀回。"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-001-workshop-postgres-live.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T14:38:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-gap-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-GAP-001",
+      "git_clean_required": false,
+      "commit": "87c16a08517e7d43ec4e5e4f8dd81b3588e9dbd4",
+      "commit_subject": "AG-GAP-001: record dev workshop persistence proof",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "AG-GAP-001 post-merge dev deployment evidence.",
+        "Not changing": "workshop runtime, deployment workflow, or canonical policy.",
+        "Composes with": "PR #3427 implementation and task owner finalization.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-GAP-001",
+        "Reviewer": "Codex2",
+        "Verified": "deploy run 29196187981; workshop survived BFF restart"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-GAP-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c1c926d64c5b33d588ac11f9ee4f6d3a4809b4ae",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-GAP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #3427 ready for review: dev root/BFF deploy pins Postgres workshop store, startup log omits DSN, and dev workflow gates create/restart/read persistence. Validation: 7 focused tests passed; bash -n; git diff --check. Live workflow run evidence remains the post-merge closeout gate.",
+      "status": "done",
+      "created_at": "2026-07-12T14:11:19Z",
+      "resolved_at": "2026-07-12T14:18:56Z"
+    },
+    {
+      "task_id": "AG-GAP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review changes required: remove trailing whitespace from docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-001-workshop-postgres-live.md line 5, rerun git diff --check origin/dev...HEAD, commit via worker_commit.py, and push PR #3427. Focused reviewer validation passed: 7 tests and bash -n. Live workflow evidence remains the post-merge owner closeout gate.",
+      "status": "done",
+      "created_at": "2026-07-12T14:18:56Z",
+      "resolved_at": "2026-07-12T14:18:56Z"
+    },
+    {
+      "task_id": "AG-GAP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implementation PR #3427 and evidence PR #3434 merged. Dev deploy run 29196187981 passed Postgres backend/startup-log/restart persistence for workshop 0ad19a18-dc7e-416a-8447-71a7473ed920. Please perform formal review approval; owner done gate is waiting on review_approved.",
+      "status": "done",
+      "created_at": "2026-07-12T14:30:17Z",
+      "resolved_at": "2026-07-12T14:36:52Z"
+    },
+    {
+      "task_id": "AG-GAP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: PRs #3427/#3434 merged; dev run 29196187981 proves Postgres selection, credential-safe startup logging, and restart persistence. Owner Codex must perform formal closeout to done.",
+      "status": "done",
+      "created_at": "2026-07-12T14:36:52Z",
+      "resolved_at": "2026-07-12T14:38:23Z"
+    }
+  ],
+  "blockers": []
+}

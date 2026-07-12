@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-11T09:19:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare OCLAW-PMEM-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 3 gates closeout",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-003"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-005/OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only BFF/frontend handoff packet; PR #3163 merged into dev at 45064190a018759dc1a85e37505d89e71a9831a0; verified git diff --check and required PR checks.",
+    "last_update": "2026-07-11T09:19:52Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "此 follow-up packet 符合 support-only 定義且保留 memory authority 與 live-smoke/isolation 限制"
+    ],
+    "review_file": "support/sidecars/OCLAW-PMEM-005/OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T09:19:52Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-005-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "b941d1f7a231c0ff9837868e40fed89381305fb3",
+      "commit_subject": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2: finalize handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped BFF and frontend support handoff packet formatting and closeout",
+        "Not changing": "canonical truth, BFF/frontend code, runtime, registry, or gates",
+        "Composes with": "OCLAW-PMEM-005 parent closeout owned by Codex",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check; git show --check HEAD"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "45064190a018759dc1a85e37505d89e71a9831a0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Support-only follow-up packet committed at e1b654afb; please review current BFF claims, Memory Plane authority boundary, derived-cache labeling, and mandatory live-smoke/isolation gates.",
+      "status": "done",
+      "created_at": "2026-07-11T09:12:43Z",
+      "resolved_at": "2026-07-11T09:14:01Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Review approved and returned to Codex2 for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T09:14:01Z",
+      "resolved_at": "2026-07-11T09:19:54Z"
+    }
+  ],
+  "blockers": []
+}

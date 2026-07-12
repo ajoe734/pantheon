@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "TJ-E2E-010",
+  "archived_at": "2026-07-12T13:20:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "title": "Historical replay and legacy backfill",
+    "summary_zh": "依 Trade Journey E2E gap 規格執行：Historical replay and legacy backfill。",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "phase": "Trade Journey E2E / Wave 4",
+    "next": "PR #3420 merged as b62bf4f2a88c8f110b88bc2759e097b0ceb7730d; historical replay and legacy backfill finalized. Verified: python3 -m pytest -q services/trade_journey/test_materializer.py services/trade_journey/test_replay_backfill.py (11 passed); python3 -m py_compile services/trade_journey/replay_backfill.py services/trade_journey/test_replay_backfill.py; git diff --check.",
+    "source_ref": {
+      "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-010-replay-legacy-backfill.md",
+      "target_repo": "pantheon",
+      "merge_target": "dev"
+    },
+    "metadata": {
+      "wave": 4,
+      "fleet_lane": "replay-legacy-backfill",
+      "target_repo": "pantheon"
+    },
+    "created_at": "2026-07-11T22:58:28.902157+00:00",
+    "id": "TJ-E2E-010",
+    "depends_on": [
+      "TJ-E2E-004",
+      "TJ-E2E-005"
+    ],
+    "last_update": "2026-07-12T13:20:21Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T13:20:21Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-010",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TJ-E2E-010",
+      "git_clean_required": false,
+      "commit": "d19874b6e71cf941a018b2f1ffea457abc021453",
+      "commit_subject": "TJ-E2E-010: preserve version lineage in replay evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Trade Journey historical replay timeline and deterministic evidence hashing.",
+        "Not changing": "journey materializer projection schema, BFF routes, or legacy backfill policy.",
+        "Composes with": "TJ-E2E-004 materializer and TJ-E2E-005 canonical read API.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "TJ-E2E-010",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest -q services/trade_journey/test_materializer.py services/trade_journey/test_replay_backfill.py (11 passed); python3 -m py_compile services/trade_journey/replay_backfill.py; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TJ-E2E-010",
+      "ahead": 0,
+      "behind": 23,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "271b746d07a2aaf37cbb7fc1d52019feec16dcb7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TJ-E2E-010",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T12:29:04Z",
+      "resolved_at": "2026-07-12T12:29:08Z"
+    },
+    {
+      "task_id": "TJ-E2E-010",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review commit 815d39948: bi-temporal as-of replay, correction overlays, deterministic evidence hash, confidence-labelled legacy backfill and orphan queue. Verification: 10 focused tests passed; py_compile and git diff --check passed.",
+      "status": "done",
+      "created_at": "2026-07-12T12:37:19Z",
+      "resolved_at": "2026-07-12T13:13:30Z"
+    },
+    {
+      "task_id": "TJ-E2E-010",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "CHANGES REQUESTED on 815d39948: replay output and evidence hash discard historical Persona/model/strategy/policy/binding/risk/broker version fields because ReplayResult exposes only JourneyMaterializer snapshots, whose stage entries contain status/time/revision. Reproduced: otherwise-identical event differing only policy_version p1 vs p2 yields same projections and same SHA-256. Preserve deterministic versioned event/timeline data in replay output and hash, including correction-overlay before/after truth; add tests proving version-only changes alter evidence and pre/post correction outputs expose p1 then p2. Verification: existing focused suite 10 passed, but the direct version-difference repro prints same_hash=True and same_projections=True.",
+      "status": "done",
+      "created_at": "2026-07-12T13:13:30Z",
+      "resolved_at": "2026-07-12T13:13:30Z"
+    },
+    {
+      "task_id": "TJ-E2E-010",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewer changes addressed in d19874b6e: replay exposes deterministic full-event timeline, hashes version lineage, and proves policy-only differences plus correction p1-to-p2 truth; focused suite 11 passed.",
+      "status": "done",
+      "created_at": "2026-07-12T13:15:03Z",
+      "resolved_at": "2026-07-12T13:16:19Z"
+    },
+    {
+      "task_id": "TJ-E2E-010",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "APPROVED: commits 815d39948 and d19874b6e satisfy deterministic bi-temporal replay, correction overlays, version-lineage hashing, confidence-labelled legacy backfill, orphan/conflict evidence, and dependency composition. Reviewer reran focused suite: 11 passed; py_compile and git diff --check passed.",
+      "status": "done",
+      "created_at": "2026-07-12T13:16:19Z",
+      "resolved_at": "2026-07-12T13:20:22Z"
+    }
+  ],
+  "blockers": []
+}

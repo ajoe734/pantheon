@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-LIVE-WORKSHOP-FE-012",
+  "archived_at": "2026-07-08T00:37:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "AG-DYNUI-LIVE-WORKSHOP-FE-012",
+    "title": "Agora Strategy Workshop execute-plans live frontend completion",
+    "summary_zh": "修正實際 live FE repo ajoe734/execute-plans 的 Strategy Workshop tab：目前 /home/lupin/code/execute-plans-ag-dynui-prod-006 仍將 workshop list 裸露為 ws.workshop_id，必須在 execute-plans repo 完成可操作 workshop list/session runtime、PR/CI/merge/deploy/readback，不可只改 Pantheon mirror。",
+    "phase": "Agora DYNUI Live Tabs Production Recovery / 2026-07-08 execute-plans workshop",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-LIVE-WORKSHOP-009"
+    ],
+    "artifacts": [
+      "execute-plans:src/agora/pages/strategy-workshop/",
+      "execute-plans:src/lib/bff-v1/agora/workshops.ts",
+      "execute-plans:src/routes/agora.tsx",
+      "execute-plans:e2e/",
+      "docs/deployment/evidence/ag-dynui-live-tabs-012/"
+    ],
+    "acceptance": [
+      "Reproduce live execute-plans Strategy Workshop tab rendering raw workshop UUID list from /home/lupin/code/execute-plans-ag-dynui-prod-006 or hosted dev",
+      "Patch ajoe734/execute-plans source (not only Pantheon mirror) so list renders workshop title/status/readiness/cards/events and selectable session runtime",
+      "Use live BFF workshop list/detail/cards/readiness/events/messages with shared auth headers; no fixture-only/static page",
+      "Add focused tests and hosted Playwright proving no raw UUID-only debug list on desktop/mobile",
+      "Open execute-plans PR",
+      "wait for CI",
+      "merge",
+      "deploy the live FE runtime to the merged commit",
+      "Record repo commit SHA/deploy path/screenshots/readback in evidence"
+    ],
+    "next": "Superseded by dependency-free follow-up because 012 depended on AG-DYNUI-LIVE-WORKSHOP-009, while the execute-plans live FE repair must run immediately to fix the raw UUID runtime gap.",
+    "last_update": "2026-07-08T00:37:21Z",
+    "terminal_outcome": "superseded",
+    "superseded_by": "AG-DYNUI-LIVE-WORKSHOP-FE-013"
+  },
+  "handoffs": [],
+  "blockers": []
+}

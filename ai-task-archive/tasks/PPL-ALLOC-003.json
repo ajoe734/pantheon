@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-003",
+  "archived_at": "2026-07-11T04:13:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-003",
+    "title": "Capital binding read model",
+    "summary_zh": "讓 persona fleet / capital rows 清楚顯示 paper ledger、canary sleeve、live sleeve/pool、current weight、target weight 與 binding state。",
+    "phase": "Persona Promotion Allocation / Wave 1 binding read models",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+      "services/control-plane/bff/tests/test_bff_capital_pool_bindings.py"
+    ],
+    "acceptance": [
+      "paper rows show isolated ledgers; canary/live rows show sleeve/pool and weights; legacy paper pool ids are migration trace only"
+    ],
+    "next": "Owner closeout complete: PR #3105 merged into dev at ffe83a8fcd3a87a6266cf21c56d03fe466a7260d; focused capital binding tests passed (3 passed); reviewer approval recorded in support/reviews/PPL-ALLOC-003-review-claude.md.",
+    "last_update": "2026-07-11T04:13:07Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+      "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+      "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "persona_promotion_allocation_execution_slice",
+    "wave": 1,
+    "fleet_lane": "capital-binding-read-model",
+    "review_notes_zh": [
+      "審查通過：capital binding projection 正確區分 paper isolated ledger 與 canary/live sleeve+weights，legacy paper pool id 僅作 migration trace。",
+      "capital-pools 端點新增 persona_binding_summaries，附 sleeve/weight/state。",
+      "3 項新測試通過；廣泛 contract test 26 passed 2 failed，該 2 項在 baseline commit 6acbf5d07 上重現一致，屬既有無關失敗，非本次回歸。"
+    ],
+    "review_file": "support/reviews/PPL-ALLOC-003-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T04:13:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-003",
+      "git_clean_required": false,
+      "commit": "6605cf6742fd87820c3dbff8cfbbc2b3e174a903",
+      "commit_subject": "PPL-ALLOC-003: record reviewer approval",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped reviewer approval evidence for the capital binding read model.",
+        "Not changing": "approved BFF projection implementation, allocation policy, frontend routes, or live capital authority.",
+        "Composes with": "PPL-ALLOC-004 allocation policy and PPL-ALLOC-006/007 frontend visibility.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "PPL-ALLOC-003",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest tests/test_bff_capital_pool_bindings.py -q (3 passed); git diff 6acbf5d07..30f4607b4 --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ffe83a8fcd3a87a6266cf21c56d03fe466a7260d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-003",
+      "from": "Gemini2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PPL-ALLOC-003 away from unavailable lane Gemini2 (disabled, paused, sidecar-only, or auth-down); owner Gemini2 -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T02:58:18Z",
+      "resolved_at": "2026-07-11T03:39:25Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review anchor 30f4607b and focused capital binding contracts",
+      "status": "done",
+      "created_at": "2026-07-11T04:05:24Z",
+      "resolved_at": "2026-07-11T04:09:10Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved and returned to owner Codex for finalization. Capital binding projection meets acceptance: paper=isolated ledger trace only, canary/live=sleeve+weights. 3 new tests pass; 2 unrelated pre-existing contract-test failures confirmed on baseline, not a regression.",
+      "status": "done",
+      "created_at": "2026-07-11T04:09:10Z",
+      "resolved_at": "2026-07-11T04:13:09Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-007",
+  "archived_at": "2026-07-12T12:55:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-007",
+    "title": "Migration cleanup and regression",
+    "summary_zh": "完成 legacy alias、dead page、secondary navigation、route baseline 與 mobile/desktop regression 清理。",
+    "phase": "Management Performance Ranking IA / Wave 2 cleanup",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-003",
+      "MGMT-PERF-IA-004",
+      "MGMT-PERF-IA-005",
+      "MGMT-PERF-IA-006"
+    ],
+    "artifacts": [
+      "execute-plans:src/App.tsx",
+      "execute-plans:src/management",
+      "execute-plans:scripts/lib/management-routes.mjs",
+      "execute-plans:e2e",
+      "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/MGMT-PERF-IA-007-migration-cleanup-regression.md"
+    ],
+    "acceptance": [
+      "no dead exported page remains without an explicit decision",
+      "ManagementOperationsNav and duplicate aliases are removed safely",
+      "canonical and compatibility routes pass crawl and redirect tests",
+      "desktop and mobile navigation share one hierarchy without overlap"
+    ],
+    "next": "Closeout complete: execute-plans PR #270 merged as a37a6ea32729f7ff6a6a7b6ea26eb8e9d4c37401; Pantheon evidence PR #3413 merged as f0b6a3ac9bddb06597112cf172d53cf6dea1c98f; closeout PR #3415 merged as 8f9b8442b0b3670a54d2eb46fc4a203b16bf76b5. Reviewer verified 19 unit tests, production build, and 5 Playwright tests; branch CI gates passed.",
+    "last_update": "2026-07-12T12:55:24Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_performance_ranking_ia_2026-07-11",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_performance_ranking_ia_gap_2026-07-11/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/INDEX.md",
+      "trigger": "2026-07-11 complete performance ranking page and menu information architecture audit",
+      "frontend_repo": "ajoe734/execute-plans",
+      "backend_repo": "ajoe734/pantheon"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_performance_ranking_ia_execution_slice",
+    "wave": 2,
+    "fleet_lane": "migration-cleanup-regression",
+    "target_repo": "execute-plans",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T12:55:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-007",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-007",
+      "git_clean_required": false,
+      "commit": "0eee75fa35779c380363c418679b56136166c78a",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-PERF-IA-007",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-007",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8f9b8442b0b3670a54d2eb46fc4a203b16bf76b5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T11:41:19Z",
+      "resolved_at": "2026-07-12T11:41:24Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review execute-plans PR #270 (commit 2fb71a1) and Pantheon evidence PR #3413 (commit 703a35a7d). Verify secondary-nav removal, canonical detail routing, dead-page decision, redirect telemetry/expiry, baseline sync, and 19 unit + 5 Playwright + build evidence.",
+      "status": "done",
+      "created_at": "2026-07-12T12:41:52Z",
+      "resolved_at": "2026-07-12T12:51:03Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Verified execute-plans PR #270 (merged, commit 2fb71a1) and Pantheon evidence PR #3413 (commit 703a35a7d) against source: 19/19 focused unit tests pass, production build succeeds, 5/5 Playwright tests pass (re-ran locally on a clean preview port after an initial false failure traced to a stale leftover preview server from another worktree). ManagementOperationsNav fully removed with no dangling references; CapitalPoolDetailRoute/RankingFormulaDetailRoute/RebalanceDetailRoute confirmed defined and wired; compatibility aliases redirect correctly with query preservation; redirect telemetry event and expiry ownership fields present and tested; RankingDashboardPage removal is a documented explicit decision. All 4 acceptance criteria met.",
+      "status": "done",
+      "created_at": "2026-07-12T12:51:03Z",
+      "resolved_at": "2026-07-12T12:55:25Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "MGMT-PERF-IA-007",
+      "owner": "Codex",
+      "waiting_for": "Claude",
+      "message": "Dispatch/canonical mismatch: worker dispatch assigns Codex/in_progress, but canonical ai-status assigns Claude/todo with Antigravity reviewer; execute-plans primary checkout is dirty on task/PPL-ALLOC-007 with unrelated tracked and untracked changes, and no clean MGMT-PERF-IA-007 frontend worktree exists. Reconcile ownership and provision a clean task worktree after dependencies are ready.",
+      "status": "resolved",
+      "created_at": "2026-07-12T11:51:01Z",
+      "resolved_at": "2026-07-12T12:22:20Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-007",
+      "owner": "Codex",
+      "waiting_for": "Claude",
+      "message": "Dispatch ownership mismatch: owned_in_progress_dispatch assigns Codex, but canonical ai-status assigns Claude with status todo. execute-plans shared checkout is task/PPL-ALLOC-007 and contains unrelated modified/untracked files; no clean MGMT-PERF-IA-007 frontend worktree is available. Per task rules, implementation did not start and no files were stashed, cleaned, or switched.",
+      "status": "resolved",
+      "created_at": "2026-07-12T12:27:38Z",
+      "resolved_at": "2026-07-12T12:33:14Z"
+    }
+  ]
+}

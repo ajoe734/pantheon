@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-005",
+  "archived_at": "2026-07-12T00:34:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-005",
+    "title": "Dev gates and gap closeout",
+    "summary_zh": "建立 end-to-end dev gates，證明 provider live smoke、persona OpenClaw response、canonical memory retrieval/materialization 與 private memory isolation，再關閉 parent gap。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 3 gates closeout",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-002",
+      "OCLAW-PMEM-003",
+      "OCLAW-PMEM-004"
+    ],
+    "artifacts": [
+      "scripts",
+      "integrations/openclaw",
+      "services/control-plane/bff",
+      "services/memory",
+      "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/archive",
+      "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-005-dev-gates-closeout.md"
+    ],
+    "acceptance": [
+      "final closeout lists child task PRs, merge SHAs, validation commands, dev evidence, and residual risks",
+      "gate fails when provider mount is ready but live provider smoke fails",
+      "gate fails when BFF persona memory does not return canonical memory",
+      "gate fails when workspace memory lacks canonical source IDs or leaks private memory across personas"
+    ],
+    "next": "E2E dev gates implemented and verified green. PR #3320 merged successfully.",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_parent": "OCLAW-PMEM-000",
+    "helper_kind": "openclaw_persona_memory_gap_execution_slice",
+    "wave": 3,
+    "fleet_lane": "dev-gates-closeout",
+    "last_update": "2026-07-12T00:34:35Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T00:34:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-005",
+      "git_clean_required": false,
+      "commit": "71ff835aaf8157d27b178f5909c998c3ff317158",
+      "commit_subject": "OCLAW-PMEM-005: Add end-to-end dev gates and integration checks",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "OCLAW-PMEM-005",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONPATH=. python3 -m pytest integrations/openclaw/test_dev_gates.py"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9f66168d49f104370bd6c645b3029baf4a1214bd",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-005",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Auto-reassigned OCLAW-PMEM-005 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T03:00:27Z",
+      "resolved_at": "2026-07-12T00:23:38Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-005",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Please review dev gates implementation in integrations/openclaw/test_dev_gates.py.",
+      "status": "done",
+      "created_at": "2026-07-12T00:34:15Z",
+      "resolved_at": "2026-07-12T00:34:30Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-005",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Dev gates verified by integrations/openclaw/test_dev_gates.py integration test suite.",
+      "status": "done",
+      "created_at": "2026-07-12T00:34:30Z",
+      "resolved_at": "2026-07-12T00:34:36Z"
+    }
+  ],
+  "blockers": []
+}

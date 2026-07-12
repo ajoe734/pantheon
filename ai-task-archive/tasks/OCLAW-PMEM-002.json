@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-002",
+  "archived_at": "2026-07-11T23:27:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-002",
+    "title": "OpenClaw persona agent reconciliation",
+    "summary_zh": "把 general persona create/update 接到 shared OpenClaw reconciler；既有 agent 要能同步 identity/workspace/model/SOUL，並消除 deploy script 與 library 的 SOUL drift。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 1 agent reconcile",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-001"
+    ],
+    "artifacts": [
+      "integrations/openclaw/persona_agent_sync.py",
+      "scripts/openclaw-sync-persona-agents.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/agora/servant",
+      "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-002-openclaw-agent-reconcile.md"
+    ],
+    "acceptance": [
+      "BFF persona create/update produces a reachable openclaw/{persona_id} agent or a failed reconcile reason",
+      "existing-agent model drift is repaired or blocked with a precise repair action",
+      "SOUL renderer parity tests cover deploy script and library output including Memory section",
+      "dev evidence shows a persona response through model=openclaw/{persona_id}"
+    ],
+    "next": "Antigravity review approved; implementation PR #3003, evidence PR #3288, and closeout PR #3300 merged into dev. Focused reconciler/BFF tests: 37 passed; py_compile and git diff --check passed. Closeout merge: 8f5814c741a551a058628db7492fe49d8c4ae3a4.",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_parent": "OCLAW-PMEM-000",
+    "helper_kind": "openclaw_persona_memory_gap_execution_slice",
+    "wave": 1,
+    "fleet_lane": "openclaw-agent-reconcile",
+    "last_update": "2026-07-11T23:27:57Z",
+    "review_notes_zh": [
+      "審查通過：單元測試皆通過，reconciler 同步與 model drift 偵測邏輯正確",
+      "後續追蹤：確認執行環境上 BFF 與 OpenClaw replicator 同步正常運作"
+    ],
+    "review_file": "support/reviews/OCLAW-PMEM-002-review-antigravity.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T23:27:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-002",
+      "git_clean_required": false,
+      "commit": "61686a509cc0168b731d4c0512003bf5780f5855",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OCLAW-PMEM-002",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8f5814c741a551a058628db7492fe49d8c4ae3a4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-002",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned OCLAW-PMEM-002 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T03:07:28Z",
+      "resolved_at": "2026-07-11T03:21:56Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review PR #3288 and evidence commit ffa01b9e5. Focused suite: 37 passed; py_compile and diff check passed. Dispatch/operator context reports completed /v1/responses output for openclaw/default and openclaw/persona-tw-equity after adapter startup lag; evidence doc explicitly records provenance and this worker non-interactive SSH limitation.",
+      "status": "done",
+      "created_at": "2026-07-11T22:52:37Z",
+      "resolved_at": "2026-07-11T23:20:40Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-002",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Chair reassigned review from Claude to Antigravity: Claude completed independent verification but the auto-mode classifier rejected formal approval as self-approval at least three times; Antigravity is distinct from owner Codex and currently dispatch-capable.",
+      "status": "done",
+      "created_at": "2026-07-11T23:20:40Z",
+      "resolved_at": "2026-07-11T23:23:37Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-002",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved by Antigravity: unit tests passed and reconciler logic verified.",
+      "status": "done",
+      "created_at": "2026-07-11T23:23:37Z",
+      "resolved_at": "2026-07-11T23:27:58Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "OCLAW-PMEM-002",
+      "owner": "Codex",
+      "waiting_for": "Human/Ops",
+      "message": "Implementation is merged in PR #3003 and focused tests pass (37 passed), but required dev evidence for a response through model=openclaw/{persona_id} is absent; task state also still records stale owner Codex2 despite owned_ready_dispatch to Codex.",
+      "status": "resolved",
+      "created_at": "2026-07-11T04:03:10Z",
+      "resolved_at": "2026-07-11T14:07:55Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-002",
+      "owner": "Codex",
+      "waiting_for": "Human/Ops",
+      "message": "Live model=openclaw/{persona_id} evidence blocked: pantheon-gcp SSH alias targets retired address; current VM private key is absent; gcloud credential refresh requires interactive login. Restore non-interactive current-dev-VM access, then rerun reconcile and /v1/responses probe. Anchor db8e7ca0f pushed.",
+      "status": "resolved",
+      "created_at": "2026-07-11T14:10:52Z",
+      "resolved_at": "2026-07-11T22:49:41Z"
+    }
+  ]
+}

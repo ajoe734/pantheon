@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-LIVE-AUTH-002-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-03T07:21:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-LIVE-AUTH-002-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-DYNUI-LIVE-AUTH-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-LIVE-AUTH-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora Dynamic UI Live Auth Transport",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-LIVE-AUTH-002/AG-DYNUI-LIVE-AUTH-002-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar BFF handoff packet reviewed by Claude, PR #2807 merged, closeout metadata merged in PR #2809 at 2642c7190a459d3c973422cbf5efff3043ad3a42; support-only artifact is ready for parent-owner absorption.",
+    "last_update": "2026-07-03T07:21:01Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-LIVE-AUTH-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Scope-clean support artifact confirmed: PR #2807 diff touches only the task brief and the handoff packet markdown, no canonical/L1/runtime edits.",
+      "Fact-checked against execute-plans@dev 6556534b937e433b40cf94d87b8ab25a792aed35: tradingRoom.ts getTradingRoom/listTradingRoomWorkspaceVersions/etc. confirmed sending only {Accept} with no buildHeaders/Authorization; headers.ts buildHeaders() confirmed emitting Authorization/X-Tenant-Id/X-Request-Id/X-Correlation-Id/X-BFF-Api-Version exactly as described.",
+      "Query gap matrix, suggested composition, and test guidance are actionable and consistent with parent AG-DYNUI-LIVE-AUTH-002 investigation notes in ai-status.json."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-03T07:21:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-live-auth-002-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-LIVE-AUTH-002-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "2642c7190a459d3c973422cbf5efff3043ad3a42",
+      "commit_subject": "Merge pull request #2809 from ajoe734/task/AG-DYNUI-LIVE-AUTH-002-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-DYNUI-LIVE-AUTH-002-SIDECAR-BFF-HANDOFF": "finalize"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-LIVE-AUTH-002-SIDECAR-BFF-HANDOFF",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2642c7190a459d3c973422cbf5efff3043ad3a42",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-LIVE-AUTH-002-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Handoff packet merged in pantheon PR #2807 (merge commit 813568c7a1e2db36f11cedd18de46b11d15c71bc). Support artifact is ready for Claude review; parent owner should decide whether to absorb the frontend auth-header guidance into AG-DYNUI-LIVE-AUTH-002.",
+      "status": "done",
+      "created_at": "2026-07-03T07:12:42Z",
+      "resolved_at": "2026-07-03T07:15:51Z"
+    },
+    {
+      "task_id": "AG-DYNUI-LIVE-AUTH-002-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed and approved: handoff packet verified against execute-plans@dev source (buildHeaders/tradingRoom.ts claims fact-checked), scope stayed support-only, no canonical truth touched. Returning to Codex for finalization to done.",
+      "status": "done",
+      "created_at": "2026-07-03T07:15:51Z",
+      "resolved_at": "2026-07-03T07:21:02Z"
+    }
+  ],
+  "blockers": []
+}
