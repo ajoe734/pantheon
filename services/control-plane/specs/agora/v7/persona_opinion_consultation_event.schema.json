@@ -171,6 +171,12 @@
             "required": ["actor_type"]
           },
           "then": {
+            "properties": {
+              "session_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
             "required": ["session_id"]
           }
         }

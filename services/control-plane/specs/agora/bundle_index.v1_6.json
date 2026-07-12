@@ -6,13 +6,13 @@
     "bundle_index_sha256": "f88662a3ba1d2e07d5711f88e35d6374b7d737ed654b1963dc07281e2c3fe5f9"
   },
   "files": {
-    "specs/agora/v7/persona_opinion_consultation_event.schema.json": "a294bfb8209c122fa3aeff500922baea347b95481b9b448a5133bff43b61df1f",
-    "specs/agora/v7/governed_action_authority_request.schema.json": "d97447d4c9d06ea78372e19e3d0a630140d0b31d2412e3d41864912783abcc1d",
+    "specs/agora/v7/persona_opinion_consultation_event.schema.json": "23e653ec9393fd583bde33c54767cffd09c3d7608955eb17cf275fbaff03b5d4",
+    "specs/agora/v7/governed_action_authority_request.schema.json": "78674dd48c378dd3e1b9bc8371937855dec4df6ff3d56cc0fe96a33a669c77d5",
     "specs/agora/v7/capability_manifest_v1_6.json": "bb29f60576b57a9139235023d4579830797570fe7823153c5f3eb1ba49278a48"
   },
   "required_definition_checksums": {
-    "PersonaOpinionConsultationEvent": "a294bfb8209c122fa3aeff500922baea347b95481b9b448a5133bff43b61df1f",
-    "GovernedActionAuthorityRequest": "d97447d4c9d06ea78372e19e3d0a630140d0b31d2412e3d41864912783abcc1d"
+    "PersonaOpinionConsultationEvent": "23e653ec9393fd583bde33c54767cffd09c3d7608955eb17cf275fbaff03b5d4",
+    "GovernedActionAuthorityRequest": "78674dd48c378dd3e1b9bc8371937855dec4df6ff3d56cc0fe96a33a669c77d5"
   },
   "contract_refs": {
     "source_design_packet": "docs/product/persona-interaction-and-governed-action-plan.md",
