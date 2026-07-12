@@ -17,7 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from services.trade_journey.materializer import IDENTIFIER_FIELDS, JourneyProjection, TERMINAL_STATUSES
+from services.trade_journey.alert_rules import evaluate_aggregate_rules, load_alert_rules
+from services.trade_journey.materializer import IDENTIFIER_FIELDS, STAGES, JourneyProjection, TERMINAL_STATUSES
 
 
 SCHEMA_VERSION = "trade_journey_slo_data_quality.v1"
@@ -86,6 +87,9 @@ class DataQualityMetrics:
     reconciliation_mismatch_max_age_seconds: float | None
     late_event_lag_p95_ms: float | None
     sse_disconnect_count: int
+    stage_latency_ms: Mapping[str, Mapping[str, Any]]
+    detail_api_p95_ms: float | None
+    resolve_api_p95_ms: float | None
 
 
 @dataclass(frozen=True)
@@ -179,12 +183,20 @@ def compute_data_quality_metrics(
     now: datetime,
     stalled_after_seconds: int = DEFAULT_STALLED_AFTER_SECONDS,
     sse_disconnect_count: int = 0,
+    detail_api_latencies_ms: Sequence[float] = (),
+    resolve_api_latencies_ms: Sequence[float] = (),
 ) -> DataQualityMetrics:
     """Derive TJ-E2E-011 data-quality metrics from a materializer snapshot.
 
     ``source_watermarks`` and ``now`` are supplied by the caller (rather than
     read from the wall clock) so the evaluation is deterministic in tests and
-    failure-injection drills.
+    failure-injection drills. ``detail_api_latencies_ms``/
+    ``resolve_api_latencies_ms`` are likewise caller-supplied (the BFF's
+    ``ApiLatencyRecorder`` in production; a fixed list in tests) rather than
+    measured here, so this function stays a pure, deterministic evaluator —
+    gap-spec section 13 requires the ``detail_api_p95_seconds``/
+    ``resolve_p95_seconds`` targets to be measured against real latency, not
+    just loaded.
     """
     total = len(projections)
     orphan = 0
@@ -198,6 +210,7 @@ def compute_data_quality_metrics(
     partial_fill_ages: list[float] = []
     mismatch_ages: list[float] = []
     late_event_lags_ms: list[float] = []
+    stage_latencies_ms: dict[str, list[float]] = {stage: [] for stage in STAGES}
 
     for projection in projections:
         snapshot = projection.snapshot
@@ -233,7 +246,11 @@ def compute_data_quality_metrics(
             occurred = _parse_iso(event.get("occurred_at"))
             recorded = _parse_iso(event.get("recorded_at"))
             if occurred and recorded:
-                late_event_lags_ms.append((recorded - occurred).total_seconds() * 1000.0)
+                lag_ms = (recorded - occurred).total_seconds() * 1000.0
+                late_event_lags_ms.append(lag_ms)
+                stage_name = event.get("stage")
+                if stage_name in stage_latencies_ms:
+                    stage_latencies_ms[stage_name].append(lag_ms)
 
     executed = sum(1 for p in projections if "order_submission" in (p.snapshot.get("stages") or {}))
 
@@ -242,6 +259,12 @@ def compute_data_quality_metrics(
     if parsed_watermarks:
         oldest = min(parsed_watermarks)
         materializer_lag_seconds = max(0.0, (now - oldest).total_seconds())
+
+    stage_latency_ms = {
+        stage: {"p50_ms": _percentile(values, 0.5), "p95_ms": _percentile(values, 0.95), "sample_count": len(values)}
+        for stage, values in stage_latencies_ms.items()
+        if values
+    }
 
     return DataQualityMetrics(
         schema_version=SCHEMA_VERSION,
@@ -262,6 +285,9 @@ def compute_data_quality_metrics(
         reconciliation_mismatch_max_age_seconds=max(mismatch_ages) if mismatch_ages else None,
         late_event_lag_p95_ms=_percentile(late_event_lags_ms, 0.95),
         sse_disconnect_count=sse_disconnect_count,
+        stage_latency_ms=stage_latency_ms,
+        detail_api_p95_ms=_percentile(list(detail_api_latencies_ms), 0.95),
+        resolve_api_p95_ms=_percentile(list(resolve_api_latencies_ms), 0.95),
     )
 
 
@@ -271,6 +297,7 @@ def evaluate_data_quality(
     projections: Sequence[JourneyProjection],
     *,
     now: datetime,
+    alert_rules: tuple[Any, ...] | None = None,
 ) -> tuple[DataQualityIncident, ...]:
     """Compare metrics against SLO targets and emit journey-linked incidents.
 
@@ -278,7 +305,9 @@ def evaluate_data_quality(
     reject) always carry ``journey_id``/``evidence_ref`` so an operator can
     jump straight to the offending journey. Aggregate SLO-breach incidents
     (materializer lag, correlation/reconciliation completeness, SSE
-    disconnects) are environment-scoped.
+    disconnects, API p95 latency) are environment-scoped and driven by the
+    declarative rules in ``alert_rules.py``/``trade_journey_alert_rules.json``
+    (pass ``alert_rules`` to override the loaded default, e.g. in tests).
     """
     incidents: list[DataQualityIncident] = []
 
@@ -308,6 +337,20 @@ def evaluate_data_quality(
                 message=f"journey {journey_id} has an order_id with no client_order_id or signal_id",
                 metric_name="orphan_event_rate", observed_value=True, target_value=False,
                 alert_path=AlertPath(event_type="trade_journey.slo.orphan_identifier"),
+                journey_id=journey_id, tenant_id=projection.tenant_id,
+                environment=projection.environment, evidence_ref=evidence_ref,
+            ))
+
+        if "identifier_conflict" in codes:
+            conflict = next(item for item in projection.diagnostics if item.get("code") == "identifier_conflict")
+            incidents.append(DataQualityIncident(
+                code="identifier_conflict", severity="warning",
+                message=(
+                    f"journey {journey_id} has conflicting {conflict['identifier_type']} values: "
+                    f"{conflict['values']}"
+                ),
+                metric_name="identifier_conflict_rate", observed_value=True, target_value=False,
+                alert_path=AlertPath(event_type="trade_journey.slo.identifier_conflict"),
                 journey_id=journey_id, tenant_id=projection.tenant_id,
                 environment=projection.environment, evidence_ref=evidence_ref,
             ))
@@ -346,59 +389,39 @@ def evaluate_data_quality(
                 environment=projection.environment, evidence_ref=evidence_ref,
             ))
 
-    if metrics.materializer_lag_seconds is not None and (
-        metrics.materializer_lag_seconds > targets.producer_to_read_model_p95_seconds
-    ):
+    for firing in evaluate_aggregate_rules(metrics, targets, alert_rules or load_alert_rules()):
+        rule = firing.rule
+        message = _AGGREGATE_ALERT_MESSAGES[rule.code](firing.observed_value, firing.target_value, targets.environment)
         incidents.append(DataQualityIncident(
-            code="materializer_lag_breach", severity="critical",
-            message=(
-                f"materializer lag {metrics.materializer_lag_seconds:.1f}s exceeds the "
-                f"{targets.producer_to_read_model_p95_seconds}s {targets.environment} target"
-            ),
-            metric_name="materializer_lag_seconds", observed_value=metrics.materializer_lag_seconds,
-            target_value=targets.producer_to_read_model_p95_seconds,
-            alert_path=AlertPath(event_type="trade_journey.slo.materializer_lag_breach"),
-        ))
-
-    if metrics.correlation_completeness_rate is not None and (
-        metrics.correlation_completeness_rate < targets.correlation_completeness_min
-    ):
-        incidents.append(DataQualityIncident(
-            code="correlation_completeness_breach", severity="critical",
-            message=(
-                f"correlation completeness {metrics.correlation_completeness_rate:.4f} is below the "
-                f"{targets.correlation_completeness_min} {targets.environment} target"
-            ),
-            metric_name="correlation_completeness_rate", observed_value=metrics.correlation_completeness_rate,
-            target_value=targets.correlation_completeness_min,
-            alert_path=AlertPath(event_type="trade_journey.slo.correlation_completeness_breach"),
-        ))
-
-    if metrics.reconciliation_completeness_rate is not None and (
-        metrics.reconciliation_completeness_rate < targets.reconciliation_completeness_min
-    ):
-        incidents.append(DataQualityIncident(
-            code="reconciliation_completeness_breach", severity="critical",
-            message=(
-                f"reconciliation completeness {metrics.reconciliation_completeness_rate:.4f} is below the "
-                f"{targets.reconciliation_completeness_min} {targets.environment} target"
-            ),
-            metric_name="reconciliation_completeness_rate",
-            observed_value=metrics.reconciliation_completeness_rate,
-            target_value=targets.reconciliation_completeness_min,
-            alert_path=AlertPath(event_type="trade_journey.slo.reconciliation_completeness_breach"),
-        ))
-
-    if metrics.sse_disconnect_count > 0:
-        incidents.append(DataQualityIncident(
-            code="sse_disconnect", severity="warning",
-            message=f"{metrics.sse_disconnect_count} SSE disconnect(s) observed in {targets.environment}",
-            metric_name="sse_disconnect_count", observed_value=metrics.sse_disconnect_count,
-            target_value=0,
-            alert_path=AlertPath(event_type="trade_journey.slo.sse_disconnect"),
+            code=rule.code, severity=rule.severity, message=message,
+            metric_name=rule.metric_name, observed_value=firing.observed_value,
+            target_value=firing.target_value,
+            alert_path=AlertPath(event_type=rule.event_type),
         ))
 
     return tuple(incidents)
+
+
+_AGGREGATE_ALERT_MESSAGES: Mapping[str, Any] = {
+    "materializer_lag_breach": lambda observed, target, environment: (
+        f"materializer lag {observed:.1f}s exceeds the {target}s {environment} target"
+    ),
+    "correlation_completeness_breach": lambda observed, target, environment: (
+        f"correlation completeness {observed:.4f} is below the {target} {environment} target"
+    ),
+    "reconciliation_completeness_breach": lambda observed, target, environment: (
+        f"reconciliation completeness {observed:.4f} is below the {target} {environment} target"
+    ),
+    "sse_disconnect": lambda observed, target, environment: (
+        f"{int(observed)} SSE disconnect(s) observed in {environment}"
+    ),
+    "detail_api_p95_breach": lambda observed, target, environment: (
+        f"detail API p95 latency {observed:.1f}ms exceeds the {target:.0f}ms {environment} target"
+    ),
+    "resolve_api_p95_breach": lambda observed, target, environment: (
+        f"resolve API p95 latency {observed:.1f}ms exceeds the {target:.0f}ms {environment} target"
+    ),
+}
 
 
 def metrics_to_dict(metrics: DataQualityMetrics) -> dict[str, Any]:
@@ -421,6 +444,9 @@ def metrics_to_dict(metrics: DataQualityMetrics) -> dict[str, Any]:
         "reconciliation_mismatch_max_age_seconds": metrics.reconciliation_mismatch_max_age_seconds,
         "late_event_lag_p95_ms": metrics.late_event_lag_p95_ms,
         "sse_disconnect_count": metrics.sse_disconnect_count,
+        "stage_latency_ms": dict(metrics.stage_latency_ms),
+        "detail_api_p95_ms": metrics.detail_api_p95_ms,
+        "resolve_api_p95_ms": metrics.resolve_api_p95_ms,
     }
 
 
