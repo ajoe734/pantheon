@@ -48,6 +48,16 @@ def _mask(value: Any, identity: Any) -> Any:
     return value
 
 
+def _decode_command_owner_body(raw: bytes) -> dict[str, Any]:
+    try:
+        decoded = json.loads(raw)
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("command owner returned invalid JSON") from exc
+    if not isinstance(decoded, Mapping):
+        raise RuntimeError("command owner returned a non-object body")
+    return dict(decoded)
+
+
 def _dispatch_command(payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
     base_url = os.getenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "").strip().rstrip("/")
     if not base_url:
@@ -60,10 +70,13 @@ def _dispatch_command(payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
     )
     try:
         with urllib_request.urlopen(req, timeout=5) as response:
-            return response.status, json.loads(response.read())
+            return response.status, _decode_command_owner_body(response.read())
     except urllib_error.HTTPError as exc:
-        return exc.code, json.loads(exc.read())
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        try:
+            return exc.code, _decode_command_owner_body(exc.read())
+        except RuntimeError as decode_error:
+            raise RuntimeError("command owner returned an invalid error response") from decode_error
+    except (OSError, RuntimeError) as exc:
         raise RuntimeError("command owner is unavailable") from exc
 
 

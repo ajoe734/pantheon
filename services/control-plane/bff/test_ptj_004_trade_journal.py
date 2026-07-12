@@ -43,6 +43,10 @@ class _Response:
     def close(self): pass
 
 
+class _RawResponse(_Response):
+    def read(self): return self.body
+
+
 class DurableOwner:
     def __init__(self):
         self.lock = threading.Lock(); self.records = {}; self.calls = []
@@ -131,6 +135,36 @@ def test_owner_rejects_nonexistent_target_and_invalid_transition(monkeypatch) ->
         monkeypatch.setattr(trade_journal.urllib_request, "urlopen", reject)
         response = client.post("/bff/personas/p1/trade-journal/missing/reflection:retry", headers={**HEADERS, "Idempotency-Key": "missing"}, json={"reason": "retry"})
         assert (response.status_code, response.json()["error"]["code"]) == (404, "RESOURCE_NOT_FOUND")
+
+
+def test_malformed_2xx_owner_array_fails_closed(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _client(td)
+        monkeypatch.setenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "http://command-owner")
+        monkeypatch.setattr(trade_journal.urllib_request, "urlopen", lambda request, timeout=5: _Response([]))
+        response = client.post(
+            "/bff/personas/p1/trade-journal/e2/reflection:retry",
+            headers={**HEADERS, "Idempotency-Key": "array-body"},
+            json={"reason": "retry"},
+        )
+        assert (response.status_code, response.json()["error"]["code"]) == (503, "DEPENDENCY_UNAVAILABLE")
+
+
+def test_non_json_owner_http_error_fails_closed(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _client(td)
+        monkeypatch.setenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "http://command-owner")
+
+        def reject(request, timeout=5):
+            raise urllib_error.HTTPError(request.full_url, 502, "bad gateway", {}, _RawResponse(b"upstream exploded"))
+
+        monkeypatch.setattr(trade_journal.urllib_request, "urlopen", reject)
+        response = client.post(
+            "/bff/personas/p1/trade-journal/e2/reflection:retry",
+            headers={**HEADERS, "Idempotency-Key": "non-json-error"},
+            json={"reason": "retry"},
+        )
+        assert (response.status_code, response.json()["error"]["code"]) == (503, "DEPENDENCY_UNAVAILABLE")
 
 
 def test_concurrent_same_key_is_atomically_owned_downstream(monkeypatch) -> None:
