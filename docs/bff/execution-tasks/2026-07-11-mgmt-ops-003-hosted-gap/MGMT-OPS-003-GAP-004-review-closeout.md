@@ -50,3 +50,39 @@ acceptance task, not a documentation-only rubber stamp.
 - `docs/deployment/evidence/mgmt-ops-003-gap`
 - `execute-plans:hosted-dev-evidence`
 - `docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md`
+
+## 2026-07-12 Independent Rerun
+
+Dependency readiness was checked against the canonical task archive, not the
+stale active-task list. `MGMT-OPS-003-GAP-001`, `-002`, and `-003` each have
+`terminal_outcome: completed` in `ai-task-archive/tasks/`.
+
+The hosted deployment identified frontend commit
+`a74e58696c900112557b0c748c3f8c69629da106` in strict live mode. The reviewer
+checked out that exact commit in an isolated clone and ran:
+
+```bash
+PANTHEON_HOSTED_E2E=1 \
+PANTHEON_FE_BASE_URL=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io \
+PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io \
+VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict \
+npx playwright test e2e/21-portfolio-workflow-hosted.spec.ts --project=chromium
+```
+
+Result: desktop passed; mobile failed (1 passed, 1 failed). On the mobile
+Human Inbox navigation the hosted UI rendered
+`strict: Failed to fetch · seed fallback blocked`. The fail-closed assertion
+correctly rejected the visible fallback state. Current authenticated Portfolio
+Book, holdings, and performance-attribution responses and both browser
+screenshots are captured under
+`docs/deployment/evidence/mgmt-ops-003-gap/gap-004/20260712T000000Z/`.
+
+## Verdict
+
+`REQUEST_CHANGES`
+
+The hosted-browser acceptance rows cannot pass while the mobile governed Human
+Review route enters a strict fetch failure/fallback state. Repair the mobile
+request failure, redeploy, and rerun both viewports against the newly reported
+deployment SHA. This verdict does not reopen dependency completion; it is a
+new hosted regression found by the independent closeout.
