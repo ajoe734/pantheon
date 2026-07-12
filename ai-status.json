@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-12T00:37:05Z",
+  "updated_at": "2026-07-12T01:35:53Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -146,7 +146,6 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "MGMT-OPS-003-GAP-004",
         "OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
@@ -788,7 +787,7 @@
       "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 review gate",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "review_approved",
       "depends_on": [
         "MGMT-OPS-003-GAP-001",
         "MGMT-OPS-003-GAP-002",
@@ -808,8 +807,8 @@
         "stale mock-only or mismatched-SHA evidence is rejected",
         "MGMT-PERF-IA-003 receives a behavior-preserving handoff"
       ],
-      "next": "REQUEST_CHANGES: exact hosted FE SHA a74e5869 desktop passed, but mobile Human Inbox rendered strict Failed to fetch / seed fallback blocked. Owner must route execute-plans mobile request repair, redeploy, and rerun authenticated desktop/mobile probes with zero required-request failures before review.",
-      "last_update": "2026-07-12T00:35:55Z",
+      "next": "APPROVED: deployed SHA 5647d4b matches /deployment.json; dev deploy run 29174965397 and post-merge integration gate 29174965400 succeeded; reviewer hosted rerun passed Portfolio desktop/mobile and Persona Fleet click-map.",
+      "last_update": "2026-07-12T01:35:53Z",
       "task_class": "execution",
       "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
       "auto_generated": true,
@@ -846,7 +845,8 @@
         ]
       },
       "wave": 2,
-      "target_repo": "pantheon+execute-plans"
+      "target_repo": "pantheon+execute-plans",
+      "review_file": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-004-review-closeout.md"
     },
     {
       "id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
@@ -1816,6 +1816,23 @@
       "message": "Ownership updated",
       "status": "pending",
       "created_at": "2026-07-12T00:37:05Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Repair verified on deployed execute-plans SHA 5647d4b; closeout doc updated with dev deployment, post-merge gate, and hosted desktop/mobile reviewer rerun. Reviewer should approve final closeout.",
+      "status": "done",
+      "created_at": "2026-07-12T01:35:48Z",
+      "resolved_at": "2026-07-12T01:35:53Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "APPROVED: deployed SHA 5647d4b matches /deployment.json; dev deploy run 29174965397 and post-merge integration gate 29174965400 succeeded; reviewer hosted rerun passed Portfolio desktop/mobile and Persona Fleet click-map.",
+      "status": "pending",
+      "created_at": "2026-07-12T01:35:53Z"
     }
   ],
   "blockers": [
@@ -1939,12 +1956,12 @@
     },
     "Codex2": {
       "total": 3,
-      "active": 2,
+      "active": 1,
       "blocked": 0,
       "done": 1,
       "review": 0,
-      "review_approved": 0,
-      "todo": 2
+      "review_approved": 1,
+      "todo": 1
     },
     "Copilot": {
       "total": 0,

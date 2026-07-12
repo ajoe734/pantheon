@@ -148,18 +148,58 @@ def _fetch_governance_approval(decision_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _authorize_lesson_action(actor_id: Optional[str], actor_roles: Optional[List[str]]) -> None:
+def _authorize_lesson_action(
+    actor_id: Optional[str],
+    actor_roles: Optional[List[str]],
+    action: str = "lesson.decide",
+) -> None:
     if not actor_id or not actor_id.strip():
         raise HTTPException(
             status_code=403,
             detail={"error": "unauthorized", "message": "Missing actor ID."}
         )
-    normalized_roles = {str(role).strip().lower() for role in actor_roles or [] if str(role).strip()}
-    authorized_set = {"operator", "admin", "reviewer", "governance_reviewer", "governance_committee"}
-    if not normalized_roles.intersection(authorized_set):
+
+    request_payload = {
+        "action": action,
+        "actor_id": actor_id,
+        "actor_roles": actor_roles or [],
+        "resource": {},
+        "context": {},
+    }
+
+    if os.getenv("PANTHEON_MEMORY_AUTHZ_MODE", "").strip().lower() == "local":
+        from services.governance.authz import evaluate_authz_request
+        decision = evaluate_authz_request(**request_payload)
+    else:
+        url = _governance_authz_url()
+        if not url:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "unauthorized", "message": "Governance authz unconfigured."}
+            )
+        body = json.dumps(request_payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        token = os.getenv("PANTHEON_GOVERNANCE_AUTH_TOKEN", "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=float(os.getenv("PANTHEON_MEMORY_AUTHZ_TIMEOUT", "2"))) as response:
+                payload = json.loads(response.read().decode("utf-8") or "{}")
+            decision = {"allowed": bool(payload.get("allowed")), "reason": str(payload.get("reason") or "unknown")}
+        except Exception:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "unauthorized", "message": "Governance authz service unavailable."}
+            )
+
+    if not decision.get("allowed"):
         raise HTTPException(
             status_code=403,
-            detail={"error": "unauthorized", "message": f"Actor roles {list(normalized_roles)} not authorized for governance action."}
+            detail={
+                "error": "unauthorized",
+                "message": f"Actor roles {actor_roles} not authorized for governance action. Reason: {decision.get('reason')}"
+            }
         )
 
 
@@ -465,12 +505,21 @@ async def decide_trade_lesson(
     x_actor_id: Optional[str] = Header(None, alias="X-Actor-ID"),
     x_actor_roles: Optional[str] = Header(None, alias="X-Actor-Roles"),
 ):
-    actor_id = x_actor_id or payload.operator_id
-    actor_roles = payload.actor_roles
-    if not actor_roles and x_actor_roles:
-        actor_roles = [r.strip() for r in x_actor_roles.split(",") if r.strip()]
+    if not x_actor_id or not x_actor_id.strip():
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "unauthorized", "message": "Missing authenticated actor ID Header (X-Actor-ID)."}
+        )
+    actor_id = x_actor_id
 
-    _authorize_lesson_action(actor_id, actor_roles)
+    if not x_actor_roles or not x_actor_roles.strip():
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "unauthorized", "message": "Missing authenticated roles Header (X-Actor-Roles)."}
+        )
+    actor_roles = [r.strip() for r in x_actor_roles.split(",") if r.strip()]
+
+    _authorize_lesson_action(actor_id, actor_roles, action="lesson.decide")
 
     candidate = _candidate_store().get(candidate_id)
     if candidate is None:
@@ -509,12 +558,46 @@ async def decide_trade_lesson(
                     "message": f"Governance decision persona mismatch. Candidate: {candidate['persona_id']}, Decision: {decision.get('persona_id')}."
                 }
             )
+        target_id = decision.get("target_id")
+        if not target_id or not str(target_id).strip():
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": "Governance decision target_id is missing or empty."
+                }
+            )
+        if str(target_id).strip() != candidate["lesson_candidate_id"]:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision target_id mismatch. Candidate: {candidate['lesson_candidate_id']}, Decision: {target_id}."
+                }
+            )
+        target_version = decision.get("target_version")
+        if not target_version or not str(target_version).strip():
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": "Governance decision target_version is missing or empty."
+                }
+            )
+        if str(target_version).strip() != candidate.get("reflection_version"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision target_version mismatch. Candidate: {candidate.get('reflection_version')}, Decision: {target_version}."
+                }
+            )
 
     try:
         updated = _governance_service().decide(
             candidate_id,
             action=payload.action,
-            operator_id=payload.operator_id,
+            operator_id=actor_id,  # Bind authenticated principal to operator_id
             reason=payload.reason,
             audit_receipt_id=payload.audit_receipt_id,
             episodes=payload.episodes,
@@ -534,14 +617,103 @@ async def merge_trade_lesson(
     x_actor_id: Optional[str] = Header(None, alias="X-Actor-ID"),
     x_actor_roles: Optional[str] = Header(None, alias="X-Actor-Roles"),
 ):
-    effective_id = actor_id or x_actor_id
-    effective_roles = actor_roles
-    if not effective_roles and x_actor_roles:
-        effective_roles = [r.strip() for r in x_actor_roles.split(",") if r.strip()]
-    elif effective_roles:
-        effective_roles = _split_csv_values(effective_roles)
+    if not x_actor_id or not x_actor_id.strip():
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "unauthorized", "message": "Missing authenticated actor ID Header (X-Actor-ID)."}
+        )
+    effective_id = x_actor_id
 
-    _authorize_lesson_action(effective_id, effective_roles)
+    if not x_actor_roles or not x_actor_roles.strip():
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "unauthorized", "message": "Missing authenticated roles Header (X-Actor-Roles)."}
+        )
+    effective_roles = [r.strip() for r in x_actor_roles.split(",") if r.strip()]
+
+    _authorize_lesson_action(effective_id, effective_roles, action="lesson.merge")
+
+    candidate = _candidate_store().get(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail={"error": "candidate_not_found", "candidate_id": candidate_id})
+
+    # Revalidate approved receipt at merge for sensitive changes or canary/live target_env
+    is_sensitive = is_sensitive_change(candidate)
+    req_env = candidate.get("target_env", "paper")
+    if is_sensitive or req_env in {"canary", "live"}:
+        receipt = candidate.get("receipt", {})
+        audit_receipt_id = receipt.get("audit_receipt_id")
+        if not audit_receipt_id:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": "Missing audit_receipt_id for sensitive change at merge."
+                }
+            )
+        decision = _fetch_governance_approval(audit_receipt_id)
+        if not decision:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision {audit_receipt_id} not found at merge."
+                }
+            )
+        is_approved = (
+            str(decision.get("decision")).lower() == "approved" or
+            str(decision.get("decision_state")).lower() == "decided" and str(decision.get("decision")).lower() == "approved"
+        )
+        if not is_approved:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision {audit_receipt_id} is not approved at merge."
+                }
+            )
+        if decision.get("persona_id") != candidate["persona_id"]:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision persona mismatch at merge. Candidate: {candidate['persona_id']}, Decision: {decision.get('persona_id')}."
+                }
+            )
+        target_id = decision.get("target_id")
+        if not target_id or not str(target_id).strip():
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": "Governance decision target_id is missing or empty at merge."
+                }
+            )
+        if str(target_id).strip() != candidate["lesson_candidate_id"]:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision target_id mismatch at merge. Candidate: {candidate['lesson_candidate_id']}, Decision: {target_id}."
+                }
+            )
+        target_version = decision.get("target_version")
+        if not target_version or not str(target_version).strip():
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": "Governance decision target_version is missing or empty at merge."
+                }
+            )
+        if str(target_version).strip() != candidate.get("reflection_version"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision target_version mismatch at merge. Candidate: {candidate.get('reflection_version')}, Decision: {target_version}."
+                }
+            )
 
     try:
         updated = _governance_service().merge_to_memory(candidate_id, _persona_store())
