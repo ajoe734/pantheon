@@ -40,10 +40,15 @@ Focused verification:
 
 ```text
 python3 -m pytest -q services/trade_journey/test_materializer.py
-7 passed
+8 passed
 python3 -m py_compile services/trade_journey/materializer.py
 git diff --check
 ```
+
+Independent round-2 review also re-derived the mixed whole/fractional-second
+ordering failure, verified the fixed-width UTC normalization and regression
+coverage, and approved the implementation for owner closeout. See
+`docs/reviews/2026-07-12-tj-e2e-004-claude-review.md`.
 
 The downstream `TJ-E2E-005` BFF should expose this read model and apply its
 authoritative RBAC policy before passing `allowed_journey_ids` to `resolve`.
