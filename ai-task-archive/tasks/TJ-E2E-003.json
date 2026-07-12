@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "task_id": "TJ-E2E-003",
+  "archived_at": "2026-07-12T01:04:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "title": "Correlation envelope propagation",
+    "summary_zh": "依 Trade Journey E2E gap 規格執行：Correlation envelope propagation。",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "phase": "Trade Journey E2E / Wave 1",
+    "next": "PR #3328 merged into dev at caa161f75a66613b3fd8773b71495da5bf1ae896; Claude round 3 approved real paper broker correlation envelope propagation; verified focused suite 124 passed and broker regression 23 passed.",
+    "source_ref": {
+      "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-003-correlation-envelope-propagation.md",
+      "target_repo": "pantheon",
+      "merge_target": "dev"
+    },
+    "metadata": {
+      "wave": 1,
+      "fleet_lane": "correlation-envelope-propagation",
+      "target_repo": "pantheon"
+    },
+    "created_at": "2026-07-11T22:58:28.902157+00:00",
+    "id": "TJ-E2E-003",
+    "depends_on": [
+      "TJ-E2E-001",
+      "TJ-E2E-002"
+    ],
+    "last_update": "2026-07-12T01:04:32Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11",
+    "review_notes_zh": [
+      "Round 3 通過：broker sidecar 邊界缺口已在真實 broker/main.py + paper_simulation.py 路徑修好，非未接線的 ShioajiBrokerAdapter",
+      "四項 round-2 required changes 皆有 submit->store->readback 測試證明",
+      "驗證數字修正為 124 passed（非 commit trailer 誤植的 132）"
+    ],
+    "review_file": "docs/reviews/2026-07-12-tj-e2e-003-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T01:04:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TJ-E2E-003",
+      "git_clean_required": false,
+      "commit": "9b1981a28486804ac1ac669af48de58a20a0099c",
+      "commit_subject": "TJ-E2E-003: finalize approved closeout record",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout handoff record for correlation envelope propagation.",
+        "Not changing": "approved runtime, broker, schema, or canonical architecture behavior.",
+        "Composes with": "Claude round 3 approval and the TJ-E2E-003 task PR into dev.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "TJ-E2E-003",
+        "Reviewer": "Claude",
+        "Verified": "focused correlation suite 124 passed; broker suite 23 passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TJ-E2E-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "caa161f75a66613b3fd8773b71495da5bf1ae896",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TJ-E2E-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T23:53:50Z",
+      "resolved_at": "2026-07-11T23:53:55Z"
+    },
+    {
+      "task_id": "TJ-E2E-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review commits 0301ac4a8 and d3975601f: versioned envelope mint/propagate, signal-boundary integration, no-field-loss and causal-chain tests. Verification: 42 passed, 4 skipped.",
+      "status": "done",
+      "created_at": "2026-07-11T23:57:34Z",
+      "resolved_at": "2026-07-12T00:06:53Z"
+    },
+    {
+      "task_id": "TJ-E2E-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed commits 0301ac4a8/d3975601f: changes requested. The envelope\ncontract library and signal-boundary mint are solid (19+23 tests pass),\nbut propagation stops there -- it never reaches risk_policy.py,\nexecutor.py's signal-context allow-list, broker/sinopac/adapter.py,\npaper_runtime.py's telemetry emitter, or reconciliation-drift, so the\ntask's own \"signal to broker/ledger/reconciliation, no manual join\"\nacceptance bar is unmet. Findings, file:line pointers, and required\nchanges recorded in docs/reviews/2026-07-12-tj-e2e-003-claude-review.md\n(PR #3312, auto-merging into dev).",
+      "status": "done",
+      "created_at": "2026-07-12T00:06:53Z",
+      "resolved_at": "2026-07-12T00:06:53Z"
+    },
+    {
+      "task_id": "TJ-E2E-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review requested after merged PR #3312 (merge 381d1af6f72d0a6ffea4e854e04d679d87565cbf): executor, risk, Shioaji broker, paper telemetry, and reconciliation drift now propagate the envelope; 119 focused tests and 50 boundary tests passed.",
+      "status": "done",
+      "created_at": "2026-07-12T00:17:11Z",
+      "resolved_at": "2026-07-12T00:22:34Z"
+    },
+    {
+      "task_id": "TJ-E2E-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Round 2 review: all 5 producer boundaries now genuinely propagate the envelope (verified manually for the 2 untested ones). Narrow required change remains: add regression tests for executor.py _signal_context_metadata and paper_runtime.py RuntimeTelemetryEmitter.build_event carrying correlation_envelope, matching the pattern already used in test_risk_policy.py/test_adapter.py/test_reconciliation_drift_consumer.py. See docs/reviews/2026-07-12-tj-e2e-003-claude-review-round2.md.",
+      "status": "done",
+      "created_at": "2026-07-12T00:22:34Z",
+      "resolved_at": "2026-07-12T00:22:34Z"
+    },
+    {
+      "task_id": "TJ-E2E-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Round 2 required regression coverage added in bd21f62b0: executor _signal_context_metadata and paper RuntimeTelemetryEmitter.build_event correlation-envelope propagation; focused suite 53 passed.",
+      "status": "done",
+      "created_at": "2026-07-12T00:26:09Z",
+      "resolved_at": "2026-07-12T00:35:17Z"
+    },
+    {
+      "task_id": "TJ-E2E-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Round 2 review: executor/risk/paper-telemetry/reconciliation-drift propagation verified as real wired call chains, accepted. Blocking gap: broker boundary wired on services/broker/sinopac/adapter.py (ShioajiBrokerAdapter), which is not on the live signal-driven paper order path; real path (executor -> paper_runtime.SubmitTaiwanBrokerOrder -> HTTP -> broker/main.py -> paper_simulation.py) still drops client_order_id/correlation_envelope. Required changes 1-4 recorded in docs/reviews/2026-07-12-tj-e2e-003-claude-review.md.",
+      "status": "done",
+      "created_at": "2026-07-12T00:35:17Z",
+      "resolved_at": "2026-07-12T00:35:17Z"
+    },
+    {
+      "task_id": "TJ-E2E-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Round 2 broker-boundary gap fixed in 251defd29: signal-driven Taiwan paper runtime now posts signal-derived client_order_id plus correlation_envelope; broker sidecar propagates broker.paper_sidecar causal hop and persists both; submit/store/reload proof added; delivered contract distinguishes manual Shioaji sandbox facade. Verification: 132 passed focused suite. Please perform round 3 review.",
+      "status": "done",
+      "created_at": "2026-07-12T00:42:22Z",
+      "resolved_at": "2026-07-12T00:54:15Z"
+    },
+    {
+      "task_id": "TJ-E2E-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Round 3 approved: broker-boundary gap resolved on the real broker/main.py + paper_simulation.py sidecar path (not ShioajiBrokerAdapter). All four round-2 required changes verified with submit->store->readback proof (services/broker/test_paper_correlation.py, services/execution/lean_runtime/test_paper_runtime.py). Corrected verification count to 124 passed (9-file focused suite), not 132; services/broker/test_broker.py 23 passed, no regression. Handing back to owner (Codex) for closeout.",
+      "status": "done",
+      "created_at": "2026-07-12T00:54:15Z",
+      "resolved_at": "2026-07-12T01:04:33Z"
+    }
+  ],
+  "blockers": []
+}

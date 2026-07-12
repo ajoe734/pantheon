@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-003",
+  "archived_at": "2026-07-04T12:39:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-003",
+    "title": "Trading Room default dynamic entry",
+    "summary_zh": "修 /agora/trading-room 預設路徑：沒有 strategyId/strategyVersion 時不得停在 All Strategies 空殼；必須由 BFF data 進入設計稿的動態 entry/readiness/workshop/proposal workflow。",
+    "phase": "Agora DYNUI Production Gap / Default Route",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx",
+      "execute-plans/src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx",
+      "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts",
+      "services/control-plane/bff/agora/trading_room.py",
+      "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-003-default-route-dynamic-entry.md"
+    ],
+    "acceptance": [
+      "hosted default route never lands on inert empty table shell without meaningful dynamic next action",
+      "ready strategy path reaches proposal preview without manual URL surgery",
+      "no fake hardcoded strategy data is introduced",
+      "Do not rebuild from imagination or static screenshots.",
+      "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+      "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+      "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+      "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+    ],
+    "next": "Closed out: execute-plans PR #173 merged and auto-redeployed hosted dev FE (deployment.json commit matches merge SHA); captured hosted screenshot evidence for no-strategy (live) and ready-strategy (documented route-mock) default-entry cases, replacing interim local-dev-server evidence; pantheon PR #2955 merged into dev (491f2ec... / a4138d663 ancestor confirmed). All acceptance criteria met.",
+    "last_update": "2026-07-04T12:39:46Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+      "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-003-default-route-dynamic-entry.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "fleet_lane": "agora-dynui-production-gap",
+    "review_notes_zh": [
+      "已審查 PR #2860 (merge ec5d902fc, head eab6e0cfd)：51/51 trading-room 測試通過、42/42 未變更檔案回歸測試通過、build:agora 通過。default entry/readiness/workshop routing 邏輯正確，涵蓋 ready/no-ready/empty 三種狀態，無 hardcode 假資料。核准。",
+      "收尾前提醒 owner：acceptance 要求的 live screenshot evidence (no-strategy / ready-strategy) 尚未附上，需在 finalize 為 done 前補齊（比照 AG-DYNUI-PROD-004 前例，需 human-gated dev deploy dispatch）。"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-003-default-route-dynamic-entry.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T12:39:46Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-003",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "a4138d6633d831941d725b85713a0700a1945d7d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-DYNUI-PROD-003",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3ff65b566a7ebca0ef2f151d96952fb255285938",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-04T00:30:45Z",
+      "resolved_at": "2026-07-04T00:30:58Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #2860 (merge ec5d902fc, head eab6e0cfd). Please review default Trading Room dynamic entry: ready strategies auto-enter workspace, no-ready/empty BFF states route to readiness/workshop entry, and inert aggregate shell is removed. Local validation: npm test -- --run src/agora/pages/trading-room/TradingRoomPage.test.tsx src/lib/bff-v1/agora/tradingRoom.test.ts (81/81); npm run build:agora passed with existing chunk-size warning. GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator.",
+      "status": "done",
+      "created_at": "2026-07-04T00:52:28Z",
+      "resolved_at": "2026-07-04T00:53:08Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "PR #2860 merged into dev (merge ec5d902fce715dbfb2254641ae86825130c4cddd; head eab6e0cfdaa50b1f6c7891ae4a94db7872203ae2). Local validation passed: npm test -- --run src/agora/pages/trading-room/TradingRoomPage.test.tsx (51/51), npm run build:agora (pass with existing chunk warning). Please review merged dynamic default entry and approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-04T00:53:08Z",
+      "resolved_at": "2026-07-04T01:02:25Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Reviewed and approved merged PR #2860; hosted screenshot evidence still owed before owner finalizes to done.",
+      "status": "done",
+      "created_at": "2026-07-04T01:02:25Z",
+      "resolved_at": "2026-07-04T02:00:04Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-003",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T02:00:04Z",
+      "resolved_at": "2026-07-04T03:00:53Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T03:00:53Z",
+      "resolved_at": "2026-07-04T03:01:40Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-003",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T03:01:40Z",
+      "resolved_at": "2026-07-04T12:39:47Z"
+    }
+  ],
+  "blockers": []
+}

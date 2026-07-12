@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+  "archived_at": "2026-07-12T10:39:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+    "title": "Fix Persona Fleet focused pagination contract",
+    "summary_zh": "讓 Persona Fleet URL persona focus 與 page size 傳入 BFF q/page_size，避免 API 100 筆選到的 persona 在 UI 預設 20 筆中消失，完成 hosted linked-page workflow。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 linked-page repair",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans:src/lib/bff-v1/management.ts",
+      "execute-plans:src/lib/bff-v1/paths.ts",
+      "execute-plans:src/management/pages/oversight/_core.tsx",
+      "execute-plans:e2e/25-persona-fleet-live-linked-pages.spec.ts",
+      "execute-plans:hosted-dev-evidence"
+    ],
+    "acceptance": [
+      "persona focus is sent to BFF q and returns the focused row regardless of default pagination",
+      "unfocused Fleet uses an explicit sufficient page size and preserves production filtering",
+      "repeated focused reloads keep persona row and all semantic links visible",
+      "unit tests assert query propagation and focus behavior",
+      "hosted browser BFF probe passes",
+      "e2e/25-persona-fleet-live-linked-pages.spec.ts passes on Pantheon dev",
+      "execute-plans PR merges to dev Dev FE Deploy succeeds and deployment.json reports merge SHA"
+    ],
+    "next": "Finalized approved Persona Fleet focus pagination delivery: execute-plans PR #256 merged at 30bc432f8a4e095e9947da4f076886828a2bcd58 with integration-gate success; Pantheon evidence PR #3404 merged at a65514bc62ed2faacd73e5d2066643c0eeff1024.",
+    "last_update": "2026-07-12T10:39:33Z",
+    "review_notes_zh": [
+      "審查通過",
+      "確認 focused q/page_size 傳播已正確實作並合併到 execute-plans dev"
+    ],
+    "review_file": "docs/reviews/2026-07-12-mgmt-ops-003-gap-001-focus-pagination-fix-antigravity-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T10:39:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-001-focus-pagination-fix",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+      "git_clean_required": false,
+      "commit": "9df129f9b3cf0468eeabf0b3582a9a1d3717434a",
+      "commit_subject": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX: record approved delivery",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped delivery brief and independent review evidence.",
+        "Not changing": "frontend implementation or canonical architecture policy.",
+        "Composes with": "execute-plans PR #256 merged into dev.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+        "Reviewer": "Antigravity",
+        "Verified": "gh pr view 256; integration-gate SUCCESS"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a65514bc62ed2faacd73e5d2066643c0eeff1024",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+      "from": "Gemini",
+      "to": "Antigravity",
+      "message": "Auto-reassigned MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX away from unavailable lane Gemini, Antigravity2 (disabled, paused, sidecar-only, or auth-down); owner Gemini -> Antigravity, reviewer Antigravity2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T14:48:54Z",
+      "resolved_at": "2026-07-11T14:48:57Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Antigravity becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T14:48:57Z",
+      "resolved_at": "2026-07-11T14:49:10Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Implementation is already merged to execute-plans dev via PR #256 (merge 30bc432f8a4e095e9947da4f076886828a2bcd58; task commit 2a565262f4b8bc1c440c079d47483e7a28d3c414). Verified 49 focused unit tests pass; hosted deployment cdeac3a contains the fix with live/strict config; e2e/25-persona-fleet-live-linked-pages.spec.ts passes 1/1 against Pantheon dev. Please review the focused q/page_size propagation and hosted evidence.",
+      "status": "done",
+      "created_at": "2026-07-12T10:29:29Z",
+      "resolved_at": "2026-07-12T10:34:32Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved and returned to Codex for finalization",
+      "status": "done",
+      "created_at": "2026-07-12T10:34:32Z",
+      "resolved_at": "2026-07-12T10:39:34Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+      "owner": "Codex",
+      "waiting_for": "Codex2",
+      "message": "Stopped before commit: worker created execute-plans branch from origin/main ce8e57e instead of required origin/dev e23aba15. Wrong-base diff preserved in old worktree and must not merge. Superseded operationally by V2 correct-base task.",
+      "status": "resolved",
+      "created_at": "2026-07-11T14:51:32Z",
+      "resolved_at": "2026-07-12T10:20:49Z"
+    }
+  ]
+}

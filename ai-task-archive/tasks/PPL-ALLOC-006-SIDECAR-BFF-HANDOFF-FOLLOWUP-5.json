@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-07-11T07:12:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete: support-only BFF/frontend handoff packet and task brief committed via PR #3131; merged to dev at 5820adedd9233238a3e73995b45b7d559f7b6a18. Verified git diff --check, check_task_targets.py, Commit trailers, Runtime mirror guard, and Smoke acceptance. Parent PPL-ALLOC-006 retains absorption decisions and explicit integration blockers.",
+    "last_update": "2026-07-11T07:12:11Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Fixture set 與 adapter boundary 皆 grounded in BFF main.py 實際回應形狀 (data.items envelope, applied:false, 409 conflict, dry-run header)；沒有更動 canonical truth / BFF runtime / frontend source，只新增 support artifact。與前序 FOLLOWUP-2/3/4 handoff 系列一致，fail-closed 假設沒有虛構新的 server guarantee。核准，交回 owner Codex2 finalize。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T07:12:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "8823119500f03045aa7a58305620cd50012eecb4",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5820adedd9233238a3e73995b45b7d559f7b6a18",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support packet ready for review at commit 90f479fe7. It defines resource-specific adapter boundaries, ten fail-closed frontend fixtures, operator-state assertions, and explicit parent blockers; canonical truth, BFF/runtime code, and frontend source are unchanged. Verified: git diff --check on the task artifact.",
+      "status": "done",
+      "created_at": "2026-07-11T06:46:35Z",
+      "resolved_at": "2026-07-11T07:08:11Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed: support-only handoff packet is accurate, fail-closed, and scoped to sidecar boundaries. Approved for owner finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T07:08:11Z",
+      "resolved_at": "2026-07-11T07:12:12Z"
+    }
+  ],
+  "blockers": []
+}

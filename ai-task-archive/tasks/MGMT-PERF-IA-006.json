@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-006",
+  "archived_at": "2026-07-12T11:40:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-006",
+    "title": "Contextual integration",
+    "summary_zh": "把 Cockpit、Persona Fleet、entity details、Human Inbox 與 Agora 接到 canonical centers，保留上下文且不再新增重複分析頁。",
+    "phase": "Management Performance Ranking IA / Wave 2 integration",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-003",
+      "MGMT-PERF-IA-004",
+      "MGMT-PERF-IA-005"
+    ],
+    "artifacts": [
+      "execute-plans:src/management",
+      "execute-plans:src/agora",
+      "execute-plans:e2e",
+      "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/MGMT-PERF-IA-006-contextual-integration.md"
+    ],
+    "acceptance": [
+      "all legitimate entry points preserve entity and period context",
+      "entity summaries are clearly distinct from formal analysis",
+      "Agora execution performance remains separate and linked",
+      "empty detail contracts render honest unavailable states"
+    ],
+    "next": "Contextual Integration implemented, tests verified green, and PR #268 merged.",
+    "last_update": "2026-07-12T11:40:55Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_performance_ranking_ia_2026-07-11",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_performance_ranking_ia_gap_2026-07-11/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/INDEX.md",
+      "trigger": "2026-07-11 complete performance ranking page and menu information architecture audit",
+      "frontend_repo": "ajoe734/execute-plans",
+      "backend_repo": "ajoe734/pantheon"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_performance_ranking_ia_execution_slice",
+    "wave": 2,
+    "fleet_lane": "contextual-integration",
+    "target_repo": "execute-plans",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T11:40:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-006",
+      "git_clean_required": false,
+      "commit": "ffec1326ac1898bbc2570b8aef9d01bcf866d833",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-PERF-IA-006",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5ff81e46bde0af7df586532d0cc9bee4d8dc97b9",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-006",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Integrate Fleet, Cockpit, entity details, Human Inbox, and Agora after Wave 1.",
+      "status": "done",
+      "created_at": "2026-07-12T11:35:27Z",
+      "resolved_at": "2026-07-12T11:35:33Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-006",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Contextual Integration has been implemented, production built, and vitest passes successfully.",
+      "status": "done",
+      "created_at": "2026-07-12T11:35:33Z",
+      "resolved_at": "2026-07-12T11:40:56Z"
+    }
+  ],
+  "blockers": []
+}

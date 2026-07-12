@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-LIVE-AUTH-003-BFF-500-TRADING-ROOM",
+  "archived_at": "2026-07-03T14:35:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-LIVE-AUTH-003-BFF-500-TRADING-ROOM",
+    "title": "BFF trading-room aggregate 500 on bearer-authenticated GET",
+    "summary_zh": null,
+    "phase": "Agora Dynamic UI Live Recovery / BFF trading-room bearer-auth 500",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-LIVE-AUTH-003"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/trading_room/router.py",
+      "services/control-plane/bff"
+    ],
+    "acceptance": [
+      "GET /bff/agora/trading-room returns 200 (not 500) with a valid Authorization bearer + correct X-Tenant-Id",
+      "root cause of INTERNAL_ERROR identified and fixed for the bearer-authenticated identity path",
+      "500 responses on this route carry CORS headers same as 200/401/403 paths (or root cause fix removes the 500 entirely)",
+      "live curl and browser probe confirm 200 for both /bff/agora/trading-room and decision-events with the dev bearer token from execute-plans/e2e/helpers/auth.ts"
+    ],
+    "next": "Closeout finalized: PR #2834 fix commit 375ac2174 merged to dev as 2dd82311 and deployed via Pantheon Nonprod Deploy 28664660985; reviewer live curl/browser proof confirms /bff/agora/trading-room and decision-events return 200; owner closeout tests passed with python3 -m pytest agora/trading_room/test_trading_room.py -q (45 passed); rescue closeout PR #2841 merged to dev as d663fbe21703967e38a5d53e33b01cae64a76201 with Branch CI Gate 28667061680 and Orchestrator Sync 28667061681 success.",
+    "last_update": "2026-07-03T14:35:13Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-03T14:35:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-bff-closeout",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-LIVE-AUTH-003-BFF-500-TRADING-ROOM-CLOSEOUT",
+      "git_clean_required": false,
+      "commit": "5d526b4353afc0616b1bb8d62f51e99d74e0998f",
+      "commit_subject": "AG-DYNUI-LIVE-AUTH-003-BFF-500-TRADING-ROOM: finalize",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Record owner closeout": "fix commit 375ac2174 confirmed merged to dev via",
+        "Owned layer": "generated task brief closeout state only.",
+        "Not changing": "BFF runtime code (already merged and verified), canonical",
+        "Composes with": "merged PR #2834 and the parent AG-DYNUI-LIVE-AUTH-003 closeout.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-DYNUI-LIVE-AUTH-003-BFF-500-TRADING-ROOM",
+        "Reviewer": "Codex",
+        "Verified": "git diff origin/dev -- services/control-plane/bff/agora/trading_room/router.py (empty); git merge-base --is-ancestor 375ac2174 origin/dev; python3 -m pytest agora/trading_room/test_trading_room.py -q (45 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-LIVE-AUTH-003-BFF-500-TRADING-ROOM-CLOSEOUT",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d663fbe21703967e38a5d53e33b01cae64a76201",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-LIVE-AUTH-003-BFF-500-TRADING-ROOM",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Fix (commit 375ac2174, merged to dev as 2dd82311 via PR #2834) is deployed and independently re-verified: curl https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room with the dev bearer token now returns 200 (matches your live-evidence note). Handing off formally for review since your prior note did not run the approve command -- status was still in_progress, not review_approved, so I (owner) cannot self-approve or close done. Please run: AI_NAME=Codex ./scripts/ai-status.sh approve AG-DYNUI-LIVE-AUTH-003-BFF-500-TRADING-ROOM \"<message>\" to move this to review_approved so I can finalize to done.",
+      "status": "done",
+      "created_at": "2026-07-03T14:24:12Z",
+      "resolved_at": "2026-07-03T14:25:07Z"
+    },
+    {
+      "task_id": "AG-DYNUI-LIVE-AUTH-003-BFF-500-TRADING-ROOM",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: PR #2834 merged to dev as 2dd82311dcd95b9ebe4ed33a8d16666ecbb82791 and deployed by Pantheon Nonprod Deploy 28664660985 success. Clean BFF pytest verification passed with 94 tests, direct live curl with dev bearer returns 200 for /bff/agora/trading-room with CORS origin and decision-events remains 200, and latest browser probe at 2026-07-03T14:18:59Z shows /bff/me, aggregate, decision-events, SSE, and shell-summary all 200 with no console errors. Root cause and fix match commit 375ac2174 (_workspace_scope for OperatorIdentity). Owner may finalize done.",
+      "status": "done",
+      "created_at": "2026-07-03T14:25:07Z",
+      "resolved_at": "2026-07-03T14:35:14Z"
+    }
+  ],
+  "blockers": []
+}

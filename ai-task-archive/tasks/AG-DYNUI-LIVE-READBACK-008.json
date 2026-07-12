@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-LIVE-READBACK-008",
+  "archived_at": "2026-07-07T16:13:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-LIVE-READBACK-008",
+    "title": "Agora live Trading Room failed-page regression readback",
+    "summary_zh": "使用 pantheon-lupin-dev-fe /agora/trading-room failed-to-load 截圖作為 production regression；先做 hosted browser/BFF readback，再修真實 FE/BFF/deploy 問題，禁止只做靜態 UI 或 fixture 證明。",
+    "phase": "Agora DYNUI Live Regression / 2026-07-07 readback and repair",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/deployment/evidence/ag-dynui-live-readback-008/",
+      "docs/bff/execution-tasks/2026-07-07-agora-live-readback-regression/AG-DYNUI-LIVE-READBACK-008.md",
+      ".orchestrator/task-briefs/ag_dynui_live_readback_008.md"
+    ],
+    "acceptance": [
+      "reproduce the hosted /agora/trading-room failure against pantheon-lupin-dev-fe without page.route mocks",
+      "capture browser console/network/BFF response evidence with request ids",
+      "verify live /bff/agora/workshops/{id}/cards and /readiness return 200 for scoped workflow",
+      "verify live /bff/agora/trading-room returns non-empty strategies after real readiness workflow",
+      "fix root cause in FE/BFF/deploy wiring in task branch and open PRs",
+      "hosted desktop and mobile screenshots must show Trading Room loaded without Failed to load Trading Room",
+      "record dev deploy SHA and CI gate results",
+      "no fixture-backed E2E or static-only UI may satisfy production acceptance"
+    ],
+    "next": "Closed after PR #3052 merged to dev at 0ec443965e7bc80bd3a1bbec0147d7a669bcc710; evidence e3df1339a records hosted Trading Room/BFF readback pass, Winner Branch live gate pass, mobile screenshot, and direct BFF 200 checks.",
+    "last_update": "2026-07-07T16:13:55Z",
+    "fleet_lane": "agora-live-regression-readback",
+    "delivery_layer": "primary",
+    "source_ref": {
+      "user_report": "browser screenshots in Codex thread 2026-07-07 showing Failed to load Trading Room on pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/trading-room",
+      "prior_archive": "AG-DYNUI-FULL-001..007, SRCLIVE-001-LIVE-ACTIVATION, SRCLIVE-004-READBACK-RECONCILE"
+    },
+    "batch": "agora-live-readback-regression-20260707",
+    "task_class": "execution",
+    "auto_created_by": "codex-live-regression-triage-20260707",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex2 review: PR #3052 merged to dev at 0ec443965e7bc80bd3a1bbec0147d7a669bcc710 with evidence commit e3df1339a. Evidence package records hosted /agora/trading-room readback pass, correct dev BFF URL, no old BFF hit, Winner Branch live gate pass, mobile screenshot, and direct BFF 200 checks. Reviewer rechecked on 2026-07-07: FE shell/deployment.json 200; authed BFF /bff/agora/trading-room and /decision-events 200 with operator:pantheon-dev-browser. Approved for owner closeout."
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-07-agora-live-readback-regression/AG-DYNUI-LIVE-READBACK-008.md",
+    "closeout_repository_id": "pantheon",
+    "closeout_artifacts_note": "Initial FE/BFF artifact paths were regression investigation surfaces. Reviewer-approved deliverable is the Pantheon evidence/docs package merged in PR #3052; no execute-plans or BFF code was changed for this task.",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-07T16:13:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-live-readback-008",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-LIVE-READBACK-008",
+      "git_clean_required": false,
+      "commit": "0ec443965e7bc80bd3a1bbec0147d7a669bcc710",
+      "commit_subject": "Merge pull request #3052 from ajoe734/task/AG-DYNUI-LIVE-READBACK-008",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-DYNUI-LIVE-READBACK-008": "record live readback evidence"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-LIVE-READBACK-008",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0ec443965e7bc80bd3a1bbec0147d7a669bcc710",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-LIVE-READBACK-008",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned AG-DYNUI-LIVE-READBACK-008 away from unavailable lane Gemini (disabled, paused, sidecar-only, or auth-down); reviewer Gemini -> Codex2.",
+      "status": "done",
+      "created_at": "2026-07-07T15:52:13Z",
+      "resolved_at": "2026-07-07T15:52:19Z"
+    },
+    {
+      "task_id": "AG-DYNUI-LIVE-READBACK-008",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #3052 merged to dev at 0ec443965e7bc80bd3a1bbec0147d7a669bcc710. Evidence package commit e3df1339a records hosted /agora/trading-room readback, Winner Branch live gate, mobile screenshot, and direct BFF 200 checks. Please review evidence and approve for owner closeout if acceptable.",
+      "status": "done",
+      "created_at": "2026-07-07T16:04:47Z",
+      "resolved_at": "2026-07-07T16:07:16Z"
+    },
+    {
+      "task_id": "AG-DYNUI-LIVE-READBACK-008",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2: PR #3052/evidence e3df1339a accepted; owner Codex should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-07-07T16:07:16Z",
+      "resolved_at": "2026-07-07T16:13:56Z"
+    }
+  ],
+  "blockers": []
+}

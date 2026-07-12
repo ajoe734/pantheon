@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-07-04T05:44:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare AG-DYNUI-PROD-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Hosted Acceptance",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001",
+      "AG-DYNUI-PROD-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: re-verified approved packet facts unchanged (execute-plans PR #171/#173 still open/clean/unreviewed, hosted FE deployment.json still dd597405..., parent AG-DYNUI-PROD-006 still todo). Task-brief reassignment record committed and merged via PR #2900 into dev.",
+    "last_update": "2026-07-04T05:44:43Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up 6 核准：此 packet 沒有修改 canonical truth/runtime/frontend code；重新核實 PROD-002 PR #171 與 PROD-003 PR #173 仍 OPEN/MERGEABLE/CLEAN、integration-gate success、零 reviews、autoMergeRequest null，hosted FE 仍是 dd597405e014cc91cf73f4ea2e96a561fcbf9c61，BFF health ok/operator-bff 0.2.0，PROD-005 parent 仍 todo 且無 direct implementation PR，parent PROD-006 仍 todo。唯一新增/相鄰事實仍只是 support churn：PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-5 已 done/PR #2895 merged；PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 已從 packet 撰寫時的 review 前進到 review_approved，PR #2897 與 close brief PR #2899 均 merged，但仍不解除 parent hosted E2E blocker。建議停止無實質觸發的同質 follow-up dispatch。"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T05:44:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-006-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "git_clean_required": false,
+      "commit": "507b75f8930d168f02cf0fbf3a551bd9e8fbb3c2",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b4fd44c4e9cd8871a5c27d267d056fe198b30e61",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-04T05:20:07Z",
+      "resolved_at": "2026-07-04T05:20:12Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support packet merged in PR #2896 (20b1d3aa39d23eac05625d7040641eadcc0ff684) and timing correction merged in PR #2898 (077d7cba512102ea2ba6c936af6550dd6329ff39); ready for Codex2 review. Packet records unchanged parent blockers (#171/#173 open, hosted FE dd597405, PROD-005 parent todo/no direct implementation PR, parent PROD-006 todo) plus adjacent PROD-005 follow-up 5/6 support-only churn that does not unblock hosted E2E.",
+      "status": "done",
+      "created_at": "2026-07-04T05:33:11Z",
+      "resolved_at": "2026-07-04T05:37:36Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only AG-DYNUI-PROD-006 follow-up 6 approved for parent owner absorption; latest adjacent PROD-005 follow-up state remains support-only and does not unblock hosted E2E.",
+      "status": "done",
+      "created_at": "2026-07-04T05:37:36Z",
+      "resolved_at": "2026-07-04T05:38:25Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T05:38:25Z",
+      "resolved_at": "2026-07-04T05:44:44Z"
+    }
+  ],
+  "blockers": []
+}

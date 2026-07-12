@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-07-11T13:36:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare MGMT-OPS-003-GAP-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 runtime truth",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-002/MGMT-OPS-003-GAP-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Antigravity approved the support-only BFF/frontend handoff packet; PR #3228 merged into dev at 2f33169823a7633824f8e459c3e94ad6f99544a5. Verified status show, diff check, commit trailers, runtime mirror guard, and smoke acceptance. Parent owner retains authority over canonical implementation absorption.",
+    "last_update": "2026-07-11T13:36:38Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "BFF與前端交接手冊內容完整",
+      "確保留留Quarantine rows與不進行推導信心指數之 fail-closed 邏輯",
+      "內容符合 sidecar 任務之純支持性定位，未修改 canonical 與 BFF 代碼"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T13:36:38Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-002-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "593d8bbb87d96b22aaf2fdacd95a1257fb21a882",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-OPS-003-GAP-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2f33169823a7633824f8e459c3e94ad6f99544a5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only BFF/frontend handoff packet committed at 93085267a; please review query-gap matrix, fail-closed operator journey, evidence contract, and canonical/runtime/frontend non-mutation boundary.",
+      "status": "done",
+      "created_at": "2026-07-11T13:33:08Z",
+      "resolved_at": "2026-07-11T13:34:07Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T13:34:07Z",
+      "resolved_at": "2026-07-11T13:36:39Z"
+    }
+  ],
+  "blockers": []
+}

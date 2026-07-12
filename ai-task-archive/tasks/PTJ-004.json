@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "task_id": "PTJ-004",
+  "archived_at": "2026-07-12T00:41:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PTJ-004",
+    "title": "Persona Trade Journal BFF APIs and governed commands",
+    "summary_zh": "依 Persona Trade Journal gap 文件執行 Persona Trade Journal BFF APIs and governed commands。",
+    "phase": "Persona Trade Journal / Wave 2",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "PTJ-002",
+      "PTJ-003"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
+    ],
+    "acceptance": [
+      "journal detail reflection and pattern routes support cursor filters RBAC masking and confidence",
+      "commands enforce idempotency audit receipts and cross-persona isolation"
+    ],
+    "next": "PR #3322 merged into dev at 36f44ab487710c073453e1539f778b703268c818; focused BFF verification: 19 passed, 8 warnings.",
+    "last_update": "2026-07-12T00:41:27Z",
+    "source_ref": {
+      "doc": "docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "wave": 2,
+    "fleet_lane": "bff-journal-api",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_trade_journal_2026_07_11",
+    "auto_generated": true,
+    "live_order_side_effects_allowed": false,
+    "review_notes_zh": [
+      "複審通過：durable command-owner 的 2xx 與 HTTPError 回應皆強制為 JSON object；malformed body fail closed；19 項 focused BFF tests 通過。"
+    ],
+    "review_file": "docs/reviews/2026-07-12-ptj-004-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T00:41:27Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ptj-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PTJ-004",
+      "git_clean_required": false,
+      "commit": "37f93edb689d8c01d1c57e9273250ec3a8281246",
+      "commit_subject": "PTJ-004: finalize approved BFF delivery",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped owner handoff and approved closeout record.",
+        "Not changing": "reviewed BFF runtime behavior or downstream owner boundaries.",
+        "Composes with": "approved PTJ-004 implementation and PR merge into dev.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "PTJ-004",
+        "Reviewer": "Codex2",
+        "Verified": "19 focused BFF tests passed, 8 warnings"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PTJ-004",
+      "ahead": 0,
+      "behind": 43,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "36f44ab487710c073453e1539f778b703268c818",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PTJ-004",
+      "from": "Claude2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PTJ-004 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T22:59:16Z",
+      "resolved_at": "2026-07-12T00:03:26Z"
+    },
+    {
+      "task_id": "PTJ-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T00:03:26Z",
+      "resolved_at": "2026-07-12T00:03:48Z"
+    },
+    {
+      "task_id": "PTJ-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implementation and owner evidence ready at docs/reviews/2026-07-12-ptj-004-codex-handoff.md; 14 focused BFF tests pass. Please review commit 0f9e105fe plus anchor bb71e321b.",
+      "status": "done",
+      "created_at": "2026-07-12T00:08:07Z",
+      "resolved_at": "2026-07-12T00:10:02Z"
+    },
+    {
+      "task_id": "PTJ-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Changes required: governed POST commands only create process-local receipts, accept nonexistent resources, and never surface downstream unavailability. Connect to a durable command/audit owner and add fail-closed tests; see reviewer artifact.",
+      "status": "done",
+      "created_at": "2026-07-12T00:10:02Z",
+      "resolved_at": "2026-07-12T00:10:02Z"
+    },
+    {
+      "task_id": "PTJ-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer blockers addressed at 5dfcd3989: commands now validate target existence and allowed state, fail closed when projection or durable command owner is unavailable, persist fsync-backed JSONL idempotency/audit records, replay across app/router recreation, and no longer claim boolean process-local audit. Verification: focused suite 16 passed; py_compile and git diff --check passed. Please re-review docs/reviews/2026-07-12-ptj-004-codex2-review.md findings.",
+      "status": "done",
+      "created_at": "2026-07-12T00:12:46Z",
+      "resolved_at": "2026-07-12T00:15:32Z"
+    },
+    {
+      "task_id": "PTJ-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Changes requested after re-review: 5dfcd3989 persists only BFF admission in JSONL and never delegates retry/submit-review/decide to a durable reflection/governance command owner; accepted/durable audit remains overstated, and process-local locking does not provide multi-worker atomic idempotency. See docs/reviews/2026-07-12-ptj-004-codex2-review.md.",
+      "status": "done",
+      "created_at": "2026-07-12T00:15:32Z",
+      "resolved_at": "2026-07-12T00:15:32Z"
+    },
+    {
+      "task_id": "PTJ-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Re-review 28a1cd0ed: durable owner delegation replaces BFF JSONL admission; fail-closed absent/reject/malformed; 17 focused tests cover downstream rejection and concurrent same-key owner admission.",
+      "status": "done",
+      "created_at": "2026-07-12T00:26:56Z",
+      "resolved_at": "2026-07-12T00:28:57Z"
+    },
+    {
+      "task_id": "PTJ-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Changes requested on 28a1cd0ed: malformed 2xx JSON arrays and non-JSON HTTPError bodies escape fail-closed translation; validate decoded owner bodies and add both regression tests. See docs/reviews/2026-07-12-ptj-004-codex2-review.md.",
+      "status": "done",
+      "created_at": "2026-07-12T00:28:57Z",
+      "resolved_at": "2026-07-12T00:28:57Z"
+    },
+    {
+      "task_id": "PTJ-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Addressed 28a1cd0ed re-review findings in 6ba87c2ca: command-owner responses now require a decoded JSON object for both 2xx and HTTPError paths; malformed 2xx arrays and non-JSON HTTPError bodies fail closed as DEPENDENCY_UNAVAILABLE. Focused suite: 19 passed.",
+      "status": "done",
+      "created_at": "2026-07-12T00:31:23Z",
+      "resolved_at": "2026-07-12T00:35:02Z"
+    },
+    {
+      "task_id": "PTJ-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved after fail-closed command-owner response regressions passed; returned to Codex for PR finalization and merge.",
+      "status": "done",
+      "created_at": "2026-07-12T00:35:02Z",
+      "resolved_at": "2026-07-12T00:41:28Z"
+    }
+  ],
+  "blockers": []
+}

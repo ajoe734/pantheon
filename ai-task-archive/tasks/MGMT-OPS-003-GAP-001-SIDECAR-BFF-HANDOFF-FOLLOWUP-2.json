@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-11T15:56:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare MGMT-OPS-003-GAP-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 frontend",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-001/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved BFF/frontend support handoff: PR #3229 merged to dev at 11ec304b951777c482f9e4f17b401fad722ca1fe; parent should compose the approved original packet plus follow-up checklist into MGMT-OPS-003-GAP-001. Verified python3 -m pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py (46 passed, 4 deprecation warnings). No canonical, runtime, governance, or execute-plans changes.",
+    "last_update": "2026-07-11T15:56:20Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/reviews/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T15:56:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-001-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "11ec304b951777c482f9e4f17b401fad722ca1fe",
+      "commit_subject": "Merge pull request #3229 from ajoe734/task/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2": "anchor handoff"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "11ec304b951777c482f9e4f17b401fad722ca1fe",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Please review the task-scoped BFF handoff follow-up at support/sidecars/MGMT-OPS-003-GAP-001/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md. It records no contract delta, reuses the approved packet, and provides the parent composition checklist. Verified with the Portfolio Book contract suite: 46 passed.",
+      "status": "done",
+      "created_at": "2026-07-11T13:36:28Z",
+      "resolved_at": "2026-07-11T15:54:33Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Approved: no new BFF contract delta needed for parent MGMT-OPS-003-GAP-001 frontend closure; reuses the approved original handoff packet and adds a verified parent composition checklist. Full verification recorded in support/reviews/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2-review-claude.md. Owner (Codex2) should finalize to done; handoff to parent owner for MGMT-OPS-003-GAP-001 execute-plans composition.",
+      "status": "done",
+      "created_at": "2026-07-11T15:54:33Z",
+      "resolved_at": "2026-07-11T15:56:22Z"
+    }
+  ],
+  "blockers": []
+}

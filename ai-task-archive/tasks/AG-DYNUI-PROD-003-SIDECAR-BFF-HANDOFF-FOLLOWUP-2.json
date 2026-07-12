@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-04T01:45:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare AG-DYNUI-PROD-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Default Route",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-003/AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: packet (PR #2871) and closeout record (PR #2873) both merged into dev; HEAD confirmed ancestor of origin/dev. Support-only sidecar confirms AG-DYNUI-PROD-003 parent's hosted-screenshot precondition remains blocked on porting the feature to the standalone ajoe734/execute-plans repo. No canonical/runtime/frontend changes made. Handed to parent owner Codex via packet §4/§5.",
+    "last_update": "2026-07-04T01:45:46Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only 確認：commit f3415dc16 僅新增 211 行 packet 檔，未動 canonical/BFF/runtime/frontend。獨立重跑 origin/dev grep (TradingRoomDefaultEntry/selectDefaultReadyStrategy/onAddToTradingRoom/onOpenWorkshop) 皆 0 match，gh pr list 對 ajoe734/execute-plans 搜尋 AG-DYNUI-PROD-003 亦無結果，確認 §2 結論屬實。§4 收尾順序（port -> merge -> human-gated deploy dispatch -> hosted screenshots）正確，未越權宣稱 AG-DYNUI-PROD-003 本體已 review 通過。核准並交還 owner Claude 收尾。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T01:45:46Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-003-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "f3e48a379d5d879e82c2262c7bac18d8ddf14136",
+      "commit_subject": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2: closeout record",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Re-verified the review-approved sidecar packet is still accurate": "PR #2871",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+        "Reviewer": "Claude2",
+        "Verified": "git merge-base --is-ancestor HEAD origin/dev; gh pr view 2871 (MERGED)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "577f0229d9bcbfcc6b0678ca24eca43adbca0390",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Follow-up packet ready: re-verified live that AG-DYNUI-PROD-003's PR #2860 merged code is NOT yet on the standalone ajoe734/execute-plans repo's dev branch (confirmed by direct content diff against origin/dev), so the reviewer's own hosted-screenshot precondition cannot be met by a deploy dispatch alone. PR #2871 open with auto-merge into dev. Packet: support/sidecars/AG-DYNUI-PROD-003/AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+      "status": "done",
+      "created_at": "2026-07-04T01:37:41Z",
+      "resolved_at": "2026-07-04T01:39:23Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Reviewed and approved sidecar follow-up packet; confirmed no canonical/runtime changes and independently re-verified the execute-plans dev-branch gap claim.",
+      "status": "done",
+      "created_at": "2026-07-04T01:39:23Z",
+      "resolved_at": "2026-07-04T01:45:46Z"
+    }
+  ],
+  "blockers": []
+}

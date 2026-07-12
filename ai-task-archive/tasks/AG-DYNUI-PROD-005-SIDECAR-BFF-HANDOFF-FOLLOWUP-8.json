@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+  "archived_at": "2026-07-04T09:07:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+    "title": "Prepare AG-DYNUI-PROD-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Dynamic Workflow",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: packet PR #2923 and brief-sync PR #2924 both merged into dev; reviewer (Claude) approval re-confirmed; recommend pausing further identical AG-DYNUI-PROD-005 BFF handoff polling sidecars until a real trigger condition changes.",
+    "last_update": "2026-07-04T09:07:06Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up 8 核准：獨立重新驗證 parent AG-DYNUI-PROD-005 仍為 todo 且無 parent branch/PR，execute-plans PR #171/#173 仍 open/clean/mergeable/零 reviews/autoMergeRequest null；與 packet 內容一致。同意第五次 stop-churn 建議：這是 supervisor-underutilization 造成的重複 dispatch，非真正觸發條件變化，建議 chair/supervisor owner 暫停此 sidecar lane 的閒置觸發派工，直到四個觸發條件之一改變。未修改 canonical truth 或 runtime 檔案。"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T09:07:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-005-sidecar-bff-handoff-followup-8",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "git_clean_required": false,
+      "commit": "c450469b212489907e7f11b735c6c252ae009c02",
+      "commit_subject": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8: sync brief status",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "local task-brief copy for this sidecar task, updated to",
+        "Not changing": "the merged packet content in",
+        "Composes with": "PR #2923 (packet) and the closeout `done` transition",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+        "Reviewer": "Claude",
+        "Verified": "confirmed PR #2923 state=MERGED into dev via `gh pr view 2923`;"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f8a25ccdd185764794414ec63dae7e39e2be02fd",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Follow-up 8 packet added and PR #2923 opened with auto-merge; re-verified follow-up 7's no-drift findings (parent AG-DYNUI-PROD-005 still todo, no parent branch/PR/commit, execute-plans PR #171/#173 unchanged, key frontend/BFF gaps unchanged); recommend pausing further identical polling sidecar dispatch for this lane.",
+      "status": "done",
+      "created_at": "2026-07-04T09:01:17Z",
+      "resolved_at": "2026-07-04T09:02:52Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support-only AG-DYNUI-PROD-005 follow-up 8 approved after independent re-verification; recommend pausing further identical polling sidecars; dispatch-policy root cause escalated for a fifth time.",
+      "status": "done",
+      "created_at": "2026-07-04T09:02:52Z",
+      "resolved_at": "2026-07-04T09:07:07Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-07-11T16:42:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare MGMT-PERF-IA-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 frontend routes",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-001/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend handoff follow-up finalized: packet merged via PR #3244 (a9b22ef21), task brief and Claude approval record merged via PR #3246 (3995bcb14d9550f8c8c23b1aff80f8b73dd815d2); validated with ai-status show, git diff --check, artifact non-empty checks, Branch CI Gate, and origin/dev ancestry. Parent owner retains canonical composition and final delivery responsibility.",
+    "last_update": "2026-07-11T16:42:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Follow-up 5 approved: it accurately records the reconciled parent branch, running PR gate, narrow emergency-actions exception, and final merge boundary."
+    ],
+    "review_file": "support/reviews/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T16:42:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-001-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "54995dc5b71a69d244e945f626a35d8f11770d44",
+      "commit_subject": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5: record approval",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped brief and reviewer approval record.",
+        "Not changing": "canonical truth, BFF/frontend runtime, schemas, or governance.",
+        "Composes with": "parent MGMT-PERF-IA-001 owner reconciliation and PR #3244.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+        "Reviewer": "Claude",
+        "Verified": "ai-status show; git diff --check; non-empty artifact checks"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3995bcb14d9550f8c8c23b1aff80f8b73dd815d2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only follow-up 5 is committed in c8b69498b and opened as Pantheon PR #3244. Please review the current PR-gate evidence, narrow emergency-actions exception, and retained BFF ownership boundary.",
+      "status": "done",
+      "created_at": "2026-07-11T16:36:56Z",
+      "resolved_at": "2026-07-11T16:39:14Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Support-only final PR-gate refresh approved for parent-owner composition.",
+      "status": "done",
+      "created_at": "2026-07-11T16:39:14Z",
+      "resolved_at": "2026-07-11T16:42:27Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-11T05:45:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare OCLAW-PMEM-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 2 BFF UI surfaces",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-003"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-004/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3119 merged as 8c52c791c48803269fdb7b8c4be540a2e6ce2a9c; delivered reviewed support-only BFF/frontend handoff packet and review evidence. Verified: git diff --check; rg route/function claim seams; GitHub commit-trailer, runtime-mirror, and smoke-acceptance checks passed. Parent owner decides absorption; OCLAW-PMEM-002 remains a non-blocking live-evidence caveat.",
+    "last_update": "2026-07-11T05:45:02Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：route/function claims 已對照現行 BFF 程式碼逐一核實，diff 範圍僅限 task-brief 與一份 support markdown，未觸及 canonical truth",
+      "非阻塞備註：OCLAW-PMEM-002 仍為 live-blocked（非 accepted），parent owner 吸收前應自行再確認"
+    ],
+    "review_file": "support/reviews/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T05:45:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-004-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "ba2490b691a8537f0acbed9719486bfab5691340",
+      "commit_subject": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: finalize handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped BFF/frontend handoff and review evidence.",
+        "Not changing": "canonical Memory Plane, BFF runtime, frontend, or governance truth.",
+        "Composes with": "OCLAW-PMEM-004 parent-owner absorption decision.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; rg route and function claim seams"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8c52c791c48803269fdb7b8c4be540a2e6ce2a9c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Support-only BFF/frontend handoff delta committed at e1b42902c; review route-to-field composition, availability distinctions, acceptance fixtures, and non-canonical boundary.",
+      "status": "done",
+      "created_at": "2026-07-11T05:26:04Z",
+      "resolved_at": "2026-07-11T05:27:40Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Antigravity to Claude after repeated Antigravity terminal: Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h7m4s.",
+      "status": "done",
+      "created_at": "2026-07-11T05:27:40Z",
+      "resolved_at": "2026-07-11T05:40:38Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: verified persona-memory optional-reader, runtime-profile, assistant providers auth_probe, usage-summary quota sentinel, and reauth route claims against current BFF code; diff scoped to task-brief + one support markdown, no canonical edits. Non-blocking dependency-state caveat recorded (OCLAW-PMEM-002 is live-blocked, not accepted). Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T05:40:38Z",
+      "resolved_at": "2026-07-11T05:45:03Z"
+    }
+  ],
+  "blockers": []
+}

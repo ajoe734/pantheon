@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-005",
+  "archived_at": "2026-07-11T05:08:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-005",
+    "title": "Frontend create paper persona flow",
+    "summary_zh": "把 Personas 的 generic create 改成 Create Paper Persona；成功後看到 paper_running，失敗則進 setup repair。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend create flow",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-002",
+      "PPL-ALLOC-003"
+    ],
+    "artifacts": [
+      "execute-plans:src/management/pages",
+      "execute-plans:src/lib/bff-v1"
+    ],
+    "acceptance": [
+      "create UI never reports success without paper ledger/runtime binding; PersonaOnboarding is repair-only; component tests cover success/partial/error"
+    ],
+    "next": "Closed after reviewer approval: execute-plans PR #248 merged to dev at f25cfdf06b03fb7d57219494cc744f5fdf7582de; focused tests 8/8, lint 0 errors, integration-gate green; Pantheon closeout PR #3109 merged at 51eab2627af83e312b45ba3a96b49b5145fd1598.",
+    "last_update": "2026-07-11T05:08:51Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+      "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+      "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "persona_promotion_allocation_execution_slice",
+    "wave": 2,
+    "fleet_lane": "fe-create-paper-persona",
+    "review_notes_zh": [
+      "Round 2 通過：PR #248 已改為 base dev，integration-gate 綠燈；PersonaOnboarding 已加上 repair-only guard（isCompletePaperBundle + failed_step 導向對應步驟），不再只是改文案。8 個 task-scoped 測試通過，lint 0 error，全套 vitest 1205/1206（唯一失敗與本次改動無關且可重現地在隔離重跑中通過）。"
+    ],
+    "review_file": "support/reviews/PPL-ALLOC-005-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T05:08:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-005",
+      "git_clean_required": false,
+      "commit": "830dd6f0e1ec3522270383fee21b0222f32c9c30",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PPL-ALLOC-005",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "51eab2627af83e312b45ba3a96b49b5145fd1598",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-005",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PPL-ALLOC-005 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T03:07:37Z",
+      "resolved_at": "2026-07-11T04:13:37Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-005",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Antigravity becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T04:13:37Z",
+      "resolved_at": "2026-07-11T04:13:54Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-005",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Please review execute-plans PR #247 (f3108af). It calls create-paper-bundle, rejects incomplete success, removes persona overlay fallback, and routes partial setup to repair-only onboarding. Validation: 6 focused tests passed; lint 0 errors; build passed.",
+      "status": "done",
+      "created_at": "2026-07-11T04:19:22Z",
+      "resolved_at": "2026-07-11T04:21:30Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-005",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Antigravity to Claude after repeated Antigravity terminal: Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h13m26s.",
+      "status": "done",
+      "created_at": "2026-07-11T04:21:30Z",
+      "resolved_at": "2026-07-11T04:33:01Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reopened: execute-plans#247 targets stale main (CI red: unit/contract-drift/release-gate) instead of dev, and PersonaOnboarding is only cosmetically repair-only (no guard against re-running the wizard on an already-complete bundle, repair=1/failed_step params unread). Full findings in support/reviews/PPL-ALLOC-005-review-claude.md (pantheon PR #3109). PR comment posted on execute-plans#247.",
+      "status": "done",
+      "created_at": "2026-07-11T04:33:01Z",
+      "resolved_at": "2026-07-11T04:33:01Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review execute-plans PR #248: dev-based replacement, repair-only guard and failed-step routing added; focused 8 tests and lint pass; integration gate pending.",
+      "status": "done",
+      "created_at": "2026-07-11T04:41:28Z",
+      "resolved_at": "2026-07-11T05:05:07Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved PR #248: dev-based branch with green integration-gate; PersonaOnboarding is now actually repair-only via isCompletePaperBundle + failed_step-aware step routing. Returning to owner Codex2 for closeout/merge.",
+      "status": "done",
+      "created_at": "2026-07-11T05:05:07Z",
+      "resolved_at": "2026-07-11T05:08:53Z"
+    }
+  ],
+  "blockers": []
+}

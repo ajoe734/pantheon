@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-11T05:15:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend handoff packet reviewed by Claude and merged via PR #3114 at 1329c8fe65e8c1c030294ba702fd6cf84bb4aacd. Verified: git diff --check; cited BFF routes and emergency containment policy checked against services/control-plane/bff/main.py and emergency_containment_policy.py. Parent PPL-ALLOC-006 may compose the packet; no canonical truth or runtime/frontend implementation changed.",
+    "last_update": "2026-07-11T05:15:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "BFF endpoint 清單與 emergency containment module 已對照 services/control-plane/bff/main.py 與 emergency_containment_policy.py 逐條核實，路徑與語意一致",
+      "git diff --check 乾淨，僅新增 support/sidecars 檔案，未觸及 canonical truth",
+      "核准，交回 owner 收尾"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T05:15:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "5727c9091b60f5e6f97c64f6947c8b8be6c872c8",
+      "commit_subject": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF: add BFF handoff packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF query, operator journey, and frontend handoff mapping.",
+        "Not changing": "canonical truth, BFF/runtime/governance implementation, or frontend source.",
+        "Composes with": "parent PPL-ALLOC-006 and PPL-ALLOC-003/004/007/008 slices.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check -- support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1329c8fe65e8c1c030294ba702fd6cf84bb4aacd",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only BFF/frontend handoff packet ready at commit 5727c9091; documents query matrix, state separation, operator journey, fail-closed gaps, and composition boundaries. Verified with git diff --check.",
+      "status": "done",
+      "created_at": "2026-07-11T05:12:35Z",
+      "resolved_at": "2026-07-11T05:14:27Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF.md: verified all cited BFF routes (quarterly-ranking, recommendations, drilldown, formula, promotion-reviews, persona-fleet, allocation-policy/evaluate, rebalances) and emergency containment module against services/control-plane/bff/main.py and emergency_containment_policy.py. Support-only, no canonical truth touched, git diff --check clean. Approved.",
+      "status": "done",
+      "created_at": "2026-07-11T05:14:27Z",
+      "resolved_at": "2026-07-11T05:15:35Z"
+    }
+  ],
+  "blockers": []
+}

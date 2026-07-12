@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-11T09:09:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare OCLAW-PMEM-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 3 gates closeout",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-003"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-005/OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "BFF/frontend support handoff finalized after Antigravity approval; PR #3161 merged as f5904ff3811334586b9c99412d0444dbe5077859. Packet preserves Memory Plane authority, derived-cache semantics, live-smoke gating, and cross-persona isolation requirements; parent Codex owns absorption into OCLAW-PMEM-005.",
+    "last_update": "2026-07-11T09:09:32Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "建議parent owner Codex吸收這些指引"
+    ],
+    "review_file": "support/reviews/OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-review-antigravity.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T09:09:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-005-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "d68013942665f7131e1d99cf0e00a7de9ba49041",
+      "commit_subject": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF: finalize handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF and frontend handoff packet closeout record.",
+        "Not changing": "canonical truth, BFF/frontend runtime, registry, or governance implementation.",
+        "Composes with": "parent task OCLAW-PMEM-005 executable gates and closeout evidence.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check; reviewer boundary and repository-reference review"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f5904ff3811334586b9c99412d0444dbe5077859",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Support-only BFF/frontend handoff packet committed as 5369551b7 and opened in PR #3159. Please review Memory Plane authority, derived-cache labeling, live-smoke gate, isolation evidence, and non-canonical scope; parent Codex decides absorption.",
+      "status": "done",
+      "created_at": "2026-07-11T09:03:10Z",
+      "resolved_at": "2026-07-11T09:05:06Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "BFF and frontend handoff packet reviewed and approved. Expose Memory Plane authority, live-smoke gates, and isolation requirements.",
+      "status": "done",
+      "created_at": "2026-07-11T09:05:06Z",
+      "resolved_at": "2026-07-11T09:09:33Z"
+    }
+  ],
+  "blockers": []
+}

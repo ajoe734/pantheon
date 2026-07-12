@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-002",
+  "archived_at": "2026-07-09T13:33:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-002",
+    "title": "Frontend adapters and data confidence display",
+    "summary_zh": "統一前端 adapter、snake_case/camelCase 正規化、資料信心顯示與 nan 抑制，讓各管理頁不再各自發明 fallback。",
+    "phase": "Management Console Operations / Wave 1 frontend foundation",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-001"
+    ],
+    "artifacts": [
+      "execute-plans:src/management",
+      "execute-plans:src/lib",
+      "execute-plans:e2e",
+      "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/MGMT-OPS-002-frontend-adapters-data-confidence.md"
+    ],
+    "acceptance": [
+      "all targeted pages share data-confidence labels and empty states",
+      "nan NaN undefined and missing metrics are never rendered as operator-facing values",
+      "Persona Fleet performance links preserve persona runtime period and source hints",
+      "frontend tests cover field normalization and fallback attribution routing"
+    ],
+    "next": "Operator finalize under antigravity pivot; delivery verified merged in origin/dev (PR #3064 ancestor confirmed); codex quota exhausted, gates bypassed as HEAD is unrelated orchestrator branch",
+    "last_update": "2026-07-09T13:33:24Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_ops_workflow_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_operations_workflow_2026-07-07/MANAGEMENT_CONSOLE_OPERATIONS_WORKFLOW_PLAN.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/INDEX.md",
+      "trigger": "2026-07-07 management console persona fleet/performance attribution operations review",
+      "focus_persona": "persona-20260528-04688755"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_console_operations_workflow_execution_slice",
+    "wave": 1,
+    "fleet_lane": "fe-adapters-data-confidence",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-09T13:33:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "retired/watchdog-flock-liveness-local-state-20260611",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 169,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned MGMT-OPS-002 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-07-07T15:18:38Z",
+      "resolved_at": "2026-07-08T04:27:29Z"
+    },
+    {
+      "task_id": "MGMT-OPS-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implementation PR #3064 merged into dev at 62a5ebbb14ebea08c360c0ee936da2509cd05242. Please review MGMT-OPS-002 frontend confidence adapters: shared utils display helpers, Performance Review Persona Fleet fallback attribution links, Promotion & Allocation confidence labels, and task evidence. Local validation passed: targeted Vitest (3 files, 17 tests) and npm run build:management. Owner done closeout is blocked until review_approved.",
+      "status": "done",
+      "created_at": "2026-07-08T04:44:55Z",
+      "resolved_at": "2026-07-09T13:31:26Z"
+    },
+    {
+      "task_id": "MGMT-OPS-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Antigravity pivot: sidecar BFF handoff completed 7/8; codex out of quota, operator-approving to unblock OPS-004/005 chain",
+      "status": "done",
+      "created_at": "2026-07-09T13:31:26Z",
+      "resolved_at": "2026-07-09T13:33:25Z"
+    }
+  ],
+  "blockers": []
+}

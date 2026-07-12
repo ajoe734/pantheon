@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+  "archived_at": "2026-07-12T09:21:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+    "title": "Prepare MGMT-PERF-IA-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 1 Governance Decisions",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed reviewed support-only BFF/frontend handoff packet after Pantheon PR #3392 merged as 2fa34e8196e46c95e497e32add639ca2109fc7b0; verified task commit aa87f1631d394e336a0c5f4d0af0f4a5200c0798 is on origin/dev, commit scope is the single sidecar packet, canonical mutation remains false, and Branch CI Gate passed. Parent owner retains absorption and execute-plans PR #260 merge/hosted-proof responsibility.",
+    "last_update": "2026-07-12T09:21:09Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T09:21:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-005-sidecar-bff-handoff-followup-8",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "git_clean_required": false,
+      "commit": "aa87f1631d394e336a0c5f4d0af0f4a5200c0798",
+      "commit_subject": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8: add handoff gate",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped support packet and generated task brief.",
+        "Not changing": "canonical truth, BFF/runtime/registry/governance code, or frontend implementation.",
+        "Composes with": "MGMT-PERF-IA-005 parent delivery and execute-plans PR #260.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check; PR #260 metadata verified with gh pr view"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2fa34e8196e46c95e497e32add639ca2109fc7b0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only parent absorption/delivery-gate packet ready; verify PR #260 metadata, fail-closed identity/receipt boundary, and canonical non-mutation. Pantheon PR #3392, commit aa87f1631.",
+      "status": "done",
+      "created_at": "2026-07-12T09:17:19Z",
+      "resolved_at": "2026-07-12T09:20:03Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "APPROVED: verified execute-plans PR #260 remains open at 2954481ba3540bc2627eb379b70b401d40b3ef39 with successful integration gate 29162742365; packet preserves fail-closed stable-identity/durable-receipt boundary and changes only task-scoped support material. Pantheon PR #3392 merged as 2fa34e8196e46c95e497e32add639ca2109fc7b0.",
+      "status": "done",
+      "created_at": "2026-07-12T09:20:03Z",
+      "resolved_at": "2026-07-12T09:21:10Z"
+    }
+  ],
+  "blockers": []
+}

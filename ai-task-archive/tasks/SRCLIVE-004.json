@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "task_id": "SRCLIVE-004",
+  "archived_at": "2026-07-07T15:08:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "SRCLIVE-004",
+    "title": "Reconcile SRCLIVE-004 readback and task state",
+    "summary_zh": "修復 SRCLIVE-004 父任務 active/archive 缺口；重跑 read-only BFF readback verifier 並記錄 PR 證據，不重做 source-ingest/BFF implementation。",
+    "phase": "SRCLIVE production closeout",
+    "owner": "Codex",
+    "reviewer": "Copilot",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-07-06-srclive-production-closeout/SRCLIVE-004-state-readback-reconciliation.md",
+      "scripts/verify_srclive_readback.py",
+      "ai-task-archive/tasks/SRCLIVE-004.json"
+    ],
+    "acceptance": [
+      "SRCLIVE-004 discoverable in status/archive",
+      "Fresh BFF readback proof or concrete blocker recorded",
+      "No duplicate implementation task",
+      "Closeout PR merged before done"
+    ],
+    "next": "Duplicate active row created during readback reconciliation; canonical follow-up task is SRCLIVE-004-READBACK-RECONCILE. Historical SRCLIVE-004 completion is documented in the reconciliation artifact with merged PRs #2539/#2548/#2554/#2557 rather than reconstructed as a live lifecycle row.",
+    "last_update": "2026-07-07T15:08:08Z",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SRCLIVE-004-READBACK-RECONCILE"
+  },
+  "handoffs": [],
+  "blockers": []
+}

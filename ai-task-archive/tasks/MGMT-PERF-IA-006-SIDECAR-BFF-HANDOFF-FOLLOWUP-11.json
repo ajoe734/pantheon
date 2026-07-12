@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+  "archived_at": "2026-07-12T05:05:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+    "title": "Prepare MGMT-PERF-IA-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 2 integration",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-006/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3361 merged into dev at 245f76a7113db61824a3e7bf0ec7190605769f47; support-only no-delta BFF/frontend handoff finalized for parent owner Antigravity. Verification: git diff --check; task-scoped diff inspection; Branch CI Gate passed.",
+    "last_update": "2026-07-12T05:05:31Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：確認無 BFF/frontend 契約變更、依循 fail-closed 邏輯、不影響 canonical layers"
+    ],
+    "review_file": "docs/reviews/2026-07-12-mgmt-perf-ia-006-sidecar-bff-handoff-followup-11-antigravity-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T05:05:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-006-sidecar-bff-handoff-followup-11",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "git_clean_required": false,
+      "commit": "db8480b794f9be4686c70e69cf0e3412b62c0869",
+      "commit_subject": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11: finalize packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend handoff closeout record",
+        "Not changing": "canonical truth, BFF/runtime, frontend, or supervisor policy",
+        "Composes with": "MGMT-PERF-IA-006 parent owner selective absorption",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check; git diff --name-only origin/dev...HEAD"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "245f76a7113db61824a3e7bf0ec7190605769f47",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only no-delta BFF/frontend handoff packet anchored at 874aa30dc. Please verify dependency posture, no invented route/query claims, fail-closed gap handling, and isolation to the sidecar artifact.",
+      "status": "done",
+      "created_at": "2026-07-12T05:01:53Z",
+      "resolved_at": "2026-07-12T05:02:48Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved; returning to Codex for closeout finalization",
+      "status": "done",
+      "created_at": "2026-07-12T05:02:48Z",
+      "resolved_at": "2026-07-12T05:05:33Z"
+    }
+  ],
+  "blockers": []
+}

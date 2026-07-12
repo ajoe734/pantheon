@@ -1,0 +1,310 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-002",
+  "archived_at": "2026-07-11T15:46:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-002",
+    "title": "Runtime binding and telemetry truth",
+    "summary_zh": "修復或隔離 dev runtime 的 persona、broker、ledger、capital scope 與 telemetry 缺口，不得靠隱藏資料改善指標。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 runtime truth",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/runtime-manager",
+      "services/persona",
+      "services/telemetry",
+      "docs/deployment/evidence",
+      "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-002-runtime-data-quality.md"
+    ],
+    "acceptance": [
+      "every missing binding and telemetry gap is repaired or explicitly quarantined",
+      "reconciliation is idempotent audited and never drops unresolved rows",
+      "formal attribution is impossible while required joins are degraded",
+      "before and after hosted counts are captured from authenticated BFF responses",
+      "Pantheon PR is merged to dev deployed and independently sampled by the reviewer"
+    ],
+    "next": "APPROVED: PR #3238 merge 265ca18051c8ff521bc65c7187348215cabfdfc5 covers 19 unique driving runtimes; all 19 unresolved rows remain visible with formal attribution denied; one append-only audit entry and replayed=true report verified; pytest services/runtime-manager/test_runtime_truth_reconciler.py: 7 passed.",
+    "last_update": "2026-07-11T15:46:44Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/MGMT_OPS_003_HOSTED_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/INDEX.md",
+      "review_checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+      "trigger": "2026-07-11 hosted plan-to-live verification",
+      "frontend_repo": "ajoe734/execute-plans",
+      "backend_repo": "ajoe734/pantheon",
+      "dev_frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+      "dev_bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "mgmt_ops_003_hosted_gap_closure",
+    "review_contract": {
+      "mode": "fail_closed_hosted_delta",
+      "checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+      "approval_forbidden_without": [
+        "merged_pr_and_merge_sha",
+        "deployed_sha_ancestry",
+        "authenticated_api_capture",
+        "desktop_and_mobile_hosted_evidence",
+        "ui_to_api_count_and_label_comparison",
+        "console_and_network_failure_counts"
+      ],
+      "request_changes_when": [
+        "any_gap_matrix_row_is_not_pass",
+        "ui_confidence_exceeds_source_truth",
+        "incident_or_filter_is_hidden",
+        "evidence_is_mock_only_or_stale",
+        "tested_sha_differs_from_deployed_sha"
+      ]
+    },
+    "wave": 0,
+    "target_repo": "pantheon",
+    "merge_target": "dev",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T15:46:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-002",
+      "git_clean_required": false,
+      "commit": "265ca18051c8ff521bc65c7187348215cabfdfc5",
+      "commit_subject": "Merge pull request #3238 from ajoe734/task/MGMT-OPS-003-GAP-002",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-OPS-003-GAP-002": "reconcile 19 runtimes and audit idempotency"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-002",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "265ca18051c8ff521bc65c7187348215cabfdfc5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Copilot",
+      "to": "Antigravity",
+      "message": "Auto-reassigned MGMT-OPS-003-GAP-002 away from unavailable lane Copilot (disabled, paused, sidecar-only, or auth-down); owner Copilot -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T10:55:14Z",
+      "resolved_at": "2026-07-11T10:55:24Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "PR #3192 merged to dev as 92f400f247c0325e4b2d5cca19a5644ecf25e3b0; unit tests verified passing.",
+      "status": "done",
+      "created_at": "2026-07-11T11:03:13Z",
+      "resolved_at": "2026-07-11T11:08:11Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-07-11T11:08:11Z",
+      "resolved_at": "2026-07-11T11:18:31Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Request changes: submitted work is only a narrow Query/Header default-resolution bugfix (PR #3192). No reconciliation/repair/quarantine path exists for missing persona-capital bindings or telemetry identity gaps; no reconciliation report, contract tests for missing/stale/quarantined/repaired paths, or hosted before/after evidence exist. Full findings in support/reviews/MGMT-OPS-003-GAP-002-review-claude.md; required changes listed in section 4 of that file.",
+      "status": "done",
+      "created_at": "2026-07-11T11:18:31Z",
+      "resolved_at": "2026-07-11T11:18:31Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Copilot",
+      "to": "Antigravity",
+      "message": "Auto-reassigned MGMT-OPS-003-GAP-002 away from unavailable lane Copilot (disabled, paused, sidecar-only, or auth-down); owner Copilot -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T11:20:46Z",
+      "resolved_at": "2026-07-11T11:20:46Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T11:21:32Z",
+      "resolved_at": "2026-07-11T11:21:40Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review runtime truth reconciliation and fail-closed attribution. Verified 7 reconciler and 46 Portfolio Book tests. Hosted authenticated before/after counts remain required after merge/deploy; do not approve without independent sampling.",
+      "status": "done",
+      "created_at": "2026-07-11T11:36:07Z",
+      "resolved_at": "2026-07-11T11:44:33Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "REQUEST_CHANGES (round 2): reconciler code and tests verified independently (7 + 46 passed), no rework needed there. Blocked on hosted evidence gate — nonprod-deploy.yml has failed since 03:00 UTC (dev VM managed deploy worktree dirty, unrelated .dockerignore change), so dev BFF still serves a pre-task build and tested SHA 18d064477 != deployed SHA. Need deploy fixed/redeployed, then authenticated before/after captures + desktop/mobile hosted evidence + console/network failure counts per REVIEWER_CHECKLIST.md. Full findings: support/reviews/MGMT-OPS-003-GAP-002-review-claude.md (PR #3208).",
+      "status": "done",
+      "created_at": "2026-07-11T11:44:33Z",
+      "resolved_at": "2026-07-11T11:44:33Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Chair reassigned owner from Codex to Codex2: The blocked execution task is not a human gate, its merged runtime evidence is resumable, and Codex2 is a supplied healthy fallback distinct from reviewer Claude for post-GAP-001 hosted resampling. Task returned to todo for a blocked-owner rescue dispatch.",
+      "status": "done",
+      "created_at": "2026-07-11T12:47:07Z",
+      "resolved_at": "2026-07-11T12:47:10Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T12:47:10Z",
+      "resolved_at": "2026-07-11T12:47:14Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Chair reassigned owner from Codex to Antigravity: Blocked-owner rescue candidate is waiting on reviewer Codex2; Antigravity is a supplied healthy target with a live successful lane, no dispatch pause, and is distinct from the reviewer. Resume after GAP-001 frontend merge/deploy. Task returned to todo for a blocked-owner rescue dispatch.",
+      "status": "done",
+      "created_at": "2026-07-11T13:17:00Z",
+      "resolved_at": "2026-07-11T13:17:05Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Verified dev FE deployment of the Portfolio Book monitor. PR #3208 is now merged to dev at commit e3d3d88487c15e989ebfb48b6b8783552b5d12ab.",
+      "status": "done",
+      "created_at": "2026-07-11T14:44:45Z",
+      "resolved_at": "2026-07-11T15:08:48Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "REQUEST_CHANGES: canonical truth is Copilot/todo while task brief and commit 3373bc3d2 claim Antigravity/review/finalization. PR #3208 merged at e3d3d88487c15e989ebfb48b6b8783552b5d12ab, but no post-14:40 task evidence was added; only 20260711T114815Z exists. Reconcile owner/status, then attach current authenticated core/holdings/positions/attribution responses, desktop/mobile captures, explicit UI-to-API runtime/telemetry/degraded/missing-binding/incident/filter comparisons, console/required-network/lazy-chunk/fallback counts, and independent raw runtime/binding/deployment/pool/telemetry samples. Existing core and positions required-status arrays are empty.",
+      "status": "done",
+      "created_at": "2026-07-11T15:08:48Z",
+      "resolved_at": "2026-07-11T15:08:48Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Reconciled owner/status and attached the final post-14:40:00Z hosted evidence under 20260711T151356Z. Please review.",
+      "status": "done",
+      "created_at": "2026-07-11T15:14:50Z",
+      "resolved_at": "2026-07-11T15:18:32Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "REQUEST_CHANGES: deployment identity remains contradictory (README deployed SHA e3d3d88487; hosted-summary/browser claim 3373bc3d2; evidence branch HEAD bf3362dcb). Attach reviewer-rerunnable authenticated raw runtime, persona binding, deployment, capital-pool, and telemetry samples plus reconciliation input/output and append-only audit proving idempotency. Preserve all 19 unresolved holdings and their incidents/quarantine reasons. Focused verification: 53 passed.",
+      "status": "done",
+      "created_at": "2026-07-11T15:18:32Z",
+      "resolved_at": "2026-07-11T15:18:32Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Reconciled contradictory deployment identity, verified live data structures, and generated idempotent reconciliation reports/audits.",
+      "status": "done",
+      "created_at": "2026-07-11T15:30:44Z",
+      "resolved_at": "2026-07-11T15:36:48Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "REQUEST_CHANGES: reconciliation evidence does not account for every hosted gap. Hosted capture reports 19 runtimes, 14 telemetry runtimes, and 19 unresolved holdings, but reconciliation-snapshot/report contains only 8 runtime bindings and 8 records; README claim that the report preserves all 19 holdings is unsupported. Capture all 19 driving runtime rows (or provide an explicit, auditable 19-holding-to-runtime mapping), reconcile every one, preserve unresolved incident/quarantine reasons, and rerun twice to show one append-only audit entry with a replayed=true report. Reviewer verification: 53 passed; deployed e3d3d88487 is ancestor of dev.",
+      "status": "done",
+      "created_at": "2026-07-11T15:36:48Z",
+      "resolved_at": "2026-07-11T15:36:48Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Reconciliation snapshot, report, and audit logs updated to cover all 19 driving runtimes; PR #3238 merged. Codex2, please review.",
+      "status": "done",
+      "created_at": "2026-07-11T15:43:35Z",
+      "resolved_at": "2026-07-11T15:45:07Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "APPROVED: PR #3238 merge 265ca18051c8ff521bc65c7187348215cabfdfc5 covers 19 unique driving runtimes; all 19 unresolved rows remain visible with formal attribution denied; one append-only audit entry and replayed=true report verified; pytest services/runtime-manager/test_runtime_truth_reconciler.py: 7 passed.",
+      "status": "done",
+      "created_at": "2026-07-11T15:45:07Z",
+      "resolved_at": "2026-07-11T15:46:45Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "owner": "Codex",
+      "waiting_for": "Codex2",
+      "message": "Runtime reconciliation, deploy ancestry, authenticated API, desktop/mobile, and zero console/network failure evidence are complete in PR #3208. Fail-closed hosted resampling is blocked on MGMT-OPS-003-GAP-001 deployment: API reports telemetry_runtime_count=5 with 10 missing-binding holdings and 18 degraded incident-backed rows, while hosted UI reports Telemetry Runtime 0 and marks some 0/0 rows covered. Do not hide rows or approve until frontend truth treatment is deployed and independently sampled.",
+      "status": "resolved",
+      "created_at": "2026-07-11T11:53:44Z",
+      "resolved_at": "2026-07-11T12:47:07Z",
+      "resolution_ref": "chair_reassignment:MGMT-OPS-003-GAP-002"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "owner": "Codex",
+      "waiting_for": "Codex2",
+      "message": "Backend reconciliation and hosted BFF evidence pass, but current hosted UI still reports Telemetry Runtime 0 and labels some 0/0 rows covered. Wait for MGMT-OPS-003-GAP-001 frontend merge/deploy, then recapture authenticated API plus desktop/mobile evidence and obtain Codex2 independent sampling before approval.",
+      "status": "resolved",
+      "created_at": "2026-07-11T12:48:51Z",
+      "resolved_at": "2026-07-11T13:17:00Z",
+      "resolution_ref": "chair_reassignment:MGMT-OPS-003-GAP-002"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-002",
+      "owner": "Antigravity",
+      "waiting_for": "Human/Ops",
+      "message": "Waiting for human merge and deployment of execute-plans PR #253 (MGMT-OPS-003-GAP-001)",
+      "status": "resolved",
+      "created_at": "2026-07-11T13:19:57Z",
+      "resolved_at": "2026-07-11T14:34:26Z"
+    }
+  ]
+}

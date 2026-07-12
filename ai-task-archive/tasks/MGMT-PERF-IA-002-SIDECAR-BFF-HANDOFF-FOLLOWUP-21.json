@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-21",
+  "archived_at": "2026-07-11T12:04:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-21",
+    "title": "Prepare MGMT-PERF-IA-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 BFF contract",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-21.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete: approved support-only BFF/frontend handoff packet committed as d30f42aba80a052e1a30940cab8e24e0e701519c and merged via PR #3213 as 7589f28e91312de429f9ddd25a99b3917b3a5c8b into dev. Verification: git merge-base --is-ancestor delivery origin/dev passed; git diff --check d30f42aba^ d30f42aba passed. No canonical truth, runtime, contract, registry, governance, or frontend implementation changed; parent owner decides absorption.",
+    "last_update": "2026-07-11T12:04:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：驗證 remote SHAs、PR #3127 狀態與 parent blocker，確認本 support packet 符合 duplicate-dispatch 抑制規範。此審查不代表核准 parent 實作。",
+      "無"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-21.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T12:04:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-002-sidecar-bff-handoff-followup-21",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-21",
+      "git_clean_required": false,
+      "commit": "d30f42aba80a052e1a30940cab8e24e0e701519c",
+      "commit_subject": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-21: package handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only duplicate-dispatch evidence, BFF/frontend handoff boundary, and resume gate.",
+        "Not changing": "canonical truth, BFF/frontend runtime, contracts, governance, registry state, or ranking formulas.",
+        "Composes with": "parent MGMT-PERF-IA-002 owner review and a clean replacement delivery.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-21",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check; remote SHA, parent PR, blocker, and 48-path diff recheck"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-21",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7589f28e91312de429f9ddd25a99b3917b3a5c8b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-21",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Support-only duplicate-dispatch packet committed at d30f42aba; parent PR #3127 remains contaminated across 48 paths with no material evidence delta. Please verify remote SHAs, blocker truth, and suppression resume gate; no canonical/runtime/frontend changes.",
+      "status": "done",
+      "created_at": "2026-07-11T12:02:14Z",
+      "resolved_at": "2026-07-11T12:03:09Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-21",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T12:03:09Z",
+      "resolved_at": "2026-07-11T12:04:35Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "PINT-004",
+  "archived_at": "2026-07-12T13:08:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PINT-004",
+    "title": "Governed Persona proposal lifecycle",
+    "summary_zh": "Implement governed proposal revisions validation linkage and audit.",
+    "phase": "Persona Interaction / Wave 1 governance",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "PINT-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/",
+      "services/control-plane/bff/governance/",
+      "services/control-plane/bff/tests/"
+    ],
+    "acceptance": [
+      "Map proposals to canonical owners;Preserve revisions;Enforce authority;Merge Pantheon PR"
+    ],
+    "next": "Owner closeout complete: PR #3417 merged to dev as fd208f4d8569770637e681c154126d3652eabee8; governed proposal revision validation, linkage, audit, conflict coverage, and timezone-aware expiry enforcement verified with pytest -q services/control-plane/bff/tests/test_agora_governed_proposals.py (4 passed).",
+    "last_update": "2026-07-12T13:08:18Z",
+    "review_notes_zh": [
+      "審查通過：timezone-naive expires_at 現在於模型驗證階段回傳 HTTP 422，不再因 datetime 比較造成 500",
+      "驗證：22 個 Agora BFF 聚焦測試通過；PR #3417 已合併，merge commit fd208f4d8"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T13:08:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/pint-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PINT-004",
+      "git_clean_required": false,
+      "commit": "0eca0eb069b2dfd8da32b11f9b3105b320a1ccfa",
+      "commit_subject": "PINT-004: reject timezone-naive proposal expiry",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "governed proposal request validation and endpoint regression coverage",
+        "Not changing": "proposal lifecycle transitions or governed action execution authority",
+        "Composes with": "PINT-001 consultation linkage and PINT-006 proposal UX",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "PINT-004",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest -q services/control-plane/bff/tests/test_agora_governed_proposals.py services/control-plane/bff/tests/test_agora_router.py (22 passed); git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PINT-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fd208f4d8569770637e681c154126d3652eabee8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PINT-004",
+      "from": "Claude2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PINT-004 away from unavailable lane Claude2, Gemini (disabled, paused, sidecar-only, or auth-down); owner Claude2 -> Antigravity, reviewer Gemini -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-12T12:15:01Z",
+      "resolved_at": "2026-07-12T12:53:40Z"
+    },
+    {
+      "task_id": "PINT-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T12:53:39Z",
+      "resolved_at": "2026-07-12T12:53:45Z"
+    },
+    {
+      "task_id": "PINT-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Please review merged PR #3416 (merge b7664bf16c40539c3fdde12bbd79f67cba75ebc9): governed proposal immutable revisions, validation-to-canonical-owner linkage with execution_authority none, audit history, ETag concurrency, and idempotency conflicts. Focused pytest services/control-plane/bff/tests/test_agora_governed_proposals.py passed (3 tests); all PR CI gates passed.",
+      "status": "done",
+      "created_at": "2026-07-12T13:02:01Z",
+      "resolved_at": "2026-07-12T13:03:48Z"
+    },
+    {
+      "task_id": "PINT-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested: ProposalCreate.governed compares timezone-naive expires_at with timezone-aware UTC now, causing TypeError/HTTP 500 for validly parsed ISO input without an offset. Normalize to UTC or reject naive timestamps as 422, and add an endpoint regression test asserting no 500 (prefer explicit timezone requirement). Focused pytest otherwise passes 3 tests.",
+      "status": "done",
+      "created_at": "2026-07-12T13:03:48Z",
+      "resolved_at": "2026-07-12T13:03:48Z"
+    },
+    {
+      "task_id": "PINT-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewer fix ready in PR #3417: timezone-naive expires_at now fails validation as HTTP 422 instead of 500; focused BFF suite 22 passed. Please review commit 0eca0eb06.",
+      "status": "done",
+      "created_at": "2026-07-12T13:05:27Z",
+      "resolved_at": "2026-07-12T13:07:02Z"
+    },
+    {
+      "task_id": "PINT-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after timezone-naive expiry regression passed; PR #3417 merged as fd208f4d8. Returned to Codex2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-12T13:07:02Z",
+      "resolved_at": "2026-07-12T13:08:19Z"
+    }
+  ],
+  "blockers": []
+}
