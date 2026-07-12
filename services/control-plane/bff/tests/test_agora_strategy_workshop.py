@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -302,6 +303,29 @@ class TestMemoryWorkshopStoreReadinessAndCards:
 # --------------------------------------------------------------------------- #
 
 class TestWorkshopStoreFactory:
+    def test_make_workshop_store_logs_postgres_backend_without_dsn(self, monkeypatch, caplog):
+        from agora.strategy_workshop import store as store_module
+
+        class FakePostgresStore:
+            def __init__(self, *, dsn, schema):
+                self.dsn = dsn
+                self.schema = schema
+
+        monkeypatch.setattr(store_module, "PostgresWorkshopStore", FakePostgresStore)
+        with caplog.at_level(logging.INFO, logger=store_module.__name__):
+            result = store_module.make_workshop_store(
+                backend="postgres",
+                dsn="postgresql://secret-user:secret-password@postgres/pantheon",
+                schema="agora",
+            )
+
+        assert isinstance(result, FakePostgresStore)
+        assert "backend=postgres" in caplog.text
+        assert "store=FakePostgresStore" in caplog.text
+        assert "schema=agora" in caplog.text
+        assert "secret-user" not in caplog.text
+        assert "secret-password" not in caplog.text
+
     def test_make_workshop_store_off_returns_memory(self):
         from agora.strategy_workshop import make_workshop_store, MemoryWorkshopStore
         store = make_workshop_store(backend="off")

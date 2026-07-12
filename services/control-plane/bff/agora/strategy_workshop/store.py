@@ -1114,7 +1114,9 @@ def make_workshop_store(
     """
     resolved = (backend or os.environ.get(BACKEND_ENV, "off")).strip().lower()
     if resolved in {"off", "false", "disabled", "none", ":memory:", ""}:
-        return MemoryWorkshopStore()
+        store = MemoryWorkshopStore()
+        _logger.info("Agora workshop store initialized backend=memory store=%s", type(store).__name__)
+        return store
     if resolved == "postgres":
         resolved_dsn = dsn or os.environ.get(DSN_ENV, "")
         if not resolved_dsn:
@@ -1122,7 +1124,13 @@ def make_workshop_store(
                 f"{DSN_ENV} must be set when {BACKEND_ENV}=postgres"
             )
         resolved_schema = schema or os.environ.get(SCHEMA_ENV, DEFAULT_SCHEMA)
-        return PostgresWorkshopStore(dsn=resolved_dsn, schema=resolved_schema)
+        store = PostgresWorkshopStore(dsn=resolved_dsn, schema=resolved_schema)
+        _logger.info(
+            "Agora workshop store initialized backend=postgres store=%s schema=%s",
+            type(store).__name__,
+            resolved_schema,
+        )
+        return store
     raise RuntimeError(
         f"Unknown {BACKEND_ENV}={resolved!r}; expected 'off' or 'postgres'"
     )

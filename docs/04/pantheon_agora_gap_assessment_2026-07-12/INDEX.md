@@ -1,5 +1,13 @@
 # Pantheon Agora gap assessment — 2026-07-12
 
+## Durable workshop storage
+
+AG-GAP-001 owns durable Strategy Workshop storage on the Pantheon dev BFF.
+Dev deployment must select the Postgres workshop store, report that selection
+at startup without logging credentials, and prove that a workshop remains
+readable after the BFF container restarts. This does not change workshop API
+semantics, database schema, or staging/live deployment policy.
+
 ## Contract honesty
 
 AG-GAP-005 confirms that six v1.1 workshop operations remain registered
@@ -19,5 +27,8 @@ gap-closure execution packet.
 
 ## Checkout hygiene
 
-AG-GAP-011 establishes frontend checkout hygiene rules, audits and removes stale nested `.fe-ep`, `.fe-human-inbox-persona-focus`, and `.fe-worktrees` checkouts inside the backend repository, and mandates that all frontend work is routed canonically through `ajoe734/execute-plans@dev`. The details of this audit are documented in [AG-GAP-011-fe-checkout-hygiene.md](../../bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-011-fe-checkout-hygiene.md).
-
+AG-GAP-011 establishes frontend checkout hygiene rules, audits and removes
+stale nested `.fe-ep`, `.fe-human-inbox-persona-focus`, and `.fe-worktrees`
+checkouts inside the backend repository, and mandates that all frontend work
+is routed canonically through `ajoe734/execute-plans@dev`. The details are
+documented in [AG-GAP-011-fe-checkout-hygiene.md](../../bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-011-fe-checkout-hygiene.md).
