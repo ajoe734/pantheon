@@ -123,3 +123,17 @@ the deployed Pantheon and Execute Plans commits.
 - `support/sidecars/PPL-ALLOC-009/PPL-ALLOC-009-SIDECAR-BFF-HANDOFF.md`
 - `support/sidecars/PPL-ALLOC-009/PPL-ALLOC-009-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md`
 - `docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/PPL-ALLOC-009-closeout-dev-publish.md`
+
+## Finalization Record
+
+- Reviewer `Antigravity` approved implementation commit `d89de9cc9` and
+  returned the task to owner `Codex` for closeout.
+- Review evidence is recorded in
+  `docs/reviews/2026-07-12-ppl-alloc-009-sidecar-bff-handoff-followup-3-antigravity-review.md`.
+- Owner closeout verification: `git diff --check`; existence checks for all
+  three references above; and `git diff --name-only origin/dev...HEAD` to
+  confirm the branch remains confined to this support packet and its review
+  record.
+- This finalization records publication readiness only. The parent owner still
+  decides whether and how to compose the packet into `PPL-ALLOC-009`; it does
+  not certify the parent task, a hosted deployment, or any capital mutation.
