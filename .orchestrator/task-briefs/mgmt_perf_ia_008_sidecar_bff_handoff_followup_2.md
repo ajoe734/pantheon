@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: 34th rewake reconfirm: PR #3372 was BEHIND again (3 commits, unrelated MGMT-PERF-IA-006-FOLLOWUP-26 sidecar merge #3397), merged origin/dev clean and pushed. Content already merged via PR #3352/#3354/#3364/#3367/#3370; PR #3372 still open awaiting human/parent-owner Antigravity merge (AI self-merge blocked by governance). No canonical truth touched, no new review work needed.
+- Next: 35th rewake reconfirm: stale dispatcher loop (ai-status.json note ahead of task-brief mirror; synced here). Content already merged, ancestor check true (418244942 in origin/dev). PR #3372 (ajoe734/pantheon) now CLEAN/MERGEABLE and OPEN after the origin/dev merge in 5962bd029; still awaiting human/Antigravity merge (AI self-merge blocked by governance). No canonical truth touched, no new review work needed.
 
 ## Summary
 平行支援 MGMT-PERF-IA-008，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
