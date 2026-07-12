@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: 37th rewake reconfirm: stale dispatcher loop, content already merged (ancestor check true, 418244942 in origin/dev). Task branch was BEHIND origin/dev by 2 commits again, blocking PR #3372 mergeability; merged origin/dev into task branch to unstick. Still awaiting human/Antigravity merge (AI self-merge blocked by governance). No canonical truth touched.
+- Next: 37th rewake reconfirm: stale dispatcher/task-brief regeneration loop, content already merged (418244942 ancestor of origin/dev confirmed). Task branch drifted BEHIND again; merged origin/dev, pushed b68e43542. PR #3372 now MERGEABLE (CI pending), still gated on human/Antigravity merge. No canonical truth touched.
 
 ## Summary
 平行支援 MGMT-PERF-IA-008，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
