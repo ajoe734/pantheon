@@ -186,6 +186,13 @@ def test_agora_capabilities_returns_manifest(monkeypatch):
     assert "capabilities" in body["data"]
     assert isinstance(body["data"]["capabilities"], list)
 
+    capabilities_list = body["data"]["capabilities"]
+    assert len(capabilities_list) == 7, f"Expected 7 capabilities, got {len(capabilities_list)}"
+    cap_names = {c["name"] for c in capabilities_list}
+    assert "agora.identity.v1" in cap_names
+    assert "agora.session.v1" in cap_names
+
+
 
 def test_agora_capabilities_unauthenticated_returns_401(monkeypatch):
     client = _client(monkeypatch)

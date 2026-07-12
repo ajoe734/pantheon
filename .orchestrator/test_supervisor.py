@@ -556,6 +556,86 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
         self.assertIsNone(supervisor.parse_quota_retry_hint(None))
 
+    def test_sidecar_parent_owner_unavailable_when_owner_disabled(self) -> None:
+        config = {"ready_dispatcher": {"disabled_agents": ["Antigravity"]}, "agents": {}}
+        candidate = {
+            "parent_task_id": "MGMT-PERF-IA-006",
+            "parent_task": {"owner": "Antigravity"},
+            "reviewer": "Antigravity",
+        }
+        self.assertTrue(
+            supervisor.sidecar_parent_owner_unavailable(config, {}, candidate)
+        )
+
+    def test_sidecar_parent_owner_unavailable_when_owner_paused(self) -> None:
+        config = {"ready_dispatcher": {"disabled_agents": []}, "agents": {}}
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity": {"blocked_until": "2099-01-01T00:00:00Z"}
+                }
+            }
+        }
+        candidate = {"parent_task_id": "X", "parent_task": {"owner": "Antigravity"}}
+        self.assertTrue(
+            supervisor.sidecar_parent_owner_unavailable(config, state, candidate)
+        )
+
+    def test_sidecar_parent_owner_available_when_owner_healthy(self) -> None:
+        config = {"ready_dispatcher": {"disabled_agents": ["Antigravity"]}, "agents": {}}
+        candidate = {"parent_task_id": "MGMT-PERF-IA-008", "parent_task": {"owner": "Codex"}}
+        self.assertFalse(
+            supervisor.sidecar_parent_owner_unavailable(config, {}, candidate)
+        )
+
+    def test_pause_dispatch_for_reaped_worker_quota_log_pauses_for_hint(self) -> None:
+        from datetime import datetime, timezone
+
+        worker = self._worker_for_log(
+            "Error: You have exhausted your capacity on this model. "
+            "Your quota will reset after 89h52m2s.\n"
+        )
+        worker.update(
+            {"provider": "antigravity", "run_id": "antigravity-run-1", "task_id": "TJ-E2E-005"}
+        )
+        config = {
+            "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        state: dict = {}
+        fake_now = datetime(2026, 7, 12, 12, 0, 0, tzinfo=timezone.utc)
+        with (
+            mock.patch.object(supervisor, "datetime") as datetime_mock,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value="ref-1"),
+        ):
+            datetime_mock.now.return_value = fake_now
+            datetime_mock.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            reason = supervisor.pause_dispatch_for_reaped_worker(config, state, worker)
+
+        self.assertIsNotNone(reason)
+        self.assertIn("exhausted your capacity", reason)
+        entry = state["provider_guardrails"]["dispatch_pauses"]["antigravity"]
+        self.assertEqual(entry["pause_kind"], "quota_terminal")
+        # 89h52m2s hint => pause window far beyond the 900s default
+        self.assertGreater(entry["reset_after_seconds"], 300000)
+
+    def test_pause_dispatch_for_reaped_worker_generic_log_no_pause(self) -> None:
+        worker = self._worker_for_log("normal progress output, nothing wrong\n")
+        worker.update({"provider": "antigravity", "run_id": "antigravity-run-2"})
+        config = {
+            "provider_guardrails": {},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        state: dict = {}
+        with mock.patch.object(supervisor, "write_activity_log"):
+            reason = supervisor.pause_dispatch_for_reaped_worker(config, state, worker)
+
+        self.assertIsNone(reason)
+        self.assertEqual(
+            state.get("provider_guardrails", {}).get("dispatch_pauses", {}), {}
+        )
+
     def test_mark_provider_dispatch_paused_honors_codex_retry_at(self) -> None:
         from datetime import datetime, timezone
 
