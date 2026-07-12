@@ -8,6 +8,11 @@ at startup without logging credentials, and prove that a workshop remains
 readable after the BFF container restarts. This does not change workshop API
 semantics, database schema, or staging/live deployment policy.
 
+AG-GAP-002 applies the same deployment boundary to Trading Room decision,
+intent, handoff, workspace, and dashboard-version state. The memory backend
+remains available for tests, while Pantheon dev selects Postgres and preserves
+the existing decision-support-only proofs and optimistic-concurrency inputs.
+
 ## Contract honesty
 
 AG-GAP-005 confirms that six v1.1 workshop operations remain registered
