@@ -18,3 +18,17 @@ inference into false audit truth.
 - Backfill reliable mappings; mark inferred confidence and queue orphans.
 - Publish before/after completeness, conflict and orphan evidence.
 - Prove deterministic historical cases and merge to Pantheon `dev`.
+
+## Implementation evidence
+
+- `services/trade_journey/replay_backfill.py` provides bi-temporal as-of replay,
+  recorded-time correction overlays, a deterministic full-event timeline, and
+  a stable SHA-256 evidence hash covering version lineage as well as projections.
+- Legacy mappings remain explicitly labelled as `explicit` or `inferred` with
+  confidence; ambiguous, low-confidence, and unmapped records enter the orphan
+  queue instead of becoming audit truth.
+- The returned evidence records total, before/after mapped counts, conflicts,
+  orphans, and the applied confidence threshold.
+- Verification: `python3 -m pytest -q services/trade_journey/test_materializer.py
+  services/trade_journey/test_replay_backfill.py` (10 passed); `python3 -m
+  py_compile services/trade_journey/replay_backfill.py`; `git diff --check`.
