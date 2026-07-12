@@ -47,6 +47,7 @@ from services.execution.lean_runtime.pending_signal_store import (
 from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
+from services.trade_journey.correlation_envelope import propagate_envelope
 
 log = logging.getLogger(__name__)
 
@@ -812,6 +813,7 @@ class RuntimeTelemetryEmitter:
         artifact_type = str(os.getenv("PANTHEON_ARTIFACT_TYPE", "execution_bundle"))
         event_metadata = self._base_metadata(binding)
         event_metadata.update(metadata or {})
+        incoming_envelope = event_metadata.get("correlation_envelope")
         payload = {
             "event_id": event_id or str(uuid.uuid4()),
             "event_type": event_type,
@@ -842,6 +844,13 @@ class RuntimeTelemetryEmitter:
             payload["target"]["lineage_ref"] = lineage_ref
         if self._identity.trace_id:
             payload["trace_id"] = self._identity.trace_id
+        if isinstance(incoming_envelope, Mapping):
+            payload["correlation_envelope"] = propagate_envelope(
+                incoming_envelope,
+                producer="execution.paper_runtime",
+                event_id=str(payload["event_id"]),
+                event_time=str(payload["created_at"]),
+            )
         return payload
 
     def emit(

@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from services.trade_journey.correlation_envelope import propagate_envelope
+
 
 DEFAULT_WARNING_RELATIVE_DELTA = 0.2
 DEFAULT_CRITICAL_RELATIVE_DELTA = 0.5
@@ -280,7 +282,7 @@ def build_drift_report_from_event(
     if not cluster_id:
         cluster_id = f"drift:{_safe_id(str(worst_check['metric']))}"
 
-    return {
+    result = {
         "id": report_id,
         "drift_report_id": report_id,
         "recon_run_id": recon_run_id,
@@ -317,6 +319,15 @@ def build_drift_report_from_event(
             "emergency_control_chain_affected": False,
         },
     }
+    incoming_envelope = normalized.get("correlation_envelope")
+    if isinstance(incoming_envelope, dict):
+        result["correlation_envelope"] = propagate_envelope(
+            incoming_envelope,
+            producer="reconciliation.drift",
+            event_id=recon_run_id,
+            event_time=timestamp,
+        )
+    return result
 
 
 def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any]:

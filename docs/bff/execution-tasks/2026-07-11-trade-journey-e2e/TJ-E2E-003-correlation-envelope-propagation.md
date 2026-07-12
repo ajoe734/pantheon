@@ -35,6 +35,9 @@ strategy/signal origin to broker, ledger and reconciliation.
 - Downstream propagation changes only event-local identity and requires
   `causation_event_id` to equal the preceding `event_id`. Stable field loss or
   replacement fails closed.
+- Production boundaries now carry the envelope through executor signal context,
+  Shioaji order records (`client_order_id` included), risk evaluations, paper
+  telemetry, and reconciliation-drift records.
 
 ## Migration and rollback
 
@@ -49,11 +52,17 @@ required.
 ## Verification
 
 ```sh
-pytest -q services/control-plane/bff/test_trade_journey_correlation_envelope.py \
+python3 -m pytest -q services/control-plane/bff/test_trade_journey_correlation_envelope.py \
   services/execution/lean_runtime/test_signal_producer.py \
+  services/execution/lean_runtime/test_executor.py \
+  services/execution/lean_runtime/test_paper_runtime.py \
+  services/broker/sinopac/test_adapter.py \
+  services/capital/test_risk_policy.py \
+  services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py \
   services/control-plane/bff/test_trade_journey_contract.py
 ```
 
-Result: `19 passed`. The parameterized P0 contract covers paper completion,
+The parameterized P0 contract covers paper completion,
 risk rejection, and broker rejection using the explicit causal chain rather
-than timestamp, symbol, or fixture-only joins.
+than timestamp, symbol, or fixture-only joins; focused tests also exercise the
+real producer functions.
