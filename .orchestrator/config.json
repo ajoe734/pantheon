@@ -883,9 +883,7 @@
     ],
     "sidecar_only_agents": [],
     "disabled_agents": [
-      "Claude",
       "Claude2",
-      "Antigravity",
       "Antigravity2",
       "Copilot"
     ],
@@ -925,16 +923,16 @@
       ]
     },
     "target_workload": {
-      "Claude": 0,
+      "Claude": 50,
       "Claude2": 0,
-      "Antigravity": 0,
+      "Antigravity": 40,
       "Antigravity2": 0,
       "Codex": 30,
       "Codex2": 30,
       "Copilot": 0
     },
     "max_tasks_per_agent_by_agent": {
-      "Claude": 0,
+      "Claude": 6,
       "Claude2": 0,
       "Antigravity": 0,
       "Antigravity2": 0,
@@ -945,7 +943,7 @@
     "max_dispatches_per_tick": 10,
     "max_active_workers_per_task": 1,
     "max_concurrent_per_quota_group": {
-      "claude": 0,
+      "claude": 6,
       "claude2": 0,
       "antigravity": 0,
       "antigravity2": 0,
