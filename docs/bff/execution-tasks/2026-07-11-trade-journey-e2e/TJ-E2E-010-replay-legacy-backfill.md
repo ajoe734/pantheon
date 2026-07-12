@@ -22,7 +22,8 @@ inference into false audit truth.
 ## Implementation evidence
 
 - `services/trade_journey/replay_backfill.py` provides bi-temporal as-of replay,
-  recorded-time correction overlays, and a stable SHA-256 evidence hash.
+  recorded-time correction overlays, a deterministic full-event timeline, and
+  a stable SHA-256 evidence hash covering version lineage as well as projections.
 - Legacy mappings remain explicitly labelled as `explicit` or `inferred` with
   confidence; ambiguous, low-confidence, and unmapped records enter the orphan
   queue instead of becoming audit truth.

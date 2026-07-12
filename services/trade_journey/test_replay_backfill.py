@@ -16,8 +16,25 @@ def test_as_of_replay_preserves_recording_time_and_applies_late_correction_deter
     repeated = replay_as_of([correction, original], occurred_as_of="2026-01-02T00:00:00Z", recorded_as_of="2026-01-04T00:00:00Z")
     assert before.projections[0]["stages"]["risk_evaluation"]["status"] == "rejected"
     assert after.projections[0]["stages"]["risk_evaluation"]["status"] == "succeeded"
+    assert before.timeline[0]["policy_version"] == "p1"
+    assert after.timeline[0]["policy_version"] == "p2"
+    assert after.timeline[0]["correction_event_id"] == "c1"
     assert after.evidence_hash == repeated.evidence_hash
     assert after.projections[0]["revision"] == 1
+
+
+def test_version_only_change_is_preserved_in_timeline_and_evidence_hash():
+    first = event("e1", "2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z",
+                  persona_version="persona-1", strategy_version="strategy-1",
+                  binding_version="binding-1", risk_version="risk-1", broker_version="broker-1")
+    second = dict(first, policy_version="p2")
+    replay_p1 = replay_as_of([first], occurred_as_of="2026-01-02T00:00:00Z",
+                             recorded_as_of="2026-01-02T00:00:00Z")
+    replay_p2 = replay_as_of([second], occurred_as_of="2026-01-02T00:00:00Z",
+                             recorded_as_of="2026-01-02T00:00:00Z")
+    assert replay_p1.timeline[0]["policy_version"] == "p1"
+    assert replay_p2.timeline[0]["policy_version"] == "p2"
+    assert replay_p1.evidence_hash != replay_p2.evidence_hash
 
 
 def test_legacy_backfill_labels_inference_and_queues_conflicts_and_low_confidence():

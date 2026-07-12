@@ -14,6 +14,7 @@ from services.trade_journey.materializer import JourneyMaterializer, Materializa
 @dataclass(frozen=True)
 class ReplayResult:
     projections: tuple[dict[str, Any], ...]
+    timeline: tuple[dict[str, Any], ...]
     evidence_hash: str
     included_event_ids: tuple[str, ...]
 
@@ -68,12 +69,19 @@ def replay_as_of(events: Iterable[Mapping[str, Any]], *, occurred_as_of: str,
         replacement["correction_event_id"] = correction["event_id"]
         overlaid[target] = replacement
 
+    timeline = tuple(sorted(overlaid.values(), key=lambda item: (
+        item["occurred_at"], item.get("recorded_at", ""), item["event_id"]
+    )))
     materializer = JourneyMaterializer()
-    materializer.rebuild(overlaid.values())
+    materializer.rebuild(timeline)
     projections = tuple(projection.snapshot for projection in materializer.projections)
-    payload = {"included_event_ids": sorted(event["event_id"] for event in eligible), "projections": projections}
+    payload = {
+        "included_event_ids": sorted(event["event_id"] for event in eligible),
+        "timeline": timeline,
+        "projections": projections,
+    }
     evidence_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return ReplayResult(projections, evidence_hash, tuple(payload["included_event_ids"]))
+    return ReplayResult(projections, timeline, evidence_hash, tuple(payload["included_event_ids"]))
 
 
 def backfill_legacy(records: Iterable[Mapping[str, Any]], *, confidence_threshold: float = 0.8) -> dict[str, Any]:
