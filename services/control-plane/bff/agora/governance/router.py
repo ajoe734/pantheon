@@ -44,6 +44,8 @@ class ProposalCreate(BaseModel):
 
     @model_validator(mode="after")
     def governed(self):
+        if self.expires_at.tzinfo is None or self.expires_at.utcoffset() is None:
+            raise ValueError("expires_at must include a timezone offset")
         if self.expires_at <= datetime.now(timezone.utc):
             raise ValueError("expires_at must be in the future")
         if self.environment_ceiling in {"paper", "canary", "live"} and not self.human_gate:
