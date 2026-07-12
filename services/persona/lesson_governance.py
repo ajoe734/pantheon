@@ -94,6 +94,26 @@ def check_evaluation_gates(candidate: Dict[str, Any], episodes: List[Dict[str, A
             if not (has_approval and has_deployment):
                 errors.append("Sensitive changes require both approval decision and deployment plan references in the receipt reason.")
 
+    # 4. Versioned lineage check
+    reflection_version = candidate.get("reflection_version")
+    if not reflection_version:
+        errors.append("Missing reflection_version in candidate.")
+    else:
+        import re
+        if not re.match(r"^v[0-9]+(\.[0-9]+)*$", str(reflection_version)):
+            errors.append(f"Invalid reflection_version format: {reflection_version}")
+
+    # 5. Environment promotion check
+    target_env = candidate.get("target_env", "paper")
+    if target_env in {"canary", "live"}:
+        receipt = candidate.get("receipt")
+        if not receipt:
+            errors.append(f"Promotion to {target_env} requires an endorsement receipt.")
+        else:
+            audit_id = receipt.get("audit_receipt_id")
+            if not audit_id:
+                errors.append(f"Promotion to {target_env} requires a valid audit_receipt_id in the receipt.")
+
     return errors
 
 
@@ -121,6 +141,10 @@ class TradeLessonCandidateStore:
             candidate["created_at"] = utc_now()
         if "updated_at" not in candidate:
             candidate["updated_at"] = candidate["created_at"]
+        if "target_env" not in candidate:
+            candidate["target_env"] = "paper"
+        if "promotion_stage" not in candidate:
+            candidate["promotion_stage"] = "proposed"
 
         json_errors = validate_lesson_candidate_json(candidate)
         if json_errors:
@@ -229,6 +253,8 @@ class LessonGovernanceService:
         reason: str,
         audit_receipt_id: str,
         episodes: List[Dict[str, Any]] = None,
+        target_env: Optional[str] = None,
+        promotion_stage: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Transition candidate state to endorsed, rejected, quarantined, or expired.
 
@@ -242,10 +268,20 @@ class LessonGovernanceService:
             raise TradeLessonCandidateError(f"Candidate not found: {lesson_candidate_id}")
 
         current_state = candidate.get("review_state")
-        if current_state not in {"proposed", "pending_review"}:
+        if current_state not in {"proposed", "pending_review", "endorsed"}:
             raise TradeLessonCandidateError(
-                f"Cannot make decision for candidate in state '{current_state}'. Must be 'proposed' or 'pending_review'."
+                f"Cannot make decision for candidate in state '{current_state}'. Must be 'proposed', 'pending_review', or 'endorsed'."
             )
+
+        if current_state == "endorsed":
+            if action != "endorse":
+                raise TradeLessonCandidateError(
+                    f"Cannot perform action '{action}' on an already endorsed candidate."
+                )
+            if not target_env:
+                raise TradeLessonCandidateError(
+                    "Target environment must be specified when updating endorsement."
+                )
 
         # Build receipt
         receipt = {
@@ -258,9 +294,35 @@ class LessonGovernanceService:
         candidate["receipt"] = receipt
 
         if action == "endorse":
+            old_env = candidate.get("target_env", "paper")
+            old_stage = candidate.get("promotion_stage", "proposed")
+            
+            new_env = target_env or old_env
+            new_stage = promotion_stage or old_stage
+
+            if new_env == "live" and old_stage != "canary_approved":
+                raise TradeLessonCandidateError(
+                    "Promotion to live is blocked: candidate must be approved in canary stage first."
+                )
+
+            # Map promotion stages automatically if not explicitly provided
+            if not promotion_stage:
+                if new_env == "canary":
+                    new_stage = "canary_approved"
+                elif new_env == "live":
+                    new_stage = "live_approved"
+                elif new_env == "paper":
+                    new_stage = "proposed"
+
+            candidate["target_env"] = new_env
+            candidate["promotion_stage"] = new_stage
+
             # Check gates before allowing endorsement
             gate_errors = check_evaluation_gates(candidate, episodes or [])
             if gate_errors:
+                # Revert on gate failure
+                candidate["target_env"] = old_env
+                candidate["promotion_stage"] = old_stage
                 raise TradeLessonCandidateError(
                     f"Endorsement blocked by evaluation gates: {gate_errors}"
                 )
@@ -300,11 +362,14 @@ class LessonGovernanceService:
                 "structured_payload": {
                     "lesson_candidate_id": candidate["lesson_candidate_id"],
                     "reflection_id": candidate["reflection_id"],
+                    "reflection_version": candidate["reflection_version"],
                     "trade_episode_ids": candidate["trade_episode_ids"],
                     "scope": candidate["scope"],
                     "proposed_change": candidate["proposed_change"],
                     "confidence": candidate["confidence"],
                     "receipt": candidate.get("receipt"),
+                    "target_env": candidate.get("target_env"),
+                    "promotion_stage": candidate.get("promotion_stage"),
                 },
                 "tags": ["strategy_lesson", candidate["scope"], candidate["persona_id"]],
             },

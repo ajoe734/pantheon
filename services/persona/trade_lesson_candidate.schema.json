@@ -66,6 +66,18 @@
       "type": "string",
       "format": "date-time"
     },
+    "reflection_version": {
+      "type": "string",
+      "pattern": "^v[0-9]+(\\.[0-9]+)*$"
+    },
+    "target_env": {
+      "type": "string",
+      "enum": ["paper", "canary", "live"]
+    },
+    "promotion_stage": {
+      "type": "string",
+      "enum": ["proposed", "canary_pending", "canary_approved", "live_pending", "live_approved"]
+    },
     "receipt": {
       "type": ["object", "null"],
       "required": ["operator_id", "decided_at", "action", "reason"],
@@ -79,5 +91,19 @@
       "additionalProperties": false
     }
   },
+  "required": [
+    "lesson_candidate_id",
+    "reflection_id",
+    "trade_episode_ids",
+    "persona_id",
+    "scope",
+    "proposed_change",
+    "confidence",
+    "review_state",
+    "created_at",
+    "updated_at",
+    "expiry",
+    "reflection_version"
+  ],
   "additionalProperties": false
 }

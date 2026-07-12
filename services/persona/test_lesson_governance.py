@@ -50,6 +50,7 @@ def make_valid_candidate(overrides: dict | None = None) -> dict:
         "created_at": utc_now(),
         "updated_at": utc_now(),
         "expiry": utc_now(),
+        "reflection_version": "v1",
     }
     if overrides:
         base.update(overrides)
@@ -224,3 +225,76 @@ def test_successful_endorse_and_merge(
     assert entry.persona_id == candidate["persona_id"]
     assert entry.memory_type == "strategy_lesson"
     assert entry.content["structured_payload"]["lesson_candidate_id"] == candidate["lesson_candidate_id"]
+    assert entry.content["structured_payload"]["reflection_version"] == "v1"
+
+
+def test_lineage_version_regex_validation(governance_service: LessonGovernanceService) -> None:
+    # Invalid reflection_version (missing 'v' prefix)
+    invalid_candidate1 = make_valid_candidate({"reflection_version": "1.0"})
+    with pytest.raises(TradeLessonCandidateError, match="Schema validation failed"):
+        governance_service.store.create(invalid_candidate1)
+
+    # Invalid reflection_version format (letters in version)
+    invalid_candidate2 = make_valid_candidate({"reflection_version": "v1.a"})
+    with pytest.raises(TradeLessonCandidateError, match="Schema validation failed"):
+        governance_service.store.create(invalid_candidate2)
+
+    # Valid reflection_version (v1.0.0)
+    valid_candidate = make_valid_candidate({"reflection_version": "v1.0.0"})
+    created = governance_service.store.create(valid_candidate)
+    assert created["reflection_version"] == "v1.0.0"
+
+
+def test_promotion_gates_fail_closed(governance_service: LessonGovernanceService) -> None:
+    # Set up episodes
+    episodes = [
+        {"trade_episode_id": "ep1", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "regime": "bear_market"},
+        {"trade_episode_id": "ep3", "regime": "bull_market"},
+    ]
+    candidate = make_valid_candidate({
+        "scope": "strategy",
+        "trade_episode_ids": ["ep1", "ep2", "ep3"],
+        "target_env": "paper",
+        "promotion_stage": "proposed",
+    })
+    governance_service.store.create(candidate)
+
+    # Promoting directly to live from paper must FAIL CLOSED
+    with pytest.raises(TradeLessonCandidateError, match="Promotion to live is blocked"):
+        governance_service.decide(
+            candidate["lesson_candidate_id"],
+            action="endorse",
+            operator_id="op-alice",
+            reason="Approved directly to live",
+            audit_receipt_id=str(uuid.uuid4()),
+            target_env="live",
+            episodes=episodes,
+        )
+
+    # Promoting to canary must PASS
+    endorsed_canary = governance_service.decide(
+        candidate["lesson_candidate_id"],
+        action="endorse",
+        operator_id="op-alice",
+        reason="Approved to canary",
+        audit_receipt_id=str(uuid.uuid4()),
+        target_env="canary",
+        episodes=episodes,
+    )
+    assert endorsed_canary["target_env"] == "canary"
+    assert endorsed_canary["promotion_stage"] == "canary_approved"
+
+    # Promoting to live from canary_approved must PASS
+    endorsed_live = governance_service.decide(
+        candidate["lesson_candidate_id"],
+        action="endorse",
+        operator_id="op-alice",
+        reason="Approved to live",
+        audit_receipt_id=str(uuid.uuid4()),
+        target_env="live",
+        episodes=episodes,
+    )
+    assert endorsed_live["target_env"] == "live"
+    assert endorsed_live["promotion_stage"] == "live_approved"
+
