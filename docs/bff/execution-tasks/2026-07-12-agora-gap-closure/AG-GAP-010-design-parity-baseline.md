@@ -52,3 +52,10 @@ or re-running the parity check itself.
   successful.
 - `git merge-base --is-ancestor c1c926d64 origin/dev` confirms the merge is
   present on `dev` as of this closeout.
+
+## Closeout Packet
+
+This packet doc and its INDEX cross-links were backfilled by Pantheon PR
+[#3442](https://github.com/ajoe734/pantheon/pull/3442) after PR #3426 had
+already merged, so the `ai-status.json` task record has a durable, linked
+artifact trail rather than only the raw declaration file.
