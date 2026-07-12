@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: 8th stale rewake: found+committed leftover task-brief edit (0023bc818), pushed to existing open PR #3372. No canonical truth changed; self-merge still governance-blocked, awaiting human/parent-owner merge.
+- Next: 10th stale rewake: found+committed leftover task-brief edit, pushed to existing open PR #3372 (CLEAN, all CI checks passing). No canonical truth changed; self-merge still governance-blocked, awaiting human/parent-owner merge.
 
 ## Summary
 平行支援 MGMT-PERF-IA-008，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
