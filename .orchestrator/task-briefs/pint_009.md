@@ -29,6 +29,6 @@ Add Persona Detail and Human Inbox contextual entry links and readback.
   `PersonaDetail.test.ts`, `HumanInboxPage.test.tsx`, and
   `HumanGateDetail.test.tsx`.
 - Delivery commit also records a clean `git diff --check`.
-- The execute-plans integration gate completed lint, unit/integration tests,
-  build, contract drift, live probes, and hosted acceptance before merge; its
-  Playwright E2E step was still running when repository policy allowed merge.
+- The execute-plans integration gate completed successfully after merge,
+  including lint, unit/integration tests, build, contract drift, live probes,
+  hosted acceptance, and Playwright E2E.
