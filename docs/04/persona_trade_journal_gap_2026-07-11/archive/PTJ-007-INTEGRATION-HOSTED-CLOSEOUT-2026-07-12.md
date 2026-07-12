@@ -3,7 +3,7 @@
 Date: 2026-07-12  
 Task: `PTJ-007`  
 Owner: Codex  
-Reviewer: Antigravity  
+Reviewer: Claude  
 Environment: Pantheon dev, paper-only validation
 
 ## Delivery inventory
