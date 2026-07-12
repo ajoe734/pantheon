@@ -1,18 +1,16 @@
 """Persona Trade Journal BFF projection and governed-command facade."""
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
 from typing import Any, Callable, Mapping
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import JSONResponse
 
-_LOCK = Lock()
 def _load(path_env: str) -> list[dict[str, Any]] | None:
     path = os.getenv(path_env, "").strip()
     if not path or not Path(path).is_file():
@@ -50,32 +48,26 @@ def _mask(value: Any, identity: Any) -> Any:
     return value
 
 
-def _command_records() -> tuple[Path | None, list[dict[str, Any]]]:
-    raw_path = os.getenv("PANTHEON_BFF_TRADE_JOURNAL_COMMAND_STORE", "").strip()
-    if not raw_path:
-        return None, []
-    path = Path(raw_path)
+def _dispatch_command(payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
+    base_url = os.getenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "").strip().rstrip("/")
+    if not base_url:
+        raise RuntimeError("command owner is not configured")
+    req = urllib_request.Request(
+        f"{base_url}/v1/trade-journal/commands",
+        data=json.dumps(dict(payload)).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Idempotency-Key": str(payload["idempotency_key"])},
+        method="POST",
+    )
     try:
-        if not path.is_file():
-            return None, []
-        records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    except (OSError, json.JSONDecodeError):
-        return None, []
-    return path, [record for record in records if isinstance(record, dict)]
+        with urllib_request.urlopen(req, timeout=5) as response:
+            return response.status, json.loads(response.read())
+    except urllib_error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("command owner is unavailable") from exc
 
 
-def _append_command(path: Path, record: dict[str, Any]) -> bool:
-    try:
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(record, sort_keys=True) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-    except OSError:
-        return False
-    return True
-
-
-def create_trade_journal_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[[Any], None], require_operator_role: Callable[[Any], None]) -> APIRouter:
+def create_trade_journal_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[[Any], None], require_operator_role: Callable[[Any], None], dispatch_command: Callable[[Mapping[str, Any]], tuple[int, dict[str, Any]]] = _dispatch_command) -> APIRouter:
     router = APIRouter()
 
     def identity(request: Request) -> Any:
@@ -131,41 +123,21 @@ def create_trade_journal_router(*, extract_identity: Callable[..., Any], require
         if not idempotency_key: return _err(400, "VALIDATION_FAILED", "Idempotency-Key is required")
         body = await request.json()
         if not str(body.get("reason", "")).strip(): return _err(422, "VALIDATION_FAILED", "reason is required")
-        resource_env = "PANTHEON_BFF_TRADE_EPISODES_STORE" if action == "reflection.retry" else "PANTHEON_BFF_TRADE_LESSONS_STORE"
-        resources = _load(resource_env)
-        if resources is None:
-            return _err(503, "DEPENDENCY_UNAVAILABLE", "Governed command target projection is unavailable", retryable=True)
-        id_field = "trade_episode_id" if action == "reflection.retry" else "lesson_id"
-        resource = next((item for item in resources if item.get("persona_id") == persona_id and item.get(id_field) == resource_id), None)
-        if resource is None:
-            return _err(404, "RESOURCE_NOT_FOUND", "Governed command target not found")
-        allowed_states = {
-            "reflection.retry": {"reflection_failed", "retryable"},
-            "lesson.submit_review": {"draft", "proposed"},
-            "lesson.decide": {"pending_review", "in_review", "submitted"},
-        }
-        state = str(resource.get("status") or resource.get("review_state") or "")
-        if state not in allowed_states[action]:
-            return _err(409, "INVALID_TRANSITION", f"{action} is not allowed from state {state or 'unknown'}")
-        digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
-        key = f"{who.operator_id}:{action}:{persona_id}:{resource_id}:{idempotency_key}"
-        with _LOCK:
-            store_path, records = _command_records()
-            if store_path is None:
-                return _err(503, "DEPENDENCY_UNAVAILABLE", "Durable trade journal command owner is unavailable", retryable=True)
-            prior = next((record for record in records if record.get("idempotency_scope") == key), None)
-            if prior and prior["request_hash"] != digest: return _err(409, "IDEMPOTENCY_CONFLICT", "Idempotency key was reused with a different request")
-            if prior:
-                response = {"data": prior["receipt"], "meta": {"idempotent_replay": True, "audit": {"durable": True, "record_ref": prior["audit_record_ref"]}}}
-                return response
-            now = datetime.now(timezone.utc).isoformat()
-            receipt = {"receipt_id": hashlib.sha256(key.encode()).hexdigest()[:24], "action": action, "persona_id": persona_id, "resource_id": resource_id, "status": "accepted", "reason": body["reason"], "actor": who.operator_id, "created_at": now, "facts_snapshot_ref": body.get("facts_snapshot_ref")}
-            audit_ref = f"trade-journal-command:{receipt['receipt_id']}"
-            record = {"idempotency_scope": key, "request_hash": digest, "receipt": receipt, "audit_record_ref": audit_ref, "target_state_at_admission": state}
-            if not _append_command(store_path, record):
-                return _err(503, "DEPENDENCY_UNAVAILABLE", "Durable trade journal command owner rejected the command", retryable=True)
-            response = {"data": receipt, "meta": {"idempotent_replay": False, "audit": {"durable": True, "record_ref": audit_ref}}}
-        return response
+        payload = {"action": action, "persona_id": persona_id, "resource_id": resource_id, "reason": body["reason"], "facts_snapshot_ref": body.get("facts_snapshot_ref"), "decision": body.get("decision"), "actor": who.operator_id, "idempotency_key": idempotency_key}
+        try:
+            status, downstream = dispatch_command(payload)
+        except RuntimeError:
+            return _err(503, "DEPENDENCY_UNAVAILABLE", "Durable trade journal command owner is unavailable", retryable=True)
+        if status not in (200, 202):
+            error = downstream.get("error") if isinstance(downstream, Mapping) else None
+            if isinstance(error, Mapping):
+                return _err(status, str(error.get("code", "COMMAND_REJECTED")), str(error.get("message", "Command owner rejected the command")), retryable=bool(error.get("retryable")))
+            return _err(503, "DEPENDENCY_UNAVAILABLE", "Durable trade journal command owner returned an invalid response", retryable=True)
+        receipt = downstream.get("data")
+        audit = downstream.get("audit") or downstream.get("meta", {}).get("audit")
+        if not isinstance(receipt, Mapping) or receipt.get("status") != "accepted" or not isinstance(audit, Mapping) or not audit.get("record_ref"):
+            return _err(503, "DEPENDENCY_UNAVAILABLE", "Durable command receipt or audit evidence is missing", retryable=True)
+        return {"data": dict(receipt), "meta": {"idempotent_replay": bool(downstream.get("idempotent_replay") or downstream.get("meta", {}).get("idempotent_replay")), "audit": dict(audit)}}
 
     @router.post("/bff/personas/{persona_id}/trade-journal/{episode_id}/reflection:retry", status_code=202)
     async def retry(request: Request, persona_id: str, episode_id: str, idempotency_key: str | None = Header(None, alias="Idempotency-Key")): return await command(request, persona_id, episode_id, "reflection.retry", idempotency_key)

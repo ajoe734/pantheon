@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib import error as urllib_error
 
 from fastapi.testclient import TestClient
 
@@ -28,8 +31,35 @@ def _client(td: str) -> TestClient:
         {"lesson_id": "l2", "persona_id": "p1", "status": "pending_review"},
     ]
     lessons_path = Path(td) / "lessons.json"; lessons_path.write_text(json.dumps(lessons)); os.environ["PANTHEON_BFF_TRADE_LESSONS_STORE"] = str(lessons_path)
-    command_path = Path(td) / "commands.jsonl"; command_path.touch(); os.environ["PANTHEON_BFF_TRADE_JOURNAL_COMMAND_STORE"] = str(command_path)
     return TestClient(bff_main.app)
+
+
+class _Response:
+    status = 202
+    def __init__(self, body): self.body = body
+    def __enter__(self): return self
+    def __exit__(self, *_): return None
+    def read(self): return json.dumps(self.body).encode()
+    def close(self): pass
+
+
+class DurableOwner:
+    def __init__(self):
+        self.lock = threading.Lock(); self.records = {}; self.calls = []
+
+    def urlopen(self, request, timeout=5):
+        payload = json.loads(request.data); key = payload["idempotency_key"]
+        with self.lock:
+            self.calls.append(payload)
+            prior = self.records.get(key)
+            if prior and prior["payload"] != payload:
+                body = {"error": {"code": "IDEMPOTENCY_CONFLICT", "message": "different request", "retryable": False}}
+                raise urllib_error.HTTPError(request.full_url, 409, "conflict", {}, _Response(body))
+            if prior: return _Response({**prior["response"], "idempotent_replay": True})
+            receipt = {"receipt_id": f"owner-{len(self.records)+1}", "action": payload["action"], "persona_id": payload["persona_id"], "resource_id": payload["resource_id"], "status": "accepted", "facts_snapshot_ref": payload.get("facts_snapshot_ref")}
+            response = {"data": receipt, "audit": {"durable": True, "record_ref": f"owner-audit:{receipt['receipt_id']}"}}
+            self.records[key] = {"payload": payload, "response": response}
+            return _Response(response)
 
 
 def test_list_detail_inbox_patterns_pagination_and_partial() -> None:
@@ -58,9 +88,12 @@ def test_auth_rbac_cross_persona_and_masking(monkeypatch) -> None:
         assert client.post("/bff/personas/p1/trade-journal/e1/reflection:retry", headers={"Authorization": "Bearer view:viewer", "Idempotency-Key": "x"}, json={"reason": "retry"}).status_code == 403
 
 
-def test_commands_are_idempotent_and_conflicts_are_rejected() -> None:
+def test_commands_delegate_to_durable_owner_and_replay(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
         client = _client(td)
+        owner = DurableOwner()
+        monkeypatch.setenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "http://command-owner")
+        monkeypatch.setattr(trade_journal.urllib_request, "urlopen", owner.urlopen)
         url = "/bff/personas/p1/trade-journal/e2/reflection:retry"
         headers = {**HEADERS, "Idempotency-Key": "retry-1"}
         first = client.post(url, headers=headers, json={"reason": "recover downstream", "facts_snapshot_ref": "facts://same"})
@@ -74,34 +107,44 @@ def test_commands_are_idempotent_and_conflicts_are_rejected() -> None:
         decide = client.post("/bff/personas/p1/trade-lessons/l2:decide", headers={**HEADERS, "Idempotency-Key": "d1"}, json={"reason": "endorse", "decision": "endorsed"})
         assert submit.status_code == decide.status_code == 202
         assert duplicate.json()["meta"]["idempotent_replay"] is True
-        records = (Path(td) / "commands.jsonl").read_text().splitlines()
-        assert len(records) == 3
+        assert len(owner.records) == 3
+        assert owner.calls[0]["action"] == "reflection.retry"
         assert first.json()["meta"]["audit"]["durable"] is True
 
 
-def test_commands_fail_closed_for_missing_target_invalid_transition_and_owner(monkeypatch) -> None:
+def test_commands_fail_closed_when_owner_is_unconfigured(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
         client = _client(td)
         headers = {**HEADERS, "Idempotency-Key": "fail-1"}
-        missing = client.post("/bff/personas/p1/trade-journal/missing/reflection:retry", headers=headers, json={"reason": "retry"})
-        invalid = client.post("/bff/personas/p1/trade-journal/e1/reflection:retry", headers=headers, json={"reason": "retry"})
-        monkeypatch.delenv("PANTHEON_BFF_TRADE_JOURNAL_COMMAND_STORE")
+        monkeypatch.delenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", raising=False)
         unavailable = client.post("/bff/personas/p1/trade-journal/e2/reflection:retry", headers=headers, json={"reason": "retry"})
-        assert (missing.status_code, missing.json()["error"]["code"]) == (404, "RESOURCE_NOT_FOUND")
-        assert (invalid.status_code, invalid.json()["error"]["code"]) == (409, "INVALID_TRANSITION")
         assert (unavailable.status_code, unavailable.json()["error"]["code"]) == (503, "DEPENDENCY_UNAVAILABLE")
 
 
-def test_command_idempotency_survives_router_memory_reset() -> None:
+def test_owner_rejects_nonexistent_target_and_invalid_transition(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
         client = _client(td)
+        monkeypatch.setenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "http://command-owner")
+        def reject(request, timeout=5):
+            body = {"error": {"code": "RESOURCE_NOT_FOUND", "message": "target not found", "retryable": False}}
+            raise urllib_error.HTTPError(request.full_url, 404, "missing", {}, _Response(body))
+        monkeypatch.setattr(trade_journal.urllib_request, "urlopen", reject)
+        response = client.post("/bff/personas/p1/trade-journal/missing/reflection:retry", headers={**HEADERS, "Idempotency-Key": "missing"}, json={"reason": "retry"})
+        assert (response.status_code, response.json()["error"]["code"]) == (404, "RESOURCE_NOT_FOUND")
+
+
+def test_concurrent_same_key_is_atomically_owned_downstream(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _client(td); owner = DurableOwner()
+        monkeypatch.setenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "http://command-owner")
+        monkeypatch.setattr(trade_journal.urllib_request, "urlopen", owner.urlopen)
         url = "/bff/personas/p1/trade-journal/e2/reflection:retry"
-        headers = {**HEADERS, "Idempotency-Key": "durable-1"}
-        first = client.post(url, headers=headers, json={"reason": "retry"})
-        replay = TestClient(bff_main.app).post(url, headers=headers, json={"reason": "retry"})
-        assert replay.status_code == 202
-        assert replay.json()["data"]["receipt_id"] == first.json()["data"]["receipt_id"]
-        assert replay.json()["meta"]["idempotent_replay"] is True
+        headers = {**HEADERS, "Idempotency-Key": "concurrent-1"}
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            responses = list(pool.map(lambda _: client.post(url, headers=headers, json={"reason": "retry"}), range(8)))
+        assert {r.status_code for r in responses} == {202}
+        assert {r.json()["data"]["receipt_id"] for r in responses} == {"owner-1"}
+        assert len(owner.records) == 1
 
 
 def test_downstream_unavailable_is_explicit() -> None:
