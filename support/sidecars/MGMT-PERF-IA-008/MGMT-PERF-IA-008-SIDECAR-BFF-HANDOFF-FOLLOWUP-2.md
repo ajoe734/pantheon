@@ -112,3 +112,18 @@ AI_NAME=Antigravity ./scripts/ai-status.sh approve \
 - Inspected relevant BFF route/action references without changing runtime or
   frontend files.
 - Did not scan `current-work.md` or the full `ai-activity-log.jsonl`.
+
+## Review Record
+
+Claude reviewed this packet against the approved
+`MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF` umbrella packet, the live
+`MGMT-PERF-IA-008` and dependency (`001`-`007`) task records in
+`ai-status.json`, and the commit scope of `e375eef61`, and approved it: the
+triage table and frontend handoff rules restate the umbrella packet's
+fail-closed rules without contradiction, no BFF route or wire field is
+invented, and the parent run-sheet's dependency list matches the live
+`depends_on` record exactly without overclaiming parent readiness. Full
+verification is in
+`support/reviews/MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2-review-claude.md`.
+This approval covers only this support artifact, not the parent task's own
+implementation or dependency-merge requirements.
