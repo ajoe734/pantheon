@@ -399,13 +399,28 @@ class PostgresResearchPlanStore:
                                (kind, record_id)).fetchone()
         return self._payload(row)
 
-    def _list(self, kind: str, *, parent_id=None):
+    def _list(self, kind: str, *, parent_id=None, subject_id=None):
         where, params = "aggregate_kind=%s", [kind]
         if parent_id is not None:
             where += " AND parent_id=%s"; params.append(parent_id)
+        if subject_id is not None:
+            where += " AND subject_id=%s"; params.append(subject_id)
         with self._connect() as conn:
             rows = conn.execute(f"SELECT payload FROM {self._records} WHERE {where} ORDER BY created_at, aggregate_id", tuple(params)).fetchall()
         return [self._payload(row) for row in rows]
+
+    def _patch(self, kind: str, record_id: str, updates: Dict[str, Any]):
+        """Atomically merge a shallow JSON object into an existing aggregate."""
+        document = json.loads(json.dumps(updates))
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""UPDATE {self._records}
+                    SET payload = payload || %s::jsonb, updated_at = now()
+                    WHERE aggregate_kind=%s AND aggregate_id=%s
+                    RETURNING payload""",
+                (json.dumps(document), kind, record_id),
+            ).fetchone()
+        return self._payload(row)
 
     def check_and_record_idempotency_key(self, scope: str, key: str) -> bool:
         with self._connect() as conn:
@@ -415,16 +430,12 @@ class PostgresResearchPlanStore:
     def create_plan(self, plan): return self._put("plan", plan["plan_id"], plan, parent_id=plan.get("workshop_id"))
     def get_plan(self, plan_id): return self._get("plan", plan_id)
     def update_plan(self, plan_id, updates):
-        current = self.get_plan(plan_id)
-        if current is None: return None
-        current.update(updates); return self.create_plan(current)
+        return self._patch("plan", plan_id, updates)
     def list_plans_for_workshop(self, workshop_id): return self._list("plan", parent_id=workshop_id)
     def create_run(self, run): return self._put("run", run["run_id"], run, parent_id=run.get("plan_id"))
     def get_run(self, run_id): return self._get("run", run_id)
     def update_run(self, run_id, updates):
-        current = self.get_run(run_id)
-        if current is None: return None
-        current.update(updates); return self.create_run(current)
+        return self._patch("run", run_id, updates)
     def list_runs_for_plan(self, plan_id): return self._list("run", parent_id=plan_id)
     def create_candidate_pool(self, pool, *, metrics_by_artifact=None):
         result = self._put("candidate_pool", pool["pool_id"], pool)
@@ -446,28 +457,42 @@ class PostgresResearchPlanStore:
             result.append(pool)
         return sorted(result, key=lambda p: p.get("snapshot_at", ""), reverse=True)
     def update_candidate_pool(self, pool_id, updates):
-        current = self.get_candidate_pool(pool_id)
-        if current is None: return None
-        current.update(updates); return self._put("candidate_pool", pool_id, current)
+        return self._patch("candidate_pool", pool_id, updates)
     def get_candidate_member(self, pool_id, artifact_id):
         pool = self.get_candidate_pool(pool_id)
         return next((dict(c) for c in (pool or {}).get("candidates", []) if c.get("artifact_id") == artifact_id), None)
     def update_candidate_member(self, pool_id, artifact_id, updates):
-        pool = self.get_candidate_pool(pool_id)
-        if pool is None: return None
-        for index, candidate in enumerate(pool.get("candidates", [])):
-            if candidate.get("artifact_id") == artifact_id:
-                updated = {**candidate, **updates}; pool["candidates"][index] = updated
-                pool["total"] = len(pool["candidates"]); self._put("candidate_pool", pool_id, pool); return updated
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT payload FROM {self._records} WHERE aggregate_kind='candidate_pool' AND aggregate_id=%s FOR UPDATE",
+                (pool_id,),
+            ).fetchone()
+            pool = self._payload(row)
+            if pool is None: return None
+            for index, candidate in enumerate(pool.get("candidates", [])):
+                if candidate.get("artifact_id") == artifact_id:
+                    updated = {**candidate, **json.loads(json.dumps(updates))}
+                    pool["candidates"][index] = updated
+                    pool["total"] = len(pool["candidates"])
+                    conn.execute(
+                        f"UPDATE {self._records} SET payload=%s::jsonb, updated_at=now() WHERE aggregate_kind='candidate_pool' AND aggregate_id=%s",
+                        (json.dumps(pool), pool_id),
+                    )
+                    return updated
         return None
     def get_candidate_metrics(self, pool_id, artifact_id): return self._get("candidate_metrics", f"{pool_id}:{artifact_id}") or {}
     def replace_candidate_scores(self, pool_id, scores_by_artifact):
-        with self._connect() as conn: conn.execute(f"DELETE FROM {self._records} WHERE aggregate_kind='candidate_score' AND parent_id=%s", (pool_id,))
-        for artifact_id, score in scores_by_artifact.items(): self._put("candidate_score", f"{pool_id}:{artifact_id}", score, parent_id=pool_id, subject_id=artifact_id)
+        with self._connect() as conn:
+            conn.execute(f"DELETE FROM {self._records} WHERE aggregate_kind='candidate_score' AND parent_id=%s", (pool_id,))
+            for artifact_id, score in scores_by_artifact.items():
+                conn.execute(f"""INSERT INTO {self._records}
+                    (aggregate_kind,aggregate_id,parent_id,subject_id,payload)
+                    VALUES ('candidate_score',%s,%s,%s,%s::jsonb)""",
+                    (f"{pool_id}:{artifact_id}", pool_id, artifact_id, json.dumps(score)))
     def list_candidate_scores(self, pool_id): return self._list("candidate_score", parent_id=pool_id)
     def get_candidate_score(self, pool_id, artifact_id): return self._get("candidate_score", f"{pool_id}:{artifact_id}")
     def add_candidate_review(self, pool_id, artifact_id, review): return self._put("candidate_review", f'{pool_id}:{artifact_id}:{review["review_id"]}', review, parent_id=pool_id, subject_id=artifact_id)
-    def list_candidate_reviews(self, pool_id, artifact_id): return [r for r in self._list("candidate_review", parent_id=pool_id) if r.get("artifact_id", artifact_id) == artifact_id]
+    def list_candidate_reviews(self, pool_id, artifact_id): return self._list("candidate_review", parent_id=pool_id, subject_id=artifact_id)
     def add_candidate_discussion(self, discussion): return self._put("candidate_discussion", discussion["discussion_id"], discussion, parent_id=discussion["pool_id"])
     def list_candidate_discussions(self, pool_id, *, subject_type=None, subject_id=None, kind=None, resolved=None):
         rows = self._list("candidate_discussion", parent_id=pool_id)

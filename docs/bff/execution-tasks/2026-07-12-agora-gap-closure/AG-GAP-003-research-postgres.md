@@ -11,6 +11,10 @@ process memory. They were lost whenever `operator-bff` restarted.
 - `PostgresResearchPlanStore` persists every route-shaped aggregate as JSONB,
   with aggregate-kind namespacing and parent/subject indexes.
 - A database primary key provides atomic, durable idempotency-key admission.
+- Candidate reviews receive stable IDs and are queried by the stored
+  `subject_id`, preserving member isolation even when payload shapes evolve.
+- Aggregate patches and candidate-member changes are concurrency-safe, while
+  score replacement deletes and inserts in one database transaction.
 - `AGORA_RESEARCH_STORE_BACKEND=postgres` selects the durable backend and
   fails closed if no DSN is configured; memory remains the test-safe default.
 - Root and control compose definitions plus both non-production BFF deploy
@@ -22,12 +26,12 @@ process memory. They were lost whenever `operator-bff` restarted.
 
 ```text
 python3 -m py_compile services/control-plane/bff/agora/research/store.py
-python3 -m pytest -q \
+AGORA_RESEARCH_TEST_POSTGRES_DSN=<postgres-dsn> python3 -m pytest -q \
   services/control-plane/bff/tests/test_agora_research_run_projection.py \
   services/control-plane/bff/tests/test_agora_candidate_pool.py \
   services/control-plane/bff/tests/test_agora_research_store_backend.py \
   services/control-plane/bff/tests/test_agora_workshop_dev_deploy_config.py
-# 9 passed
+# 11 passed (including real Postgres review isolation/restart and score replacement)
 git diff --check
 ```
 
