@@ -105,6 +105,29 @@ def test_authz_rejects_cross_persona_session_memory_retrieval():
     assert r.json()["reason"] == "persona_scope_mismatch"
 
 
+def test_authz_lesson_decide_and_merge():
+    # 1. Allowed for operator
+    for act in ["lesson.decide", "lesson.merge"]:
+        r = client.post("/api/governance/authz/check", json={
+            "action": act,
+            "actor_id": "op-1",
+            "actor_roles": ["operator"],
+        })
+        assert r.status_code == 200
+        assert r.json()["allowed"] is True
+
+    # 2. Denied for trainer_session
+    for act in ["lesson.decide", "lesson.merge"]:
+        r = client.post("/api/governance/authz/check", json={
+            "action": act,
+            "actor_id": "op-1",
+            "actor_roles": ["trainer_session"],
+        })
+        assert r.status_code == 200
+        assert r.json()["allowed"] is False
+        assert r.json()["reason"] == "lesson_governance_role_denied"
+
+
 # ---------------------------------------------------------------------------
 # Propose
 # ---------------------------------------------------------------------------
