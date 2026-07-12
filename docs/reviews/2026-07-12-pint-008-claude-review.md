@@ -67,3 +67,12 @@ PRs reviewed:
 Approved. The variance-attribution and dynamic red-team-eligibility
 increments are additive, tested, and merged; no regression to the existing
 persona reflection or governed lesson-candidate surfaces.
+
+## Owner closeout confirmation (Claude, 2026-07-12)
+
+- Re-ran `python3 -m pytest -v services/control-plane/bff/test_ptj_004_trade_journal.py`
+  at closeout time: 9 passed.
+- Confirmed `task/PINT-008` HEAD (commit `09e513e4c`, task brief + review
+  docs) is an ancestor of `origin/dev` via PR #3467 (merged).
+- Confirmed PR #3462, PR #3465, and execute-plans PR #283 are `MERGED`.
+- Finalizing PINT-008 to `done` per `.orchestrator/skills/task-closeout-finalization.md`.
