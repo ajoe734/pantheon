@@ -1,6 +1,6 @@
 # MGMT-OPS-003 GAP-001 Deploy Probe Fix BFF Handoff
 
-Status: support packet for parent owner review
+Status: reviewer-approved support packet; pending task PR merge and owner closeout
 
 Parent task: `MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX`
 
@@ -107,3 +107,19 @@ canonical BFF contract.
 Reviewer `Codex` should verify that the packet stays support-only, does not
 promote frontend route state into BFF contract truth, and accurately preserves
 the fail-closed production-default and focused-query boundaries.
+
+## Closeout Record
+
+Reviewer `Codex` approved anchor `c7e265d92` as support-only: it introduces no
+BFF, runtime, or canonical-truth delta, and preserves the production-default
+fail-closed boundary plus the `personaFocus` to `q` mapping with
+`page_size=100`. Parent-task absorption, frontend delivery, and deployment
+remain owned by the parent owner.
+
+Owner closeout verification:
+
+- `git diff --check`
+- task status inspected with
+  `AI_NAME=Codex2 python3 scripts/ai_status.py show MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX-SIDECAR-BFF-HANDOFF`
+- artifact claims rechecked against the task-scoped review sources listed
+  above
