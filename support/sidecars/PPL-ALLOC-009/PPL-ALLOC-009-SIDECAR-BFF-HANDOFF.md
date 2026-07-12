@@ -1,14 +1,15 @@
 # PPL-ALLOC-009 BFF and Frontend Handoff Packet
 
-**Sidecar Task ID**: `PPL-ALLOC-009-SIDECAR-BFF-HANDOFF`  
-**Parent Task**: `PPL-ALLOC-009`  
-**Parent Owner**: `Antigravity`  
-**Parent Reviewer**: `Claude`  
-**Sidecar Owner**: `Codex`  
-**Sidecar Reviewer**: `Antigravity`  
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-07-12  
-**Mutates Canonical**: `no`
+- **Sidecar Task ID**: `PPL-ALLOC-009-SIDECAR-BFF-HANDOFF`
+- **Parent Task**: `PPL-ALLOC-009`
+- **Parent Owner**: `Antigravity`
+- **Parent Reviewer**: `Claude`
+- **Sidecar Owner**: `Codex`
+- **Sidecar Reviewer**: `Antigravity`
+- **Helper Kind**: `bff_handoff_packet`
+- **Generated**: 2026-07-12
+- **Mutates Canonical**: `no`
+
 
 This packet is support material only. It does not change L1 truth, service
 contracts, BFF or frontend runtime code, registry/governance behavior, or
