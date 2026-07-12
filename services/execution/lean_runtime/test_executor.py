@@ -5,6 +5,7 @@ from services.execution.lean_runtime.executor import (
     BRACKET_ORDER_STATUS_SUBMITTED_TO_BROKER,
     ExecutionError,
     _build_bracket_legs,
+    _signal_context_metadata,
     execute,
 )
 
@@ -193,6 +194,22 @@ class _SimAlgo(_GuardedPaperAlgo):
 
 
 class ExecutorBracketOrderTests(unittest.TestCase):
+    def test_signal_context_metadata_carries_correlation_envelope(self):
+        envelope = {
+            "schema_version": "1.0",
+            "journey_id": "journey-001",
+            "event_id": "signal-event-001",
+        }
+
+        context = _signal_context_metadata(
+            {
+                "signal_id": "sig-envelope-001",
+                "metadata": {"correlation_envelope": envelope},
+            }
+        )
+
+        self.assertEqual(context["correlation_envelope"], envelope)
+
     def test_hold_signal_records_noop_feedback_without_order(self):
         algo = _SpyAlgo()
 

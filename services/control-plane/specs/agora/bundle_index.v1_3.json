@@ -20,7 +20,7 @@
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_3.openapi.yaml",
-    "sha256": "74e4acb0f504c283d4ff572a2ff9bd223f8f49f96045fabb888d06ed8c43223e"
+    "sha256": "3997d0149e026d895cf32f70ee91f1f1021dcaab8be0dddc72e65971975cfd9b"
   },
   "note": "workshop_card.schema.json hash differs from design-closure template; the typed discriminated-union payload implementation replaces the generic additionalProperties:true payload from the reference schema."
 }

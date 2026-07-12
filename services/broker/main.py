@@ -111,6 +111,8 @@ def _paper_gate_check() -> Optional[JSONResponse]:
 class PaperOrderRequest(BaseModel):
     capital_pool_id: str
     strategy_id: str
+    client_order_id: Optional[str] = None
+    correlation_envelope: Optional[Dict[str, Any]] = None
     symbol: str
     qty: float
     side: str
@@ -131,6 +133,8 @@ def submit_paper_order(req: PaperOrderRequest) -> JSONResponse:
         order = simulate_paper_order(
             capital_pool_id=req.capital_pool_id,
             strategy_id=req.strategy_id,
+            client_order_id=req.client_order_id,
+            correlation_envelope=req.correlation_envelope,
             symbol=req.symbol,
             qty=req.qty,
             side=req.side,
