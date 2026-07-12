@@ -1,6 +1,6 @@
 # MGMT-OPS-003 GAP-001 Deploy Probe Fix BFF Handoff Follow-up 2
 
-Status: support packet ready for independent review
+Status: reviewer approved; finalized for parent-owner absorption
 
 Parent task: `MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX`
 
@@ -111,3 +111,10 @@ before closing or unblocking the parent task.
 Reviewer `Codex` should verify that this remains support-only, preserves the
 production-default fail-closed boundary, and does not recast frontend route
 state as a BFF contract.
+
+## Closeout
+
+Reviewer `Codex` approved anchor `df10508aa`. The approved packet remains
+support-only; parent owner `Codex` retains absorption and lifecycle ownership.
+Finalization verification: `git diff --check` and source-reference existence
+checks for all three paths listed under Verification Sources.
