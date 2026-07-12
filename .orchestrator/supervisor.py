@@ -4807,6 +4807,17 @@ _QUOTA_RESETS_AT_DATE_PATTERN = re.compile(
     r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
     re.IGNORECASE,
 )
+# Relative-duration resets, e.g. Antigravity's "Your quota will reset after
+# 89h52m2s." Codex/Claude emit absolute clock times (handled above); Antigravity
+# emits a countdown, so without this branch the guardrail falls back to the short
+# default capacity pause and re-dispatches into an hours-long outage every cycle.
+_QUOTA_RESET_AFTER_PATTERN = re.compile(
+    r"reset(?:s|ting)?\s+(?:after|in)\s+"
+    r"(?:(?P<hours>\d+)\s*h)?\s*"
+    r"(?:(?P<minutes>\d+)\s*m)?\s*"
+    r"(?:(?P<seconds>\d+)\s*s)?",
+    re.IGNORECASE,
+)
 _MONTH_NAME_TO_NUMBER = {
     "jan": 1,
     "january": 1,
@@ -4846,6 +4857,18 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
         return None
     hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
     now_dt = now or datetime.now(timezone.utc)
+    duration_match = _QUOTA_RESET_AFTER_PATTERN.search(reason)
+    if duration_match and any(
+        duration_match.group(part) for part in ("hours", "minutes", "seconds")
+    ):
+        return (
+            now_dt
+            + timedelta(
+                hours=int(duration_match.group("hours") or 0),
+                minutes=int(duration_match.group("minutes") or 0),
+                seconds=int(duration_match.group("seconds") or 0),
+            )
+        ).astimezone(timezone.utc)
     date_match = _QUOTA_RETRY_AT_DATE_PATTERN.search(reason)
     if date_match:
         month = _MONTH_NAME_TO_NUMBER.get(date_match.group("month").lower())
