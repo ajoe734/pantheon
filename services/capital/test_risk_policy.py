@@ -38,6 +38,19 @@ def test_risk_policy_rejects_exposure_asset_and_liquidity_breaches() -> None:
     }
 
 
+def test_risk_evaluation_propagates_trade_envelope() -> None:
+    from services.trade_journey.correlation_envelope import mint_trade_envelope
+    incoming = mint_trade_envelope({"tenant_id": "tenant-1", "environment": "paper"}, producer="execution.signal-decision")
+    evaluation = RiskPolicyEvaluator().evaluate(
+        RiskPolicy(risk_policy_id="risk-main"),
+        RiskPolicyEvaluationContext(target_type="order", target_id="order-1", capital_pool_id="pool-1", correlation_envelope=incoming),
+    )
+    outgoing = evaluation.to_dict()["correlation_envelope"]
+    assert outgoing["journey_id"] == incoming["journey_id"]
+    assert outgoing["causation_event_id"] == incoming["event_id"]
+    assert outgoing["producer"] == "risk.evaluation"
+
+
 def test_canary_scale_and_kill_switch_are_evaluable_limits() -> None:
     policy = RiskPolicy(
         risk_policy_id="risk-main",
