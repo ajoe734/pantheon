@@ -1,15 +1,21 @@
-# Agora Gap Closure Execution Packet — 2026-07-12
+# Agora gap closure — 2026-07-12
 
-Status: active.
+- [AG-GAP-001 durable workshop storage](AG-GAP-001-workshop-postgres-live.md):
+  pins the dev workshop backend to Postgres and gates deployment on restart
+  persistence.
+- [AG-GAP-005 contract honesty](AG-GAP-005-contract-honesty.md): formally
+  defers six workshop 501 operations and refreshes dev compatibility tracking
+  from the stale v1.1 snapshot to the v1.5 additive contract.
+- [AG-GAP-013 market-data activation](AG-GAP-013-market-data-activation.md):
+  projects real SRCLIVE source records into Agora market/watchlist and daily
+  signal surfaces without inventing rows.
+- [AG-GAP-007 capabilities mismatch](AG-GAP-007-capabilities-mismatch.md): fixes
+  the BFF `/bff/agora/capabilities` endpoint silent projection loading failure
+  and documents the dev journal dry-run residue cleanup procedure.
+- [AG-GAP-011 FE checkout hygiene](AG-GAP-011-fe-checkout-hygiene.md): details
+  the audit and removal of stale frontend checkouts and establishes rules for
+  execute-plans workspace integrity.
 
-## Wave 0
-
-| Task | Owner | Reviewer | Goal |
-|---|---|---|---|
-| `AG-GAP-001` | Codex | Codex2 | Pin the dev workshop backend to Postgres and gate deployment on restart persistence. |
-
-Artifact: `AG-GAP-001-workshop-postgres-live.md`.
-
-Completion requires a Pantheon task PR merged to `dev`, successful focused
-validation, and live workflow evidence showing that a newly created workshop
-survives an `operator-bff` restart.
+AG-GAP-001 completion requires a Pantheon task PR merged to `dev`, successful
+focused validation, and live workflow evidence showing that a newly created
+workshop survives an `operator-bff` restart.
