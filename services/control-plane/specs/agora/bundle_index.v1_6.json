@@ -1,0 +1,25 @@
+{
+  "bundle_version": "1.6",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_5.json",
+    "bundle_version": "1.5",
+    "bundle_index_sha256": "f88662a3ba1d2e07d5711f88e35d6374b7d737ed654b1963dc07281e2c3fe5f9"
+  },
+  "files": {
+    "specs/agora/v7/persona_opinion_consultation_event.schema.json": "a294bfb8209c122fa3aeff500922baea347b95481b9b448a5133bff43b61df1f",
+    "specs/agora/v7/governed_action_authority_request.schema.json": "d97447d4c9d06ea78372e19e3d0a630140d0b31d2412e3d41864912783abcc1d",
+    "specs/agora/v7/capability_manifest_v1_6.json": "bb29f60576b57a9139235023d4579830797570fe7823153c5f3eb1ba49278a48"
+  },
+  "required_definition_checksums": {
+    "PersonaOpinionConsultationEvent": "a294bfb8209c122fa3aeff500922baea347b95481b9b448a5133bff43b61df1f",
+    "GovernedActionAuthorityRequest": "d97447d4c9d06ea78372e19e3d0a630140d0b31d2412e3d41864912783abcc1d"
+  },
+  "contract_refs": {
+    "source_design_packet": "docs/product/persona-interaction-and-governed-action-plan.md",
+    "consult_policy_model": "PERSONA_RUNTIME_MODEL.md",
+    "persona_boundary_decision": "docs/decisions/control-plane-persona-boundary.md",
+    "router_enforcement_ownership_decision": "docs/decisions/control-plane-router-enforcement-ownership.md",
+    "adjacent_governance_consult_service": "services/consultation/consult_request.schema.json"
+  },
+  "note": "Additive PINT-001 event-contract-only bundle for PersonaOpinionConsultationEvent and GovernedActionAuthorityRequest. No new OpenAPI file is introduced; there is no backend route surface in this freeze. Downstream BFF/route wiring is out of scope and tracked as follow-up execution work."
+}
