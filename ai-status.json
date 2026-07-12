@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-12T01:35:53Z",
+  "updated_at": "2026-07-12T15:32:47Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -218,11 +218,12 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "PTJ-005"
+        "PTJ-005",
+        "PINT-005"
       ],
       "branch": "feat/antigravity-research-runtime",
-      "next": "Supervisor re-dispatched PTJ-005; task remains in progress.",
-      "last_update": "2026-07-12T00:28:48Z"
+      "next": "Strategy Workshop Persona interaction UX implementation completed. Pushed to task/PINT-005 in execute-plans (PR #276). All unit tests pass.",
+      "last_update": "2026-07-12T15:32:47Z"
     },
     {
       "name": "Antigravity2",
@@ -1409,6 +1410,20 @@
       "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "PINT-005",
+      "title": null,
+      "summary_zh": null,
+      "phase": "Unassigned",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [],
+      "acceptance": [],
+      "next": "Strategy Workshop Persona interaction UX implementation completed. Pushed to task/PINT-005 in execute-plans (PR #276). All unit tests pass.",
+      "last_update": "2026-07-12T15:32:47Z"
     }
   ],
   "handoffs": [
@@ -1833,6 +1848,14 @@
       "message": "APPROVED: deployed SHA 5647d4b matches /deployment.json; dev deploy run 29174965397 and post-merge integration gate 29174965400 succeeded; reviewer hosted rerun passed Portfolio desktop/mobile and Persona Fleet click-map.",
       "status": "pending",
       "created_at": "2026-07-12T01:35:53Z"
+    },
+    {
+      "task_id": "PINT-005",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Strategy Workshop Persona interaction UX implementation completed. Pushed to task/PINT-005 in execute-plans (PR #276). All unit tests pass.",
+      "status": "pending",
+      "created_at": "2026-07-12T15:32:47Z"
     }
   ],
   "blockers": [
@@ -1910,11 +1933,11 @@
       "todo": 0
     },
     "Antigravity": {
-      "total": 11,
-      "active": 1,
+      "total": 12,
+      "active": 2,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 1,
       "todo": 10
     },
