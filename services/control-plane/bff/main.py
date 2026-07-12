@@ -27650,10 +27650,10 @@ def _pm12_attribution_dimension_label(
 
 
 def _pm12_performance_attribution_sources() -> Dict[str, Any]:
-    runtime_bindings = read_store.list_runtime_bindings() or []
+    runtime_bindings = read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
     deployment_plans = read_store.list_deployment_plans() or []
-    bindings = read_store.list_bindings() or []
-    capital_pools = read_store.list_capital_pools() or []
+    bindings = read_store.list_bindings(include_market_persona_defaults=True) or []
+    capital_pools = read_store.list_capital_pools(include_market_persona_defaults=True) or []
     personas = _list_persona_records()
     strategies = _list_strategy_summaries()
 
@@ -30539,10 +30539,10 @@ async def bff_management_portfolio_book_holdings(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    runtime_bindings = read_store.list_runtime_bindings() or []
+    runtime_bindings = read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
     deployment_plans = read_store.list_deployment_plans() or []
-    bindings = read_store.list_bindings() or []
-    capital_pools = read_store.list_capital_pools() or []
+    bindings = read_store.list_bindings(include_market_persona_defaults=True) or []
+    capital_pools = read_store.list_capital_pools(include_market_persona_defaults=True) or []
 
     plans_by_id = {
         _management_record_id(plan, "plan_id", "id"): plan
