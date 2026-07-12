@@ -1306,6 +1306,89 @@ class TestWorkshopPrivacyContract:
     Raw message content must never appear as the redacted_summary.
     """
 
+    def test_create_private_store_failure_leaves_no_partial_session(self):
+        from agora.strategy_workshop import MemoryWorkshopStore
+        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from fastapi import FastAPI, HTTPException
+
+        class FailingPrivateStore:
+            def put(self, **kwargs):
+                raise RuntimeError("private store unavailable")
+
+        workshop_store = MemoryWorkshopStore()
+        identity = {"operator_id": "user-alpha", "roles": ["operator"],
+                    "claims": {"tenant_id": "tenant-alpha"}}
+        app = FastAPI()
+        app.include_router(create_strategy_workshop_router(
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda current: None,
+            bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
+            utc_now=lambda: "2026-07-12T00:00:00Z",
+            workshop_store=workshop_store,
+            private_content_store=FailingPrivateStore(),
+        ))
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/bff/agora/workshops",
+            headers={"Authorization": "Bearer ignored", "Idempotency-Key": "create-fail"},
+            json={"initial_message": "must not create a session"},
+        )
+        assert response.status_code == 500
+        sessions, _ = workshop_store.list_sessions(
+            user_id="user-alpha", tenant_id="tenant-alpha"
+        )
+        assert sessions == []
+
+    def test_create_event_failure_discards_private_object_and_session(self):
+        from agora.strategy_workshop import MemoryWorkshopStore
+        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from fastapi import FastAPI, HTTPException
+        from privacy.private_content_models import PrivateContentAccessDenied
+        from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
+
+        class EventFailingStore(MemoryWorkshopStore):
+            def create_event(self, event):
+                raise RuntimeError("event write failed")
+
+        workshop_store = EventFailingStore()
+        private_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
+        written = []
+        original_put = private_store.put
+
+        def recording_put(**kwargs):
+            descriptor = original_put(**kwargs)
+            written.append(descriptor)
+            return descriptor
+
+        private_store.put = recording_put
+        identity = {"operator_id": "user-alpha", "roles": ["operator"],
+                    "claims": {"tenant_id": "tenant-alpha"}}
+        app = FastAPI()
+        app.include_router(create_strategy_workshop_router(
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda current: None,
+            bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
+            utc_now=lambda: "2026-07-12T00:00:00Z",
+            workshop_store=workshop_store,
+            private_content_store=private_store,
+        ))
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/bff/agora/workshops",
+            headers={"Authorization": "Bearer ignored", "Idempotency-Key": "event-fail"},
+            json={"initial_message": "must be hard discarded"},
+        )
+        assert response.status_code == 500
+        sessions, _ = workshop_store.list_sessions(
+            user_id="user-alpha", tenant_id="tenant-alpha"
+        )
+        assert sessions == []
+        assert len(written) == 1
+        with pytest.raises(PrivateContentAccessDenied):
+            private_store.get_for_owner(
+                private_content_ref=written[0].private_content_ref,
+                tenant_id="tenant-alpha", owner_user_id="user-alpha",
+                purpose="orphan-regression", request_id="req-create-orphan",
+            )
+
     def test_initial_event_has_private_content_ref(self, monkeypatch):
         """create_workshop must generate private_content_ref for the initial event."""
         client = _workshop_client(monkeypatch)

@@ -980,8 +980,8 @@ def create_strategy_workshop_router(
                 suggestion="Supply a UUID v4 in the Idempotency-Key request header",
             )
         # Reject duplicate keys for the same user+tenant+endpoint.
+        idem_scope = f"{scope.user_id}:{scope.tenant_id}:POST:/bff/agora/workshops"
         if hasattr(store, "check_and_record_idempotency_key"):
-            idem_scope = f"{scope.user_id}:{scope.tenant_id}:POST:/bff/agora/workshops"
             if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
                 from models import ErrorCode
                 raise bff_error(
@@ -997,24 +997,40 @@ def create_strategy_workshop_router(
             "active_strategy_spec_registry_id": body.strategy_spec_ref,
             "status": "open",
         })
-        if private_content_store is None:
-            raise bff_error(503, "PRIVATE_CONTENT_STORE_UNAVAILABLE",
-                            "Private content store is not configured", "private_content_store")
-        initial_event_id = str(uuid.uuid4())
-        private = private_content_store.put(
-            tenant_id=scope.tenant_id, owner_user_id=scope.user_id,
-            workshop_id=workshop_id, event_id=initial_event_id,
-            content_type="text/plain", plaintext=body.initial_message.encode("utf-8"),
-            retention_class="workshop_default", idempotency_key=idempotency_key,
-        )
-        store.create_event({
-            "event_id": initial_event_id,
-            "workshop_id": workshop_id,
-            "actor_type": "operator",
-            "event_type": "message",
-            "private_content_ref": private.private_content_ref,
-            "redacted_summary": "Private workshop message",
-        })
+        try:
+            if private_content_store is None:
+                raise bff_error(503, "PRIVATE_CONTENT_STORE_UNAVAILABLE",
+                                "Private content store is not configured", "private_content_store")
+            initial_event_id = str(uuid.uuid4())
+            private = private_content_store.put(
+                tenant_id=scope.tenant_id, owner_user_id=scope.user_id,
+                workshop_id=workshop_id, event_id=initial_event_id,
+                content_type="text/plain", plaintext=body.initial_message.encode("utf-8"),
+                retention_class="workshop_default", idempotency_key=idempotency_key,
+            )
+            try:
+                store.create_event({
+                    "event_id": initial_event_id,
+                    "workshop_id": workshop_id,
+                    "actor_type": "operator",
+                    "event_type": "message",
+                    "private_content_ref": private.private_content_ref,
+                    "redacted_summary": "Private workshop message",
+                })
+            except Exception:
+                private_content_store.discard_failed_write(
+                    private_content_ref=private.private_content_ref,
+                    tenant_id=scope.tenant_id,
+                    owner_user_id=scope.user_id,
+                )
+                raise
+        except Exception:
+            store.rollback_create_session(
+                workshop_id,
+                idempotency_scope=idem_scope,
+                idempotency_key=idempotency_key,
+            )
+            raise
         return {
             "data": session,
             "meta": {

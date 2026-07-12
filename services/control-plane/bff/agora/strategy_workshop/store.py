@@ -140,6 +140,14 @@ class MemoryWorkshopStore:
             self._sessions[row["workshop_id"]] = row
             return dict(row)
 
+    def rollback_create_session(self, workshop_id: str, *, idempotency_scope: str,
+                                idempotency_key: str) -> None:
+        """Remove every trace of a failed create-workshop attempt."""
+        with self._lock:
+            self._events.pop(workshop_id, None)
+            self._sessions.pop(workshop_id, None)
+            self._idempotency_keys.pop(f"{idempotency_scope}:{idempotency_key}", None)
+
     def get_session(self, workshop_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             row = self._sessions.get(workshop_id)
@@ -604,6 +612,17 @@ class PostgresWorkshopStore:
                 ),
             )
         return row
+
+    def rollback_create_session(self, workshop_id: str, *, idempotency_scope: str,
+                                idempotency_key: str) -> None:
+        """Compensate a create that failed before its initial event committed."""
+        with self._connect() as conn:
+            conn.execute(f"DELETE FROM {self._et} WHERE workshop_id = %s", (workshop_id,))
+            conn.execute(f"DELETE FROM {self._st} WHERE workshop_id = %s", (workshop_id,))
+            conn.execute(
+                f"DELETE FROM {self._ikt} WHERE scope = %s AND idempotency_key = %s",
+                (idempotency_scope, idempotency_key),
+            )
 
     def get_session(self, workshop_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
