@@ -1,0 +1,266 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/persona_opinion_consultation_event/v1",
+  "title": "PersonaOpinionConsultationEvent",
+  "description": "Canonical cross-repo event contract for persona-to-persona opinion consultation. Operationalizes PERSONA_RUNTIME_MODEL.md section 13 (requester / responder / committee_participant roles, always mediated through SessionPersona, never a raw registry Persona). This is a lighter-weight interaction-thread contract distinct from services/consultation's ConsultRequest/ConsultMemo governance-review workflow; when an exchange must become a formal governance review it links out via escalated_consult_request_id instead of being re-modeled here. This event does not grant deployment, rollback, broker, capital, or order authority.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "event_id",
+    "event_type",
+    "interaction_id",
+    "topic",
+    "requester",
+    "context_refs",
+    "status",
+    "no_capital_authority_proof",
+    "trace_id",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "opinion_requested",
+        "opinion_offered",
+        "opinion_declined",
+        "opinion_escalated",
+        "thread_closed"
+      ]
+    },
+    "interaction_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Correlates every event belonging to the same requester/responder(s) opinion exchange."
+    },
+    "topic": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requester": {
+      "$ref": "#/definitions/sessionActorRef"
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/participant"
+      },
+      "default": []
+    },
+    "context_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/contextRef"
+      }
+    },
+    "opinion": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/opinion"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "escalated_consult_request_id": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "partially_answered",
+        "answered",
+        "escalated",
+        "closed"
+      ]
+    },
+    "no_capital_authority_proof": {
+      "type": "string",
+      "enum": [
+        "persona_interaction_event_no_capital_or_order_authority"
+      ]
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "minLength": 1
+    },
+    "updated_at": {
+      "$ref": "#/definitions/nullableDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "opinion_offered"
+          }
+        },
+        "required": ["event_type"]
+      },
+      "then": {
+        "properties": {
+          "opinion": {
+            "$ref": "#/definitions/opinion"
+          }
+        },
+        "required": ["opinion"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "opinion_escalated"
+          }
+        },
+        "required": ["event_type"]
+      },
+      "then": {
+        "required": ["escalated_consult_request_id"]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "sessionActorRef": {
+      "type": "object",
+      "description": "A consultation participant, always resolved through SessionPersona per PERSONA_RUNTIME_MODEL.md section 13 -- never a raw Persona Registry object.",
+      "required": ["actor_type", "actor_id"],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": ["persona_session", "human", "committee", "system"]
+        },
+        "actor_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "persona_id, operator id, committee id, or system actor id."
+        },
+        "session_id": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "display_name": {
+          "$ref": "#/definitions/nullableString"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "actor_type": {
+                "const": "persona_session"
+              }
+            },
+            "required": ["actor_type"]
+          },
+          "then": {
+            "properties": {
+              "session_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["session_id"]
+          }
+        }
+      ]
+    },
+    "participant": {
+      "type": "object",
+      "required": ["actor", "role"],
+      "properties": {
+        "actor": {
+          "$ref": "#/definitions/sessionActorRef"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["responder", "committee_participant"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "contextRef": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "opinion": {
+      "type": "object",
+      "required": ["stance", "confidence", "rationale"],
+      "properties": {
+        "stance": {
+          "type": "string",
+          "enum": ["agree", "disagree", "conditional", "abstain", "no_opinion"]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "nullableString": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableDateTime": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

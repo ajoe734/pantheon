@@ -1,8 +1,8 @@
 # MGMT-PERF-IA-007 - Migration Cleanup And Regression
 
-Owner: Claude
+Owner: Codex
 
-Reviewer: Antigravity
+Reviewer: Claude
 
 Wave: 2
 
@@ -48,3 +48,43 @@ centers and contextual integrations are proven.
 - `execute-plans:src/management`
 - `execute-plans:scripts/lib/management-routes.mjs`
 - `execute-plans:e2e`
+
+## Migration Decisions And Evidence
+
+- Removed the duplicate `ManagementOperationsNav` component and every render
+  site. The responsive `ManagementLayout` sidebar/drawer, center tabs,
+  breadcrumbs, and contextual actions are now the only navigation hierarchy.
+- Mounted `CapitalPoolDetail`, `RankingFormulaDetail`, and `RebalanceDetail` on
+  their canonical singular routes. Plural compatibility detail aliases now
+  preserve the query string and terminate on those canonical routes.
+- Removed the unrouted `RankingDashboardPage` implementation and its barrel
+  export. The canonical Rankings Center owns rolling and quarterly ranking.
+- Reclassified retired top-level baseline entries as compatibility aliases,
+  added redirect telemetry via the
+  `pantheon:management-legacy-redirect` browser event, and assigned alias
+  expiry review to `management-frontend` on `2026-10-01`.
+
+Delivery records:
+
+- Execute-plans PR `#270` merged into `dev` as
+  `a37a6ea32729f7ff6a6a7b6ea26eb8e9d4c37401`; task commit `2fb71a1`.
+- Pantheon evidence PR `#3413` merged into `dev` as
+  `f0b6a3ac9bddb06597112cf172d53cf6dea1c98f`; task commit `703a35a7d`.
+- Reviewer Claude approved all four task acceptance criteria after independently
+  rerunning the focused unit, production build, and Playwright checks.
+
+Focused verification:
+
+```text
+npm test -- --run src/management/navigation/managementRouteManifest.test.ts src/management/pages/CapitalPoolDetail.test.tsx
+# 19 passed
+
+npm run build
+# passed (existing chunk-size, circular-chunk, and CSS minifier warnings)
+
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:8081 npx playwright test e2e/26-mgmt-perf-ia-canonical-manifest.spec.ts --project=chromium
+# 5 passed
+
+git diff --check
+# passed
+```
