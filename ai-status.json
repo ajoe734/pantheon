@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-12T00:37:05Z",
+  "updated_at": "2026-07-12T00:39:12Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -150,8 +150,8 @@
         "OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
-      "next": "Preparing support-only BFF/frontend umbrella closeout handoff; canonical/runtime layers unchanged.",
-      "last_update": "2026-07-12T00:37:02Z"
+      "next": "Support-only BFF/frontend umbrella handoff committed as b56772676 and opened in PR #3324. Please verify current BFF baseline claims, canonical-memory authority, frontend BFF-only boundary, and that no canonical/runtime implementation changed. Validation: persona_memory subset 4 passed; git diff --check.",
+      "last_update": "2026-07-12T00:38:39Z"
     },
     {
       "name": "Copilot",
@@ -415,59 +415,6 @@
       }
     },
     {
-      "id": "OCLAW-PMEM-000",
-      "title": "OpenClaw persona model routing and memory architecture gap",
-      "summary_zh": "釐清並修正 Persona/OpenClaw/provider pool/Memory Plane 的 source-of-truth 邊界；把 runtime profile、OpenClaw agent sync、canonical memory bridge、BFF/UI surfaces 與 dev gates 拆成可驗收 execution tasks。",
-      "phase": "OpenClaw Persona Memory Gap / Umbrella",
-      "owner": "Antigravity",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [
-        "OCLAW-PMEM-005"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03",
-        "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap",
-        "integrations/openclaw",
-        "services/control-plane/bff",
-        "services/control-plane/persona",
-        "services/memory",
-        "services/persona"
-      ],
-      "acceptance": [
-        "OCLAW-PMEM-005 done or reviewer-approved superseded",
-        "final closeout includes PR SHAs, validation, hosted dev evidence, and residual risks",
-        "Management UI explains persona model routing and canonical memory materialization",
-        "dev gates prove provider live smoke, persona OpenClaw response, memory retrieval/materialization, and no private memory leakage"
-      ],
-      "next": "Ownership updated",
-      "task_class": "execution",
-      "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
-      "auto_generated": true,
-      "source_ref": {
-        "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
-        "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
-      },
-      "delivery_layer": "primary",
-      "mutates_canonical": true,
-      "helper_parent": "OCLAW-PMEM-000",
-      "helper_kind": "openclaw_persona_memory_gap_execution_slice",
-      "wave": 99,
-      "fleet_lane": "oversight-closeout",
-      "gap_children": [
-        "OCLAW-PMEM-001",
-        "OCLAW-PMEM-002",
-        "OCLAW-PMEM-003",
-        "OCLAW-PMEM-004",
-        "OCLAW-PMEM-005"
-      ],
-      "last_update": "2026-07-12T00:37:05Z",
-      "review_notes_zh": [
-        "審查通過：所有子任務皆已順利存檔，並建立關閉報告。"
-      ],
-      "review_file": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OCLAW-PMEM-000-closeout-2026-07-12.md"
-    },
-    {
       "id": "PPL-ALLOC-007",
       "title": "Binding visibility and route prune",
       "summary_zh": "修 Persona Fleet / Capital 顯示不同 persona 綁定到不同 paper ledger 或 real sleeve；legacy/diagnostic 頁面不再搶主流程。",
@@ -619,8 +566,8 @@
         "capital access and rebalance mutations require governed apply receipts",
         "legacy routes and hosted desktop mobile behavior are proven"
       ],
-      "next": "Re-verified execute-plans#260 unchanged (head 2954481ba354, CLEAN/MERGEABLE, integration-gate 29162742365 SUCCESS, mergedAt null, autoMergeRequest null, zero reviews). Still blocked purely on human merge per governance policy; no owner action possible. Steady state, 56th+ consecutive no-op owned_finalize_dispatch pass.",
-      "last_update": "2026-07-12T00:36:21Z",
+      "next": "Supervisor resumed MGMT-PERF-IA-005 for finalize after successful dispatch.",
+      "last_update": "2026-07-12T00:39:12Z",
       "task_class": "execution",
       "auto_created_by": "dispatch_management_performance_ranking_ia_2026-07-11",
       "auto_generated": true,
@@ -808,8 +755,8 @@
         "stale mock-only or mismatched-SHA evidence is rejected",
         "MGMT-PERF-IA-003 receives a behavior-preserving handoff"
       ],
-      "next": "REQUEST_CHANGES: exact hosted FE SHA a74e5869 desktop passed, but mobile Human Inbox rendered strict Failed to fetch / seed fallback blocked. Owner must route execute-plans mobile request repair, redeploy, and rerun authenticated desktop/mobile probes with zero required-request failures before review.",
-      "last_update": "2026-07-12T00:35:55Z",
+      "next": "Blocked on MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX: fail-closed rerun found desktop pass but mobile Human Inbox strict Failed to fetch / seed fallback blocked on deployed FE a74e5869. Repair task assigned to Codex2; rerun GAP-004 after fix merges/deploys and hosted desktop/mobile evidence is zero-failure.",
+      "last_update": "2026-07-12T00:37:36Z",
       "task_class": "execution",
       "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
       "auto_generated": true,
@@ -1389,7 +1336,7 @@
       "phase": "OpenClaw Persona Memory Gap / Umbrella",
       "owner": "Codex2",
       "reviewer": "Antigravity",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [
         "OCLAW-PMEM-005"
       ],
@@ -1401,14 +1348,45 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Preparing support-only BFF/frontend umbrella closeout handoff; canonical/runtime layers unchanged.",
-      "last_update": "2026-07-12T00:37:02Z",
+      "next": "Support-only BFF/frontend umbrella handoff committed as b56772676 and opened in PR #3324. Please verify current BFF baseline claims, canonical-memory authority, frontend BFF-only boundary, and that no canonical/runtime implementation changed. Validation: persona_memory subset 4 passed; git diff --check.",
+      "last_update": "2026-07-12T00:38:39Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "OCLAW-PMEM-000",
       "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+      "title": "Repair hosted mobile Human Inbox workflow failure",
+      "summary_zh": "修復 MGMT-OPS-003-GAP-004 發現的 hosted mobile Human Inbox strict Failed to fetch / seed fallback blocked；需從 execute-plans dev 修復、merge、deploy，並重跑 desktop/mobile hosted workflow。",
+      "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 mobile repair",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-OPS-003-GAP-001",
+        "MGMT-OPS-003-GAP-002",
+        "MGMT-OPS-003-GAP-003"
+      ],
+      "artifacts": [
+        "execute-plans:e2e/21-portfolio-workflow-hosted.spec.ts",
+        "execute-plans:src/management/pages/oversight",
+        "execute-plans:src/lib/bff-v1",
+        "execute-plans:hosted-dev-evidence",
+        "docs/deployment/evidence/mgmt-ops-003-gap/gap-004"
+      ],
+      "acceptance": [
+        "execute-plans PR merges to dev",
+        "dev FE deploy succeeds and deployment.json reports repaired SHA",
+        "post-merge execute-plans integration gate succeeds",
+        "hosted desktop and mobile Portfolio workflow reaches Human Inbox with target context visible",
+        "console errors failed required requests BFF 4xx/5xx lazy chunk failures and fallback indicators are zero",
+        "evidence records PR merge SHA deploy run gate run desktop/mobile command output and failure counts"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-07-12T00:37:19Z"
     }
   ],
   "handoffs": [
@@ -1420,15 +1398,6 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "OCLAW-PMEM-000",
-      "from": "Codex",
-      "to": "Antigravity",
-      "message": "Auto-reassigned OCLAW-PMEM-000 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Antigravity.",
-      "status": "done",
-      "created_at": "2026-07-11T03:00:02Z",
-      "resolved_at": "2026-07-12T00:34:48Z"
     },
     {
       "task_id": "PPL-ALLOC-009",
@@ -1801,21 +1770,12 @@
       "resolved_at": "2026-07-12T00:35:55Z"
     },
     {
-      "task_id": "OCLAW-PMEM-000",
-      "from": "Antigravity",
-      "to": "Claude",
-      "message": "Closeout report approved.",
-      "status": "done",
-      "created_at": "2026-07-12T00:36:51Z",
-      "resolved_at": "2026-07-12T00:37:05Z"
-    },
-    {
-      "task_id": "OCLAW-PMEM-000",
-      "from": "Claude",
+      "task_id": "OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
       "to": "Antigravity",
-      "message": "Ownership updated",
+      "message": "Support-only BFF/frontend umbrella handoff committed as b56772676 and opened in PR #3324. Please verify current BFF baseline claims, canonical-memory authority, frontend BFF-only boundary, and that no canonical/runtime implementation changed. Validation: persona_memory subset 4 passed; git diff --check.",
       "status": "pending",
-      "created_at": "2026-07-12T00:37:05Z"
+      "created_at": "2026-07-12T00:38:39Z"
     }
   ],
   "blockers": [
@@ -1893,12 +1853,12 @@
       "todo": 0
     },
     "Antigravity": {
-      "total": 11,
+      "total": 10,
       "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 10
     },
     "Antigravity2": {
@@ -1938,11 +1898,11 @@
       "todo": 2
     },
     "Codex2": {
-      "total": 3,
+      "total": 4,
       "active": 2,
       "blocked": 0,
       "done": 1,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 2
     },
