@@ -221,6 +221,94 @@ def _safe_card_id(*parts: Any) -> str:
     return clean or uuid.uuid4().hex
 
 
+def _project_winner_branch_state_map(state_map: Dict[str, str]) -> Dict[str, str]:
+    winner_keys = {
+        "market_scope",
+        "insider_branch_mapping",
+        "winner_branch_scoring",
+        "migration_reverse_flow",
+        "event_lead",
+        "signal_formation",
+        "entry_holding",
+        "add_reduce_exit",
+        "sizing_leverage",
+        "cost_liquidity_capacity",
+        "validation_backtest_refutation",
+        "monitoring_update",
+    }
+    if not any(k in state_map for k in winner_keys):
+        return state_map
+
+    projected = dict(state_map)
+
+    def to_generic_grade(grade: str) -> str:
+        if grade in {"confirmed", "complete", "satisfied"}:
+            return "complete"
+        if grade in {"inferred_needs_confirmation", "weak", "conflicting"}:
+            return "partial"
+        return "missing"
+
+    def to_specific_grade(grade: str) -> str:
+        if grade == "confirmed":
+            return "confirmed"
+        if grade == "inferred_needs_confirmation":
+            return "inferred_needs_confirmation"
+        if grade == "weak":
+            return "weak"
+        if grade == "conflicting":
+            return "conflicting"
+        return "missing"
+
+    # Map Winner Branch blocks directly to specific StrategySpec fields
+    if "insider_branch_mapping" in state_map:
+        projected["data_identity_mapping_role"] = to_specific_grade(state_map["insider_branch_mapping"])
+        projected["identity_mapping_role"] = to_specific_grade(state_map["insider_branch_mapping"])
+    if "migration_reverse_flow" in state_map:
+        projected["exit"] = to_specific_grade(state_map["migration_reverse_flow"])
+        projected["exit_invalidation"] = to_specific_grade(state_map["migration_reverse_flow"])
+    if "event_lead" in state_map:
+        projected["entry_signal"] = to_specific_grade(state_map["event_lead"])
+    if "signal_formation" in state_map:
+        projected["entry_signal_confirmation"] = to_specific_grade(state_map["signal_formation"])
+    if "entry_holding" in state_map:
+        projected["holding_period"] = to_specific_grade(state_map["entry_holding"])
+    if "add_reduce_exit" in state_map:
+        projected["exit_invalidation"] = to_specific_grade(state_map["add_reduce_exit"])
+    if "sizing_leverage" in state_map:
+        projected["risk_constraints"] = to_specific_grade(state_map["sizing_leverage"])
+        projected["position_sizing"] = to_specific_grade(state_map["sizing_leverage"])
+    if "cost_liquidity_capacity" in state_map:
+        projected["execution_cost"] = to_specific_grade(state_map["cost_liquidity_capacity"])
+        projected["liquidity"] = to_specific_grade(state_map["cost_liquidity_capacity"])
+    if "validation_backtest_refutation" in state_map:
+        projected["validation_oos"] = to_specific_grade(state_map["validation_backtest_refutation"])
+
+    # Map Winner Branch blocks to 7 dimensions
+    mapping = {
+        "market_scope": ["market_scope"],
+        "data_dependencies": ["insider_branch_mapping", "winner_branch_scoring", "migration_reverse_flow"],
+        "hypothesis": ["event_lead", "signal_formation"],
+        "evaluation_plan": ["entry_holding", "add_reduce_exit"],
+        "risk_constraints": ["sizing_leverage"],
+        "execution_profile": ["cost_liquidity_capacity", "validation_backtest_refutation"],
+        "governance": ["monitoring_update"],
+    }
+
+    for dim, blocks in mapping.items():
+        grades = [to_generic_grade(state_map[b]) for b in blocks if b in state_map]
+        if not grades:
+            if dim not in state_map:
+                projected[dim] = "missing"
+        elif all(g == "complete" for g in grades):
+            projected[dim] = "complete"
+        elif all(g == "missing" for g in grades):
+            projected[dim] = "missing"
+        else:
+            projected[dim] = "partial"
+
+    return projected
+
+
 def _state_map_from_snapshot(snapshot: Optional[Dict[str, Any]]) -> Dict[str, str]:
     if not snapshot:
         return {}
@@ -237,7 +325,7 @@ def _state_map_from_snapshot(snapshot: Optional[Dict[str, Any]]) -> Dict[str, st
             state = value
         if key and state is not None:
             result[str(key)] = str(state)
-    return result
+    return _project_winner_branch_state_map(result)
 
 
 def _explicit_blockers(snapshot: Optional[Dict[str, Any]]) -> List[str]:
