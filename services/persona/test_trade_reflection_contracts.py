@@ -116,6 +116,7 @@ def test_validate_valid_lesson_candidate_with_governance_receipt() -> None:
         "created_at": "2026-07-11T13:00:00Z",
         "updated_at": "2026-07-11T14:30:00Z",
         "expiry": "2026-09-11T00:00:00Z",
+        "reflection_version": "v1",
         "receipt": {
             "operator_id": "operator-alice",
             "decided_at": "2026-07-11T14:30:00Z",

@@ -18,6 +18,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -34694,6 +34696,13 @@ def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
         "last_status": None,
         "last_error": None,
         "quota": _management_ai_quota_snapshot({}),
+        "persona_dependencies": {
+            "status": "unavailable",
+            "count": None,
+            "personas": [],
+            "source": None,
+            "reason": "persona_dependency_inventory_unavailable",
+        },
         "observed_usage": dict(observed_usage),
         "models": {},
     }
@@ -34824,6 +34833,53 @@ def _assistant_provider_usage_summary(
         live_auth = bool(item.get("ready") is True and str(auth_status or "").lower() in {"ready", "account_session", "authorized"})
         row["live_auth"] = live_auth
         row["quota"] = _management_ai_quota_snapshot(item)
+        dependencies = item.get("persona_dependencies", item.get("personaDependencies"))
+        if isinstance(dependencies, dict):
+            dependency_personas = dependencies.get("personas")
+            if not isinstance(dependency_personas, list):
+                dependency_personas = []
+            dependency_status = str(dependencies.get("status") or "available")
+            row["persona_dependencies"] = {
+                "status": dependency_status,
+                "count": dependencies.get("count", len(dependency_personas)),
+                "personas": dependency_personas,
+                "source": dependencies.get("source") or "provider_inventory",
+                "reason": dependencies.get("reason"),
+            }
+        else:
+            dependency_personas = item.get("dependent_personas", item.get("dependentPersonas"))
+            if isinstance(dependency_personas, list):
+                row["persona_dependencies"] = {
+                    "status": "available",
+                    "count": len(dependency_personas),
+                    "personas": dependency_personas,
+                    "source": "provider_inventory",
+                    "reason": None,
+                }
+        smoke = item.get("live_smoke") if isinstance(item.get("live_smoke"), dict) else {}
+        reauth = item.get("reauth") if isinstance(item.get("reauth"), dict) else {}
+        row["provider_auth"] = {
+            "status": auth_status or "not_checked",
+            "authenticated": str(auth_status or "").lower() in {"ready", "account_session", "authorized"},
+            "source": item.get("auth_source") or item.get("authSource") or "provider_probe",
+        }
+        row["live_smoke"] = {
+            "status": smoke.get("status") or item.get("smoke_status") or "not_checked",
+            "passed": smoke.get("passed") is True,
+            "checked_at": smoke.get("checked_at") or smoke.get("checkedAt") or item.get("last_live_smoke_at"),
+            "reason": smoke.get("reason") or item.get("smoke_reason"),
+        }
+        row["reauth"] = {
+            "status": reauth.get("status") or item.get("reauth_status") or "not_started",
+            "code_entry_required": bool(reauth.get("code_entry_required", reauth.get("codeEntryRequired", False))),
+            "readiness_recheck_required": bool(reauth.get("readiness_recheck_required", reauth.get("readinessRecheckRequired", False))),
+        }
+        row["readiness"] = {
+            "ready": item.get("ready") is True,
+            "proof": item.get("readiness_proof") or "provider_probe",
+            "mount_ready_is_sufficient": False,
+            "reason": item.get("reason"),
+        }
 
     started_by_run: Dict[str, Dict[str, Any]] = {}
     events = _management_ai_list_audit_events(limit=event_limit)
@@ -40803,15 +40859,13 @@ async def bff_get_persona_memory(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
 ):
-    """BFF: persona memory updates."""
+    """BFF: canonical Memory Plane entries for a persona."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _ensure_persona_exists(persona_id)
     snapshot_at = utc_now()
-    memory: List[Dict[str, Any]] = []
-    fetcher = getattr(read_store, "list_memory_updates_for_persona", None)
-    if callable(fetcher):
-        memory = fetcher(persona_id) or []
+    memory, source = _retrieve_canonical_persona_memory(persona_id, identity)
+    surface_status = "ok" if source["available"] else "degraded"
     return {
         "data": memory,
         "items": memory,
@@ -40819,7 +40873,77 @@ async def bff_get_persona_memory(
         "meta": _read_surface_meta(
             "personas", "persona_memory",
             snapshot_at=snapshot_at, total=len(memory),
-        ),
+        ) | {
+            "status": surface_status,
+            "memory_source": source,
+        },
+    }
+
+
+def _retrieve_canonical_persona_memory(
+    persona_id: str,
+    identity: OperatorIdentity,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Read persona memory without falling back to BFF snapshots or workspace files."""
+    base_url = (
+        os.getenv("PANTHEON_MEMORY_API_URL")
+        or os.getenv("PANTHEON_MEMORY_SERVICE_URL")
+        or ""
+    ).strip().rstrip("/")
+    source = {
+        "kind": "canonical_memory_plane",
+        "endpoint": "/api/memory/retrieve",
+        "available": False,
+        "fallback_used": False,
+        "workspace_is_source_of_truth": False,
+    }
+    if not base_url:
+        return [], source | {
+            "reason": "memory_plane_unconfigured",
+            "repair_action": "configure_memory_service_url",
+        }
+
+    params = urlencode(
+        {
+            "actor_id": identity.operator_id,
+            "actor_roles": ",".join(sorted(identity.roles)),
+            "session_id": f"bff-persona-memory-{persona_id}",
+            "persona_id": persona_id,
+            "session_persona_id": persona_id,
+            "scope": "persona",
+            "limit": 100,
+        }
+    )
+    timeout = float(os.getenv("PANTHEON_MEMORY_API_TIMEOUT_SECONDS", "3"))
+    try:
+        with urllib_request.urlopen(
+            urllib_request.Request(f"{base_url}/api/memory/retrieve?{params}", method="GET"),
+            timeout=timeout,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+    except urllib_error.HTTPError as exc:
+        reason = "memory_plane_access_denied" if exc.code in {401, 403} else "memory_plane_http_error"
+        return [], source | {"reason": reason, "http_status": exc.code, "repair_action": "check_memory_plane_health_and_authz"}
+    except (urllib_error.URLError, TimeoutError, OSError):
+        return [], source | {"reason": "memory_plane_unavailable", "repair_action": "check_memory_plane_health"}
+    except (ValueError, json.JSONDecodeError):
+        return [], source | {"reason": "memory_plane_invalid_response", "repair_action": "check_memory_plane_contract"}
+
+    hits = payload.get("hits") if isinstance(payload, dict) else None
+    if not isinstance(hits, list):
+        return [], source | {"reason": "memory_plane_invalid_response", "repair_action": "check_memory_plane_contract"}
+    items = []
+    for hit in hits:
+        if not isinstance(hit, dict) or hit.get("type") != "persona" or not isinstance(hit.get("entry"), dict):
+            continue
+        entry = dict(hit["entry"])
+        entry["relevance_score"] = hit.get("relevance_score")
+        items.append(entry)
+    return items, source | {
+        "available": True,
+        "reason": None,
+        "authz_policy_version": (payload.get("authz") or {}).get("policy_version"),
+        "returned_items": len(items),
     }
 
 
@@ -59058,6 +59182,13 @@ def _include_knowledge_routes() -> None:
 
 
 _include_knowledge_routes()
+
+from trade_journal import create_trade_journal_router as _create_trade_journal_router  # noqa: E402
+app.include_router(_create_trade_journal_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    require_operator_role=_require_operator_role,
+))
 
 
 # BFFGAP-LINEAGE: lineage graph endpoint via isolated module
