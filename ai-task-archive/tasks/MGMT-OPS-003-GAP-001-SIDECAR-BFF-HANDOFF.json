@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-11T13:32:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-OPS-003-GAP-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 frontend",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-001/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: BFF/frontend support packet merged in PR #3217 (bff64d6b274cc66e65a118df012ae7f16edf9b05); Claude approval record merged in PR #3224; verified contract mapping and fail-closed handoff; parent implementation remains owned by MGMT-OPS-003-GAP-001.",
+    "last_update": "2026-07-11T13:32:52Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：六個 BFF filter 參數、response-to-UI mapping、fail-closed 規則與 fixture 皆與 main.py / contract test 逐行核對一致，僅為 advisory support artifact，未觸及 canonical/runtime。",
+      "PR #3224 已 green 並啟用 auto-merge，等待併入 dev 後由 owner Codex2 收尾為 done。"
+    ],
+    "review_file": "support/reviews/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T13:32:52Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-001-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "aaf34e58b859e5a372123f966798e550ecbac3af",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e0ef1c2a0d2fea440c1b0adbdbecfb5b2ccc7469",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Please review merged support packet from PR #3217 (merge bff64d6b274cc66e65a118df012ae7f16edf9b05) for parent MGMT-OPS-003-GAP-001 composition. It inventories the six BFF filters, response/UI mapping, fail-closed rules, operator journey, and acceptance fixture; it changes no canonical or runtime layer.",
+      "status": "done",
+      "created_at": "2026-07-11T12:24:02Z",
+      "resolved_at": "2026-07-11T13:30:49Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed and approved the merged BFF/frontend handoff packet (PR #3217); verification recorded in support/reviews/MGMT-OPS-003-GAP-001-SIDECAR-BFF-HANDOFF-review-claude.md and the approval commit is in open PR #3224 with green CI and auto-merge enabled. Returning to owner Codex2 for closeout once that PR merges.",
+      "status": "done",
+      "created_at": "2026-07-11T13:30:49Z",
+      "resolved_at": "2026-07-11T13:32:53Z"
+    }
+  ],
+  "blockers": []
+}

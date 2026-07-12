@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+  "archived_at": "2026-07-12T09:29:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+    "title": "Prepare MGMT-PERF-IA-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 1 Governance Decisions",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar closeout merged via PR #3393 at ade97ce40d79e9526825027ba60050742221592c; support-only BFF/frontend handoff approved, with parent merge/deploy and future command contract explicitly left to owning lanes. Verified execute-plans PR #260 metadata and git diff --check.",
+    "last_update": "2026-07-12T09:29:03Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "通過：handoff packet 與 execute-plans PR #260 即時狀態一致；範圍僅限 support artifact，清楚保留 read-only、apply identity/receipt 與 parent delivery gate 邊界，未修改 canonical/runtime/frontend 實作。"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T09:29:03Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-005-sidecar-bff-handoff-followup-9",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "git_clean_required": false,
+      "commit": "c890c2e8c206379bdacf2feffa5eb69720ea6d08",
+      "commit_subject": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9: finalize handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped BFF/frontend support packet and generated brief.",
+        "Not changing": "canonical truth, runtime, registry, governance, or frontend code.",
+        "Composes with": "MGMT-PERF-IA-005 parent delivery and execute-plans PR #260.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+        "Reviewer": "Codex",
+        "Verified": "gh pr view 260 --repo ajoe734/execute-plans; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ade97ce40d79e9526825027ba60050742221592c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend handoff packet ready for review at support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md. Reverified execute-plans PR #260 remains OPEN/CLEAN/MERGEABLE at 2954481b with integration-gate success and no review, auto-merge, or merge commit. Packet preserves the read-only boundary and identifies recommendation-specific apply identity/receipt work as separate BFF scope. No canonical/runtime/registry/governance/frontend implementation changed. Commit c68879ac9; verification: git diff --check and gh pr view 260.",
+      "status": "done",
+      "created_at": "2026-07-12T09:24:54Z",
+      "resolved_at": "2026-07-12T09:26:04Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Support-only BFF/frontend handoff is accurate and bounded; owner Codex2 must finalize through task PR and done closeout.",
+      "status": "done",
+      "created_at": "2026-07-12T09:26:04Z",
+      "resolved_at": "2026-07-12T09:29:04Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+  "archived_at": "2026-07-12T09:14:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+    "title": "Prepare MGMT-PERF-IA-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 1 Governance Decisions",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend handoff after Pantheon PR #3391 merged as 06dbdb61ea98b0a4a4a266f167808e8732f7db00. Verified merge ancestry and artifact scope; packet preserves read-only Human Review semantics and leaves recommendation-to-durable-apply identity/receipt work and parent hosted evidence explicitly open.",
+    "last_update": "2026-07-12T09:14:46Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "支援性 handoff packet 的事實邊界通過：execute-plans PR #260 仍為 open、head 2954481ba3540bc2627eb379b70b401d40b3ef39、integration-gate 成功；packet 正確把 Human Gate decision history 限定為 review evidence，而非 durable apply receipt。"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T09:14:46Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-005-sidecar-bff-handoff-followup-7",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "git_clean_required": false,
+      "commit": "06dbdb61ea98b0a4a4a266f167808e8732f7db00",
+      "commit_subject": "Merge pull request #3391 from ajoe734/task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7": "add handoff gate"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "06dbdb61ea98b0a4a4a266f167808e8732f7db00",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend handoff gate ready for review at a67b1de65. It records execute-plans PR #260 open with successful integration-gate, the read-only Human Review slice, the unproven recommendation-to-apply identity/receipt chain, and the merge plus hosted desktop/mobile evidence gate. No canonical, BFF/runtime, governance, or frontend files changed.",
+      "status": "done",
+      "created_at": "2026-07-12T09:12:19Z",
+      "resolved_at": "2026-07-12T09:13:47Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only packet accurately records the open PR #260 gate, read-only Human Review slice, and unproven recommendation-to-durable-apply identity/receipt chain. Owner Codex2 must finalize after the Pantheon task PR merges; parent completion remains gated on execute-plans merge and hosted desktop/mobile evidence.",
+      "status": "done",
+      "created_at": "2026-07-12T09:13:47Z",
+      "resolved_at": "2026-07-12T09:14:47Z"
+    }
+  ],
+  "blockers": []
+}

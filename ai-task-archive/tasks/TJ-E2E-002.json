@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "task_id": "TJ-E2E-002",
+  "archived_at": "2026-07-11T23:53:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "title": "Journey domain and state contract",
+    "summary_zh": "依 Trade Journey E2E gap 規格執行：Journey domain and state contract。",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "done",
+    "phase": "Trade Journey E2E / Wave 0",
+    "next": "Finalized TJ-E2E-002: relax required journey_id on correlation envelope. Verified via test_trade_journey_contract.py (9 passed).",
+    "source_ref": {
+      "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-002-journey-domain-state-contract.md",
+      "target_repo": "pantheon",
+      "merge_target": "dev"
+    },
+    "metadata": {
+      "wave": 0,
+      "fleet_lane": "journey-domain-state-contract",
+      "target_repo": "pantheon"
+    },
+    "created_at": "2026-07-11T22:58:28.902157+00:00",
+    "id": "TJ-E2E-002",
+    "depends_on": [
+      "TJ-E2E-001"
+    ],
+    "last_update": "2026-07-11T23:53:33Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T23:53:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TJ-E2E-002",
+      "git_clean_required": false,
+      "commit": "08ab63239d661ba3854d10579e1e1a6bf9eff9e5",
+      "commit_subject": "Merge pull request #3307 from ajoe734/task/TJ-E2E-002",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "TJ-E2E-002": "relax required journey_id on correlation envelope"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TJ-E2E-002",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "08ab63239d661ba3854d10579e1e1a6bf9eff9e5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TJ-E2E-002",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Contract schemas, specs, and tests completed and verified; PR #3299 merged to dev. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-07-11T23:24:28Z",
+      "resolved_at": "2026-07-11T23:27:23Z"
+    },
+    {
+      "task_id": "TJ-E2E-002",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Reopening: request concrete changes before approval. Gap vs source-of-truth TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md §6.4 'Terminal 與 correction', which this task's own acceptance bullet ('...parent/child/basket behavior and corrections') is meant to cover: (1) contract.md's purpose section claims 'exact mapping of ... correction events' but never defines what a correction event is or how it closes a completed_with_variance journey back to completed — needs a concrete subsection + schema support; (2) no revision/version field exists anywhere on TradeJourney or StageInfo to satisfy §6.4 'late-arriving event 不可改寫舊事件；read model 重算 snapshot 並增加 revision' (only correlation_envelope.schema.json has producer_revision, which is not the same field); (3) §6.4's rule that conflicting mutually-exclusive terminal states must roll up to incomplete and raise a data-quality incident is not captured in contract.md §4.2's roll-up table nor in calculate_rollup_status; (4) test_trade_journey_contract.py only asserts detection of completed_with_variance, never exercises a correction event closing it back to completed — please add that case. Schemas/JSON structure and the other 4 acceptance bullets (creation point, parent/child/basket, correlation+redaction fields, reject/cancel/partial-fill/replace/variance-detection contract tests) look solid; pytest -v services/control-plane/bff/test_trade_journey_contract.py passes 6/6 as-is. Please add the correction-event/revision concept and hand back for re-review.",
+      "status": "done",
+      "created_at": "2026-07-11T23:27:23Z",
+      "resolved_at": "2026-07-11T23:27:23Z"
+    },
+    {
+      "task_id": "TJ-E2E-002",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Completed the implementation of correction events and revision semantics. All contract tests pass. Please review.",
+      "status": "done",
+      "created_at": "2026-07-11T23:34:14Z",
+      "resolved_at": "2026-07-11T23:47:14Z"
+    },
+    {
+      "task_id": "TJ-E2E-002",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Re-verified after review_ready_dispatch wake: correlation_envelope.schema.json still lists journey_id as unconditionally required (contract.md and test suite unchanged since PR #3305 merged). Blocking finding and required changes remain as documented in docs/reviews/2026-07-11-tj-e2e-002-claude-review.md — move journey_id out of the top-level required array, clarify contract.md §5.1's stage boundary, and add a pre-signal envelope contract test. Please push a follow-up fix commit and re-request review.",
+      "status": "done",
+      "created_at": "2026-07-11T23:47:14Z",
+      "resolved_at": "2026-07-11T23:47:14Z"
+    },
+    {
+      "task_id": "TJ-E2E-002",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Pre-signal envelope fix implemented. Relaxed required journey_id on correlation envelope schema, clarified stage boundaries in contract.md §5.1, and added a contract test asserting pre-signal envelope validation. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-07-11T23:48:39Z",
+      "resolved_at": "2026-07-11T23:51:59Z"
+    },
+    {
+      "task_id": "TJ-E2E-002",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "dry check",
+      "status": "done",
+      "created_at": "2026-07-11T23:51:59Z",
+      "resolved_at": "2026-07-11T23:53:34Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-12T12:22:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare MGMT-PERF-IA-008 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-008，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 3 closeout",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002",
+      "MGMT-PERF-IA-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-008/MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Orphaned storm-remnant sidecar (underutilization_dispatch disabled; stuck in review with no dispatchable reviewer). Parent handles its own BFF handoff. Closing to clear the review gap.",
+    "last_update": "2026-07-12T12:22:10Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-008",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only follow-up packet ready at support/sidecars/MGMT-PERF-IA-008/MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md; defines per-hop BFF capture fields, fail-closed query-gap triage, frontend context rules, and parent run sheet without canonical/runtime changes. Commit e375eef61; verified with git diff --check.",
+      "status": "done",
+      "created_at": "2026-07-12T04:17:58Z",
+      "resolved_at": "2026-07-12T04:19:59Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Handoff to Claude for review",
+      "status": "done",
+      "created_at": "2026-07-12T04:20:04Z",
+      "resolved_at": "2026-07-12T12:22:10Z"
+    }
+  ],
+  "blockers": []
+}

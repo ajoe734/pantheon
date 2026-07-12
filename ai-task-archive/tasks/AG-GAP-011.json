@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "AG-GAP-011",
+  "archived_at": "2026-07-12T14:53:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-GAP-011",
+    "title": "Reconcile nested FE checkouts; enforce canonical execute-plans",
+    "summary_zh": "盤點 .fe-ep 與 .fe-human-inbox-persona-focus 未推送的工作、salvage 後清除 stale checkout；成文規則：FE 只經 ajoe734/execute-plans@dev。",
+    "phase": "Agora Gap Closure 2026-07-12 / Wave 2",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-011-fe-checkout-hygiene.md"
+    ],
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-011-fe-checkout-hygiene.md"
+    ],
+    "next": "nested FE checkout purge and canonical execute-plans reconciliation verified; PR #3439 merged as f077c2b4f.",
+    "last_update": "2026-07-12T14:53:12Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_gap_closure_2026-07-12",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "prior_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "prior_gate": "docs/bff/execution-tasks/2026-07-08-agora-live-tabs-production/AG-DYNUI-LIVE-TABS-GATE-011.md"
+    },
+    "wave": 2,
+    "fleet_lane": "agora-gap-hygiene",
+    "review_notes_zh": [
+      "審查通過：已驗證四個 Pantheon 內嵌 FE 路徑皆已移除，ec15204 已進 canonical execute-plans origin/dev，交付 commit 2797430fe 已由 PR #3439 合入 Pantheon dev（merge f077c2b4f）。",
+      "Owner 應依 closeout skill 確認已合併交付並執行 done。"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-011-fe-checkout-hygiene.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T14:53:12Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-gap-011",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-GAP-011",
+      "git_clean_required": false,
+      "commit": "50cc5fcf96db6bc3b06dcc5a4fabf7bc90a469f7",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-GAP-011",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-GAP-011",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f077c2b4feee469ae05e27dd66adfe22146a1e57",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-GAP-011",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Audited checkouts, removed stale directories, and documented rules. PR #3431 is merged.",
+      "status": "done",
+      "created_at": "2026-07-12T14:23:00Z",
+      "resolved_at": "2026-07-12T14:35:04Z"
+    },
+    {
+      "task_id": "AG-GAP-011",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Changes required: /home/lupin/code/pantheon/execute-plans still exists with src/management and tests/e2e, so the documented no-nested-checkouts rule and all-stale-checkouts-purged claim remain false. Audit/salvage those files without folding the unrelated dirty live Pantheon checkout into this task, remove the nested artifact safely, update the evidence with exact patch-equivalence proof for 821ad41, and request re-review.",
+      "status": "done",
+      "created_at": "2026-07-12T14:35:04Z",
+      "resolved_at": "2026-07-12T14:35:04Z"
+    },
+    {
+      "task_id": "AG-GAP-011",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Reconciled nested checkouts, verified patch-equivalence, safely deleted nested execute-plans folder. Ready for review.",
+      "status": "done",
+      "created_at": "2026-07-12T14:48:26Z",
+      "resolved_at": "2026-07-12T14:49:41Z"
+    },
+    {
+      "task_id": "AG-GAP-011",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Review approved: nested FE checkout purge and canonical execute-plans reconciliation verified; PR #3439 merged as f077c2b4f. Returned to Antigravity for owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-12T14:49:41Z",
+      "resolved_at": "2026-07-12T14:53:13Z"
+    }
+  ],
+  "blockers": []
+}

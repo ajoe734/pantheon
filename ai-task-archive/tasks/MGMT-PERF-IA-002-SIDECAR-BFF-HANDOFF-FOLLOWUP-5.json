@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-07-11T07:35:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare MGMT-PERF-IA-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 BFF contract",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only BFF/frontend recovery handoff packet merged via PR #3135; git diff --check and required GitHub checks passed; parent owner Antigravity decides absorption.",
+    "last_update": "2026-07-11T07:35:08Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "查核點與當前 merged/candidate 邊界吻合",
+      "實作聲明以所需證明表達，非完成行為",
+      "復原範圍排除無關分支祖先",
+      "前端指引維持後端授權與 fail-closed",
+      "無 canonical 異動"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T07:35:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-002-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "4b931ed428145e7ca3a1b11f8589813619069076",
+      "commit_subject": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5: anchor handoff packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF and frontend recovery handoff packet.",
+        "Not changing": "canonical truth, BFF runtime/tests, frontend code, or governance.",
+        "Composes with": "parent MGMT-PERF-IA-002 clean recovery and Antigravity review.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check on the sidecar packet"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c5ff1185e113d5d26a751370b7b0b29349a1941a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Handoff packet ready for review at support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md. Anchor commit 4b931ed42. It records unchanged candidate evidence, clean-recovery acceptance proof, response examples, and fail-closed frontend journey without canonical/runtime/frontend changes. Verified: git diff --check on packet.",
+      "status": "done",
+      "created_at": "2026-07-11T07:31:24Z",
+      "resolved_at": "2026-07-11T07:32:34Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Handoff packet approved and returned to Codex for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T07:32:34Z",
+      "resolved_at": "2026-07-11T07:35:09Z"
+    }
+  ],
+  "blockers": []
+}

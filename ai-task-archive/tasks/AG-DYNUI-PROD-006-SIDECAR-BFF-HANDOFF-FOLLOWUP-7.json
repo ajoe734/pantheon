@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+  "archived_at": "2026-07-04T09:58:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+    "title": "Prepare AG-DYNUI-PROD-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Hosted Acceptance",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001",
+      "AG-DYNUI-PROD-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: re-verified PR #171/#173 still OPEN/MERGEABLE/CLEAN/unreviewed, hosted deployment.json unchanged at dd597405e014cc91cf73f4ea2e96a561fcbf9c61, parent AG-DYNUI-PROD-006 still todo. None of FOLLOWUP-6's five stop/continue triggers fired. Task-brief mirror synced and merged via PR #2931.",
+    "last_update": "2026-07-04T09:58:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up 7 核准：此 packet 沒有修改 canonical truth/runtime/frontend code；獨立重新核實 PR #171 與 PR #173 仍 OPEN/MERGEABLE/CLEAN、zero reviews、integration-gate SUCCESS；hosted deployment.json 仍是 dd597405e014cc91cf73f4ea2e96a561fcbf9c61 (20260704T012041Z)；operator-bff health 正常 0.2.0；tradingRoom.ts export 集合與 router.py route 集合皆與描述相符，PROD-005 仍無 direct implementation PR/branch；ai-status.json 中 PROD-002/PROD-003 (review_approved)、PROD-005 (todo)、PROD-006 (todo) 狀態與 owner/reviewer 皆核對相符。FOLLOWUP-6 列出的五個 trigger 條件全數未觸發，同意 §5 停止派發第 8 輪同質 follow-up 的建議。"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T09:58:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-006-sidecar-bff-handoff-followup-7",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "git_clean_required": false,
+      "commit": "ef849b66a64b462e70364ab5cf435464a0dd5d96",
+      "commit_subject": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7: finalize closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "done": "PR #171/#173 in ajoe734/execute-plans remain OPEN/MERGEABLE/",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+        "Reviewer": "Claude2",
+        "Verified": "gh pr view 171/173 --repo ajoe734/execute-plans; curl hosted deployment.json; AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "74b5bf1539404c50c6fd3d017f2465a1ba6492e7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support packet merged pending PR #2921 (task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7, auto-merge enabled). Packet confirms none of FOLLOWUP-6's five trigger conditions fired: PR #171/#173 still open/clean/unreviewed, hosted FE deployment.json still dd597405..., PROD-005 parent still todo with no direct implementation PR, parent PROD-006 still todo, BFF route/frontend surface unchanged. Recommends stopping further identical AG-DYNUI-PROD-006 BFF handoff follow-up dispatch absent a real trigger.",
+      "status": "done",
+      "created_at": "2026-07-04T08:46:18Z",
+      "resolved_at": "2026-07-04T09:43:58Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T09:43:58Z",
+      "resolved_at": "2026-07-04T09:44:39Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T09:44:39Z",
+      "resolved_at": "2026-07-04T09:45:55Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only AG-DYNUI-PROD-006 follow-up 7 approved for parent owner absorption; all facts independently re-verified.",
+      "status": "done",
+      "created_at": "2026-07-04T09:45:55Z",
+      "resolved_at": "2026-07-04T09:58:40Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "AG-GAP-010",
+  "archived_at": "2026-07-12T14:55:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-GAP-010",
+    "title": "Declare design parity baseline (design zip lost)",
+    "summary_zh": "最後一次記錄式搜尋 AI Trading Desk Design.zip；找不到就正式宣告遺失，改以 closure pack 規格 + TABS-GATE-011 截圖（釘 deploy SHA）為 parity 基準。",
+    "phase": "Agora Gap Closure 2026-07-12 / Wave 2",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-010-design-parity-baseline.md"
+    ],
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-010-design-parity-baseline.md"
+    ],
+    "next": "Design parity baseline closeout finalized: PR #3426 (declaration merged c1c926d64) plus PR #3442 (backfilled packet doc + INDEX cross-links, merged 4b6ac5717) both confirmed ancestors of dev. AI Trading Desk Design.zip formally declared lost; replacement baseline is closure-pack specs + TABS-GATE-011 screenshots pinned to frontend SHA 9d60297e5c200d05214df7f758ee0c20c224db02.",
+    "last_update": "2026-07-12T14:55:47Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_gap_closure_2026-07-12",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "prior_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "prior_gate": "docs/bff/execution-tasks/2026-07-08-agora-live-tabs-production/AG-DYNUI-LIVE-TABS-GATE-011.md"
+    },
+    "wave": 2,
+    "fleet_lane": "agora-gap-docs",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T14:55:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-gap-010",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-GAP-010",
+      "git_clean_required": false,
+      "commit": "85db67337bf6f172ff9af418264954a6898a14a6",
+      "commit_subject": "AG-GAP-010: cross-link closeout PR in the packet doc",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "adds a Closeout Packet note recording that PR #3442 backfilled",
+        "Not changing": "task scope or acceptance criteria.",
+        "Composes with": "PR #3442 (this task branch), on top of the already-pushed",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-GAP-010",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-GAP-010",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4b6ac57179afefb4ce68e01f17858155e7056bbe",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-GAP-010",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Auto-reassigned AG-GAP-010 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "status": "done",
+      "created_at": "2026-07-12T14:02:01Z",
+      "resolved_at": "2026-07-12T14:03:27Z"
+    },
+    {
+      "task_id": "AG-GAP-010",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Design parity baseline declared and merged via PR #3426 (task/AG-GAP-010 -> dev, merge commit c1c926d64). Final search log, baseline declaration doc (docs/04/agora_design_pack_dynui_2026-06-28/design-parity-baseline-declaration.md), and AG-DYNUI-FULL-008 + design-pack README updates are all in dev. Please review against the AG-GAP-010 acceptance criteria (search log recorded, baseline merged, FULL-008 references updated) and approve.",
+      "status": "done",
+      "created_at": "2026-07-12T14:37:37Z",
+      "resolved_at": "2026-07-12T14:39:36Z"
+    },
+    {
+      "task_id": "AG-GAP-010",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved: final recorded search declares AI Trading Desk Design.zip lost; replacement baseline is closure-pack specifications plus TABS-GATE-011 hosted screenshots pinned to frontend SHA 9d60297e5c200d05214df7f758ee0c20c224db02; README and AG-DYNUI-FULL-008 references are updated; Pantheon PR #3426 merged to dev as c1c926d64 with visible checks successful.",
+      "status": "done",
+      "created_at": "2026-07-12T14:39:36Z",
+      "resolved_at": "2026-07-12T14:55:50Z"
+    }
+  ],
+  "blockers": []
+}

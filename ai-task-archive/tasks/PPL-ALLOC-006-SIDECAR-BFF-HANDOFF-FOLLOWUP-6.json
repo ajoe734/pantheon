@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-07-11T07:47:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved support-only BFF/frontend handoff matrix; PR #3137 merged into dev at eb1b38a0095677384a6cf9c67441bc0c95a3affb. Verified: git diff --check; packet boundary and reviewed applied:false/409/422 gap assertions present.",
+    "last_update": "2026-07-11T07:47:50Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "技術主張已對照 services/control-plane/bff/main.py 逐項核實：ranking data.items、rebalance list 為裸陣列/detail 為物件、allocation-policy/evaluate 回傳 applied:false、apply 對 live increase 缺 approval_ref 回 409、proposal 缺欄位回 422，全部與實作一致；與 FOLLOWUP-2~5 的既有規則一致，未新增未經驗證的技術主張，範圍維持 support-only（僅新增本 sidecar 檔案，未觸及 canonical truth / BFF 實作 / execute-plans 前端源碼）",
+      "建議 parent owner 按文件中的 absorption order 與 minimum evidence bundle 逐步落地"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T07:47:50Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "git_clean_required": false,
+      "commit": "eb1b38a0095677384a6cf9c67441bc0c95a3affb",
+      "commit_subject": "Merge pull request #3137 from ajoe734/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6": "add handoff matrix"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "eb1b38a0095677384a6cf9c67441bc0c95a3affb",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Please review support-only absorption order, traceability matrix, fail-closed gaps, and minimum evidence; commit fa6fc5bdb.",
+      "status": "done",
+      "created_at": "2026-07-11T07:44:48Z",
+      "resolved_at": "2026-07-11T07:46:56Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed FOLLOWUP-6 handoff matrix against services/control-plane/bff/main.py; envelope shapes, applied:false, 409 approval_ref gate, and 422 validation all match. Consistent with FOLLOWUP-2 through 5, no new unverified claims, stays support-only. Approved and returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T07:46:56Z",
+      "resolved_at": "2026-07-11T07:47:51Z"
+    }
+  ],
+  "blockers": []
+}

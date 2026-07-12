@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+  "archived_at": "2026-07-12T12:48:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+    "title": "Fix Persona Fleet hosted deploy probe regression",
+    "summary_zh": "修正預設 Persona Fleet 在 production 為空時錯誤顯示 non-production rows，保留明確 persona focus 切頁行為，重新發布並通過 hosted probe。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 deploy repair",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans:src/management/pages/oversight/_core.tsx",
+      "execute-plans:src/management/pages/oversight/PersonaFleetPage.test.tsx",
+      "execute-plans:scripts/probe-hosted-browser-bff.mjs",
+      "execute-plans:hosted-dev-evidence"
+    ],
+    "acceptance": [
+      "default persona-fleet without persona or tab query never renders non-production rows",
+      "production-empty state is rendered when no production rows exist",
+      "explicit non-production persona focus switches to non-production tab",
+      "focused unit and Playwright tests pass",
+      "execute-plans PR merges to dev and Pantheon Dev FE Deploy succeeds",
+      "deployment.json reports repaired merge SHA and hosted browser BFF probe passes"
+    ],
+    "next": "Finalized approved Persona Fleet deploy-probe repair: execute-plans PRs #254/#256 merged, deploy run 29156996097 and hosted probes passed; Pantheon closeout PR #3414 merged as cba887828a9a41fa0c66321207d7899cf483fe7b.",
+    "last_update": "2026-07-12T12:48:26Z",
+    "review_notes_zh": [
+      "預設 Persona Fleet 保持 production 且不洩漏 non-production rows",
+      "明確 persona focus 查詢與切頁行為保留",
+      "49 個 focused tests、production build 與 hosted deploy evidence 通過",
+      "stale rankings route expectation 屬 task scope 外，不阻擋批准"
+    ],
+    "review_file": "docs/reviews/2026-07-12-mgmt-ops-003-gap-001-deploy-probe-fix-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T12:48:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-001-deploy-probe-fix",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+      "git_clean_required": false,
+      "commit": "565054bfee95a62e00b8645a5736ff761b75c299",
+      "commit_subject": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX: record closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped Pantheon closeout record.",
+        "Not changing": "execute-plans runtime or canonical architecture.",
+        "Composes with": "execute-plans PRs #254 and #256 and deploy run 29156996097.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+        "Reviewer": "Codex2",
+        "Verified": "PR #254/#256 merged; deploy run 29156996097 success; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cba887828a9a41fa0c66321207d7899cf483fe7b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T14:26:41Z",
+      "resolved_at": "2026-07-11T14:26:46Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for final review: execute-plans PR #254 merged as e23aba15; pagination dependency PR #256 merged as 30bc432f; fresh hosted core probe PASS at 2026-07-12T12:31:50Z. Focused linked-page rerun confirms persona presence, then reaches unrelated stale rank-route expectation (/management/rankings vs old allowlist).",
+      "status": "done",
+      "created_at": "2026-07-12T12:32:25Z",
+      "resolved_at": "2026-07-12T12:35:59Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 approved the Persona Fleet deploy-probe repair; owner Codex must finalize the merged delivery and close the task.",
+      "status": "done",
+      "created_at": "2026-07-12T12:35:59Z",
+      "resolved_at": "2026-07-12T12:48:28Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
+      "owner": "Codex",
+      "waiting_for": "Codex2",
+      "message": "Core hosted probe now passes on e23aba15, but deploy run 29156252948 failed linked-page E2E because focused persona was absent from UI default page. Waiting for MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX and independent review.",
+      "status": "resolved",
+      "created_at": "2026-07-11T14:45:54Z",
+      "resolved_at": "2026-07-12T12:24:03Z"
+    }
+  ]
+}

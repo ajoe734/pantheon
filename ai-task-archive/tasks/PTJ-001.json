@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "task_id": "PTJ-001",
+  "archived_at": "2026-07-11T23:11:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PTJ-001",
+    "title": "Persona Trade Journal contract and schema lock",
+    "summary_zh": "依 Persona Trade Journal gap 文件執行 Persona Trade Journal contract and schema lock。",
+    "phase": "Persona Trade Journal / Wave 0",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/telemetry",
+      "services/persona",
+      "services/lineage-read",
+      "docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md",
+      "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
+    ],
+    "acceptance": [
+      "versioned episode reflection lesson and event schemas exist",
+      "identity lifecycle truth ownership and unresolved migration rules have contract tests"
+    ],
+    "next": "Owner finalized approved task PTJ-001: contract schemas and negative fixtures merged into dev",
+    "last_update": "2026-07-11T23:11:47Z",
+    "source_ref": {
+      "doc": "docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "wave": 0,
+    "fleet_lane": "contract-schema",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_trade_journal_2026_07_11",
+    "auto_generated": true,
+    "live_order_side_effects_allowed": false,
+    "review_notes_zh": [
+      "審查通過：四份 versioned schema、truth ownership、episode identity/state machine、unresolved coverage 與 negative fixtures 符合 PTJ-001 驗收",
+      "驗證：python3 -m pytest -q services/telemetry/test_trade_journal_contracts.py services/persona/test_trade_reflection_contracts.py（15 passed）",
+      "PR #3294 CI 全綠；交還 Antigravity 依 closeout spec 合併後正式 done"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T23:11:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ptj-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PTJ-001",
+      "git_clean_required": false,
+      "commit": "aea82011977f526db0f76dbf9de5c4f7bc84657b",
+      "commit_subject": "PTJ-001: anchor schema lock and negative fixtures (#3294)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "* PTJ-001": "anchor schema lock and negative fixtures",
+        "Owned layer": "trade episode projection, trade journal event schemas, contract md, and test fixtures.",
+        "Not changing": "reflection worker pipeline implementation, BFF API endpoints, and memory governance controller.",
+        "Composes with": "PTJ-002 episode lineage replay and PTJ-003 reflection worker tasks.",
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "PTJ-001",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest services/telemetry/test_trade_journal_contracts.py services/persona/test_trade_reflection_contracts.py",
+        "Co-authored-by": "pantheon-release-bot <pantheon-release-bot@users.noreply.github.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PTJ-001",
+      "ahead": 1,
+      "behind": 3,
+      "push_status": "diverged",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "aea82011977f526db0f76dbf9de5c4f7bc84657b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PTJ-001",
+      "from": "Claude2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PTJ-001 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); owner Claude2 -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T22:59:11Z",
+      "resolved_at": "2026-07-11T23:00:03Z"
+    },
+    {
+      "task_id": "PTJ-001",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Schemas, contracts, and tests for PTJ-001 completed. Pushed branch task/PTJ-001 to origin. All 231 tests pass. Ready for Codex2's review.",
+      "status": "done",
+      "created_at": "2026-07-11T23:02:28Z",
+      "resolved_at": "2026-07-11T23:04:07Z"
+    },
+    {
+      "task_id": "PTJ-001",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Review changes required: add rejected/cancelled/aborted or a single consistent terminal intent state to the schema; model unresolved joins explicitly; add event ordering/sequence metadata for late and out-of-order replay; add negative fixtures that prove these invariants; reconcile task owner metadata (packet says Claude2, commit/brief say Antigravity). Focused pytest currently passes 11 tests but does not enforce these acceptance requirements.",
+      "status": "done",
+      "created_at": "2026-07-11T23:04:07Z",
+      "resolved_at": "2026-07-11T23:04:07Z"
+    },
+    {
+      "task_id": "PTJ-001",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Contract and schema lock completed with negative fixtures. PR #139 opened with auto-merge. Ready for Codex2's review.",
+      "status": "done",
+      "created_at": "2026-07-11T23:06:26Z",
+      "resolved_at": "2026-07-11T23:08:38Z"
+    },
+    {
+      "task_id": "PTJ-001",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Review approved: schemas/contracts and negative fixtures pass; return to Antigravity for merge and owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-11T23:08:38Z",
+      "resolved_at": "2026-07-11T23:11:48Z"
+    }
+  ],
+  "blockers": []
+}

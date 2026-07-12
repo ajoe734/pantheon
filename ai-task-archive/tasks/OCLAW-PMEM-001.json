@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-001",
+  "archived_at": "2026-07-11T03:21:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-001",
+    "title": "Persona runtime profile and model routing contract",
+    "summary_zh": "定義 PersonaRuntimeProfile 與 model_routing contract，讓 persona 使用 shared provider/model pool，而不是隱性 preferred_model 或一 persona 一 auth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 0 contract",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/persona",
+      "services/control-plane/bff",
+      "integrations/openclaw/model-pool-and-persona-routing.md",
+      "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-001-runtime-profile-contract.md"
+    ],
+    "acceptance": [
+      "PersonaRuntimeProfile contract/schema exists with model_routing and memory_policy",
+      "BFF exposes read-only runtime profile surface with source_refs",
+      "invalid provider/model references fail closed with operator-visible reason",
+      "tests prove personas map many-to-few onto the shared provider pool"
+    ],
+    "next": "Closeout: PersonaRuntimeProfile contract (PR #2950, commit d302bf8f2) and review-notes anchor (PR #3099) already merged into dev; re-verified acceptance via pytest services/persona/test_runtime_profile.py + services/control-plane/bff/test_bff_strategy_persona_contract.py -k runtime_profile (8 passed). No new code changes required; status-only finalization.",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_parent": "OCLAW-PMEM-000",
+    "helper_kind": "openclaw_persona_memory_gap_execution_slice",
+    "wave": 0,
+    "fleet_lane": "persona-runtime-contract",
+    "last_update": "2026-07-11T03:21:37Z",
+    "review_notes_zh": [
+      "審查通過：已驗證 PersonaRuntimeProfile 與 model_routing 契約及 fail-closed 機制，通過 pytest 測試。"
+    ],
+    "review_file": "support/reviews/OCLAW-PMEM-001-review-antigravity.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T03:21:37Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-001",
+      "git_clean_required": false,
+      "commit": "788fc6db0469713a328c000ca7eb29974ff8d127",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OCLAW-PMEM-001",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4f7480eb80ef498f84c52609284f4af6f923a279",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Already implemented and merged (PR #2950 / commit d302bf8f2, 2026-07-04) — verified all 4 acceptance criteria pass on this branch (services/persona/runtime_profile.py + schema, BFF GET /bff/personas/{id}/runtime-profile, contract tests all green). Please review-approve so this stale re-dispatched task can be closed out without duplicate work; no code changes were made on this branch.",
+      "status": "done",
+      "created_at": "2026-07-11T03:04:27Z",
+      "resolved_at": "2026-07-11T03:05:10Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-001",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Auto-reassigned OCLAW-PMEM-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T03:05:10Z",
+      "resolved_at": "2026-07-11T03:07:55Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-001",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Persona runtime profile contract review approved.",
+      "status": "done",
+      "created_at": "2026-07-11T03:07:55Z",
+      "resolved_at": "2026-07-11T03:08:08Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-001",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Restoring review_approved: prior 'start' calls incorrectly demoted this task after Antigravity's approval (review_notes_zh + review_file already present as evidence). No new code changes needed; PersonaRuntimeProfile contract was already merged via PR #2950 (commit d302bf8f2).",
+      "status": "done",
+      "created_at": "2026-07-11T03:11:59Z",
+      "resolved_at": "2026-07-11T03:21:38Z"
+    }
+  ],
+  "blockers": []
+}

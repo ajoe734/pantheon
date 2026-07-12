@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+  "archived_at": "2026-07-04T12:43:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+    "title": "Prepare AG-DYNUI-PROD-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Hosted Acceptance",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001",
+      "AG-DYNUI-PROD-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed via PR #2957 (merged into dev at 2026-07-04T12:43:03Z). Re-verified reviewer-approved packet: execute-plans PR #171/#173 remain MERGED; hosted deployment.json advanced to 691f2ec56af9bbc592814563558c001860d8bc7f, matching execute-plans:dev HEAD exactly (PROD-003 deploy catch-up completed). AG-DYNUI-PROD-005 still todo/no implementation, AG-DYNUI-PROD-006 parent still todo/no branch -- packet's conclusion that PROD-005 is the sole hard blocker for the full hosted E2E still holds. No canonical truth, BFF runtime, registry/governance, or frontend implementation files touched.",
+    "last_update": "2026-07-04T12:43:38Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up 8 核准：commit eae6dc0c9 只改了 task brief 與 sidecar packet 兩個檔案，沒有碰 canonical truth/BFF runtime/registry/frontend。獨立重新核實：gh pr view 171/173 --repo ajoe734/execute-plans 皆為 MERGED（12:14:50Z / 12:22:37Z）；hosted deployment.json 目前已進一步推進到 691f2ec56af9bbc592814563558c001860d8bc7f（= packet 記錄的 dev HEAD），代表 packet 當時標記為 in_progress 的 PROD-003 deploy 現已完成——這與 packet 用語一致（當時如實記錄為 in-flight，未過度宣稱）。AI_NAME=Claude2 python3 scripts/ai_status.py show 確認 AG-DYNUI-PROD-005 仍 todo 無實作、parent AG-DYNUI-PROD-006 仍 todo 無 branch，PROD-005 維持唯一硬性 blocker，符合 packet §3-4 結論。同意 §5 更新後的建議：不要僅因 worker 閒置就派發 FOLLOWUP-9；不過 deploy 追上 dev HEAD 這件事本身已滿足 packet 列出的下一個 trigger 條件之一，之後如需再派發應在 next 訊息中一併記錄這點。"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T12:43:38Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-006-sidecar-bff-handoff-followup-8",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "git_clean_required": false,
+      "commit": "c2973ad18ea2fd006ad6bef699ded366017ba44d",
+      "commit_subject": "Merge pull request #2957 from ajoe734/task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c2973ad18ea2fd006ad6bef699ded366017ba44d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support-only follow-up 8 packet ready for review: PR https://github.com/ajoe734/pantheon/pull/2954 (auto-merge enabled). Two of five FOLLOWUP-6/-7 stop-churn triggers fired for the first time (execute-plans PR #171 and #173 merged; hosted deployment.json moved off dd597405...), but AG-DYNUI-PROD-005 remains todo/unimplemented and stays the sole hard blocker for the full hosted E2E; parent AG-DYNUI-PROD-006 still todo with no branch. See packet section 3-5 for full detail and updated FOLLOWUP-9 stop-churn criteria.",
+      "status": "done",
+      "created_at": "2026-07-04T12:31:48Z",
+      "resolved_at": "2026-07-04T12:33:42Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only AG-DYNUI-PROD-006 follow-up 8 approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-07-04T12:33:42Z",
+      "resolved_at": "2026-07-04T12:43:39Z"
+    }
+  ],
+  "blockers": []
+}

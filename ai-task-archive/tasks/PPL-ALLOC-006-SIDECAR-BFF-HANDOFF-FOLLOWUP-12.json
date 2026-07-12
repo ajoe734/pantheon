@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+  "archived_at": "2026-07-11T10:23:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend handoff follow-up finalized; reviewer-approved packet merged via Pantheon PR #3180 at dev merge 79ceb985036e5cf897e1d3afb93e464fa34be7ca; execute-plans PR #251 independently revalidated OPEN/non-draft/MERGEABLE at 436aa32e with integration-gate SUCCESS and no merge commit; no canonical or runtime layer changed.",
+    "last_update": "2026-07-11T10:23:42Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Reviewer 獨立重新驗證 PR #251 (OPEN/non-draft/MERGEABLE, head 436aa32e, integration-gate SUCCESS, 無 merge commit) 與 packet 內容一致；範圍僅限 support-only sidecar 檔案，未觸及 canonical truth",
+      "核准此 no-delta revalidation packet，交還 owner Codex 進行最終收尾"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T10:23:42Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-12",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "git_clean_required": false,
+      "commit": "11bcb1aa647251dd72009e92fbffb9dd2c5e28c4",
+      "commit_subject": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-12: close handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only finalization record for the reviewed BFF/frontend handoff packet.",
+        "Not changing": "canonical truth, BFF/frontend implementation, PR state, or parent lifecycle.",
+        "Composes with": "parent PPL-ALLOC-006 and execute-plans PR #251 delivery evidence.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; gh pr view 251 --repo ajoe734/execute-plans"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "79ceb985036e5cf897e1d3afb93e464fa34be7ca",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only no-delta BFF/frontend handoff revalidated at execute-plans PR #251 head 436aa32e; reviewer should preserve delivery and authoritative-readback boundaries.",
+      "status": "done",
+      "created_at": "2026-07-11T10:14:38Z",
+      "resolved_at": "2026-07-11T10:20:19Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Independently re-verified PR #251 state (OPEN/non-draft/MERGEABLE, head 436aa32e, integration-gate SUCCESS, no merge commit) matches the packet; scope confirmed support-only; approved and returned to Codex for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T10:20:19Z",
+      "resolved_at": "2026-07-11T10:23:43Z"
+    }
+  ],
+  "blockers": []
+}

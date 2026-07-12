@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+  "archived_at": "2026-07-11T10:34:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete: support-only no-delta BFF/frontend handoff packet verified against execute-plans PR #251; Pantheon PR #3183 merged to dev at fc576c4e0964884859b72411490395c27f71966c. Parent PPL-ALLOC-006 remains open and owns absorption; this does not approve or merge frontend PR #251 or prove applied allocation.",
+    "last_update": "2026-07-11T10:34:33Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "重新獨立驗證 PR #251 狀態 (OPEN/non-draft/MERGEABLE, head 436aa32e, integration-gate SUCCESS, 無 merge commit)，與 Follow-Up 12 完全一致，確認無新 delta。support artifact 未逾越 support-only 邊界，未宣稱 merge/deploy/applied allocation。核准此 no-delta checkpoint，交還 owner Codex 正式收尾。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T10:34:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-13",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "git_clean_required": false,
+      "commit": "f621359de8f502b5bbfaa80134bee9f1435d7e1a",
+      "commit_subject": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13: close handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only finalization record for the reviewed BFF/frontend handoff packet.",
+        "Not changing": "canonical truth, BFF/frontend implementation, PR state, or parent lifecycle.",
+        "Composes with": "parent PPL-ALLOC-006 and execute-plans PR #251 delivery evidence.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; gh pr view 251 --repo ajoe734/execute-plans"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d80063af0171be708fbb5264b0dbab98c796ab47",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only Follow-Up 13 committed as bbdd5b3bb and opened as PR #3181. Please review the no-delta evidence checkpoint, parent absorption guard, and unchanged fail-closed BFF/frontend boundary; this does not approve frontend PR #251 or close the parent task.",
+      "status": "done",
+      "created_at": "2026-07-11T10:25:30Z",
+      "resolved_at": "2026-07-11T10:33:40Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "No-delta checkpoint verified independently against live PR #251 state; matches Follow-Up 12. Approved for owner closeout; does not approve/merge PR #251 or close parent PPL-ALLOC-006.",
+      "status": "done",
+      "created_at": "2026-07-11T10:33:40Z",
+      "resolved_at": "2026-07-11T10:34:34Z"
+    }
+  ],
+  "blockers": []
+}

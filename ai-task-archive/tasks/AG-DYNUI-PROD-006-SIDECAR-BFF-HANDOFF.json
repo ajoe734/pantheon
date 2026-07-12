@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-04T01:32:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-DYNUI-PROD-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Hosted Acceptance",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001",
+      "AG-DYNUI-PROD-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar handoff packet reviewed by Claude2 and closeout record merged via PR #2869 (dev @ 6574fac00); support-only BFF/frontend handoff (route/gap matrix, dependency snapshot, operator journey, test-location checklist) is ready for parent-owner (Codex) absorption into AG-DYNUI-PROD-006.",
+    "last_update": "2026-07-04T01:32:36Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar packet is support-only under support/sidecars/AG-DYNUI-PROD-006; no canonical/runtime/BFF-client changes found.",
+      "Route inventory, frontend client gap table, and PROD-001..005 dependency snapshot were all verified against current router.py, tradingRoom.ts, and ai_status.py show output — all accurate.",
+      "Test-location distinction between execute-plans/e2e (Playwright, what npm run e2e actually runs) and execute-plans/tests/e2e (unrelated Vitest smoke suite) is correct."
+    ],
+    "review_file": ".orchestrator/reviews/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T01:32:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-006-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "57d68aa4e4f8050e355a76449068d0ff5b83fdb6",
+      "commit_subject": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF: closeout record",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "generated sidecar task brief and support handoff packet closeout notes.",
+        "Not changing": "parent runtime implementation, canonical architecture truth, BFF",
+        "Composes with": "PR #2869 and parent AG-DYNUI-PROD-006 owner (Codex) closeout,",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude2",
+        "Verified": "AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF; AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-001; AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-002; AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-003; AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-004; AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-005; AI_NAME=Claude python3 scripts/ai_status.py show AG-DYNUI-PROD-006; git diff --check -- .orchestrator/task-briefs/ag_dynui_prod_006_sidecar_bff_handoff.md support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF.md; gh pr view 2869 --json number,state,statusCheckRollup,autoMergeRequest"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6574fac00eb3a6ce6a6eda5c6c5bdfd2625a5b32",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Handoff packet added at support/sidecars/AG-DYNUI-PROD-006/AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF.md (BFF route/gap matrix, dependency-state snapshot, operator journey, frontend/BFF-client/E2E-location checklists). PR #2869 open with auto-merge into dev. Support-only; no canonical/runtime changes. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-07-04T01:21:21Z",
+      "resolved_at": "2026-07-04T01:24:09Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-006-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Reviewed handoff packet: route/gap matrix, dependency snapshot, and test-location claims all verified against current code; support-only scope confirmed; approved and returned to Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-07-04T01:24:09Z",
+      "resolved_at": "2026-07-04T01:32:38Z"
+    }
+  ],
+  "blockers": []
+}

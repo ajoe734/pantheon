@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-04T02:44:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare AG-DYNUI-PROD-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Shell Architecture",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-002/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #2877 merged into dev (merge commit 9a871ce94, task branch tip dd29db4ff). Packet reconfirmed: PR #171 still unmerged in ajoe734/execute-plans (human self-merge gate), hosted dev FE still on pre-fix commit; operator journey and reviewer handoff instructions recorded for AG-DYNUI-PROD-006. Sidecar closed; parent AG-DYNUI-PROD-002 closeout remains gated on hosted proof per its own reviewer note.",
+    "last_update": "2026-07-04T02:44:03Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "獨立驗證通過：PR#171 未合併(dev tip dd597405e0，merge-base 確認 67c0b04 非其祖先)、hosted /deployment.json 對應 pre-fix commit、封包僅新增 support 檔案未動 canonical/runtime/BFF/frontend/registry。核准，交還 owner Claude 收尾。"
+    ],
+    "review_file": "/tmp/review-AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T02:44:03Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-002-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "dd29db4ffb07a1199830e9b52be29fad4e911209",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9a871ce940e243881ca3acf38f3736258502892b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-07-04T01:59:11Z",
+      "resolved_at": "2026-07-04T01:59:24Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Support-only follow-up packet ready for review at support/sidecars/AG-DYNUI-PROD-002/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md. PR https://github.com/ajoe734/pantheon/pull/2877 open with auto-merge; please review and approve.",
+      "status": "done",
+      "created_at": "2026-07-04T02:06:07Z",
+      "resolved_at": "2026-07-04T02:32:44Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex2 to Claude2: Reviewer Codex2 has been quota_terminal since 2026-07-04T02:00:09Z with hint_blocked_until 2026-07-04T19:17:00Z (~17h real reset), far past the 30-min reviewer-quota-blocking threshold; zero review workers have started against this task since handoff at 02:06:07Z. Claude2 is healthy, unpaused, and not this task's owner (owner is Claude). Same repair pattern already applied successfully to the parent AG-DYNUI-PROD-002 by the 01:21Z chair cycle.",
+      "status": "done",
+      "created_at": "2026-07-04T02:32:44Z",
+      "resolved_at": "2026-07-04T02:34:23Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Reviewer Claude2 independently reproduced all packet claims (PR #171 unmerged via fresh-clone merge-base check, hosted deployment.json matches pre-fix dev tip, git status confirms support-only scope). Approved and returned to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-07-04T02:34:23Z",
+      "resolved_at": "2026-07-04T02:44:04Z"
+    }
+  ],
+  "blockers": []
+}
