@@ -57,3 +57,20 @@ The review artifact must contain exactly one verdict:
 
 Reviewers must not approve based only on unit tests, a green PR, a successful
 deployment job, or the existence of a rendered page.
+
+## MGMT-OPS-003-GAP-004 Rerun Record (2026-07-12)
+
+- [x] Exact hosted frontend SHA captured and tested.
+- [x] Authenticated Portfolio Book and attribution payloads captured.
+- [x] Desktop hosted workflow rerun passed.
+- [ ] Mobile hosted workflow rerun passed.
+- [ ] Strict-live browser run completed without fallback state.
+- [ ] Failed required network request count is zero.
+
+Verdict: `REQUEST_CHANGES`
+
+Direct evidence:
+`docs/deployment/evidence/mgmt-ops-003-gap/gap-004/20260712T000000Z/`.
+The mobile Human Inbox route rendered
+`strict: Failed to fetch · seed fallback blocked`; approval remains forbidden
+until a new deployment passes both viewports.
