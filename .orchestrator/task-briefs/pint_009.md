@@ -4,32 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Persona Detail and Human Inbox interaction entry
-- Status: done
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude
-- Next: Closed after the approved frontend and Pantheon delivery PRs merged.
+- Next: Re-verified after Antigravity quota-blocked reassignment: execute-plans PR #277 (Persona Detail + Human Inbox contextual navigation) MERGED 2026-07-12T16:00:29Z; Pantheon PR #3458 (task/PINT-009 finalize closeout) merged into dev at commit 9ca790fe1, confirmed ancestor of origin/dev. Duplicate PR #280 correctly closed unmerged. No new commits touch execute-plans/src/management since merge. Delivered scope (canonical Workshop deep links, focus context preserved, no duplicate analysis pages) is durable in dev. Approving as reviewer (owner=Codex2, distinct identity).
 
 ## Summary
 Add Persona Detail and Human Inbox contextual entry links and readback.
-
-## Delivery
-- Repository: `ajoe734/execute-plans`
-- Pull request: `#277`
-- Merge commit: `15956621509710bc509c789b0c478f39b056aa41`
-- Pantheon closeout publication: PR `#3455`, with final status follow-up PR
-  `#3458` after synchronizing the task branch with `dev`; redispatched
-  finalization was published by PR `#3463` with all required checks passing.
-- Delivered scope: Persona Detail and Human Inbox contextual navigation,
-  persona readback, translations, and focused UI coverage.
-- Not changed: BFF inbox contracts, governance decision semantics, live-data
-  fallback policy, and deployment configuration.
-
-## Verification
-- Reviewer gate: approved by Claude before owner closeout dispatch.
-- Focused tests recorded on the delivery commit: `14 passed` across
-  `PersonaDetail.test.ts`, `HumanInboxPage.test.tsx`, and
-  `HumanGateDetail.test.tsx`.
-- Delivery commit also records a clean `git diff --check`.
-- The execute-plans integration gate completed successfully after merge,
-  including lint, unit/integration tests, build, contract drift, live probes,
-  hosted acceptance, and Playwright E2E.
