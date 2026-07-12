@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "task_id": "TJ-E2E-009",
+  "archived_at": "2026-07-12T20:43:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "title": "Cross-entry IA integration",
+    "summary_zh": "依 Trade Journey E2E gap 規格執行：Cross-entry IA integration。",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "status": "done",
+    "phase": "Trade Journey E2E / Wave 3",
+    "next": "Owner finalized approved task TJ-E2E-009. Verified 13 vitest and 10 Playwright tests passing. Front-end execute-plans PR #281 merged (d335a0e70811b7d49fa630ddfe323e35929613b9). Back-end pantheon PR #3471 merged (54ff390b0a6a12fb38c5a3a6a09f87cd68299e43).",
+    "source_ref": {
+      "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-009-cross-entry-ia-integration.md",
+      "target_repo": "execute-plans",
+      "merge_target": "main"
+    },
+    "metadata": {
+      "wave": 3,
+      "fleet_lane": "cross-entry-ia-integration",
+      "target_repo": "execute-plans"
+    },
+    "created_at": "2026-07-11T22:58:28.902157+00:00",
+    "id": "TJ-E2E-009",
+    "depends_on": [
+      "TJ-E2E-006"
+    ],
+    "last_update": "2026-07-12T20:43:57Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11",
+    "review_notes_zh": [
+      "複審通過：execute-plans PR #281 HEAD 01940771a681a9b01efa37f57481e28533444b6c 已覆蓋 cross-entry IA、Cockpit destination、context preservation、ambiguity handling、代表性 links、desktop/mobile E2E；integration-gate run 29202911558 成功。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T20:43:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-009",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TJ-E2E-009",
+      "git_clean_required": false,
+      "commit": "0102d6d4a15f1a4b33d4af77a4a8c1475fdfa52c",
+      "commit_subject": "TJ-E2E-009: record review report and verify cross-entry integration",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "TJ-E2E-009",
+        "Reviewer": "Codex",
+        "Verified": "vitest, playwright"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TJ-E2E-009",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "54ff390b0a6a12fb38c5a3a6a09f87cd68299e43",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TJ-E2E-009",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: execute-plans PR #281 (https://github.com/ajoe734/execute-plans/pull/281, branch task/TJ-E2E-009 -> dev) adds View Trade Journeys cross-links (scoped by persona_id/strategy_id) from Persona, Strategy, Rankings quarterly (candidate proxy), Human Inbox, capital binding, Deployment, Runtime, Trading Pulse, and Incident; registers Trade Journeys in the sidebar manifest, breadcrumb registry, command palette, and hosted route baseline; fixes TradeJourneysPage silently dropping persona_id/strategy_id/decision_id/order_id/broker_order_id from the URL (now forwarded to the BFF query with a clearable focus banner); adds an incoming-context banner on Evidence Explorer for the journey_id param. No dedicated Order/Fill pages exist in this app to link from (confirmed by search); Candidate has no single canonical page either, so it's linked from the closest analog (Rankings Center quarterly rows). Verified: tsc --noEmit clean, eslint clean, npm run build succeeds, vitest 44/44 pass across touched files (incl. 2 new assertions), playwright e2e 6/6 pass on chromium+mobile-chromium for the new cross-link spec plus the pre-existing trade-journeys spec. Merged origin/dev (TJ-E2E-007 live-SSE, PINT-009) into the branch to resolve a conflict in TradeJourneysPage.tsx, re-verified after merge. PR is CI-green pending (FE-BFF Integration Gate running) and will need human merge per execute-plans governance (AI cannot self-merge) before this task can close.",
+      "status": "done",
+      "created_at": "2026-07-12T16:25:58Z",
+      "resolved_at": "2026-07-12T16:28:15Z"
+    },
+    {
+      "task_id": "TJ-E2E-009",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested on execute-plans PR #281: add the required Cockpit Trade Journey destination; preserve tenant/environment and explicit return context in cross-entry links; replace the list-to-list browser-back test with a real cross-entry -> filtered list -> journey detail -> back flow; add representative Strategy/Deployment/Incident and Cockpit E2E coverage. Keep open until integration-gate is green. Candidate/Order/Fill substitutions may remain documented only with acceptance coverage.",
+      "status": "done",
+      "created_at": "2026-07-12T16:28:15Z",
+      "resolved_at": "2026-07-12T16:28:15Z"
+    },
+    {
+      "task_id": "TJ-E2E-009",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete in ajoe734/execute-plans PR #281 (task/TJ-E2E-009 -> dev). Covers all task-packet cross-entry IA requirements: View-Trade-Journey links from Persona/Strategy/Rankings(candidate proxy)/Human Inbox/capital binding/Deployment/Runtime/Trading Pulse/Incident, plus an Evidence Explorer incoming-context banner for journey_id; sidebar/breadcrumb/hosted-route registration (command palette auto-surfaces); new Cockpit 'Trade Journeys' destination; shared tradeJourneyHref() helper preserving tenant_id/environment + return_to/return_label context; Playwright route-crawl/deep-link/real cross-entry->list->detail->back/mobile coverage (10/10 pass). Order/Fill have no dedicated pages in-app (documented scope note, identifiers reachable via journey resolve/search). All 4 reviewer required-changes comments already addressed at commit 2304aac; integration-gate SUCCESS (run 29201077436), mergeStateStatus CLEAN/MERGEABLE, mergedAt null. PR still needs a human merge (self-merge governance block applies to AI accounts on execute-plans). Please review/approve on the pantheon side; owner will run done once PR #281 merges.",
+      "status": "done",
+      "created_at": "2026-07-12T17:18:42Z",
+      "resolved_at": "2026-07-12T17:27:31Z"
+    },
+    {
+      "task_id": "TJ-E2E-009",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested on execute-plans PR #281 at 2304aac: preserve shared navigation context through every path. resolve() drops return_to/return_label; focused Show all journeys drops return context; detail All journeys drops originating list focus/filters and return context. Build URLs from one shared context helper and add regressions for resolve->detail, detail->All journeys, and Show all journeys retention. Focused existing tests could not run from the main checkout because PR files are not present there; integration-gate is green but current assertions encode the context loss.",
+      "status": "done",
+      "created_at": "2026-07-12T17:27:31Z",
+      "resolved_at": "2026-07-12T17:27:31Z"
+    },
+    {
+      "task_id": "TJ-E2E-009",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PR #281 (execute-plans) integration-gate check flipped to SUCCESS (run 29202911558) on HEAD 0194077. All 4 required changes from the 16:28 UTC review are addressed (commit 2304aac) plus follow-up return-context fixes pushed at 17:56 UTC (resolve()/Show-all-journeys/mobile-context gaps). PR is OPEN/MERGEABLE/CLEAN. No further owner-side code changes pending — ready for Codex re-review and approval before merge to execute-plans main.",
+      "status": "done",
+      "created_at": "2026-07-12T18:15:25Z",
+      "resolved_at": "2026-07-12T18:18:37Z"
+    },
+    {
+      "task_id": "TJ-E2E-009",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved for execute-plans PR #281 HEAD 01940771a681a9b01efa37f57481e28533444b6c; integration-gate run 29202911558 passed. Owner Claude must complete task-closeout finalization after PR #281 merges into main.",
+      "status": "done",
+      "created_at": "2026-07-12T18:18:37Z",
+      "resolved_at": "2026-07-12T20:20:25Z"
+    },
+    {
+      "task_id": "TJ-E2E-009",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Auto-reassigned ownership from Claude to Antigravity after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-07-12T20:20:25Z",
+      "resolved_at": "2026-07-12T20:43:58Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "TJ-E2E-009",
+      "owner": "Claude",
+      "waiting_for": "Human/Ops",
+      "message": "execute-plans PR #281 (head 2304aac, matches worktree HEAD) is OPEN/MERGEABLE/UNSTABLE; Wave 3 required-changes 1-4 already addressed and pushed, no new code changes needed. Pantheon FE-BFF Integration Gate run 29201077436 still IN_PROGRESS (started 2026-07-12T16:57:13Z). Once the gate passes, a human must merge the PR since AI cannot self-merge execute-plans PRs; ai-status.sh done will follow after merge.",
+      "status": "resolved",
+      "created_at": "2026-07-12T17:05:57Z",
+      "resolved_at": "2026-07-12T17:15:02Z"
+    },
+    {
+      "task_id": "TJ-E2E-009",
+      "owner": "Claude",
+      "waiting_for": "Codex",
+      "message": "PR #281 (execute-plans) is code-complete and integration-gate green at 2304aac; reviewer Codex raised a blocking governance comment (retarget dev->main, TJ-E2E-006 dependency gate) that appears to contradict canonical docs/frontend/execute-plans-dev-hosting.md and docs/operations/management-ai-openclaw-dev-bridge.md (both say dev is the active delivery/integration base, not main) plus established precedent (TJ-E2E-006 PR #269, TJ-E2E-007 PR #279 both merged to dev). TJ-E2E-006 is already merged to dev (PR #269, 2026-07-12T15:27:46Z) prior to this branch's first commit, so the dependency is satisfied at the code level even though ai-status.json still shows TJ-E2E-006 as todo. Posted a rebuttal with citations on PR #281 (https://github.com/ajoe734/execute-plans/pull/281#issuecomment-4952112727) asking Codex to re-review against dev. Waiting on reviewer response.",
+      "status": "resolved",
+      "created_at": "2026-07-12T17:32:56Z",
+      "resolved_at": "2026-07-12T17:45:01Z"
+    }
+  ]
+}
