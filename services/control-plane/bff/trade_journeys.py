@@ -16,6 +16,7 @@ id" from "not yours" (gap spec section 12).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -54,6 +55,60 @@ _LIVE_CAPITAL_FIELDS = ("quantity", "price")
 _LIVE_CAPITAL_VISIBLE_ROLES = {"operator", "approver", "admin", "reviewer"}
 
 ReadState = Literal["formal", "partial", "degraded", "unavailable"]
+
+_JOURNEY_ACTIONS = {
+    "escalate", "human_review", "pause", "cancel",
+    "reconciliation_retry", "incident_acknowledge",
+}
+_LIVE_ACTIONS = {"pause", "cancel", "reconciliation_retry"}
+
+
+class TradeJourneyActionRequest(BaseModel):
+    action: str
+    reason: str = Field(min_length=3, max_length=1000)
+    expected_revision: int = Field(ge=0)
+    confirm_token: str = Field(min_length=1)
+    incident_id: Optional[str] = None
+    return_to: Optional[str] = None
+
+
+class TradeJourneyActionEnvelope(BaseModel):
+    data: Dict[str, Any]
+    meta: Dict[str, Any]
+
+
+class JourneyActionLedger:
+    """Process-local admission ledger; production may inject a durable command bus.
+
+    The ledger never executes capital actions itself.  It only makes retries
+    deterministic and rejects reuse of a key for a different request.
+    """
+
+    def __init__(self) -> None:
+        self._records: Dict[str, Tuple[str, Dict[str, Any]]] = {}
+
+    def lookup(self, key: str, request_hash: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+        existing = self._records.get(key)
+        if existing is None:
+            return "new", None
+        if existing[0] != request_hash:
+            return "conflict", None
+        return "replay", dict(existing[1])
+
+    def record(self, key: str, request_hash: str, receipt: Dict[str, Any]) -> None:
+        self._records[key] = (request_hash, dict(receipt))
+
+
+ACTION_LEDGER = JourneyActionLedger()
+
+
+def _unconfigured_action_dispatcher(command: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "status": "partial_failure",
+        "code": "ACTION_DISPATCH_UNAVAILABLE",
+        "message": "Canonical governed command dispatcher is unavailable",
+        "readback": None,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -605,7 +660,10 @@ def create_trade_journeys_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[[Any], None],
+    require_operator_role: Optional[Callable[[Any], None]] = None,
     get_event_store: Callable[[], TradeJourneyEventStore] = lambda: EVENT_STORE,
+    dispatch_action: Callable[[Dict[str, Any]], Dict[str, Any]] = _unconfigured_action_dispatcher,
+    action_ledger: JourneyActionLedger = ACTION_LEDGER,
     utc_now: Callable[[], str] = _default_utc_now,
 ) -> APIRouter:
     """Factory for the `/bff/management/trade-journeys` route family.
@@ -618,6 +676,76 @@ def create_trade_journeys_router(
 
     def _identity(authorization: Optional[str]) -> Any:
         return extract_identity(authorization)
+
+    @router.post(
+        "/bff/management/trade-journeys/{journey_id}/actions",
+        response_model=TradeJourneyActionEnvelope,
+    )
+    async def bff_trade_journey_action(
+        journey_id: str,
+        request: TradeJourneyActionRequest,
+        tenant_id: str = Query(...),
+        environment: str = Query(...),
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ):
+        identity = _identity(authorization)
+        (require_operator_role or require_read_role)(identity)
+        if request.action not in _JOURNEY_ACTIONS:
+            return _err(400, "VALIDATION_FAILED", f"action must be one of {sorted(_JOURNEY_ACTIONS)}")
+        if not idempotency_key or len(idempotency_key.strip()) < 8:
+            return _err(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must contain at least 8 characters")
+        if environment not in _ALLOWED_ENVIRONMENTS:
+            return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
+        if environment == "live" and request.action in _LIVE_ACTIONS and os.getenv("PANTHEON_TRADE_JOURNEY_LIVE_ACTIONS", "false").lower() != "true":
+            return _err(403, "LIVE_ACTION_DISABLED", "Live-capital journey actions are feature-flagged off")
+        materializer = get_event_store().materializer()
+        projection = materializer.get(journey_id, tenant_id=tenant_id, environment=environment) if materializer and _tenant_allowed(identity, tenant_id) else None
+        if projection is None:
+            return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
+        if request.expected_revision != projection.snapshot.get("revision"):
+            return _err(409, "STALE_JOURNEY_REVISION", "Canonical journey changed; refetch before retry")
+
+        body = request.model_dump()
+        request_hash = hashlib.sha256(json.dumps({"journey_id": journey_id, "tenant_id": tenant_id, "environment": environment, **body}, sort_keys=True).encode()).hexdigest()
+        disposition, cached = action_ledger.lookup(idempotency_key.strip(), request_hash)
+        if disposition == "conflict":
+            return _err(409, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for a different command")
+        if cached is not None:
+            cached["idempotent_replay"] = True
+            return {"data": cached, "meta": {"snapshot_at": utc_now(), "refetch_required": True}}
+
+        command = {
+            "command_type": "trade_journey_action",
+            "journey_id": journey_id,
+            "tenant_id": tenant_id,
+            "environment": environment,
+            "idempotency_key": idempotency_key.strip(),
+            **body,
+            "human_inbox": {
+                "href": "/bff/management/human-inbox",
+                "return_to": request.return_to or f"/management/trade-journeys/{journey_id}",
+            },
+        }
+        result = dict(dispatch_action(command) or {})
+        status = str(result.get("status") or "partial_failure")
+        receipt = {
+            "receipt_id": str(result.get("receipt_id") or f"tja-{idempotency_key.strip()}"),
+            "journey_id": journey_id,
+            "action": request.action,
+            "status": status,
+            "readback": result.get("readback"),
+            "human_inbox": command["human_inbox"],
+            "idempotent_replay": False,
+        }
+        if status == "succeeded" and receipt["readback"] is None:
+            receipt["status"] = "partial_failure"
+            receipt["code"] = "READBACK_REQUIRED"
+        if result.get("code"):
+            receipt["code"] = result["code"]
+        action_ledger.record(idempotency_key.strip(), request_hash, receipt)
+        response_status = 200 if receipt["status"] == "succeeded" else 502
+        return JSONResponse(status_code=response_status, content={"data": receipt, "meta": {"snapshot_at": utc_now(), "refetch_required": True}})
 
     # NOTE: `resolve` and `metrics` are static siblings of the `{journey_id}`
     # path segment and MUST be registered before the `{journey_id}` routes

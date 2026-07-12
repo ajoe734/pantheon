@@ -58361,6 +58361,7 @@ from trade_journeys import create_trade_journeys_router as _create_trade_journey
 app.include_router(_create_trade_journeys_router(
     extract_identity=_extract_identity,
     require_read_role=_require_read_role,
+    require_operator_role=_require_operator_role,
 ))
 
 
