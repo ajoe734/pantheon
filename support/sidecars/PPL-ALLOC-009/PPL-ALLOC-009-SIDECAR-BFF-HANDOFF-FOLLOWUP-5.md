@@ -97,12 +97,12 @@ this support material into `PPL-ALLOC-009`; Claude retains parent review.
 
 ## Reviewer Checklist
 
-- [ ] Snapshot statements match current durable task state.
-- [ ] Missing active dependency rows are not treated as terminal success.
-- [ ] The `PPL-ALLOC-007` blocker remains explicit and is not worked around.
-- [ ] Admission, execution, readback, and frontend rendering remain distinct.
-- [ ] No new route, schema, governance, deployment, or capital truth is claimed.
-- [ ] Output is suitable for parent-owner composition as support material only.
+- [x] Snapshot statements match current durable task state.
+- [x] Missing active dependency rows are not treated as terminal success.
+- [x] The `PPL-ALLOC-007` blocker remains explicit and is not worked around.
+- [x] Admission, execution, readback, and frontend rendering remain distinct.
+- [x] No new route, schema, governance, deployment, or capital truth is claimed.
+- [x] Output is suitable for parent-owner composition as support material only.
 
 ## References
 
