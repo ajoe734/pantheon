@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Contract honesty: resolve 501 routes + refresh compatibility manifest
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.
+- Next: Review approved: formal 501 deferrals and v1.5 compatibility refresh are contract-honest; 17 focused tests passed and manifest verify --allow-pending succeeded. Owner must finalize task commit/PR into dev, then mark done.
 
 ## Summary
 v1_1 OpenAPI 承諾的 6 條 workshop 501 stub 路由逐條實作或正式標註 deferred；dev-compatibility-manifest 從 2026-06-21 pending 更新到 v1_5 現況。
