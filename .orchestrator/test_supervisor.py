@@ -530,6 +530,28 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertEqual(hint, datetime(2026, 5, 18, 16, 40, 0, tzinfo=timezone.utc))
 
+    def test_parse_quota_retry_hint_antigravity_relative_duration(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 7, 12, 12, 0, 0, tzinfo=timezone.utc)
+        hint = supervisor.parse_quota_retry_hint(
+            "Error: You have exhausted your capacity on this model. "
+            "Your quota will reset after 89h52m2s.",
+            now=now,
+        )
+
+        self.assertEqual(hint, now + timedelta(hours=89, minutes=52, seconds=2))
+
+    def test_parse_quota_retry_hint_relative_minutes_only(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 7, 12, 12, 0, 0, tzinfo=timezone.utc)
+        hint = supervisor.parse_quota_retry_hint(
+            "quota will reset in 45m", now=now
+        )
+
+        self.assertEqual(hint, now + timedelta(minutes=45))
+
     def test_parse_quota_retry_hint_returns_none_when_absent(self) -> None:
         self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
         self.assertIsNone(supervisor.parse_quota_retry_hint(None))
