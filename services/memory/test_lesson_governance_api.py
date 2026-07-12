@@ -100,7 +100,11 @@ def test_api_decide_gate_check_failure(client: TestClient) -> None:
         "episodes": [],
         "actor_roles": ["operator"],
     }
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 422
     assert "Endorsement blocked by evaluation gates" in resp.json()["detail"]["message"]
 
@@ -125,15 +129,19 @@ def test_api_decide_and_merge_success(client: TestClient) -> None:
         "episodes": episodes,
         "actor_roles": ["operator"],
     }
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 200
     assert resp.json()["review_state"] == "endorsed"
 
     # Merge to memory
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge", params={
-        "actor_id": "op-alice",
-        "actor_roles": "operator",
-    })
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge",
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 200
     assert resp.json()["review_state"] == "merged"
 
@@ -155,37 +163,45 @@ def test_api_rbac_authorization_failures(client: TestClient) -> None:
     payload = make_valid_candidate_payload()
     client.post("/api/memory/trade-lessons", json=payload)
 
-    # 1. Decide with unauthorized role (e.g. trainer_session) -> 403
+    # 1. Decide with unauthorized role in header (e.g. trainer_session) -> 403
     decide_payload = {
         "action": "endorse",
         "operator_id": "op-alice",
         "reason": "Approved",
         "audit_receipt_id": str(uuid.uuid4()),
-        "actor_roles": ["trainer_session"]
+        "actor_roles": ["operator"], # Attempt spoof in body
     }
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "trainer_session"}
+    )
     assert resp.status_code == 403
     assert "not authorized" in resp.json()["detail"]["message"]
 
-    # 2. Decide without actor_roles -> 403
+    # 2. Decide without actor_roles Header (X-Actor-Roles) -> 403
     decide_payload_no_roles = {
         "action": "endorse",
         "operator_id": "op-alice",
         "reason": "Approved",
         "audit_receipt_id": str(uuid.uuid4()),
     }
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload_no_roles)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload_no_roles,
+        headers={"X-Actor-ID": "op-alice"} # Missing X-Actor-Roles
+    )
     assert resp.status_code == 403
 
-    # 3. Merge with unauthorized role -> 403
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge", params={
-        "actor_id": "op-alice",
-        "actor_roles": "trainer_session",
-    })
+    # 3. Merge with unauthorized role in header -> 403
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge",
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "trainer_session"}
+    )
     assert resp.status_code == 403
     assert "not authorized" in resp.json()["detail"]["message"]
 
-    # 4. Merge without role -> 403
+    # 4. Merge without role in header -> 403
     resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge")
     assert resp.status_code == 403
 
@@ -209,7 +225,11 @@ def test_api_decide_receipt_validation_sensitive(client: TestClient, monkeypatch
 
     # Case A: Mock governance approval to return None (not found / spoofed) -> 403
     monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: None)
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 403
     assert "not found" in resp.json()["detail"]["message"]
 
@@ -221,7 +241,11 @@ def test_api_decide_receipt_validation_sensitive(client: TestClient, monkeypatch
         "persona_id": "persona-micro",  # candidate is persona-macro
     }
     monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_mismatched_decision)
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 403
     assert "persona mismatch" in resp.json()["detail"]["message"]
 
@@ -233,7 +257,11 @@ def test_api_decide_receipt_validation_sensitive(client: TestClient, monkeypatch
         "persona_id": "persona-macro",
     }
     monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_unapproved_decision)
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 403
     assert "is not approved" in resp.json()["detail"]["message"]
 
@@ -245,7 +273,11 @@ def test_api_decide_receipt_validation_sensitive(client: TestClient, monkeypatch
         "persona_id": "persona-macro",
     }
     monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_approved_decision)
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 200
     assert resp.json()["review_state"] == "endorsed"
 
@@ -284,7 +316,11 @@ def test_api_promotion_gates(client: TestClient, monkeypatch) -> None:
         "target_env": "live",
         "episodes": episodes,
     }
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_live_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_live_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 422
     assert "Promotion to live is blocked" in resp.json()["detail"]["message"]
 
@@ -298,13 +334,21 @@ def test_api_promotion_gates(client: TestClient, monkeypatch) -> None:
         "target_env": "canary",
         "episodes": episodes,
     }
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_canary_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_canary_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 200
     assert resp.json()["target_env"] == "canary"
     assert resp.json()["promotion_stage"] == "canary_approved"
 
     # 3. Promote to live from canary_approved -> 200
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_live_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_live_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 200
     assert resp.json()["target_env"] == "live"
     assert resp.json()["promotion_stage"] == "live_approved"
@@ -345,7 +389,11 @@ def test_api_promotion_stage_bypass_repro(client: TestClient, monkeypatch) -> No
         "promotion_stage": "canary_approved",
         "episodes": episodes,
     }
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_bypass_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_bypass_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 422
     assert "Invalid promotion_stage" in resp.json()["detail"]["message"]
 
@@ -366,7 +414,11 @@ def test_api_promotion_stage_bypass_repro(client: TestClient, monkeypatch) -> No
         "promotion_stage": "live_approved",
         "episodes": episodes,
     }
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_live_bypass_payload)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_live_bypass_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
     assert resp.status_code == 422
     assert "Promotion to live is blocked" in resp.json()["detail"]["message"]
 
@@ -389,6 +441,125 @@ def test_api_create_candidate_fail_closed_canary_live(client: TestClient) -> Non
     resp = client.post("/api/memory/trade-lessons", json=payload_stage)
     assert resp.status_code == 422
     assert "Cannot create candidate with promotion_stage 'canary_approved'" in resp.json()["detail"]["message"]
+
+
+def test_api_spoofed_role_negative(client: TestClient) -> None:
+    payload = make_valid_candidate_payload()
+    client.post("/api/memory/trade-lessons", json=payload)
+
+    # Attempt to spoof role via body but passing non-authorized roles in headers -> 403
+    decide_payload = {
+        "action": "endorse",
+        "operator_id": "op-alice",
+        "reason": "Approved",
+        "audit_receipt_id": str(uuid.uuid4()),
+        "actor_roles": ["operator"], # Spoofing role in JSON body
+    }
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "trainer_session"} # Headers are authoritative!
+    )
+    assert resp.status_code == 403
+
+
+def test_api_authz_dependency_unavailable_negative(client: TestClient, monkeypatch) -> None:
+    payload = make_valid_candidate_payload()
+    client.post("/api/memory/trade-lessons", json=payload)
+
+    # Set authz mode to remote, but do not provide a URL or mock failure to simulate dependency unavailable
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "remote")
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_AUTHZ_URL", "") # Empty -> unconfigured
+
+    decide_payload = {
+        "action": "endorse",
+        "operator_id": "op-alice",
+        "reason": "Approved",
+        "audit_receipt_id": str(uuid.uuid4()),
+    }
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
+    assert resp.status_code == 403
+    assert "Governance authz unconfigured" in resp.json()["detail"]["message"]
+
+    # Now provide a URL but simulate a connection failure
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_AUTHZ_URL", "http://invalid-governance-service-url")
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
+    assert resp.status_code == 403
+    assert "Governance authz service unavailable" in resp.json()["detail"]["message"]
+
+
+def test_api_merge_revalidate_receipt_sensitive(client: TestClient, monkeypatch) -> None:
+    # Sensitive change: scope is 'risk'
+    payload = make_valid_candidate_payload({
+        "scope": "risk",
+        "proposed_change": "Change leverage limit from 2x to 3x",
+    })
+    client.post("/api/memory/trade-lessons", json=payload)
+
+    audit_receipt_id = str(uuid.uuid4())
+    decide_payload = {
+        "action": "endorse",
+        "operator_id": "op-alice",
+        "reason": "Approved decision app-123 and deployment plan-456",
+        "audit_receipt_id": audit_receipt_id,
+        "actor_roles": ["operator"],
+    }
+
+    # Endorse first with valid mocked approval
+    mock_approved_decision = {
+        "decision_id": audit_receipt_id,
+        "decision": "approved",
+        "decision_state": "decided",
+        "persona_id": "persona-macro",
+    }
+    monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_approved_decision)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
+        json=decide_payload,
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
+    assert resp.status_code == 200
+
+    # Case A: At merge, mock decision to be None (revoked or not found) -> 403
+    monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: None)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge",
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
+    assert resp.status_code == 403
+    assert "not found at merge" in resp.json()["detail"]["message"]
+
+    # Case B: At merge, mock decision is not approved (rejected) -> 403
+    mock_rejected_decision = {
+        "decision_id": audit_receipt_id,
+        "decision": "rejected",
+        "decision_state": "decided",
+        "persona_id": "persona-macro",
+    }
+    monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_rejected_decision)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge",
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
+    assert resp.status_code == 403
+    assert "is not approved at merge" in resp.json()["detail"]["message"]
+
+    # Case C: At merge, mock decision matches approved -> 200
+    monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_approved_decision)
+    resp = client.post(
+        f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge",
+        headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "operator"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["review_state"] == "merged"
 
 
 
