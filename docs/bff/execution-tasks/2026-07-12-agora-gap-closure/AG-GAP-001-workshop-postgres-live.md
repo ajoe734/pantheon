@@ -2,7 +2,7 @@
 
 Status: implementation complete; live proof pending merged dev deployment.
 
-Owner: Codex  
+Owner: Codex
 Reviewer: Codex2
 
 ## Scope
