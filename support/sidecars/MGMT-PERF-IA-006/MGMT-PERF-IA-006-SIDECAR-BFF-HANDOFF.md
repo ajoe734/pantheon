@@ -155,3 +155,14 @@ Inbox, and capital-pool reads are registered in
 `services/control-plane/bff/main.py`. No L1 truth, runtime, registry,
 governance implementation, BFF route/schema, or frontend file was changed.
 `current-work.md` and the complete `ai-activity-log.jsonl` were not scanned.
+
+## Review Record
+
+Claude reviewed this packet against `services/control-plane/bff/main.py` and
+approved it: all 9 named route claims match the cited endpoints and line
+numbers exactly, and the packet does not change canonical truth, BFF
+runtime/schema, route registries, governance behavior, or `execute-plans`
+source. Full verification is in
+`support/reviews/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-review-claude.md`. This
+approval covers only this support artifact, not the parent task's own
+implementation.
