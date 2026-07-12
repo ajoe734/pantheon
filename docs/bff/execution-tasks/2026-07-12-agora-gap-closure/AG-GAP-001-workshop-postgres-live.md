@@ -1,6 +1,6 @@
 # AG-GAP-001 — Durable Workshop Postgres Backend on Dev
 
-Status: implementation complete; live proof pending merged dev deployment.
+Status: complete; merged dev restart-persistence proof passed.
 
 Owner: Codex
 Reviewer: Codex2
@@ -24,7 +24,7 @@ behavior, staging/live deployment policy, or broker authority.
 - [x] Startup logs identify `backend=postgres` and omit DSN credentials.
 - [x] A focused unit/config gate covers the settings and safe log output.
 - [x] The deployment workflow contains a restart-persistence smoke for dev.
-- [ ] A merged dev deployment records the workflow run and surviving
+- [x] A merged dev deployment records the workflow run and surviving
   `workshop_id` as live evidence.
 
 ## Validation
@@ -41,6 +41,13 @@ git diff --check origin/dev...HEAD
 
 ## Live Evidence
 
-Pending. The workflow gate runs only after the task implementation is merged
-and deployed to dev. Record the GitHub Actions run URL, deployed merge SHA,
-and surviving workshop ID here before final owner closeout.
+Passed on 2026-07-12 in [GitHub Actions run 29196187981](https://github.com/ajoe734/pantheon/actions/runs/29196187981):
+
+- deployed PR #3427 merge SHA
+  `19fdca5400618b23f6100435d85809b3ac64499f` to the dev BFF;
+- confirmed `AGORA_WORKSHOP_STORE_BACKEND=postgres` in the running container;
+- confirmed the credential-safe `backend=postgres` startup log;
+- created workshop `0ad19a18-dc7e-416a-8447-71a7473ed920` at
+  `2026-07-12T14:26:23Z`;
+- restarted `pantheon-operator-bff-1`, waited for readiness, and read the same
+  workshop ID back successfully.
