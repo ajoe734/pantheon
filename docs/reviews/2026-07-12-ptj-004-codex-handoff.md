@@ -2,7 +2,7 @@
 
 Owner: Codex  
 Reviewer: Codex2  
-Status: ready for review
+Status: review approved; ready for owner finalization
 
 ## Delivered boundary
 
@@ -30,7 +30,7 @@ python3 -m pytest services/control-plane/bff/test_ptj_004_trade_journal.py \
   services/control-plane/bff/test_no_undefined_call_symbols.py \
   services/control-plane/bff/test_bff_error_envelope_shape.py -q
 
-17 passed
+19 passed, 8 warnings
 ```
 
 The focused contract covers complete/partial/unavailable reads, pagination and environment filtering,
