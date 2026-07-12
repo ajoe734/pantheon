@@ -17,7 +17,8 @@ Add Persona Detail and Human Inbox contextual entry links and readback.
 - Pull request: `#277`
 - Merge commit: `15956621509710bc509c789b0c478f39b056aa41`
 - Pantheon closeout publication: PR `#3455`, with final status follow-up PR
-  `#3458` after synchronizing the task branch with `dev`.
+  `#3458` after synchronizing the task branch with `dev`; redispatched
+  finalization was published by PR `#3463` with all required checks passing.
 - Delivered scope: Persona Detail and Human Inbox contextual navigation,
   persona readback, translations, and focused UI coverage.
 - Not changed: BFF inbox contracts, governance decision semantics, live-data
