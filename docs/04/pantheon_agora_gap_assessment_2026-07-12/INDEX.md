@@ -25,6 +25,13 @@ SRCLIVE-001 activation evidence was merged in PR #3047. AG-GAP-013 owns the
 remaining read-model projection and live Agora readback proof; see the Agora
 gap-closure execution packet.
 
+## Private workshop content
+
+AG-GAP-009 closes the workshop `priv-content-stub://` gap. Raw messages cross
+only the owner-scoped private-content boundary; workshop events contain an
+opaque `pcnt_<ULID>` reference and a non-content-bearing redacted summary. See
+[the execution packet](../../bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-009-private-content-store.md).
+
 ## Checkout hygiene
 
 AG-GAP-011 establishes frontend checkout hygiene rules, audits and removes

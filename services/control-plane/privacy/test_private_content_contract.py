@@ -31,6 +31,7 @@ from privacy.private_content_policy import (  # noqa: E402
     validate_redaction_result,
 )
 from privacy.private_content_store import (  # noqa: E402
+    MemoryPrivateContentStore,
     PrivateContentStore,
     _DevKeyProvider,
     _decrypt_content,
@@ -108,6 +109,32 @@ def test_dev_key_provider_refuses_production(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(RuntimeError):
         _DevKeyProvider()
+
+
+def test_concrete_store_is_owner_scoped_idempotent_and_audited(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PANTHEON_ENV", raising=False)
+    monkeypatch.setenv("AGORA_PRIVATE_CONTENT_DEV_KEK", DEV_KEK)
+    store = MemoryPrivateContentStore(key_provider=_DevKeyProvider())
+    kwargs = dict(
+        tenant_id="tenant-001", owner_user_id="user-001", workshop_id="ws-001",
+        event_id="evt-001", content_type="text/plain", plaintext=b"secret alpha",
+        retention_class="workshop_default", idempotency_key="idem-001",
+    )
+    first = store.put(**kwargs)
+    second = store.put(**kwargs)
+    assert first.private_content_ref == second.private_content_ref
+    assert re.fullmatch(r"pcnt_[0-9A-HJKMNP-TV-Z]{26}", first.private_content_ref)
+    assert store.get_for_owner(
+        private_content_ref=first.private_content_ref, tenant_id="tenant-001",
+        owner_user_id="user-001", purpose="owner_view", request_id="req-001",
+    ) == b"secret alpha"
+    with pytest.raises(PrivateContentAccessDenied):
+        store.get_for_owner(
+            private_content_ref=first.private_content_ref, tenant_id="tenant-001",
+            owner_user_id="user-002", purpose="owner_view", request_id="req-002",
+        )
+    assert [record.outcome for record in store.audit_records] == ["success", "denied"]
+    assert "list" not in MemoryPrivateContentStore.__dict__
 
 
 def test_policy_owner_only_decrypt_and_fail_closed_redaction() -> None:

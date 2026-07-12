@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Protocol
 
@@ -176,6 +178,7 @@ class _DevKeyProvider:
             raise RuntimeError(
                 f"{self._ENV_VAR} must be a hex-encoded 32-byte value."
             ) from exc
+
         if len(key_bytes) != 32:
             raise RuntimeError(
                 f"{self._ENV_VAR} must be exactly 32 bytes (64 hex chars)."
@@ -220,6 +223,26 @@ class _DevKeyProvider:
             raise PrivateContentStoreUnavailable(
                 "Unable to unwrap encrypted DEK."
             ) from exc
+
+
+class EphemeralKeyProvider:
+    """Process-local KEK for an explicitly ephemeral non-production store."""
+
+    def __init__(self) -> None:
+        if os.environ.get("PANTHEON_ENV") == "production":
+            raise RuntimeError("EphemeralKeyProvider is forbidden in production.")
+        self._key = os.urandom(32)
+
+    def wrap_dek(self, dek: bytes, aad: bytes) -> tuple[bytes, str]:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        nonce = os.urandom(12)
+        return nonce + AESGCM(self._key).encrypt(nonce, dek, aad), "ephemeral-v1"
+
+    def unwrap_dek(self, encrypted_dek: bytes, kek_key_version: str, aad: bytes) -> bytes:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        if kek_key_version != "ephemeral-v1":
+            raise PrivateContentStoreUnavailable("Unknown ephemeral KEK version.")
+        return AESGCM(self._key).decrypt(encrypted_dek[:12], encrypted_dek[12:], aad)
 
 
 # ---------------------------------------------------------------------------
@@ -366,3 +389,124 @@ def compute_expires_at(
     if days is None:
         return None  # legal_hold: no automatic expiry
     return created_at.replace(tzinfo=timezone.utc) + timedelta(days=days)
+
+
+@dataclasses.dataclass
+class _StoredPrivateContent:
+    descriptor: PrivateContentDescriptor
+    envelope: _EncryptedEnvelope
+    ciphertext: bytes
+    idempotency_key: str
+
+
+class MemoryPrivateContentStore:
+    """Encrypted concrete store for dev/tests and dependency injection.
+
+    This implementation deliberately exposes no enumeration API.  Production
+    adapters can implement the same protocol with object storage and the
+    metadata table; the authorization, crypto envelope and lifecycle semantics
+    exercised here remain identical.
+    """
+
+    def __init__(self, *, key_provider: KeyProvider, now_fn=None) -> None:
+        self._key_provider = key_provider
+        self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
+        self._objects: dict[str, _StoredPrivateContent] = {}
+        self._idempotency: dict[tuple[str, str, str], str] = {}
+        self._audit: list[DecryptAuditRecord] = []
+        self._lock = threading.RLock()
+
+    @property
+    def audit_records(self) -> tuple[DecryptAuditRecord, ...]:
+        return tuple(self._audit)
+
+    def put(self, *, tenant_id: str, owner_user_id: str, workshop_id: str,
+            event_id: str, content_type: str, plaintext: bytes,
+            retention_class: RetentionClass, idempotency_key: str) -> PrivateContentDescriptor:
+        if not all((tenant_id, owner_user_id, workshop_id, event_id, content_type, idempotency_key)):
+            raise ValueError("Private-content identity fields must be non-empty.")
+        if not plaintext:
+            raise ValueError("Private content must be non-empty.")
+        if retention_class not in RETENTION_DAYS:
+            raise ValueError(f"Unknown retention class: {retention_class}")
+        idem = (tenant_id, owner_user_id, idempotency_key)
+        with self._lock:
+            existing_ref = self._idempotency.get(idem)
+            if existing_ref:
+                return self._objects[existing_ref].descriptor
+            created_at = self._now_fn()
+            ref = generate_private_content_ref()
+            ciphertext, _nonce, envelope = _encrypt_content(
+                plaintext=plaintext, key_provider=self._key_provider,
+                tenant_id=tenant_id, owner_user_id=owner_user_id,
+                workshop_id=workshop_id, event_id=event_id, content_type=content_type,
+            )
+            envelope = dataclasses.replace(envelope, object_uri=f"memory-private://{ref}")
+            descriptor = PrivateContentDescriptor(
+                private_content_ref=ref, tenant_id=tenant_id,
+                owner_user_id=owner_user_id, workshop_id=workshop_id,
+                event_id=event_id, content_type=content_type,
+                retention_class=retention_class,
+                expires_at=compute_expires_at(retention_class, created_at),
+                state="active", created_at=created_at,
+            )
+            self._objects[ref] = _StoredPrivateContent(descriptor, envelope, ciphertext, idempotency_key)
+            self._idempotency[idem] = ref
+            return descriptor
+
+    def get_for_owner(self, *, private_content_ref: str, tenant_id: str,
+                      owner_user_id: str, purpose: str, request_id: str) -> bytes:
+        now = self._now_fn()
+        outcome = "not_found"
+        stored = self._objects.get(private_content_ref)
+        try:
+            if stored is None:
+                raise PrivateContentAccessDenied("Private content is unavailable.")
+            d = stored.descriptor
+            if d.tenant_id != tenant_id or d.owner_user_id != owner_user_id or d.state != "active":
+                outcome = "denied"
+                raise PrivateContentAccessDenied("Private content is outside the owner scope.")
+            if d.expires_at is not None and d.expires_at <= now:
+                outcome = "expired"
+                raise PrivateContentExpired("Private content has expired.")
+            plaintext = _decrypt_content(
+                ct_with_tag=stored.ciphertext, envelope=stored.envelope,
+                key_provider=self._key_provider, tenant_id=d.tenant_id,
+                owner_user_id=d.owner_user_id, workshop_id=d.workshop_id,
+                event_id=d.event_id or "", content_type=d.content_type,
+            )
+            outcome = "success"
+            return plaintext
+        finally:
+            self._audit.append(DecryptAuditRecord(
+                private_content_ref=private_content_ref, tenant_id=tenant_id,
+                owner_user_id=owner_user_id, actor_ref=owner_user_id,
+                purpose=purpose, request_id=request_id, accessed_at=now,
+                outcome=outcome,
+            ))
+
+    def delete_for_owner(self, *, private_content_ref: str, tenant_id: str,
+                         owner_user_id: str, request_id: str) -> None:
+        with self._lock:
+            stored = self._objects.get(private_content_ref)
+            if stored is None or stored.descriptor.tenant_id != tenant_id or stored.descriptor.owner_user_id != owner_user_id:
+                raise PrivateContentAccessDenied("Private content is outside the owner scope.")
+            if stored.descriptor.retention_class == "legal_hold":
+                raise PrivateContentAccessDenied("Private content is under legal hold.")
+            stored.descriptor = dataclasses.replace(
+                stored.descriptor, state="deleted"
+            )
+            stored.ciphertext = b""
+            stored.envelope = dataclasses.replace(stored.envelope, encrypted_dek=b"")
+
+    def expire_due(self, *, now: datetime) -> int:
+        count = 0
+        with self._lock:
+            for stored in self._objects.values():
+                d = stored.descriptor
+                if d.state == "active" and d.expires_at is not None and d.expires_at <= now:
+                    stored.descriptor = dataclasses.replace(d, state="deleted")
+                    stored.ciphertext = b""
+                    stored.envelope = dataclasses.replace(stored.envelope, encrypted_dek=b"")
+                    count += 1
+        return count

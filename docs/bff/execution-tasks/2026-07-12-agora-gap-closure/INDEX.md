@@ -12,6 +12,9 @@
 - [AG-GAP-007 capabilities mismatch](AG-GAP-007-capabilities-mismatch.md): fixes the 
   BFF /bff/agora/capabilities endpoint silent projection loading failure and documents
   the dev journal dry-run residue cleanup procedure.
+- [AG-GAP-009 private content store](AG-GAP-009-private-content-store.md):
+  replaces workshop private-content stub references with owner-scoped,
+  envelope-encrypted `pcnt_<ULID>` storage and redacted event summaries.
 - [AG-GAP-011 FE checkout hygiene](AG-GAP-011-fe-checkout-hygiene.md): details
   the audit and removal of stale frontend checkouts and establishes rules for
   execute-plans workspace integrity.
