@@ -10,13 +10,22 @@ preview, and workspace versions can be compared or rolled back.
 
 ## Source Of Truth
 
-- Local design archive:
+**2026-07-12 update (AG-GAP-010):** the local design archive below is
+declared lost after a final documented search; see
+`design-parity-baseline-declaration.md` in this directory for the search log
+and the replacement parity baseline (closure pack specs + hosted screenshots
+pinned to a deploy SHA). Do not search for the archive again in future tasks.
+
+- Local design archive (lost, do not re-search):
   `/home/lupin/code/pantheon/AI Trading Desk Design.zip`
 - Frozen dynamic UI source/gap/invariant map:
   `docs/04/agora_design_pack_dynui_2026-06-28/source-map-and-gap-map.md`
 - Owner closeout evidence:
   `docs/04/agora_design_pack_dynui_2026-06-28/closeout.md`
-- Extracted reference used while creating this packet:
+- Design parity baseline declaration (replaces the lost archive):
+  `docs/04/agora_design_pack_dynui_2026-06-28/design-parity-baseline-declaration.md`
+- Extracted reference used while creating this packet (also no longer
+  present; see the declaration doc):
   `/tmp/ai-trading-desk-design/`
 - Primary documents:
   - `uploads/Pathreon_Agora_ClaudeDesign_UI_Requirement_V10_Expert_Strategy_Dialogue_2026-06-18.md`

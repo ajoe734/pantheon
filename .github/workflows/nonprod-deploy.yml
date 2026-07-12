@@ -205,6 +205,37 @@ jobs:
               ;;
           esac
 
+      - name: Dev Agora workshop restart persistence smoke
+        if: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') }}
+        env:
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
+        run: |
+          set -euo pipefail
+          idem="agora-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          workshop_id="$(
+            curl -fsS -X POST "${DEV_BFF_URL}/bff/agora/workshops" \
+              -H 'Authorization: Bearer agora-deploy-smoke:operator' \
+              -H "Idempotency-Key: ${idem}" \
+              -H 'Content-Type: application/json' \
+              --data '{"initial_message":"Versioned dev restart-persistence smoke"}' \
+              | jq -er '.data.workshop_id'
+          )"
+          gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            --ssh-flag=-T \
+            --command "docker inspect pantheon-operator-bff-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -q '^AGORA_WORKSHOP_STORE_BACKEND=postgres$' && docker logs pantheon-operator-bff-1 2>&1 | grep -q 'Agora workshop store initialized backend=postgres' && cd /home/lupin/code/pantheon && docker compose -p pantheon -f docker-compose.yml restart operator-bff"
+          for attempt in $(seq 1 30); do
+            if curl -fsS "${DEV_BFF_URL}/readyz" >/dev/null; then break; fi
+            sleep 2
+          done
+          test "$(curl -fsS "${DEV_BFF_URL}/bff/agora/workshops/${workshop_id}" -H 'Authorization: Bearer agora-deploy-smoke:operator' | jq -er '.data.workshop_id')" = "${workshop_id}"
+          echo "Workshop ${workshop_id} survived operator-bff restart." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Summarize auto-deploy
         if: github.event_name == 'push'
         run: |

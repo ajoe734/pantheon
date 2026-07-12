@@ -1,7 +1,7 @@
 {
   "manifest_version": "1.6",
   "extends": "v1.5",
-  "description": "Agora BFF capability manifest v1.6 - persona-to-persona opinion consultation and governed action authority event contracts (PINT-001). This is a contract freeze only: no new BFF/OpenAPI routes are introduced by this manifest.",
+  "description": "Agora BFF capability manifest v1.6 - persona-to-persona opinion consultation, governed action authority event contracts (PINT-001), and 12-block Winner Branch completeness contract (AG-GAP-012). This is a contract freeze only: no new BFF/OpenAPI routes are introduced by this manifest.",
   "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_6.json",
   "capabilities": [
     {
@@ -27,11 +27,24 @@
       "routes": [],
       "bff_route_families": [],
       "implementation_status": "contract_frozen_no_backend_routes"
+    },
+    {
+      "id": "winner_branch_completeness",
+      "name": "agora.winner_branch.completeness.v1",
+      "version": "1.0",
+      "description": "Cross-repo contract defining the 12 named Winner Branch block completeness assessment, mapped compatibly to the 7 generic completeness dimensions.",
+      "schemas": [
+        "WinnerBranchCompleteness"
+      ],
+      "routes": [],
+      "bff_route_families": [],
+      "implementation_status": "contract_frozen_no_backend_routes"
     }
   ],
   "required_definition_checksums": [
     "PersonaOpinionConsultationEvent",
-    "GovernedActionAuthorityRequest"
+    "GovernedActionAuthorityRequest",
+    "WinnerBranchCompleteness"
   ],
   "authority_boundary": {
     "persona_owned": [
@@ -59,5 +72,5 @@
     "command_execution": false,
     "schema_validator_required": true
   },
-  "note": "The v1.6 surface is additive over v1.5 and freezes two new event contracts only. It does not authorize direct trading actions, deployment, rollback, broker, or capital actions, and it does not itself execute the governed action -- execution stays owned by the domain service that owns the action per docs/decisions/control-plane-router-enforcement-ownership.md. BFF wiring / route implementation is out of scope for this freeze and is tracked as follow-up execution work."
+  "note": "The v1.6 surface is additive over v1.5 and freezes three new schemas/contracts. It does not authorize direct trading actions, deployment, rollback, broker, or capital actions, and it does not itself execute the governed action. BFF wiring / route implementation is out of scope for this freeze and is tracked as follow-up execution work."
 }

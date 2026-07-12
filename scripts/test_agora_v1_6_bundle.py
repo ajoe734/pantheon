@@ -13,6 +13,7 @@ AGORA_SPECS = ROOT / "services/control-plane/specs/agora"
 REQUIRED_DEFINITIONS = {
     "PersonaOpinionConsultationEvent",
     "GovernedActionAuthorityRequest",
+    "WinnerBranchCompleteness",
 }
 
 
@@ -94,6 +95,9 @@ def test_v1_6_required_definition_checksums_match_schema_file_hashes() -> None:
     )
     assert bundle["required_definition_checksums"]["GovernedActionAuthorityRequest"] == _sha256(
         AGORA_SPECS / "v7/governed_action_authority_request.schema.json"
+    )
+    assert bundle["required_definition_checksums"]["WinnerBranchCompleteness"] == _sha256(
+        AGORA_SPECS / "v7/winner_branch_completeness.schema.json"
     )
 
 
@@ -205,3 +209,128 @@ def test_authority_request_non_resolved_status_does_not_require_decision_by() ->
     )
     errors = list(validator.iter_errors(draft))
     assert errors == []
+
+
+def _winner_branch_completeness(**overrides) -> dict:
+    payload = {
+        "spec_version": "1.0",
+        "completeness_id": "wc-1",
+        "strategy_ref": "strat-1",
+        "assessed_by_persona_id": "persona-a",
+        "overall_grade": "mostly_complete",
+        "dimensions": [
+            {"dimension": "hypothesis", "grade": "complete"},
+            {"dimension": "data_dependencies", "grade": "complete"},
+            {"dimension": "market_scope", "grade": "complete"},
+            {"dimension": "evaluation_plan", "grade": "complete"},
+            {"dimension": "risk_constraints", "grade": "partial"},
+            {"dimension": "execution_profile", "grade": "complete"},
+            {"dimension": "governance", "grade": "complete"},
+        ],
+        "winner_branch_blocks": [
+            {"block_name": "market_scope", "grade": "confirmed", "mapped_dimension": "market_scope"},
+            {"block_name": "insider_branch_mapping", "grade": "confirmed", "mapped_dimension": "data_dependencies"},
+            {"block_name": "winner_branch_scoring", "grade": "confirmed", "mapped_dimension": "data_dependencies"},
+            {"block_name": "migration_reverse_flow", "grade": "confirmed", "mapped_dimension": "data_dependencies"},
+            {"block_name": "event_lead", "grade": "confirmed", "mapped_dimension": "hypothesis"},
+            {"block_name": "signal_formation", "grade": "confirmed", "mapped_dimension": "hypothesis"},
+            {"block_name": "entry_holding", "grade": "confirmed", "mapped_dimension": "evaluation_plan"},
+            {"block_name": "add_reduce_exit", "grade": "confirmed", "mapped_dimension": "evaluation_plan"},
+            {"block_name": "sizing_leverage", "grade": "weak", "mapped_dimension": "risk_constraints"},
+            {"block_name": "cost_liquidity_capacity", "grade": "confirmed", "mapped_dimension": "execution_profile"},
+            {"block_name": "validation_backtest_refutation", "grade": "confirmed", "mapped_dimension": "execution_profile"},
+            {"block_name": "monitoring_update", "grade": "confirmed", "mapped_dimension": "governance"},
+        ],
+        "assessed_at": "2026-07-12T00:00:00Z",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_winner_branch_completeness_accepts_canonical() -> None:
+    schema = _load_schema("winner_branch_completeness.schema.json")
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+    errors = list(validator.iter_errors(_winner_branch_completeness()))
+    assert errors == []
+
+
+def test_winner_branch_completeness_rejects_missing_required() -> None:
+    schema = _load_schema("winner_branch_completeness.schema.json")
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+    bad = _winner_branch_completeness()
+    del bad["winner_branch_blocks"]
+    errors = list(validator.iter_errors(bad))
+    assert errors
+
+
+def test_winner_branch_completeness_rejects_duplicate_dimensions() -> None:
+    schema = _load_schema("winner_branch_completeness.schema.json")
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+    
+    # 7 items, but "governance" is replaced with a duplicate "hypothesis"
+    bad = _winner_branch_completeness()
+    bad["dimensions"] = [
+        {"dimension": "hypothesis", "grade": "complete"},
+        {"dimension": "data_dependencies", "grade": "complete"},
+        {"dimension": "market_scope", "grade": "complete"},
+        {"dimension": "evaluation_plan", "grade": "complete"},
+        {"dimension": "risk_constraints", "grade": "partial"},
+        {"dimension": "execution_profile", "grade": "complete"},
+        {"dimension": "hypothesis", "grade": "complete"},  # duplicate
+    ]
+    errors = list(validator.iter_errors(bad))
+    assert errors, "Duplicate dimensions (missing governance) must fail validation"
+
+
+def test_winner_branch_completeness_rejects_incorrect_dimension_count() -> None:
+    schema = _load_schema("winner_branch_completeness.schema.json")
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+
+    # 6 items (missing governance)
+    bad_short = _winner_branch_completeness()
+    bad_short["dimensions"] = bad_short["dimensions"][:-1]
+    errors_short = list(validator.iter_errors(bad_short))
+    assert errors_short, "Fewer than 7 dimensions must fail validation"
+
+    # 8 items
+    bad_long = _winner_branch_completeness()
+    bad_long["dimensions"].append({"dimension": "governance", "grade": "complete"})
+    errors_long = list(validator.iter_errors(bad_long))
+    assert errors_long, "More than 7 dimensions must fail validation"
+
+
+def test_winner_branch_completeness_rejects_duplicate_winner_branch_blocks() -> None:
+    schema = _load_schema("winner_branch_completeness.schema.json")
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+
+    # 12 items, but "monitoring_update" is replaced with duplicate "market_scope"
+    bad = _winner_branch_completeness()
+    bad["winner_branch_blocks"][-1] = {
+        "block_name": "market_scope",
+        "grade": "confirmed",
+        "mapped_dimension": "market_scope",
+    }
+    errors = list(validator.iter_errors(bad))
+    assert errors, "Duplicate blocks (missing monitoring_update) must fail validation"
+
+
+def test_winner_branch_completeness_rejects_incorrect_block_count() -> None:
+    schema = _load_schema("winner_branch_completeness.schema.json")
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+
+    # 11 items
+    bad_short = _winner_branch_completeness()
+    bad_short["winner_branch_blocks"] = bad_short["winner_branch_blocks"][:-1]
+    errors_short = list(validator.iter_errors(bad_short))
+    assert errors_short, "Fewer than 12 blocks must fail validation"
+
+    # 13 items
+    bad_long = _winner_branch_completeness()
+    bad_long["winner_branch_blocks"].append({
+        "block_name": "monitoring_update",
+        "grade": "confirmed",
+        "mapped_dimension": "governance",
+    })
+    errors_long = list(validator.iter_errors(bad_long))
+    assert errors_long, "More than 12 blocks must fail validation"
+

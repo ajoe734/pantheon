@@ -60,9 +60,12 @@ Detailed hosted evidence and residual-risk disposition are archived in
 
 All dependencies `MGMT-PERF-IA-001` through `MGMT-PERF-IA-007` are terminal
 `done` in the canonical task archive. The deployed frontend is execute-plans
-`dev` commit `e4217ee6c49c40ef66284acec491b1b375971d0f` (PR #271), as reported by
-the hosted `/deployment.json` at `2026-07-12T13:02:20Z`. The frontend and BFF
-health probes both returned HTTP 200.
+`dev` commit `407d8227dc6508ad61a525d812199776f2db523b` (PR #274), as reported by
+the hosted `/deployment.json` at `2026-07-12T14:14:22Z`. The frontend and BFF
+health probes both returned HTTP 200. Post-merge integration gate run
+`29195825381` and dev deploy run `29195825522` both completed successfully;
+the integration gate includes the aggregate release verdict, hosted acceptance,
+and Playwright E2E against the final route wiring.
 
 The deployment is deliberately configured with `VITE_BFF_REAL_WRITES=false`.
 The accepted hosted outcome is therefore safely non-applied: navigation,
