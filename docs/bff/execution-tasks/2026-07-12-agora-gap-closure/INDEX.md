@@ -21,6 +21,9 @@
 - [AG-GAP-007 capabilities mismatch](AG-GAP-007-capabilities-mismatch.md): fixes the 
   BFF /bff/agora/capabilities endpoint silent projection loading failure and documents
   the dev journal dry-run residue cleanup procedure.
+- [AG-GAP-009 private content store](AG-GAP-009-private-content-store.md):
+  replaces workshop private-content stub references with owner-scoped,
+  envelope-encrypted `pcnt_<ULID>` storage and redacted event summaries.
 - [AG-GAP-008 Trading Room typed SSE](AG-GAP-008-trading-room-typed-sse.md):
   replaces the empty stream stub with immediate typed acknowledgement,
   user-scope isolation, bounded replay, and typed trader-decision delivery.
