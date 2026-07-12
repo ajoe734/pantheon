@@ -179,6 +179,7 @@ class RiskPolicyEvaluationContext:
     kill_switch_trigger: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     trace_id: str | None = None
+    correlation_envelope: Mapping[str, Any] | None = None
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "RiskPolicyEvaluationContext":
@@ -226,6 +227,7 @@ class RiskPolicyEvaluationContext:
             kill_switch_trigger=_first_text_or_none(payload, "kill_switch_trigger"),
             metadata=metadata,
             trace_id=_first_text_or_none(payload, "trace_id"),
+            correlation_envelope=_mapping(payload.get("correlation_envelope")) or None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -261,6 +263,7 @@ class RiskPolicyEvaluation:
     warnings: tuple[str, ...]
     evaluated_at: str
     trace_id: str
+    correlation_envelope: Mapping[str, Any] | None = None
 
     @property
     def allowed(self) -> bool:
@@ -274,7 +277,7 @@ class RiskPolicyEvaluation:
         return self.decision == RiskPolicyDecision.REJECTED.value
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "risk_policy_id": self.risk_policy_id,
             "risk_policy_version": self.risk_policy_version,
             "capital_pool_id": self.capital_pool_id,
@@ -287,6 +290,9 @@ class RiskPolicyEvaluation:
             "evaluated_at": self.evaluated_at,
             "trace_id": self.trace_id,
         }
+        if self.correlation_envelope:
+            payload["correlation_envelope"] = dict(self.correlation_envelope)
+        return payload
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "RiskPolicyEvaluation":
@@ -315,6 +321,7 @@ class RiskPolicyEvaluation:
             warnings=tuple(str(item) for item in payload.get("warnings", [])),
             evaluated_at=str(payload.get("evaluated_at") or ""),
             trace_id=str(payload.get("trace_id") or ""),
+            correlation_envelope=_mapping(payload.get("correlation_envelope")) or None,
         )
 
 
@@ -379,6 +386,15 @@ class RiskPolicyEvaluator:
         else:
             decision = RiskPolicyDecision.ALLOWED.value
 
+        envelope = None
+        if resolved_context.correlation_envelope:
+            from services.trade_journey.correlation_envelope import propagate_envelope
+            envelope = propagate_envelope(
+                resolved_context.correlation_envelope,
+                producer="risk.evaluation",
+                event_id=f"risk-evaluation:{resolved_context.target_id}:{uuid.uuid4().hex[:12]}",
+                event_time=utc_now(),
+            )
         return RiskPolicyEvaluation(
             risk_policy_id=resolved_policy.risk_policy_id,
             risk_policy_version=resolved_policy.version,
@@ -391,6 +407,7 @@ class RiskPolicyEvaluator:
             warnings=warnings,
             evaluated_at=utc_now(),
             trace_id=resolved_context.trace_id or f"risk-eval-{uuid.uuid4().hex[:12]}",
+            correlation_envelope=envelope,
         )
 
     def ensure_allowed(

@@ -21,6 +21,8 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
+from services.trade_journey.correlation_envelope import propagate_envelope
+
 _ERR_SANDBOX_DISABLED = "SHIOAJI_SANDBOX_DISABLED"
 _ERR_LIVE_DISABLED = "SHIOAJI_LIVE_DISABLED"
 _ERR_ORDER_NOT_FOUND = "SHIOAJI_ORDER_NOT_FOUND"
@@ -62,6 +64,7 @@ class ShioajiOrder:
     """Order record — same shape as PaperOrder plus shioaji_trade_id."""
 
     order_id: str
+    client_order_id: str
     capital_pool_id: str
     strategy_id: str
     symbol: str
@@ -88,6 +91,7 @@ class ShioajiOrder:
     shioaji_order_status: Optional[str] = None
     shioaji_order_status_code: Optional[str] = None
     shioaji_order_status_message: Optional[str] = None
+    correlation_envelope: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
@@ -468,6 +472,8 @@ class ShioajiBrokerAdapter:
         limit_price: Optional[float] = None,
         account_kind: str = _ACCOUNT_STOCK,
         futures_category: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+        correlation_envelope: Optional[Dict[str, Any]] = None,
     ) -> ShioajiOrder:
         """Submit an order to the Shioaji simulation (sandbox) account."""
         self._gate_check()
@@ -502,6 +508,17 @@ class ShioajiBrokerAdapter:
         spacing_wait, spacing_previous_elapsed = self._enforce_submit_spacing(account_key)
         now = _utc_now_iso()
         order_id = uuid.uuid4().hex
+        resolved_client_order_id = str(client_order_id or order_id)
+        broker_envelope = (
+            propagate_envelope(
+                correlation_envelope,
+                producer="broker.sinopac",
+                event_id=f"broker-order:{order_id}",
+                event_time=now,
+            )
+            if correlation_envelope is not None
+            else None
+        )
 
         try:
             trade = self._place_order_via_sdk(
@@ -529,6 +546,7 @@ class ShioajiBrokerAdapter:
 
         order = ShioajiOrder(
             order_id=order_id,
+            client_order_id=resolved_client_order_id,
             capital_pool_id=capital_pool_id,
             strategy_id=strategy_id,
             symbol=symbol,
@@ -550,6 +568,7 @@ class ShioajiBrokerAdapter:
             shioaji_order_status=trade_status.get("status"),
             shioaji_order_status_code=trade_status.get("status_code"),
             shioaji_order_status_message=trade_status.get("message"),
+            correlation_envelope=broker_envelope,
         )
 
         with self._lock:
