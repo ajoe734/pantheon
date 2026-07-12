@@ -14,6 +14,12 @@ This harness never calls a broker, never writes to a shared store, and never
 touches production telemetry: it only exercises the pure materializer and
 evaluator with in-memory synthetic events, so it is safe to run in CI and in
 an operator drill.
+
+Reviewer follow-up on PR #3460 found the original six scenarios covered
+conflicting-terminal-state conflicts but not identifier conflicts, and
+covered no broker-reject path even though `evaluate_data_quality` scores
+`broker_reject_rate`; ``identifier_conflict`` and ``broker_reject`` close
+both gaps.
 """
 from __future__ import annotations
 
@@ -62,6 +68,28 @@ def _orphan_identifier_scenario() -> tuple[list[dict[str, Any]], datetime, int]:
     return events, BASE_TIME + timedelta(seconds=1), 0
 
 
+def _identifier_conflict_scenario() -> tuple[list[dict[str, Any]], datetime, int]:
+    events = [
+        _event("idconflict-1", "tj-idconflict-1", "signal_generation", "succeeded", BASE_TIME, signal_id="sig-a"),
+        _event(
+            "idconflict-2", "tj-idconflict-1", "trade_decision", "succeeded",
+            BASE_TIME + timedelta(seconds=1), signal_id="sig-b",
+        ),
+    ]
+    return events, BASE_TIME + timedelta(seconds=2), 0
+
+
+def _broker_reject_scenario() -> tuple[list[dict[str, Any]], datetime, int]:
+    events = [
+        _event("brokerreject-1", "tj-brokerreject-1", "order_submission", "succeeded", BASE_TIME, client_order_id="c-1"),
+        _event(
+            "brokerreject-2", "tj-brokerreject-1", "broker_acknowledgement", "rejected",
+            BASE_TIME + timedelta(seconds=1), broker_order_id="b-1",
+        ),
+    ]
+    return events, BASE_TIME + timedelta(seconds=2), 0
+
+
 def _conflicting_terminal_scenario() -> tuple[list[dict[str, Any]], datetime, int]:
     events = [
         _event("conflict-1", "tj-conflict-1", "reconciliation", "succeeded", BASE_TIME),
@@ -100,9 +128,11 @@ DEFAULT_STALLED_DRILL_SECONDS = 1200  # > canary (300s) and > paper (900s) thres
 SCENARIOS: Mapping[str, tuple[str, Any]] = {
     "materializer_lag": ("materializer_lag_breach", _materializer_lag_scenario),
     "orphan_identifier": ("orphan_identifier", _orphan_identifier_scenario),
+    "identifier_conflict": ("identifier_conflict", _identifier_conflict_scenario),
     "conflicting_terminal": ("conflicting_terminal_states", _conflicting_terminal_scenario),
     "stalled": ("journey_stalled", _stalled_scenario),
     "reconciliation_mismatch": ("reconciliation_mismatch", _reconciliation_mismatch_scenario),
+    "broker_reject": ("broker_reject", _broker_reject_scenario),
     "stale_sse": ("sse_disconnect", _stale_sse_scenario),
 }
 
