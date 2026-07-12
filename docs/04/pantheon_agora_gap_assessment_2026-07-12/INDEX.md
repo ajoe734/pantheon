@@ -8,6 +8,10 @@ at startup without logging credentials, and prove that a workshop remains
 readable after the BFF container restarts. This does not change workshop API
 semantics, database schema, or staging/live deployment policy.
 
+AG-GAP-004 similarly moves dashboard recipes from router process memory into a
+Postgres-capable store. Recipe ETags, append-only versions, and rollback as a
+new version remain the public concurrency contract.
+
 AG-GAP-002 applies the same deployment boundary to Trading Room decision,
 intent, handoff, workspace, and dashboard-version state. The memory backend
 remains available for tests, while Pantheon dev selects Postgres and preserves
