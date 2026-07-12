@@ -3,6 +3,9 @@
 - [AG-GAP-001 durable workshop storage](AG-GAP-001-workshop-postgres-live.md):
   pins the dev workshop backend to Postgres and gates deployment on restart
   persistence.
+- [AG-GAP-004 durable dashboard recipe storage](AG-GAP-004-dashboard-postgres.md):
+  moves recipe identity/version/idempotency state behind a Postgres-capable
+  store while retaining ETag CAS, append-only history, and rollback semantics.
 - [AG-GAP-005 contract honesty](AG-GAP-005-contract-honesty.md): formally
   defers six workshop 501 operations and refreshes dev compatibility tracking
   from the stale v1.1 snapshot to the v1.5 additive contract.

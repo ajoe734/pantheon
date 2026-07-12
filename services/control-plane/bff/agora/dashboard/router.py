@@ -15,6 +15,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response
 
+from .store import MemoryDashboardRecipeStore, make_dashboard_recipe_store
+
 # ── Widget registry ──────────────────────────────────────────────────────────
 
 _WIDGET_REGISTRY_PATH = os.path.normpath(os.path.join(
@@ -71,8 +73,9 @@ _WIDGET_REGISTRY, _REGISTRY_SCHEMA_HASH = _load_widget_registry()
 #                                                      recipe_json, content_sha256, generated_by,
 #                                                      change_reason, created_at}
 
-_recipe_identity: Dict[str, dict] = {}
-_recipe_versions: Dict[Tuple[str, int], dict] = {}
+_default_store = MemoryDashboardRecipeStore()
+_recipe_identity = _default_store.identities  # compatibility for legacy tests
+_recipe_versions = _default_store.versions
 _recipe_feedback: List[dict] = []
 _widget_feedback: List[dict] = []
 _plugin_proposals: List[dict] = []
@@ -92,7 +95,7 @@ def _make_etag(recipe_id: str, version: int, content_sha256: str) -> str:
 
 
 def _get_version_record(recipe_id: str, version: int) -> Optional[dict]:
-    return _recipe_versions.get((recipe_id, version))
+    return _default_store.get_version(recipe_id, version)
 
 
 def _identity_scope(identity: Any) -> Dict[str, str]:
@@ -354,6 +357,7 @@ def create_dashboard_router(
     require_read_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
+    store: Optional[Any] = None,
 ) -> APIRouter:
     """Dashboard v2 router — agora.dashboard.v2.
 
@@ -361,6 +365,13 @@ def create_dashboard_router(
     append-only versioning and ETag-based optimistic concurrency.
     """
     router = APIRouter(tags=["agora-dashboard-v2"])
+    recipe_store = store or make_dashboard_recipe_store()
+    # Preserve existing tests that reset the historical module dictionaries.
+    if store is None and isinstance(recipe_store, MemoryDashboardRecipeStore):
+        recipe_store = _default_store
+
+    def get_version(recipe_id: str, version: int) -> Optional[dict]:
+        return recipe_store.get_version(recipe_id, version)
 
     # ── GET /bff/agora/strategies/{strategy_id}/dashboard-recipes ─────────
     @router.get("/bff/agora/strategies/{strategy_id}/dashboard-recipes")
@@ -376,12 +387,13 @@ def create_dashboard_router(
         require_read_role(identity)
 
         items = []
-        for recipe_id, ident in _recipe_identity.items():
+        for ident in recipe_store.list_identities():
+            recipe_id = ident["recipe_id"]
             if ident.get("strategy_id") != strategy_id:
                 continue
             if not _recipe_visible_to_identity(ident, identity):
                 continue
-            ver = _get_version_record(recipe_id, ident["active_version"])
+            ver = get_version(recipe_id, ident["active_version"])
             if ver is None:
                 continue
             rj = ver.get("recipe_json") or {}
@@ -441,11 +453,12 @@ def create_dashboard_router(
         if phase not in {"candidate_review", "monitoring", "position_monitoring", "post_trade_review"}:
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, f"Invalid phase '{phase}'", "invalid_phase")
 
-        if idempotency_key and idempotency_key in _seen_idempotency_keys:
-            for recipe_id, ident in _recipe_identity.items():
+        if recipe_store.has_idempotency_key(idempotency_key):
+            for ident in recipe_store.list_identities():
+                recipe_id = ident["recipe_id"]
                 if ident.get("strategy_id") != strategy_id:
                     continue
-                ver = _get_version_record(recipe_id, ident["active_version"])
+                ver = get_version(recipe_id, ident["active_version"])
                 if ver and ver.get("status") == "proposal":
                     rj = ver.get("recipe_json") or {}
                     if rj.get("workspace") == workspace and rj.get("phase") == phase:
@@ -485,7 +498,7 @@ def create_dashboard_router(
         content_sha256 = _sha256(recipe_json)
         recipe_json["content_sha256"] = content_sha256
 
-        _recipe_identity[recipe_id] = {
+        identity_record = {
             "recipe_id": recipe_id,
             "tenant_id": tenant_id,
             "user_id": user_id,
@@ -493,7 +506,7 @@ def create_dashboard_router(
             "active_version": 1,
             "created_at": now,
         }
-        _recipe_versions[(recipe_id, 1)] = {
+        version_record = {
             "recipe_id": recipe_id,
             "version": 1,
             "previous_version": None,
@@ -505,8 +518,7 @@ def create_dashboard_router(
             "created_at": now,
         }
 
-        if idempotency_key:
-            _seen_idempotency_keys.add(idempotency_key)
+        recipe_store.create_recipe(identity_record, version_record, idempotency_key)
 
         return {
             "data": {
@@ -532,7 +544,7 @@ def create_dashboard_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        ident = _recipe_identity.get(recipe_id)
+        ident = recipe_store.get_identity(recipe_id)
         if not ident:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
         if not _recipe_visible_to_identity(ident, identity):
@@ -542,7 +554,7 @@ def create_dashboard_router(
                 resource_id=recipe_id,
             )
 
-        ver = _get_version_record(recipe_id, ident["active_version"])
+        ver = get_version(recipe_id, ident["active_version"])
         if not ver:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Version record missing", "version_not_found")
 
@@ -580,7 +592,7 @@ def create_dashboard_router(
         if not isinstance(expected_version, int):
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "expected_version (integer) required", "missing_field")
 
-        ident = _recipe_identity.get(recipe_id)
+        ident = recipe_store.get_identity(recipe_id)
         if not ident:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
         if not _recipe_visible_to_identity(ident, identity):
@@ -591,7 +603,7 @@ def create_dashboard_router(
             )
 
         active_version = ident["active_version"]
-        cur_ver = _get_version_record(recipe_id, active_version)
+        cur_ver = get_version(recipe_id, active_version)
         if not cur_ver:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Version record missing", "version_not_found")
 
@@ -610,7 +622,7 @@ def create_dashboard_router(
                 },
             )
 
-        if idempotency_key and idempotency_key in _seen_idempotency_keys:
+        if recipe_store.has_idempotency_key(idempotency_key):
             response.headers["ETag"] = current_etag
             return {
                 "data": {"recipe_id": recipe_id, "version": active_version, "status": cur_ver["status"]},
@@ -629,7 +641,7 @@ def create_dashboard_router(
         new_sha256 = _sha256(new_recipe)
         new_recipe["content_sha256"] = new_sha256
 
-        _recipe_versions[(recipe_id, new_version)] = {
+        version_record = {
             "recipe_id": recipe_id,
             "version": new_version,
             "previous_version": active_version,
@@ -640,10 +652,8 @@ def create_dashboard_router(
             "change_reason": body.get("note") or "Accepted proposal",
             "created_at": now,
         }
-        _recipe_identity[recipe_id]["active_version"] = new_version
-
-        if idempotency_key:
-            _seen_idempotency_keys.add(idempotency_key)
+        if not recipe_store.append_version(recipe_id, active_version, version_record, idempotency_key):
+            raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Dashboard recipe changed after the client snapshot.", "etag_mismatch")
 
         new_etag = _make_etag(recipe_id, new_version, new_sha256)
         response.headers["ETag"] = new_etag
@@ -676,7 +686,7 @@ def create_dashboard_router(
         if not operations:
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "operations array must not be empty", "missing_operations")
 
-        ident = _recipe_identity.get(recipe_id)
+        ident = recipe_store.get_identity(recipe_id)
         if not ident:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
         if not _recipe_visible_to_identity(ident, identity):
@@ -687,7 +697,7 @@ def create_dashboard_router(
             )
 
         active_version = ident["active_version"]
-        cur_ver = _get_version_record(recipe_id, active_version)
+        cur_ver = get_version(recipe_id, active_version)
         if not cur_ver:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Version record missing", "version_not_found")
 
@@ -754,7 +764,7 @@ def create_dashboard_router(
         new_sha256 = _sha256(new_recipe)
         new_recipe["content_sha256"] = new_sha256
 
-        _recipe_versions[(recipe_id, new_version)] = {
+        version_record = {
             "recipe_id": recipe_id,
             "version": new_version,
             "previous_version": active_version,
@@ -765,10 +775,8 @@ def create_dashboard_router(
             "change_reason": body.get("reason") or "Layout patch",
             "created_at": now,
         }
-        _recipe_identity[recipe_id]["active_version"] = new_version
-
-        if idempotency_key:
-            _seen_idempotency_keys.add(idempotency_key)
+        if not recipe_store.append_version(recipe_id, active_version, version_record, idempotency_key):
+            raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Dashboard recipe changed after the client snapshot.", "etag_mismatch")
 
         new_etag = _make_etag(recipe_id, new_version, new_sha256)
         response.headers["ETag"] = new_etag
@@ -799,7 +807,7 @@ def create_dashboard_router(
         if not isinstance(expected_version, int) or not isinstance(target_version, int):
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "expected_version and target_version (integers) required", "missing_field")
 
-        ident = _recipe_identity.get(recipe_id)
+        ident = recipe_store.get_identity(recipe_id)
         if not ident:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
         if not _recipe_visible_to_identity(ident, identity):
@@ -810,7 +818,7 @@ def create_dashboard_router(
             )
 
         active_version = ident["active_version"]
-        cur_ver = _get_version_record(recipe_id, active_version)
+        cur_ver = get_version(recipe_id, active_version)
         if not cur_ver:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Version record missing", "version_not_found")
 
@@ -829,7 +837,7 @@ def create_dashboard_router(
                 },
             )
 
-        target_ver = _get_version_record(recipe_id, target_version)
+        target_ver = get_version(recipe_id, target_version)
         if not target_ver:
             raise bff_error(
                 404,
@@ -850,7 +858,7 @@ def create_dashboard_router(
         new_sha256 = _sha256(restored)
         restored["content_sha256"] = new_sha256
 
-        _recipe_versions[(recipe_id, new_version)] = {
+        version_record = {
             "recipe_id": recipe_id,
             "version": new_version,
             "previous_version": active_version,
@@ -861,10 +869,8 @@ def create_dashboard_router(
             "change_reason": body.get("reason") or f"Rollback to version {target_version}",
             "created_at": now,
         }
-        _recipe_identity[recipe_id]["active_version"] = new_version
-
-        if idempotency_key:
-            _seen_idempotency_keys.add(idempotency_key)
+        if not recipe_store.append_version(recipe_id, active_version, version_record, idempotency_key):
+            raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Dashboard recipe changed after the client snapshot.", "etag_mismatch")
 
         new_etag = _make_etag(recipe_id, new_version, new_sha256)
         response.headers["ETag"] = new_etag
@@ -890,9 +896,10 @@ def create_dashboard_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        if recipe_id not in _recipe_identity:
+        recipe_identity = recipe_store.get_identity(recipe_id)
+        if not recipe_identity:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
-        if not _recipe_visible_to_identity(_recipe_identity[recipe_id], identity):
+        if not _recipe_visible_to_identity(recipe_identity, identity):
             _raise_cross_user_forbidden(
                 bff_error=bff_error,
                 resource="dashboard_recipe",
@@ -906,7 +913,7 @@ def create_dashboard_router(
         if context not in {"after_accept", "after_use", "periodic_review"}:
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, f"Invalid context '{context}'", "invalid_context")
 
-        _recipe_feedback.append({
+        recipe_store.add_feedback({
             "recipe_id": recipe_id,
             "rating": rating,
             "comment": body.get("comment") or "",
@@ -931,9 +938,10 @@ def create_dashboard_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        if recipe_id not in _recipe_identity:
+        recipe_identity = recipe_store.get_identity(recipe_id)
+        if not recipe_identity:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
-        if not _recipe_visible_to_identity(_recipe_identity[recipe_id], identity):
+        if not _recipe_visible_to_identity(recipe_identity, identity):
             _raise_cross_user_forbidden(
                 bff_error=bff_error,
                 resource="dashboard_recipe",
@@ -941,7 +949,7 @@ def create_dashboard_router(
             )
 
         versions = sorted(
-            [v for (rid, _ver), v in _recipe_versions.items() if rid == recipe_id],
+            recipe_store.list_versions(recipe_id),
             key=lambda v: v["version"],
         )
         if cursor:
