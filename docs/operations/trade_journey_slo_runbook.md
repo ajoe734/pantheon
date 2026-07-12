@@ -15,10 +15,36 @@ The evaluation logic is a pure, side-effect-free module,
 `JourneyMaterializer` snapshot plus `source_watermarks`, computes the
 metrics required by the Trade Journey E2E observability gap spec section 13
 (`docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md`),
-and emits `DataQualityIncident` records. It does not write to a store, call
-a broker, or push to an external alert transport — the operator/on-call
-pipeline is responsible for taking `DataQualityIncident.alert_path` and
-routing it to `severity_channel`.
+and emits `DataQualityIncident` records.
+
+Reviewer follow-up on PR #3460 found that this pure evaluator had no runtime
+wiring: no exporter, no dashboard/alert-rule artifact, and no alert
+transport that consumed an emitted incident. That gap is closed by four
+additions, all covered by `test_alert_rules.py` / `test_dashboard.py` /
+`test_alert_transport.py` / `services/control-plane/bff/test_tj_e2e_011_slo_alert_endpoint.py`:
+
+- **Runtime exporter** — `GET /bff/management/trade-journeys/slo`
+  (`services/control-plane/bff/trade_journeys.py`) computes metrics/incidents
+  from the *live* materializer (not a synthetic drill), scoped by
+  `tenant_id`/`environment` and RBAC like every other route in this router
+  family.
+- **Alert-rule artifact** — `trade_journey_alert_rules.json` +
+  `alert_rules.py` drive the six aggregate SLO-breach checks
+  (materializer lag, correlation/reconciliation completeness, SSE
+  disconnects, detail/resolve API p95) from data, not hardcoded Python
+  thresholds. Per-journey diagnostics (stalled/orphan/identifier-conflict/
+  conflicting-terminal/reconciliation-mismatch/broker-reject) stay in
+  `evaluate_data_quality` because they require per-projection state.
+- **Dashboard artifact** — `trade_journey_slo_dashboard.json` +
+  `dashboard.py` name every `DataQualityMetrics` field as a panel;
+  `validate_dashboard()` fails if a panel drifts from a real field, and
+  `render_dashboard_snapshot()` populates live values/targets on every
+  `/slo` call.
+- **Alert transport** — `alert_transport.py`'s `DataQualityAlertTransport`
+  publishes every emitted incident onto the same shared outbox primitive
+  other Pantheon services use (`services/foundation/outbox.py`,
+  `JsonlOutboxStore`), so an incident has a durable, replayable record
+  instead of vanishing when the request returns.
 
 ## Metrics Measured
 
@@ -39,6 +65,9 @@ Computed by `compute_data_quality_metrics()`:
 | Reconciliation mismatch aging | `reconciliation_mismatch_max_age_seconds` | oldest `completed_with_variance` journey age |
 | Late-event lag | `late_event_lag_p95_ms` | p95 of `recorded_at - occurred_at` across the timeline |
 | SSE disconnects | `sse_disconnect_count` | supplied by the BFF SSE connection registry (not derived from the materializer) |
+| Stage latency | `stage_latency_ms` | per-stage p50/p95/sample-count of `recorded_at - occurred_at`, same shape as the TJ-E2E-005 `/metrics` endpoint's `stage_latency_ms` |
+| Journey detail API p95 | `detail_api_p95_ms` | p95 of real `detail`/`{journey_id}` handler latency, recorded by `ApiLatencyRecorder` and passed in via `detail_api_latencies_ms` |
+| Identifier resolve API p95 | `resolve_api_p95_ms` | p95 of real `resolve` handler latency, recorded the same way via `resolve_api_latencies_ms` |
 
 ## Default SLO Targets
 
@@ -61,20 +90,34 @@ to confirm the config still loads and passes the test suite.
 ## Alert Routing
 
 Every journey-scoped incident (`journey_stalled`, `orphan_identifier`,
-`conflicting_terminal_states`, `reconciliation_mismatch`, `broker_reject`)
-carries `journey_id`, `tenant_id`, `environment`, and `evidence_ref` pointing
-at `/bff/management/trade-journeys/{journey_id}/evidence` (the TJ-E2E-005
+`identifier_conflict`, `conflicting_terminal_states`,
+`reconciliation_mismatch`, `broker_reject`) carries `journey_id`,
+`tenant_id`, `environment`, and `evidence_ref` pointing at
+`/bff/management/trade-journeys/{journey_id}/evidence` (the TJ-E2E-005
 evidence route) — the operator can jump straight from the alert to the
 journey's evidence bundle. Aggregate SLO-breach incidents
 (`materializer_lag_breach`, `correlation_completeness_breach`,
-`reconciliation_completeness_breach`, `sse_disconnect`) are
-environment-scoped and route to `/bff/management/trade-journeys/attention`.
+`reconciliation_completeness_breach`, `sse_disconnect`,
+`detail_api_p95_breach`, `resolve_api_p95_breach`) are environment-scoped
+and route to `/bff/management/trade-journeys/attention`.
 
 Each `DataQualityIncident.alert_path` carries `event_type`,
 `severity_channel` (default `telemetry.alerts`), `operator_surface`,
-`escalation_target`, and this runbook's path. Wire `alert_path.event_type`
-to the operator's existing alert transport; this module does not publish
-alerts itself.
+`escalation_target`, and this runbook's path.
+
+`GET /bff/management/trade-journeys/slo?tenant_id=...&environment=...`
+(same RBAC/tenant-scope contract as every other route in
+`trade_journeys.py`) is the runtime integration point: it computes metrics
+and incidents from the live materializer, publishes every incident through
+`DataQualityAlertTransport.publish_incidents()`
+(`services/trade_journey/alert_transport.py`), and returns the metrics,
+incidents, `alerts_published` count, and a rendered dashboard snapshot in
+one response. The alert transport writes each incident as an
+`EventEnvelope`/`OutboxRecord` to a `JsonlOutboxStore` at
+`$PANTHEON_TRADE_JOURNEY_SLO_DATA_DIR/slo_alerts_outbox.jsonl` (defaults to
+`/tmp/pantheon/trade_journey_slo/slo_alerts_outbox.jsonl`) — an on-call
+consumer tails or replays that file the same way other Pantheon services
+consume their own outbox.
 
 ## Failure Injection
 
@@ -86,9 +129,11 @@ criterion ("故障注入可觸發 stalled/orphan/conflict/lag 告警"):
 |---|---|
 | `materializer_lag` | `materializer_lag_breach` |
 | `orphan_identifier` | `orphan_identifier` |
+| `identifier_conflict` | `identifier_conflict` |
 | `conflicting_terminal` | `conflicting_terminal_states` |
 | `stalled` | `journey_stalled` |
 | `reconciliation_mismatch` | `reconciliation_mismatch` |
+| `broker_reject` | `broker_reject` |
 | `stale_sse` | `sse_disconnect` |
 
 Run all drills:
@@ -147,9 +192,12 @@ Per gap spec section 19:
   `_events`/`_event_fingerprints` before repopulating, so a failed rebuild
   should be retried with corrected input rather than partially patched.
 - Rollback of this module (the SLO/alert layer itself) is config-only:
-  revert or edit `trade_journey_slo_targets.json` and stop routing
-  `alert_path.event_type` values to the alert transport. No producer,
-  materializer, or BFF route change is required to roll back alerting.
+  revert or edit `trade_journey_slo_targets.json`/
+  `trade_journey_alert_rules.json`, or stop calling
+  `DataQualityAlertTransport.publish_incidents()` from the BFF `/slo` route.
+  No producer, materializer, or other BFF route change is required to roll
+  back alerting; the `/slo` route itself can be disabled independently since
+  it only reads the materializer and writes to its own outbox file.
 
 ## Operational Notes
 
@@ -168,6 +216,10 @@ Per gap spec section 19:
 - Incidents are pure data — this module does not decide retry, throttling,
   or auto-remediation. An operator or the alert transport's own policy
   decides response actions.
+- `detail_api_p95_ms`/`resolve_api_p95_ms` reflect whatever samples
+  `ApiLatencyRecorder` has captured in the current BFF process since its
+  last restart (bounded ring buffer, default 500 samples per endpoint) —
+  they are not a durable, cross-restart time series.
 
 ## Verification
 
@@ -175,6 +227,10 @@ Focused tests:
 
 ```bash
 python3 -m pytest -q services/trade_journey/test_slo_data_quality.py
+python3 -m pytest -q services/trade_journey/test_alert_rules.py
+python3 -m pytest -q services/trade_journey/test_dashboard.py
+python3 -m pytest -q services/trade_journey/test_alert_transport.py
+python3 -m pytest -q services/control-plane/bff/test_tj_e2e_011_slo_alert_endpoint.py
 python3 -m pytest -q services/trade_journey/
 python3 -m services.trade_journey.failure_injection
 ```

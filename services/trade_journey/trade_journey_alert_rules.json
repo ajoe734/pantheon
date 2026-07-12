@@ -1,0 +1,56 @@
+{
+  "schema_version": "trade_journey_alert_rules.v1",
+  "source": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md#13",
+  "rules": [
+    {
+      "code": "materializer_lag_breach",
+      "metric_name": "materializer_lag_seconds",
+      "comparator": "gt",
+      "target_field": "producer_to_read_model_p95_seconds",
+      "severity": "critical",
+      "event_type": "trade_journey.slo.materializer_lag_breach"
+    },
+    {
+      "code": "correlation_completeness_breach",
+      "metric_name": "correlation_completeness_rate",
+      "comparator": "lt",
+      "target_field": "correlation_completeness_min",
+      "severity": "critical",
+      "event_type": "trade_journey.slo.correlation_completeness_breach"
+    },
+    {
+      "code": "reconciliation_completeness_breach",
+      "metric_name": "reconciliation_completeness_rate",
+      "comparator": "lt",
+      "target_field": "reconciliation_completeness_min",
+      "severity": "critical",
+      "event_type": "trade_journey.slo.reconciliation_completeness_breach"
+    },
+    {
+      "code": "sse_disconnect",
+      "metric_name": "sse_disconnect_count",
+      "comparator": "gt",
+      "threshold": 0,
+      "severity": "warning",
+      "event_type": "trade_journey.slo.sse_disconnect"
+    },
+    {
+      "code": "detail_api_p95_breach",
+      "metric_name": "detail_api_p95_ms",
+      "comparator": "gt",
+      "target_field": "detail_api_p95_seconds",
+      "target_unit_multiplier": 1000,
+      "severity": "critical",
+      "event_type": "trade_journey.slo.detail_api_p95_breach"
+    },
+    {
+      "code": "resolve_api_p95_breach",
+      "metric_name": "resolve_api_p95_ms",
+      "comparator": "gt",
+      "target_field": "resolve_p95_seconds",
+      "target_unit_multiplier": 1000,
+      "severity": "critical",
+      "event_type": "trade_journey.slo.resolve_api_p95_breach"
+    }
+  ]
+}

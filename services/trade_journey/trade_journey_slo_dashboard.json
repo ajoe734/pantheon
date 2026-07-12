@@ -1,0 +1,23 @@
+{
+  "schema_version": "trade_journey_slo_dashboard.v1",
+  "title": "Trade Journey SLO & Data Quality",
+  "source": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md#13",
+  "runbook": "docs/operations/trade_journey_slo_runbook.md",
+  "panels": [
+    {"panel_id": "materializer_lag", "title": "Materializer lag (producer -> read model)", "metric": "materializer_lag_seconds", "unit": "seconds", "target_field": "producer_to_read_model_p95_seconds"},
+    {"panel_id": "stalled_count", "title": "Stalled journeys", "metric": "stalled_count", "unit": "count", "target_field": null},
+    {"panel_id": "orphan_event_rate", "title": "Orphan event rate", "metric": "orphan_event_rate", "unit": "rate", "target_field": null},
+    {"panel_id": "missing_identifier_rate", "title": "Missing identifier rate", "metric": "missing_identifier_rate", "unit": "rate", "target_field": null},
+    {"panel_id": "identifier_conflict_rate", "title": "Identifier conflict rate", "metric": "identifier_conflict_rate", "unit": "rate", "target_field": null},
+    {"panel_id": "conflicting_terminal_rate", "title": "Conflicting terminal rate", "metric": "conflicting_terminal_rate", "unit": "rate", "target_field": null},
+    {"panel_id": "correlation_completeness", "title": "Correlation completeness", "metric": "correlation_completeness_rate", "unit": "rate", "target_field": "correlation_completeness_min"},
+    {"panel_id": "reconciliation_completeness", "title": "Reconciliation completeness", "metric": "reconciliation_completeness_rate", "unit": "rate", "target_field": "reconciliation_completeness_min"},
+    {"panel_id": "broker_reject_rate", "title": "Broker reject rate", "metric": "broker_reject_rate", "unit": "rate", "target_field": null},
+    {"panel_id": "partial_fill_max_age", "title": "Oldest unresolved partial fill", "metric": "partial_fill_max_age_seconds", "unit": "seconds", "target_field": null},
+    {"panel_id": "reconciliation_mismatch_max_age", "title": "Oldest unresolved reconciliation mismatch", "metric": "reconciliation_mismatch_max_age_seconds", "unit": "seconds", "target_field": null},
+    {"panel_id": "late_event_lag_p95", "title": "Late-event lag p95", "metric": "late_event_lag_p95_ms", "unit": "milliseconds", "target_field": null},
+    {"panel_id": "sse_disconnect_count", "title": "SSE disconnects", "metric": "sse_disconnect_count", "unit": "count", "target_field": null},
+    {"panel_id": "detail_api_p95", "title": "Journey detail API p95", "metric": "detail_api_p95_ms", "unit": "milliseconds", "target_field": "detail_api_p95_seconds", "target_unit_multiplier": 1000},
+    {"panel_id": "resolve_api_p95", "title": "Identifier resolve API p95", "metric": "resolve_api_p95_ms", "unit": "milliseconds", "target_field": "resolve_p95_seconds", "target_unit_multiplier": 1000}
+  ]
+}

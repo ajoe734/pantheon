@@ -118,6 +118,119 @@ def test_reconciliation_mismatch_ages_and_alerts():
     assert mismatch.severity == "critical"
 
 
+def test_stage_latency_ms_measures_per_stage_p50_p95():
+    materializer = JourneyMaterializer()
+    materializer.rebuild([
+        event("e1", "tj_1", "signal_generation", "succeeded", 0, signal_id="sig-1",
+              recorded_at="2026-07-12T00:00:00.500Z"),
+        event("e2", "tj_1", "signal_generation", "succeeded", 1, signal_id="sig-1",
+              recorded_at="2026-07-12T00:01:01.000Z"),
+    ])
+    now = datetime(2026, 7, 12, 0, 2, tzinfo=timezone.utc)
+    targets = load_slo_targets("paper")
+    metrics = compute_data_quality_metrics(
+        materializer.projections, environment="paper",
+        source_watermarks=materializer.source_watermarks, now=now,
+        stalled_after_seconds=targets.stalled_after_seconds,
+    )
+    assert "signal_generation" in metrics.stage_latency_ms
+    stage = metrics.stage_latency_ms["signal_generation"]
+    assert stage["sample_count"] == 2
+    assert stage["p95_ms"] == pytest.approx(1000.0)
+
+
+def test_detail_and_resolve_api_p95_are_none_without_samples():
+    materializer = JourneyMaterializer()
+    materializer.rebuild([event("e1", "tj_1", "signal_generation", "succeeded", 0, signal_id="sig-1")])
+    now = datetime(2026, 7, 12, 0, 0, 1, tzinfo=timezone.utc)
+    targets = load_slo_targets("paper")
+    metrics = compute_data_quality_metrics(
+        materializer.projections, environment="paper",
+        source_watermarks=materializer.source_watermarks, now=now,
+        stalled_after_seconds=targets.stalled_after_seconds,
+    )
+    assert metrics.detail_api_p95_ms is None
+    assert metrics.resolve_api_p95_ms is None
+
+
+def test_detail_api_p95_breach_fires_from_measured_latency_samples():
+    materializer = JourneyMaterializer()
+    materializer.rebuild([event("e1", "tj_1", "signal_generation", "succeeded", 0, signal_id="sig-1")])
+    now = datetime(2026, 7, 12, 0, 0, 1, tzinfo=timezone.utc)
+    targets = load_slo_targets("paper")  # detail_api_p95_seconds == 1.5s == 1500ms
+    metrics = compute_data_quality_metrics(
+        materializer.projections, environment="paper",
+        source_watermarks=materializer.source_watermarks, now=now,
+        stalled_after_seconds=targets.stalled_after_seconds,
+        detail_api_latencies_ms=[100.0, 200.0, 3000.0],
+    )
+    assert metrics.detail_api_p95_ms == pytest.approx(3000.0)
+    incidents = evaluate_data_quality(metrics, targets, materializer.projections, now=now)
+    breach = next(item for item in incidents if item.code == "detail_api_p95_breach")
+    assert breach.severity == "critical"
+    assert breach.observed_value == pytest.approx(3000.0)
+    assert breach.target_value == pytest.approx(1500.0)
+
+
+def test_resolve_api_p95_breach_fires_from_measured_latency_samples():
+    materializer = JourneyMaterializer()
+    materializer.rebuild([event("e1", "tj_1", "signal_generation", "succeeded", 0, signal_id="sig-1")])
+    now = datetime(2026, 7, 12, 0, 0, 1, tzinfo=timezone.utc)
+    targets = load_slo_targets("paper")  # resolve_p95_seconds == 1.0s == 1000ms
+    metrics = compute_data_quality_metrics(
+        materializer.projections, environment="paper",
+        source_watermarks=materializer.source_watermarks, now=now,
+        stalled_after_seconds=targets.stalled_after_seconds,
+        resolve_api_latencies_ms=[2000.0],
+    )
+    incidents = evaluate_data_quality(metrics, targets, materializer.projections, now=now)
+    breach = next(item for item in incidents if item.code == "resolve_api_p95_breach")
+    assert breach.observed_value == pytest.approx(2000.0)
+
+
+def test_identifier_conflict_journey_links_to_exact_journey_evidence():
+    materializer = JourneyMaterializer()
+    materializer.rebuild([
+        event("e1", "tj_conflict", "signal_generation", "succeeded", 0, signal_id="sig-a"),
+        event("e2", "tj_conflict", "trade_decision", "succeeded", 1, signal_id="sig-b"),
+    ])
+    now = datetime(2026, 7, 12, 0, 1, tzinfo=timezone.utc)
+    targets = load_slo_targets("canary")
+    metrics = compute_data_quality_metrics(
+        materializer.projections, environment="canary",
+        source_watermarks=materializer.source_watermarks, now=now,
+        stalled_after_seconds=targets.stalled_after_seconds,
+    )
+    assert metrics.identifier_conflict_rate == 1.0
+
+    incidents = evaluate_data_quality(metrics, targets, materializer.projections, now=now)
+    conflict = next(item for item in incidents if item.code == "identifier_conflict")
+    assert conflict.journey_id == "tj_conflict"
+    assert conflict.evidence_ref == "/bff/management/trade-journeys/tj_conflict/evidence"
+
+
+def test_broker_reject_journey_links_to_exact_journey_evidence():
+    materializer = JourneyMaterializer()
+    materializer.rebuild([
+        event("e1", "tj_reject", "order_submission", "succeeded", 0, client_order_id="c-1"),
+        event("e2", "tj_reject", "broker_acknowledgement", "rejected", 1, broker_order_id="b-1"),
+    ])
+    now = datetime(2026, 7, 12, 0, 1, tzinfo=timezone.utc)
+    targets = load_slo_targets("paper")
+    metrics = compute_data_quality_metrics(
+        materializer.projections, environment="paper",
+        source_watermarks=materializer.source_watermarks, now=now,
+        stalled_after_seconds=targets.stalled_after_seconds,
+    )
+    assert metrics.broker_reject_count == 1
+    assert metrics.broker_reject_rate == 1.0
+
+    incidents = evaluate_data_quality(metrics, targets, materializer.projections, now=now)
+    reject = next(item for item in incidents if item.code == "broker_reject")
+    assert reject.journey_id == "tj_reject"
+    assert reject.evidence_ref == "/bff/management/trade-journeys/tj_reject/evidence"
+
+
 @pytest.mark.parametrize("scenario", sorted(SCENARIOS))
 def test_failure_injection_scenario_triggers_expected_alert(scenario):
     result = assert_drill_triggers_alert(scenario)
