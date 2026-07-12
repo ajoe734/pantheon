@@ -104,6 +104,21 @@ this support material into `PPL-ALLOC-009`; Claude retains parent review.
 - [x] No new route, schema, governance, deployment, or capital truth is claimed.
 - [x] Output is suitable for parent-owner composition as support material only.
 
+## Finalization Record
+
+Antigravity approved this support-only packet and returned it to Codex for
+owner finalization. Closeout preserved the reviewed composition boundary and
+made no canonical, runtime, frontend, deployment, governance, or capital-state
+change.
+
+Focused verification on 2026-07-12:
+
+- `git diff --check origin/dev...HEAD`
+- existence checks for every file listed under References
+- commit trailer inspection for `9e3345e2a` and `e16fcf3ab`
+- `git status --short` to confirm the remaining task-scoped brief was the only
+  uncommitted path before the final commit
+
 ## References
 
 - `support/sidecars/PPL-ALLOC-009/PPL-ALLOC-009-SIDECAR-BFF-HANDOFF.md`
