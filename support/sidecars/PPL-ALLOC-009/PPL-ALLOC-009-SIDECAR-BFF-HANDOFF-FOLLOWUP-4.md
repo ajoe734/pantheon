@@ -93,6 +93,23 @@ state.
 Composes with: the original `PPL-ALLOC-009` handoff, follow-up-2 readiness
 gate, follow-up-3 stop/go matrix, and the parent owner's closeout archive.
 
+## Owner Finalization
+
+Reviewer approval was returned to the owner on 2026-07-12. The owner re-read
+the approved packet and confirmed that it remains a support-only gap and
+evidence handoff: all hosted/runtime verdicts remain `unproven`, and no L1
+truth, API contract, implementation, deployment, or capital state is changed.
+
+Focused closeout verification:
+
+- `git diff --check origin/dev...HEAD`
+- `rg -n "unproven|execute-plans|VITE_BFF_FALLBACK|authoritative readback|Not changing" support/sidecars/PPL-ALLOC-009/PPL-ALLOC-009-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md`
+
+Final disposition: approved for composition by the `PPL-ALLOC-009` parent
+owner as supporting material only. The parent owner retains responsibility for
+collecting the named deployment, API, negative-probe, and frontend evidence
+before changing any parent acceptance verdict.
+
 ## References
 
 - `support/sidecars/PPL-ALLOC-009/PPL-ALLOC-009-SIDECAR-BFF-HANDOFF.md`
