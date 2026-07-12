@@ -8,18 +8,20 @@
   "files": {
     "specs/agora/v7/persona_opinion_consultation_event.schema.json": "23e653ec9393fd583bde33c54767cffd09c3d7608955eb17cf275fbaff03b5d4",
     "specs/agora/v7/governed_action_authority_request.schema.json": "78674dd48c378dd3e1b9bc8371937855dec4df6ff3d56cc0fe96a33a669c77d5",
-    "specs/agora/v7/capability_manifest_v1_6.json": "bb29f60576b57a9139235023d4579830797570fe7823153c5f3eb1ba49278a48"
+    "specs/agora/v7/winner_branch_completeness.schema.json": "8a85739687f5a37865ef5ae954c263f239aea4b6928400edc7a67c2f66297f35",
+    "specs/agora/v7/capability_manifest_v1_6.json": "cc55b8dc8d41ff5a4287ab19cd83df482377e7ead072f124242b903575bda1f0"
   },
   "required_definition_checksums": {
     "PersonaOpinionConsultationEvent": "23e653ec9393fd583bde33c54767cffd09c3d7608955eb17cf275fbaff03b5d4",
-    "GovernedActionAuthorityRequest": "78674dd48c378dd3e1b9bc8371937855dec4df6ff3d56cc0fe96a33a669c77d5"
+    "GovernedActionAuthorityRequest": "78674dd48c378dd3e1b9bc8371937855dec4df6ff3d56cc0fe96a33a669c77d5",
+    "WinnerBranchCompleteness": "8a85739687f5a37865ef5ae954c263f239aea4b6928400edc7a67c2f66297f35"
   },
   "contract_refs": {
-    "source_design_packet": "docs/product/persona-interaction-and-governed-action-plan.md",
+    "source_design_packet": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-012-twelve-block-completeness.md",
     "consult_policy_model": "PERSONA_RUNTIME_MODEL.md",
     "persona_boundary_decision": "docs/decisions/control-plane-persona-boundary.md",
     "router_enforcement_ownership_decision": "docs/decisions/control-plane-router-enforcement-ownership.md",
     "adjacent_governance_consult_service": "services/consultation/consult_request.schema.json"
   },
-  "note": "Additive PINT-001 event-contract-only bundle for PersonaOpinionConsultationEvent and GovernedActionAuthorityRequest. No new OpenAPI file is introduced; there is no backend route surface in this freeze. Downstream BFF/route wiring is out of scope and tracked as follow-up execution work."
+  "note": "Additive PINT-001 and AG-GAP-012 event/completeness-contract-only bundle. No new OpenAPI file is introduced; there is no backend route surface in this freeze. Downstream BFF/route wiring is out of scope and tracked as follow-up execution work."
 }

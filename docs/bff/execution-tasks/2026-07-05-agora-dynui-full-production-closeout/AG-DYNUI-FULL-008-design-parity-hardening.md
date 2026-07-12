@@ -19,18 +19,23 @@ must keep the dynamic workflow proven by AG-DYNUI-FULL-006.
 
 ## Current Design Source State
 
-The user referenced:
+**2026-07-12 update (AG-GAP-010):** `AI Trading Desk Design.zip` is now
+formally declared lost after a final documented search found no copy of the
+file, its `/tmp/ai-trading-desk-design` extraction, or its primary source
+documents anywhere on the machine. It is retired as a gate — no future parity
+check may block on recovering it. The verifiable replacement baseline is
+recorded in
+`docs/04/agora_design_pack_dynui_2026-06-28/design-parity-baseline-declaration.md`:
+the closure packs' written IA/component specs (this file's parity-matrix
+criteria plus the 2026-06-28 design-pack invariants) and the hosted
+screenshots from `AG-DYNUI-LIVE-TABS-GATE-011`, pinned to deployed frontend
+commit `9d60297e5c200d05214df7f758ee0c20c224db02`. Any future maintenance pass
+on this task should diff against that baseline doc, not search for the zip
+again.
 
-- `/home/lupin/code/pantheon/AI%20Trading%20Desk%20Design.zip`
-
-That exact file is not present in the current repository root. The available
-local design pack is:
+The available local design pack remains:
 
 - `/home/lupin/code/pantheon/Pantheon_Agora_Design_Closure_Pack_2026-06-20.zip`
-
-If the missing `AI Trading Desk Design.zip` is later provided, this task must
-use it as the higher-priority source. Until then, use the available design
-closure pack and record the missing-file constraint explicitly.
 
 ## Owned Scope
 
@@ -119,4 +124,10 @@ Published design-parity work now includes:
 
 Do not create a duplicate implementation task for the above work. New work is allowed only for a concrete regression found by comparing the current deployed SHA against the available design pack and hosted screenshots.
 
-The referenced file /home/lupin/code/pantheon/AI%20Trading%20Desk%20Design.zip is still not present, and /home/lupin/code/pantheon/AI Trading Desk Design.zip was also not found. The available local design pack remains /home/lupin/code/pantheon/Pantheon_Agora_Design_Closure_Pack_2026-06-20.zip.
+## 2026-07-12 Baseline Declaration (AG-GAP-010)
+
+The referenced file `/home/lupin/code/pantheon/AI Trading Desk Design.zip` is
+declared lost; see the "Current Design Source State" update above and
+`docs/04/agora_design_pack_dynui_2026-06-28/design-parity-baseline-declaration.md`
+for the final search log and the replacement baseline. Do not reopen this
+search in a future task.
