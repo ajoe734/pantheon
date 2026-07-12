@@ -35,6 +35,7 @@ from .shadow.router import create_shadow_router
 from .personalization.router import create_personalization_router
 from .management_projection.router import create_management_projection_router
 from .dataset_extraction.router import create_dataset_extraction_router
+from .interaction.router import create_interaction_router
 from .governance.router import create_governance_router
 
 
@@ -181,6 +182,11 @@ def create_agora_router(
     router.include_router(create_personalization_router(**_kw))
     router.include_router(create_management_projection_router(**_kw))
     router.include_router(create_dataset_extraction_router(**_kw))
+    router.include_router(create_interaction_router(
+        **_kw,
+        get_read_store=get_read_store,
+        workshop_store=workshop_store,
+    ))
     router.include_router(create_governance_router(**_kw))
 
     return router
