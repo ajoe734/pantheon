@@ -380,6 +380,40 @@ def test_tj_e2e_005_resolve_single_match_is_unambiguous() -> None:
     _run(scenario)
 
 
+def test_tj_e2e_005_resolve_covers_every_claimed_identifier_from_research_to_reconciliation() -> None:
+    def scenario():
+        identifiers_data = {
+            "research_journey_id": "rj-unique-123",
+            "strategy_lifecycle_id": "sl-unique-123",
+            "signal_id": "sig-unique-123",
+            "decision_id": "dec-unique-123",
+            "risk_decision_id": "risk-unique-123",
+            "client_order_id": "co-unique-123",
+            "order_id": "ord-unique-123",
+            "broker_order_id": "bo-unique-123",
+            "broker_trade_id": "bt-unique-123",
+            "ledger_entry_id": "le-unique-123",
+            "reconciliation_id": "recon-unique-123",
+        }
+        # Ingest one event containing all of them
+        events = [_event("e_all", "tj_1", "reconciliation", "succeeded", 1, **identifiers_data)]
+        client, _ = _client_with(events)
+
+        # Test each identifier type resolves correctly to tj_1
+        for id_type, id_val in identifiers_data.items():
+            resp = client.get(
+                f"/bff/management/trade-journeys/resolve?q={id_val}&tenant_id=tenant-a&environment=paper",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, f"failed for {id_type}: {resp.text}"
+            data = resp.json()["data"]
+            assert data["ambiguous"] is False, f"ambiguity failed for {id_type}"
+            assert data["journey_ids"] == ["tj_1"], f"resolve failed for {id_type}"
+
+    _run(scenario)
+
+
+
 # --------------------------------------------------------------------------- #
 # Replay — read-only, honors as_of, avoids the TJ-E2E-004 precision bug class
 # --------------------------------------------------------------------------- #
