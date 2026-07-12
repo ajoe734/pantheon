@@ -558,6 +558,40 @@ async def decide_trade_lesson(
                     "message": f"Governance decision persona mismatch. Candidate: {candidate['persona_id']}, Decision: {decision.get('persona_id')}."
                 }
             )
+        target_id = decision.get("target_id")
+        if not target_id or not str(target_id).strip():
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": "Governance decision target_id is missing or empty."
+                }
+            )
+        if str(target_id).strip() != candidate["lesson_candidate_id"]:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision target_id mismatch. Candidate: {candidate['lesson_candidate_id']}, Decision: {target_id}."
+                }
+            )
+        target_version = decision.get("target_version")
+        if not target_version or not str(target_version).strip():
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": "Governance decision target_version is missing or empty."
+                }
+            )
+        if str(target_version).strip() != candidate.get("reflection_version"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision target_version mismatch. Candidate: {candidate.get('reflection_version')}, Decision: {target_version}."
+                }
+            )
 
     try:
         updated = _governance_service().decide(
@@ -644,6 +678,40 @@ async def merge_trade_lesson(
                 detail={
                     "error": "unauthorized",
                     "message": f"Governance decision persona mismatch at merge. Candidate: {candidate['persona_id']}, Decision: {decision.get('persona_id')}."
+                }
+            )
+        target_id = decision.get("target_id")
+        if not target_id or not str(target_id).strip():
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": "Governance decision target_id is missing or empty at merge."
+                }
+            )
+        if str(target_id).strip() != candidate["lesson_candidate_id"]:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision target_id mismatch at merge. Candidate: {candidate['lesson_candidate_id']}, Decision: {target_id}."
+                }
+            )
+        target_version = decision.get("target_version")
+        if not target_version or not str(target_version).strip():
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": "Governance decision target_version is missing or empty at merge."
+                }
+            )
+        if str(target_version).strip() != candidate.get("reflection_version"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision target_version mismatch at merge. Candidate: {candidate.get('reflection_version')}, Decision: {target_version}."
                 }
             )
 
