@@ -309,3 +309,65 @@ def test_api_promotion_gates(client: TestClient, monkeypatch) -> None:
     assert resp.json()["target_env"] == "live"
     assert resp.json()["promotion_stage"] == "live_approved"
 
+
+def test_api_promotion_stage_bypass_repro(client: TestClient, monkeypatch) -> None:
+    # Repro/Regression test for API-level promotion_stage bypass attempt
+    audit_receipt_id = str(uuid.uuid4())
+    mock_approved_decision = {
+        "decision_id": audit_receipt_id,
+        "decision": "approved",
+        "decision_state": "decided",
+        "persona_id": "persona-macro",
+    }
+    monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_approved_decision)
+
+    episodes = [
+        {"trade_episode_id": "ep1", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "regime": "bear_market"},
+        {"trade_episode_id": "ep3", "regime": "bull_market"},
+    ]
+    payload = make_valid_candidate_payload({
+        "scope": "strategy",
+        "trade_episode_ids": ["ep1", "ep2", "ep3"],
+        "target_env": "paper",
+        "promotion_stage": "proposed",
+    })
+    client.post("/api/memory/trade-lessons", json=payload)
+
+    # 1. Attempt to endorse target_env=paper with promotion_stage=canary_approved via API -> should return 422
+    decide_bypass_payload = {
+        "action": "endorse",
+        "operator_id": "op-alice",
+        "reason": "Approved decision app-123 and deployment plan-456",
+        "audit_receipt_id": audit_receipt_id,
+        "actor_roles": ["operator"],
+        "target_env": "paper",
+        "promotion_stage": "canary_approved",
+        "episodes": episodes,
+    }
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_bypass_payload)
+    assert resp.status_code == 422
+    assert "Invalid promotion_stage" in resp.json()["detail"]["message"]
+
+    # 2. Verify that the candidate is still "proposed" stage
+    resp = client.get(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}")
+    assert resp.status_code == 200
+    assert resp.json()["target_env"] == "paper"
+    assert resp.json()["promotion_stage"] == "proposed"
+
+    # 3. Attempt to endorse directly to live bypassing canary stage -> should return 422
+    decide_live_bypass_payload = {
+        "action": "endorse",
+        "operator_id": "op-alice",
+        "reason": "Approved decision app-123 and deployment plan-456",
+        "audit_receipt_id": audit_receipt_id,
+        "actor_roles": ["operator"],
+        "target_env": "live",
+        "promotion_stage": "live_approved",
+        "episodes": episodes,
+    }
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_live_bypass_payload)
+    assert resp.status_code == 422
+    assert "Promotion to live is blocked" in resp.json()["detail"]["message"]
+
+

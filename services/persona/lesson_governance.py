@@ -143,8 +143,24 @@ class TradeLessonCandidateStore:
             candidate["updated_at"] = candidate["created_at"]
         if "target_env" not in candidate:
             candidate["target_env"] = "paper"
+
+        # Derive stages server-side
+        env_to_stage = {
+            "paper": "proposed",
+            "canary": "canary_approved",
+            "live": "live_approved"
+        }
+        target_env = candidate["target_env"]
+        if target_env not in env_to_stage:
+            raise TradeLessonCandidateError(f"Invalid target environment: {target_env}")
+        
+        expected_stage = env_to_stage[target_env]
         if "promotion_stage" not in candidate:
-            candidate["promotion_stage"] = "proposed"
+            candidate["promotion_stage"] = expected_stage
+        elif candidate["promotion_stage"] != expected_stage:
+            raise TradeLessonCandidateError(
+                f"promotion_stage '{candidate['promotion_stage']}' does not match target_env '{target_env}'."
+            )
 
         json_errors = validate_lesson_candidate_json(candidate)
         if json_errors:
@@ -168,6 +184,23 @@ class TradeLessonCandidateStore:
         """Validate and update an existing candidate."""
         candidate = deepcopy(candidate_data)
         candidate["updated_at"] = utc_now()
+
+        env_to_stage = {
+            "paper": "proposed",
+            "canary": "canary_approved",
+            "live": "live_approved"
+        }
+        target_env = candidate.get("target_env", "paper")
+        if target_env not in env_to_stage:
+            raise TradeLessonCandidateError(f"Invalid target environment: {target_env}")
+            
+        expected_stage = env_to_stage[target_env]
+        if "promotion_stage" not in candidate:
+            candidate["promotion_stage"] = expected_stage
+        elif candidate["promotion_stage"] != expected_stage:
+            raise TradeLessonCandidateError(
+                f"promotion_stage '{candidate['promotion_stage']}' does not match target_env '{target_env}'."
+            )
 
         json_errors = validate_lesson_candidate_json(candidate)
         if json_errors:
@@ -298,21 +331,40 @@ class LessonGovernanceService:
             old_stage = candidate.get("promotion_stage", "proposed")
             
             new_env = target_env or old_env
-            new_stage = promotion_stage or old_stage
-
-            if new_env == "live" and old_stage != "canary_approved":
+            
+            # Map promotion stages server-side
+            env_to_stage = {
+                "paper": "proposed",
+                "canary": "canary_approved",
+                "live": "live_approved"
+            }
+            if new_env not in env_to_stage:
+                raise TradeLessonCandidateError(f"Invalid target environment: {new_env}")
+                
+            new_stage = env_to_stage[new_env]
+            
+            # If caller explicitly provided a stage, it must match the server-side derived stage
+            if promotion_stage and promotion_stage != new_stage:
                 raise TradeLessonCandidateError(
-                    "Promotion to live is blocked: candidate must be approved in canary stage first."
+                    f"Invalid promotion_stage '{promotion_stage}' for target_env '{new_env}'. "
+                    f"Must be '{new_stage}'."
                 )
 
-            # Map promotion stages automatically if not explicitly provided
-            if not promotion_stage:
-                if new_env == "canary":
-                    new_stage = "canary_approved"
-                elif new_env == "live":
-                    new_stage = "live_approved"
-                elif new_env == "paper":
-                    new_stage = "proposed"
+            # Enforce sequential transition matrix:
+            # - To promote to live, current state must be canary & canary_approved
+            # - To promote to canary, current state must be paper & proposed
+            if new_env == "live" and old_env != "live":
+                if old_env != "canary" or old_stage != "canary_approved":
+                    raise TradeLessonCandidateError(
+                        f"Promotion to live is blocked: candidate must transition from canary (canary_approved), "
+                        f"but current state is {old_env} ({old_stage})."
+                    )
+            elif new_env == "canary" and old_env != "canary":
+                if old_env != "paper" or old_stage != "proposed":
+                    raise TradeLessonCandidateError(
+                        f"Promotion to canary is blocked: candidate must transition from paper (proposed), "
+                        f"but current state is {old_env} ({old_stage})."
+                    )
 
             candidate["target_env"] = new_env
             candidate["promotion_stage"] = new_stage

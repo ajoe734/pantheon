@@ -298,3 +298,53 @@ def test_promotion_gates_fail_closed(governance_service: LessonGovernanceService
     assert endorsed_live["target_env"] == "live"
     assert endorsed_live["promotion_stage"] == "live_approved"
 
+
+def test_promotion_stage_governance_bypass_repro(governance_service: LessonGovernanceService) -> None:
+    # Repro/Regression test for promotion_stage bypass vulnerability
+    episodes = [
+        {"trade_episode_id": "ep1", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "regime": "bear_market"},
+        {"trade_episode_id": "ep3", "regime": "bull_market"},
+    ]
+    candidate = make_valid_candidate({
+        "scope": "strategy",
+        "trade_episode_ids": ["ep1", "ep2", "ep3"],
+        "target_env": "paper",
+        "promotion_stage": "proposed",
+    })
+    governance_service.store.create(candidate)
+
+    # 1. Attempting to endorse target_env=paper with promotion_stage=canary_approved
+    # should be rejected because promotion_stage must match target_env.
+    with pytest.raises(TradeLessonCandidateError, match="Invalid promotion_stage"):
+        governance_service.decide(
+            candidate["lesson_candidate_id"],
+            action="endorse",
+            operator_id="op-alice",
+            reason="Bypass attempt step 1",
+            audit_receipt_id=str(uuid.uuid4()),
+            target_env="paper",
+            promotion_stage="canary_approved",
+            episodes=episodes,
+        )
+
+    # 2. Check that the candidate's stage is still "proposed" and target_env is still "paper"
+    curr = governance_service.store.get(candidate["lesson_candidate_id"])
+    assert curr["target_env"] == "paper"
+    assert curr["promotion_stage"] == "proposed"
+
+    # 3. Attempting to promote directly to live (bypassing canary) from paper/proposed
+    # should fail even if caller-controlled promotion_stage is attempted.
+    with pytest.raises(TradeLessonCandidateError, match="Promotion to live is blocked"):
+        governance_service.decide(
+            candidate["lesson_candidate_id"],
+            action="endorse",
+            operator_id="op-alice",
+            reason="Bypass attempt step 2",
+            audit_receipt_id=str(uuid.uuid4()),
+            target_env="live",
+            promotion_stage="live_approved",
+            episodes=episodes,
+        )
+
+
