@@ -147,3 +147,15 @@ AI_NAME=Codex2 ./scripts/ai-status.sh handoff \
 - Changed only this support artifact. No canonical truth, Pantheon BFF/runtime
   code, schema, registry/governance implementation, or frontend source was
   changed.
+
+## 8. Closeout Record
+
+- Sidecar reviewer `Antigravity` approved the worksheet in
+  `support/reviews/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-23-review-antigravity.md`.
+- Approval applies only to this support packet; parent task
+  `MGMT-PERF-IA-006` remains owned and accepted independently.
+- Finalization verification: `git diff --check origin/dev...HEAD` and explicit
+  existence checks for the packet and reviewer artifact.
+- Parent absorption target remains `Antigravity`; no canonical, runtime, BFF,
+  schema, governance, registry, or frontend implementation was changed during
+  closeout.
