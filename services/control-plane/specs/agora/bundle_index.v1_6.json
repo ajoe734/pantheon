@@ -8,13 +8,13 @@
   "files": {
     "specs/agora/v7/persona_opinion_consultation_event.schema.json": "23e653ec9393fd583bde33c54767cffd09c3d7608955eb17cf275fbaff03b5d4",
     "specs/agora/v7/governed_action_authority_request.schema.json": "78674dd48c378dd3e1b9bc8371937855dec4df6ff3d56cc0fe96a33a669c77d5",
-    "specs/agora/v7/winner_branch_completeness.schema.json": "b75845a7ea809aee0c895be2287018276d4cf88b7d7c0a65d8d6f5143c316eb9",
+    "specs/agora/v7/winner_branch_completeness.schema.json": "8a85739687f5a37865ef5ae954c263f239aea4b6928400edc7a67c2f66297f35",
     "specs/agora/v7/capability_manifest_v1_6.json": "cc55b8dc8d41ff5a4287ab19cd83df482377e7ead072f124242b903575bda1f0"
   },
   "required_definition_checksums": {
     "PersonaOpinionConsultationEvent": "23e653ec9393fd583bde33c54767cffd09c3d7608955eb17cf275fbaff03b5d4",
     "GovernedActionAuthorityRequest": "78674dd48c378dd3e1b9bc8371937855dec4df6ff3d56cc0fe96a33a669c77d5",
-    "WinnerBranchCompleteness": "b75845a7ea809aee0c895be2287018276d4cf88b7d7c0a65d8d6f5143c316eb9"
+    "WinnerBranchCompleteness": "8a85739687f5a37865ef5ae954c263f239aea4b6928400edc7a67c2f66297f35"
   },
   "contract_refs": {
     "source_design_packet": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-012-twelve-block-completeness.md",
