@@ -130,23 +130,80 @@ def _ws_publish(
     return event_id
 
 
-def _ws_replay_after(workshop_id: str, last_event_id: str) -> List[dict]:
+def _ws_replay_after(
+    workshop_id: str,
+    last_event_id: str,
+    store: Optional[Any] = None,
+) -> List[dict]:
     """Return buffered events that came after *last_event_id*.
 
     Returns an empty list when last_event_id is not found (caller may treat
     this as a missed-event condition and reconnect from the top).
     """
     buf = _workshop_sse_buffers.get(workshop_id)
-    if not buf:
-        return []
     found = False
     replayed: List[dict] = []
-    for eid, evt in buf:
+    if buf:
+        for eid, evt in buf:
+            if found:
+                replayed.append(evt)
+            elif eid == last_event_id:
+                found = True
         if found:
-            replayed.append(evt)
-        elif eid == last_event_id:
-            found = True
-    return replayed  # empty when last_event_id is not in buffer
+            return replayed
+
+    # Database fallback to ensure reconnect/readback does not lose durable cards/events
+    if store and hasattr(store, "list_events"):
+        try:
+            db_events = store.list_events(workshop_id)
+            idx = -1
+            for i, ev in enumerate(db_events):
+                if ev.get("event_id") == last_event_id:
+                    idx = i
+                    break
+            if idx != -1:
+                replayed = []
+                for ev in db_events[idx + 1:]:
+                    payload_refs = ev.get("payload_refs_json")
+                    if isinstance(payload_refs, str) and payload_refs:
+                        try:
+                            payload_refs = json.loads(payload_refs)
+                        except Exception:
+                            pass
+                    if isinstance(payload_refs, dict) and "event_type" in payload_refs:
+                        # Reconstructed SSE event format from full DB event
+                        evt = {
+                            "id": ev["event_id"],
+                            "type": ev["event_type"],
+                            "timestamp": ev["created_at"],
+                            "data": {
+                                "workshop_id": workshop_id,
+                                **payload_refs
+                            }
+                        }
+                    else:
+                        evt = {
+                            "id": ev["event_id"],
+                            "type": ev["event_type"],
+                            "timestamp": ev["created_at"],
+                            "data": {
+                                "workshop_id": workshop_id,
+                                "event_id": ev["event_id"],
+                                "sequence_no": ev["sequence_no"],
+                                "actor_type": ev["actor_type"],
+                                "event_type": ev["event_type"],
+                                "private_content_ref": ev.get("private_content_ref"),
+                                "redacted_summary": ev.get("redacted_summary"),
+                                "payload_refs_json": payload_refs,
+                                "trace_id": ev.get("trace_id"),
+                            }
+                        }
+                    replayed.append(evt)
+                return replayed
+        except Exception:
+            pass
+    return []
+
 
 
 # --------------------------------------------------------------------------- #
@@ -1647,7 +1704,7 @@ def create_strategy_workshop_router(
             try:
                 # Replay missed events when client reconnects with Last-Event-ID
                 if last_event_id:
-                    for replayed_evt in _ws_replay_after(workshop_id, last_event_id):
+                    for replayed_evt in _ws_replay_after(workshop_id, last_event_id, store=store):
                         yield _ws_sse_format(replayed_evt)
 
                 # Immediate ack on connect — satisfies the < 2s first-acknowledgement requirement.
