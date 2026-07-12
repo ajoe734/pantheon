@@ -11,7 +11,7 @@ import json
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 
@@ -84,7 +84,7 @@ class TradeReflectionPipeline:
 
         try:
             generated = dict(self.provider.reflect(facts=deepcopy(snapshot), trigger=request.trigger))
-            artifact = self._artifact(request, generated, snapshot_ref, snapshot_hash, attempt)
+            artifact = self._artifact(request, generated, snapshot_ref, snapshot_hash)
         except Exception as exc:
             if attempt >= self.max_attempts:
                 self.dead_letters.append(
@@ -117,42 +117,46 @@ class TradeReflectionPipeline:
         generated: Mapping[str, Any],
         snapshot_ref: str,
         snapshot_hash: str,
-        attempt: int,
     ) -> dict[str, Any]:
         coverage = "partial" if request.missing_refs else "complete"
         unknowns = list(generated.get("unknowns", []))
         unknowns.extend(f"missing canonical ref: {ref}" for ref in request.missing_refs)
-        counterfactuals = []
-        for item in generated.get("counterfactuals", []):
-            marked = dict(item)
-            marked["is_counterfactual"] = True
-            marked.setdefault("uncertainty", "unknown")
-            counterfactuals.append(marked)
+        counterfactuals = [
+            {
+                "alternative_action": str(item.get("alternative_action", "unknown")),
+                "estimated_impact": str(item.get("estimated_impact", "unknown")),
+                "assumptions": str(item.get("assumptions", "unknown")),
+            }
+            for item in generated.get("counterfactuals", [])
+        ]
 
         lessons = []
         for item in generated.get("lesson_candidates", []):
-            lesson = dict(item)
-            lesson.update(
-                {
-                    "lesson_candidate_id": lesson.get("lesson_candidate_id", str(uuid.uuid4())),
-                    "supporting_episode_ids": list(request.trade_episode_ids),
-                    "review_state": "proposed",
-                    "mutation_authority": False,
-                }
-            )
+            lesson = {
+                "lesson_candidate_id": item.get("lesson_candidate_id", str(uuid.uuid4())),
+                "scope": str(item.get("scope", "unknown")),
+                "proposed_change": str(item.get("proposed_change", "unknown")),
+                "supporting_episode_ids": list(request.trade_episode_ids),
+                "confidence": item.get("confidence", 0),
+                "expiry": item.get("expiry", (self.now() + timedelta(days=30)).isoformat()),
+            }
             lessons.append(lesson)
+
+        generated_comparison = generated.get("expected_vs_actual", {})
+        expected_vs_actual = {
+            key: generated_comparison.get(key)
+            for key in ("thesis", "entry_quality", "exit_quality", "sizing", "timing", "risk_adherence")
+        }
 
         return {
             "reflection_id": str(uuid.uuid4()),
-            "request_id": request.request_id,
             "trade_episode_id": request.trade_episode_ids[0],
-            "supporting_episode_ids": list(request.trade_episode_ids),
             "persona_id": request.persona_id,
             "reflection_version": 1,
             "trigger": request.trigger,
             "facts_snapshot_ref": snapshot_ref,
             "facts_snapshot_hash": snapshot_hash,
-            "expected_vs_actual": dict(generated.get("expected_vs_actual", {})),
+            "expected_vs_actual": expected_vs_actual,
             "counterfactuals": counterfactuals,
             "attribution": generated.get("attribution", "unknown"),
             "mistakes": list(generated.get("mistakes", [])),
@@ -167,12 +171,6 @@ class TradeReflectionPipeline:
             "generated_at": self.now().isoformat(),
             "evidence_coverage": coverage,
             "review_state": "proposed",
-            "attempt": attempt,
-            "hindsight_guard": {
-                "outcome_is_not_decision_quality": True,
-                "missing_facts_are_unknown": True,
-                "counterfactuals_are_estimates": True,
-            },
         }
 
 

@@ -18,6 +18,11 @@ from services.execution.lean_runtime.pending_signal_store import (
     RedisPendingSignalStore,
     validate_signal_payload_minimal,
 )
+from services.trade_journey.correlation_envelope import (
+    CorrelationEnvelopeError,
+    mint_trade_envelope,
+    validate_envelope,
+)
 
 SIGNAL_SCHEMA_VERSION = "1.0"
 
@@ -162,6 +167,23 @@ def build_decision_signals(
         "strategy_id": normalized_strategy_id,
         "timestamp": timestamp,
     }
+    upstream_envelope = payload.get("correlation_envelope")
+    if upstream_envelope is not None:
+        if not isinstance(upstream_envelope, Mapping):
+            raise SignalProducerValidationError("correlation_envelope must be an object")
+        try:
+            if upstream_envelope.get("journey_id"):
+                common["correlation_envelope"] = validate_envelope(upstream_envelope)
+            else:
+                common["correlation_envelope"] = mint_trade_envelope(
+                    upstream_envelope,
+                    producer="execution.signal-decision",
+                    now=timestamp,
+                    journey_id=_first_string(payload, "journey_id"),
+                    event_id=_first_string(payload, "event_id"),
+                )
+        except CorrelationEnvelopeError as exc:
+            raise SignalProducerValidationError(str(exc)) from exc
     if run_id or _first_string(payload, "run_id"):
         common["run_id"] = str(run_id or _first_string(payload, "run_id"))
     if binding_id or _first_string(payload, "binding_id"):
