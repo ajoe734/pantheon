@@ -7,7 +7,7 @@ import threading
 import uuid
 from typing import Any, Callable, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -163,8 +163,225 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         resolved = scope(authorization, x_tenant_id)
         return {"data": eligibility(body, resolved), "meta": {"snapshot_at": utc_now(), "capability": "agora.persona.interaction.v1"}}
 
+    def simulate_interaction_debate_and_synthesis(
+        workshop_id: str,
+        interaction_id: str,
+        topic: str,
+        mode: str,
+        participants: List[str],
+        context_refs: List[ContextRef],
+        tenant_id: str,
+        user_id: str,
+        trace_id: str,
+    ) -> None:
+        from agora.strategy_workshop.router import _ws_publish
+
+        # 1. opinion_requested event
+        req_event_id = f"evt-{uuid.uuid4().hex[:12]}"
+        requested_event = {
+            "spec_version": "1.0",
+            "event_id": req_event_id,
+            "event_type": "opinion_requested",
+            "interaction_id": interaction_id,
+            "topic": topic,
+            "requester": {"actor_type": "human", "actor_id": user_id, "display_name": "Operator"},
+            "participants": [{"actor": {"actor_type": "persona_session", "actor_id": p, "session_id": f"sess-{p}", "display_name": f"Persona {p}"}, "role": "responder"} for p in participants],
+            "context_refs": [ref.model_dump() for ref in context_refs],
+            "status": "open",
+            "no_capital_authority_proof": "persona_interaction_event_no_capital_or_order_authority",
+            "trace_id": trace_id,
+            "created_at": utc_now()
+        }
+        workshop_store.create_event({
+            "event_id": req_event_id,
+            "workshop_id": workshop_id,
+            "actor_type": "operator",
+            "event_type": "opinion_requested",
+            "private_content_ref": f"priv-content-stub://{req_event_id}",
+            "redacted_summary": f"Opinion requested for topic: {topic}",
+            "payload_refs_json": requested_event,
+            "trace_id": trace_id,
+        })
+        _ws_publish(workshop_id, "consultation.started", {
+            "interaction_id": interaction_id,
+            "topic": topic,
+            "participants": participants,
+            "trace_id": trace_id,
+            "event_id": req_event_id,
+        })
+
+        # 2. Simulate opinions for each participant
+        opinion_event_ids = []
+        has_homogeneity = "homogeneity" in topic.lower() or "correlation" in topic.lower()
+        has_degraded = "degraded" in topic.lower()
+        has_no_consensus = "no_consensus" in topic.lower()
+        has_more_research = "more_research" in topic.lower()
+
+        if has_degraded:
+            _ws_publish(workshop_id, "workshop.openclaw.degraded", {
+                "workshop_id": workshop_id,
+                "error_code": "OPENCLAW_UPSTREAM_DEGRADED",
+                "message": "OpenClaw connection timeout while fetching opinions",
+                "trace_id": trace_id,
+            })
+
+        for idx, pid in enumerate(participants):
+            is_last = (idx == len(participants) - 1)
+            offered_event_id = f"evt-{uuid.uuid4().hex[:12]}"
+            opinion_event_ids.append(offered_event_id)
+
+            if has_degraded:
+                stance = "abstain"
+                confidence = 0.0
+                rationale = "Opinion aborted: Provider/evidence path degraded or unreachable."
+                evidence_refs = []
+            elif has_no_consensus:
+                if idx == 0:
+                    stance = "agree"
+                    confidence = 0.85
+                    rationale = "Historical backtest confirms strong positive alpha edge for the version patch."
+                    evidence_refs = ["ev-backtest-001"]
+                else:
+                    stance = "disagree"
+                    confidence = 0.90
+                    rationale = "High regime shift risk detected: current market conditions indicate potential drawdowns."
+                    evidence_refs = ["ev-regime-002"]
+            elif has_more_research:
+                stance = "conditional"
+                confidence = 0.40
+                rationale = "Insufficient backtest sample size under the selected regime. More research required."
+                evidence_refs = []
+            else:
+                stance = "agree"
+                confidence = 0.90
+                rationale = f"Persona {pid} confirms strategy parameters are consistent and readiness gates are satisfied."
+                evidence_refs = ["ev-telemetry-001"]
+
+            status = "partially_answered" if not is_last else "answered"
+            offered_event = {
+                "spec_version": "1.0",
+                "event_id": offered_event_id,
+                "event_type": "opinion_offered",
+                "interaction_id": interaction_id,
+                "topic": topic,
+                "requester": {"actor_type": "persona_session", "actor_id": pid, "session_id": f"sess-{pid}", "display_name": f"Persona {pid}"},
+                "participants": [],
+                "context_refs": [ref.model_dump() for ref in context_refs],
+                "opinion": {
+                    "stance": stance,
+                    "confidence": confidence,
+                    "rationale": rationale,
+                    "evidence_refs": evidence_refs
+                },
+                "status": status,
+                "no_capital_authority_proof": "persona_interaction_event_no_capital_or_order_authority",
+                "trace_id": trace_id,
+                "created_at": utc_now()
+            }
+            workshop_store.create_event({
+                "event_id": offered_event_id,
+                "workshop_id": workshop_id,
+                "actor_type": "persona_session",
+                "event_type": "opinion_offered",
+                "private_content_ref": f"priv-content-stub://{offered_event_id}",
+                "redacted_summary": f"Persona {pid} offered opinion: {stance} (confidence: {confidence})",
+                "payload_refs_json": offered_event,
+                "trace_id": trace_id,
+            })
+
+        # 3. thread_closed event
+        closed_event_id = f"evt-{uuid.uuid4().hex[:12]}"
+        closed_event = {
+            "spec_version": "1.0",
+            "event_id": closed_event_id,
+            "event_type": "thread_closed",
+            "interaction_id": interaction_id,
+            "topic": topic,
+            "requester": {"actor_type": "human", "actor_id": user_id, "display_name": "Operator"},
+            "participants": [],
+            "context_refs": [ref.model_dump() for ref in context_refs],
+            "status": "closed",
+            "no_capital_authority_proof": "persona_interaction_event_no_capital_or_order_authority",
+            "trace_id": trace_id,
+            "created_at": utc_now()
+        }
+        workshop_store.create_event({
+            "event_id": closed_event_id,
+            "workshop_id": workshop_id,
+            "actor_type": "operator",
+            "event_type": "thread_closed",
+            "private_content_ref": f"priv-content-stub://{closed_event_id}",
+            "redacted_summary": "Interaction thread closed.",
+            "payload_refs_json": closed_event,
+            "trace_id": trace_id,
+        })
+
+        # 4. Generate consult_result card
+        synthesis_status = "recommendation"
+        consensus_summary_text = "All active participants agree on strategy version parameters."
+        disagreements = []
+        risk_notes = []
+        conditions = []
+        evidence_refs = [{"ref_type": "telemetry_snapshot", "ref_id": "ev-1", "summary": "Telemetry snapshot used in debate"}]
+
+        if has_degraded:
+            synthesis_status = "options"
+            consensus_summary_text = "No clear recommendation due to degraded provider/evidence paths."
+            risk_notes.append("OpenClaw upstream connection failure.")
+        elif has_no_consensus:
+            synthesis_status = "no_consensus"
+            consensus_summary_text = "Strong disagreement on strategy alpha edge under current market regime."
+            disagreements.append({
+                "persona_id": participants[-1] if participants else "unknown",
+                "cause": "regime_assumption",
+                "detail": "Participant believes high-volatility regime renders prior backtest invalid."
+            })
+        elif has_more_research:
+            synthesis_status = "more_research_required"
+            consensus_summary_text = "Confidence thresholds not met. More research required before version promotion."
+            conditions.append("Extend observation window and rerun backtest with at least 500 samples.")
+        
+        if has_homogeneity:
+            risk_notes.append("Homogeneity warning: High correlation between participant models detected.")
+
+        card_payload = {
+            "consultation_id": interaction_id,
+            "consultation_type": "pre_deployment",
+            "participant_persona_refs": participants,
+            "status": synthesis_status,
+            "consensus_summary": consensus_summary_text,
+            "disagreements": disagreements,
+            "risk_notes": risk_notes,
+            "conditions": conditions,
+            "evidence_refs": evidence_refs,
+            "freshness": utc_now()
+        }
+
+        # Record the card in workshop store
+        workshop_store.record_workshop_card({
+            "card_id": f"card_consult_{interaction_id}",
+            "card_type": "consult_result",
+            "workshop_id": workshop_id,
+            "status": "completed",
+            "title": "Strategy consultation synthesized",
+            "summary": consensus_summary_text,
+            "payload": card_payload,
+            "evidence_refs": evidence_refs,
+            "allowed_actions": {},
+        })
+
+        _ws_publish(workshop_id, "consultation.completed", {
+            "interaction_id": interaction_id,
+            "status": synthesis_status,
+            "consensus_summary": consensus_summary_text,
+            "trace_id": trace_id,
+            "event_id": closed_event_id,
+        })
+
     @router.post("/bff/agora/interactions", status_code=202)
-    def submit(body: SubmitInteractionRequest, authorization: Optional[str] = Header(default=None),
+    def submit(body: SubmitInteractionRequest,
+               background_tasks: BackgroundTasks,
+               authorization: Optional[str] = Header(default=None),
                x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
                idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")) -> Dict[str, Any]:
         resolved = scope(authorization, x_tenant_id)
@@ -180,6 +397,9 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         if not set(body.participant_persona_ids).issubset(eligible):
             from models import ErrorCode
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "One or more participants are ineligible", "participant_eligibility_failed")
+        
+        trace_id = session.get("openclaw_session_id") or f"trace-{uuid.uuid4().hex[:12]}"
+
         def build() -> Dict[str, Any]:
             return {"interaction_id": body.interaction_id or str(uuid.uuid4()), "workshop_id": body.workshop_id,
                     "mode": body.mode, "topic": body.topic, "participants": body.participant_persona_ids,
@@ -187,6 +407,21 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                     "execution_authority": "none", "no_capital_authority_proof": "persona_interaction_event_no_capital_or_order_authority",
                     "submitted_at": utc_now()}
         data = store.once(f"command:{resolved.tenant_id}:{resolved.user_id}", idempotency_key, build)
+
+        # Trigger simulated async debate and synthesis
+        background_tasks.add_task(
+            simulate_interaction_debate_and_synthesis,
+            workshop_id=body.workshop_id,
+            interaction_id=data["interaction_id"],
+            topic=body.topic,
+            mode=body.mode,
+            participants=body.participant_persona_ids,
+            context_refs=body.context_refs,
+            tenant_id=resolved.tenant_id,
+            user_id=resolved.user_id,
+            trace_id=trace_id
+        )
+
         return {"data": data, "meta": {"snapshot_at": utc_now(), "capability": "agora.persona.interaction.v1"}}
 
     return router
