@@ -59059,6 +59059,13 @@ def _include_knowledge_routes() -> None:
 
 _include_knowledge_routes()
 
+from trade_journal import create_trade_journal_router as _create_trade_journal_router  # noqa: E402
+app.include_router(_create_trade_journal_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    require_operator_role=_require_operator_role,
+))
+
 
 # BFFGAP-LINEAGE: lineage graph endpoint via isolated module
 from console_gap.lineage import create_lineage_router  # noqa: E402
