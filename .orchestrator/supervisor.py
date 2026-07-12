@@ -5221,6 +5221,45 @@ def mark_provider_dispatch_paused(
     return changed
 
 
+def pause_dispatch_for_reaped_worker(
+    config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]
+) -> str | None:
+    """Recover a terminal quota/capacity/auth reason from a heartbeat-reaped
+    worker's log and pause the provider for the real reset window.
+
+    A quota-dead provider (e.g. Antigravity after "exhausted your capacity")
+    tends to hang with no heartbeat and gets reaped as an expired lease rather
+    than exiting cleanly. Without this the generic lease-timeout message would
+    classify as a plain stall, firing neither the guardrail pause nor model
+    rotation, so the supervisor keeps re-dispatching into a multi-hour outage
+    every poll. Returns the detected reason when a pause was recorded, else
+    None (caller keeps the generic lease-timeout message).
+    """
+    detected_reason = detect_worker_failure(worker)
+    if not detected_reason:
+        return None
+    pause_kind = str(
+        classify_worker_failure(config, worker, detected_reason).get("kind") or ""
+    )
+    if not should_pause_dispatch_for_failure_kind(pause_kind):
+        return None
+    raw_ref = write_failure_evidence(
+        config, worker=worker, reason=detected_reason, failure_kind=pause_kind
+    )
+    mark_provider_dispatch_paused(
+        config,
+        state,
+        worker.get("provider"),
+        detected_reason,
+        task_id=str(worker.get("task_id") or ""),
+        worker_run_id=worker.get("run_id"),
+        failure_kind=pause_kind,
+        pause_kind=pause_kind,
+        raw_ref=raw_ref,
+    )
+    return detected_reason
+
+
 def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> bool:
     provider_id = normalize_agent_id(provider or "")
     if not provider_id:
@@ -6849,7 +6888,10 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             terminate_worker_pid(worker.get("pid"))
             worker["status"] = "failed"
             worker["last_event_at"] = utc_now()
-            worker["last_error"] = "Worker lease expired after heartbeat became stale."
+            worker["last_error"] = (
+                pause_dispatch_for_reaped_worker(config, state, worker)
+                or "Worker lease expired after heartbeat became stale."
+            )
             write_activity_log(
                 config,
                 {
