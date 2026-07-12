@@ -1,0 +1,22 @@
+{
+  "schema_version": "trade_journey_slo_targets.v1",
+  "source": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md#13-slo-data-quality-and-alerting",
+  "targets": {
+    "paper": {
+      "producer_to_read_model_p95_seconds": 10,
+      "detail_api_p95_seconds": 1.5,
+      "resolve_p95_seconds": 1.0,
+      "correlation_completeness_min": 0.99,
+      "reconciliation_completeness_min": 0.99,
+      "stalled_after_seconds": 900
+    },
+    "canary": {
+      "producer_to_read_model_p95_seconds": 3,
+      "detail_api_p95_seconds": 1.0,
+      "resolve_p95_seconds": 1.0,
+      "correlation_completeness_min": 0.999,
+      "reconciliation_completeness_min": 1.0,
+      "stalled_after_seconds": 300
+    }
+  }
+}

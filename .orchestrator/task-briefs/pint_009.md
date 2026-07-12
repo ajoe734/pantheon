@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Persona Detail and Human Inbox interaction entry
-- Status: review_approved
+- Status: done
 - Owner: Codex2
 - Reviewer: Claude
-- Next: Supervisor resumed PINT-009 for finalize after successful dispatch.
+- Next: Closed after the approved frontend and Pantheon delivery PRs merged.
 
 ## Summary
 Add Persona Detail and Human Inbox contextual entry links and readback.
@@ -16,6 +16,8 @@ Add Persona Detail and Human Inbox contextual entry links and readback.
 - Repository: `ajoe734/execute-plans`
 - Pull request: `#277`
 - Merge commit: `15956621509710bc509c789b0c478f39b056aa41`
+- Pantheon closeout publication: PR `#3455`, with final status follow-up PR
+  `#3458` after synchronizing the task branch with `dev`.
 - Delivered scope: Persona Detail and Human Inbox contextual navigation,
   persona readback, translations, and focused UI coverage.
 - Not changed: BFF inbox contracts, governance decision semantics, live-data
