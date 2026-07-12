@@ -46,8 +46,19 @@ This is deterministic paper fixture evidence. It does not invoke a broker adapte
 - Frontend deployment run: execute-plans GitHub Actions run `29199429734`, explicitly dispatched for latest `main` SHA `c6eeff25be926a9748576cb624bff65e64af9eab` with `skip_probe=false`.
 - Required build safety: `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`, `VITE_BFF_REAL_WRITES=false`.
 - Unauthenticated BFF probes for journal, reflections, and patterns return governed `401 AUTH_REQUIRED`, proving the deployed routes exist and fail closed rather than exposing cross-persona data.
+- `deployment.json` reports deployed commit `c6eeff25be926a9748576cb624bff65e64af9eab` at `20260712T160610Z`; this commit contains PTJ-006 merge `916abb9bfc84084a18d7b81a7ec8781c04ae0476`.
+- Hosted bundle `assets/index-9puPnkYu.js` contains `Trade Journal`, `trade-journal`, and `tradeJournal`, contains the intended dev BFF URL, and contains neither the legacy BFF IP nor the Lovable dev URL.
+- A clean detached worktree at the deployed SHA ran the PTJ-006 Playwright scenario against the hosted FE. Navigation, deterministic paper episodes, timeline/detail, partial/degraded states, reflection retry receipt, lesson endorsement receipt, and pattern view passed: `1 passed (8.1s)`.
 
-Final deployment readback and browser smoke are recorded below after the workflow completes.
+```text
+PANTHEON_FE_BASE_URL=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io \
+  npx playwright test e2e/22-persona-trade-journal.spec.ts \
+  --project=chromium --reporter=line
+
+1 passed (8.1s)
+```
+
+The deployment workflow concluded `failure` after installation because its generic persona-fleet probe waited for `/bff/management/persona-fleet`, while the loaded page requested `/bff/management/fleet` and received 404. The run still installed the requested SHA, and the task-specific manifest, bundle, BFF fail-closed probes, and hosted PTJ Playwright scenario passed. The generic probe route mismatch remains owned by the execute-plans dev-deploy workflow lane; it is not hidden as a green workflow claim.
 
 ## SLO and alert ownership
 
@@ -58,3 +69,4 @@ The product targets remain those in the gap specification: paper projection fres
 - No live broker proof was attempted or authorized.
 - Hosted commands remain safe-write disabled; command behavior is covered by deterministic BFF/frontend tests and governed auth probes.
 - Canonical order/fill/P&L authority remains runtime telemetry and attribution. The journal is a rebuildable projection, the BFF is an aggregation boundary, and the frontend performs no canonical P&L inference.
+- Generic deploy probe route mismatch: execute-plans deployment workflow owner; reconcile `/bff/management/persona-fleet` versus `/bff/management/fleet` before treating the broad persona-fleet deploy gate as green.
