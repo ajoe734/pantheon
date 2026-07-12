@@ -10,3 +10,9 @@ disposition and implementation boundaries are recorded in
 The development compatibility record now targets the v1.5 additive bundle.
 It must remain `pending` until frontend v1.5 generated-contract evidence and a
 real frontend runtime commit are available.
+
+## Market-data activation
+
+SRCLIVE-001 activation evidence was merged in PR #3047. AG-GAP-013 owns the
+remaining read-model projection and live Agora readback proof; see the Agora
+gap-closure execution packet.
