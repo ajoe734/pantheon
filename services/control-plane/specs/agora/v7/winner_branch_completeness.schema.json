@@ -82,7 +82,16 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "allOf": [
+        { "contains": { "properties": { "dimension": { "const": "hypothesis" } } } },
+        { "contains": { "properties": { "dimension": { "const": "data_dependencies" } } } },
+        { "contains": { "properties": { "dimension": { "const": "market_scope" } } } },
+        { "contains": { "properties": { "dimension": { "const": "evaluation_plan" } } } },
+        { "contains": { "properties": { "dimension": { "const": "risk_constraints" } } } },
+        { "contains": { "properties": { "dimension": { "const": "execution_profile" } } } },
+        { "contains": { "properties": { "dimension": { "const": "governance" } } } }
+      ]
     },
     "winner_branch_blocks": {
       "type": "array",
@@ -147,7 +156,21 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "allOf": [
+        { "contains": { "properties": { "block_name": { "const": "market_scope" } } } },
+        { "contains": { "properties": { "block_name": { "const": "insider_branch_mapping" } } } },
+        { "contains": { "properties": { "block_name": { "const": "winner_branch_scoring" } } } },
+        { "contains": { "properties": { "block_name": { "const": "migration_reverse_flow" } } } },
+        { "contains": { "properties": { "block_name": { "const": "event_lead" } } } },
+        { "contains": { "properties": { "block_name": { "const": "signal_formation" } } } },
+        { "contains": { "properties": { "block_name": { "const": "entry_holding" } } } },
+        { "contains": { "properties": { "block_name": { "const": "add_reduce_exit" } } } },
+        { "contains": { "properties": { "block_name": { "const": "sizing_leverage" } } } },
+        { "contains": { "properties": { "block_name": { "const": "cost_liquidity_capacity" } } } },
+        { "contains": { "properties": { "block_name": { "const": "validation_backtest_refutation" } } } },
+        { "contains": { "properties": { "block_name": { "const": "monitoring_update" } } } }
+      ]
     },
     "blockers": {
       "type": "array",
