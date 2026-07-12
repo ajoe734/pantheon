@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: 5th stale rewake: already approved+merged via PR #3352/#3354, reconfirmed via PR #3364 (merged as caacd19a6) and PR #3367 (merged as b20e6b196). Task branch HEAD is already an ancestor of origin/dev with zero commits ahead and zero file drift. No new review work performed; parent owner Antigravity still decides on absorption.
+- Next: 7th stale rewake (review_ready_dispatch): task already approved+merged (PR #3352/#3354/#3364/#3367/#3370). HEAD is still an ancestor of origin/dev (bc615232e) with zero commits ahead and zero file drift on the sidecar artifact. No new review work performed; parent owner Antigravity still decides on absorption into MGMT-PERF-IA-008.
 
 ## Summary
 平行支援 MGMT-PERF-IA-008，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
