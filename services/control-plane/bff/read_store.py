@@ -1035,8 +1035,8 @@ def _merge_market_persona_fleet(
             "violation_count": 0,
             "league_rank": 2,
             "league_score": 87.4,
-            "recommendation": "promote_canary_review",
-            "current_work": "paper observation and OOS cost review",
+            "recommendation": None,
+            "current_work": None,
             "risk_flags": [],
         },
         {
@@ -1089,8 +1089,8 @@ def _merge_market_persona_fleet(
             "violation_count": 0,
             "league_rank": 3,
             "league_score": 79.1,
-            "recommendation": "hold_for_risk_owner_review",
-            "current_work": "TW corporate-action and session-boundary evidence review",
+            "recommendation": None,
+            "current_work": None,
             "risk_flags": ["slippage_watch"],
         },
         {
@@ -1143,8 +1143,8 @@ def _merge_market_persona_fleet(
             "violation_count": 0,
             "league_rank": 1,
             "league_score": 91.8,
-            "recommendation": "prepare_canary_packet",
-            "current_work": "paper broker sandbox readback and funding-rate stress review",
+            "recommendation": None,
+            "current_work": None,
             "risk_flags": [],
         },
     ]
