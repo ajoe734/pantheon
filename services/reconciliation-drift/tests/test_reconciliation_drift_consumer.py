@@ -83,6 +83,16 @@ def test_telemetry_fixture_builds_canonical_drift_report() -> None:
     assert set(report["metrics"]["breached_metric_ids"]) == {"avg_slippage_bps", "drawdown", "pnl"}
 
 
+def test_drift_report_propagates_telemetry_trade_envelope() -> None:
+    from services.trade_journey.correlation_envelope import mint_trade_envelope
+    consumer = _load_consumer_module()
+    event = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    event["correlation_envelope"] = mint_trade_envelope({"tenant_id": "tenant-1", "environment": "paper"}, producer="execution.paper_runtime")
+    report = consumer.build_drift_report_from_event(event)
+    assert report["correlation_envelope"]["journey_id"] == event["correlation_envelope"]["journey_id"]
+    assert report["correlation_envelope"]["causation_event_id"] == event["correlation_envelope"]["event_id"]
+
+
 def test_consume_endpoint_persists_drift_report_from_telemetry_fixture() -> None:
     with tempfile.TemporaryDirectory() as data_dir:
         module = _load_service_module(data_dir)

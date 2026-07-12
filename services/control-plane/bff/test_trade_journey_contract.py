@@ -247,3 +247,34 @@ def test_reconciliation_variance_corrected():
     
     # Calculate rollup with correction events should resolve to completed
     assert calculate_rollup_status(payload["stages"], payload["correction_events"]) == "completed"
+
+
+def test_pre_signal_envelope_validation():
+    # Pre-signal envelope (no journey_id, carries research_journey_id)
+    envelope = {
+        "schema_version": "trade-journey-envelope/1",
+        "tenant_id": "tenant-pantheon",
+        "environment": "paper",
+        "research_journey_id": "rj_e2e_002_sample",
+        "correlation_id": "corr-12345",
+        "trace_id": "trace-67890",
+        "event_id": "evt-1",
+        "causation_event_id": "evt-0",
+        "producer": "persona.ooda",
+        "event_time": "2026-07-11T22:00:00Z",
+        "received_at": "2026-07-11T22:00:01Z",
+        "producer_revision": 1,
+    }
+    # This should now validate successfully
+    jsonschema.validate(instance=envelope, schema=correlation_envelope_schema)
+
+    # Adding journey_id should also validate successfully
+    envelope["journey_id"] = "tj_e2e_002_sample"
+    jsonschema.validate(instance=envelope, schema=correlation_envelope_schema)
+
+    # Omitting a required field (e.g. correlation_id) should fail validation
+    invalid_envelope = envelope.copy()
+    del invalid_envelope["correlation_id"]
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=invalid_envelope, schema=correlation_envelope_schema)
+

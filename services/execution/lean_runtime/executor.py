@@ -52,6 +52,7 @@ def _is_taiwan_venue_symbol(symbol_str: str) -> bool:
     return s.rsplit(".", 1)[1] in _TAIWAN_VENUE_SUFFIXES
 
 _ORDER_ADAPTER_CONTEXT_KEYS = (
+    "correlation_envelope",
     "adapter",
     "broker",
     "provider",
@@ -295,6 +296,9 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
         if value not in (None, ""):
             context[key] = value
     context["order_type"] = signal.get("order_type") or "MARKET"
+    envelope = signal.get("correlation_envelope") or metadata.get("correlation_envelope")
+    if isinstance(envelope, dict):
+        context["correlation_envelope"] = dict(envelope)
     for key in (
         "alpha_source",
         "confidence_score",
