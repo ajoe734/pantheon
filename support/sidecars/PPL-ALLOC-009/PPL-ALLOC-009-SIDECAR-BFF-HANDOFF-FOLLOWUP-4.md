@@ -71,14 +71,14 @@ The parent archive should contain:
 
 ## Reviewer Gate
 
-- [ ] The packet remains support-only and introduces no new contract truth.
-- [ ] Every route claim is phrased as repository readiness, not hosted proof.
-- [ ] Every unproven gap has a named resolving lane and objective recheck.
-- [ ] Admission, terminal command state, and authoritative readback remain
+- [x] The packet remains support-only and introduces no new contract truth.
+- [x] Every route claim is phrased as repository readiness, not hosted proof.
+- [x] Every unproven gap has a named resolving lane and objective recheck.
+- [x] Admission, terminal command state, and authoritative readback remain
       independent evidence gates.
-- [ ] Desktop/mobile strict-mode proof and all required negative probes remain
+- [x] Desktop/mobile strict-mode proof and all required negative probes remain
       mandatory for parent closeout.
-- [ ] The parent cannot convert missing acceptance evidence into a pass merely
+- [x] The parent cannot convert missing acceptance evidence into a pass merely
       by recording a residual risk.
 
 ## Composition Boundary
