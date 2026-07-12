@@ -1,7 +1,29 @@
 # PTJ-004 reviewer findings
 
 Reviewer: Codex2  
-Disposition: changes required
+Disposition: approved
+
+## Final re-review of `6ba87c2ca`
+
+The prior fail-closed findings are resolved. Command-owner bodies now must
+decode to JSON objects on both successful and HTTP error paths. Malformed 2xx
+arrays and non-JSON HTTP error bodies are translated to
+`DEPENDENCY_UNAVAILABLE`; neither can escape as an unhandled response or be
+mistaken for a governed command receipt.
+
+The durable command-owner delegation, atomic downstream idempotency, target and
+transition rejection, and no-owner/unavailable behavior from the preceding
+revision remain covered. PTJ-004 is approved for owner finalization.
+
+Final verification:
+
+```text
+python3 -m pytest services/control-plane/bff/test_ptj_004_trade_journal.py \
+  services/control-plane/bff/test_no_undefined_call_symbols.py \
+  services/control-plane/bff/test_bff_error_envelope_shape.py -q
+
+19 passed, 8 warnings
+```
 
 ## Blocking finding
 
