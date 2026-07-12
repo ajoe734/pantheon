@@ -17,6 +17,9 @@ def test_dev_root_and_bff_deploys_pin_durable_agora_stores() -> None:
         "AGORA_RESEARCH_STORE_BACKEND=postgres",
         "AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
         "AGORA_RESEARCH_STORE_SCHEMA=agora_research",
+        "AGORA_TRADING_ROOM_STORE_BACKEND=postgres",
+        "AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
+        "AGORA_TRADING_ROOM_STORE_SCHEMA=agora",
     )
     for setting in expected:
         assert setting in root_case
