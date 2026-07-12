@@ -3,6 +3,9 @@
 - [AG-GAP-001 durable workshop storage](AG-GAP-001-workshop-postgres-live.md):
   pins the dev workshop backend to Postgres and gates deployment on restart
   persistence.
+- [AG-GAP-004 durable dashboard recipe storage](AG-GAP-004-dashboard-postgres.md):
+  moves recipe identity/version/idempotency state behind a Postgres-capable
+  store while retaining ETag CAS, append-only history, and rollback semantics.
 - [AG-GAP-003 durable research storage](AG-GAP-003-research-postgres.md):
   persists research plans/runs and candidate collaboration aggregates in
   Postgres while preserving plan-first and tenant/user boundaries.
