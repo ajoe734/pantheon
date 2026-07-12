@@ -30,3 +30,5 @@ pytest -q services/control-plane/tests/agora/test_cross_user_isolation.py
 Deployment acceptance still requires creating/editing a recipe, restarting the
 BFF container, reading it back with the same ETag/version, and executing a
 rollback that appends (rather than overwrites) the next version.
+
+Closeout publication is tracked by Pantheon PR #3443 into `dev`.
