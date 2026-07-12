@@ -30,13 +30,16 @@ Routes implemented here:
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 import json
 import uuid
-from typing import Any, Callable, Dict, List, Literal, Optional
+from collections import deque
+from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..dashboard.router import (
@@ -59,6 +62,63 @@ from .store import TradingRoomStore, make_trading_room_store
 # ---------------------------------------------------------------------------
 
 _store: Optional[TradingRoomStore] = None
+
+_TR_SSE_BUFFER_SIZE = 500
+_trading_room_sse_buffers: Dict[str, deque] = {}
+_trading_room_sse_subscribers: Dict[str, List[asyncio.Queue]] = {}
+
+
+def _tr_scope_key(scope: Dict[str, str]) -> str:
+    return f"{scope['tenant_id']}:{scope['user_id']}"
+
+
+def _tr_event_id() -> str:
+    return f"trevt-{uuid.uuid4().hex[:16]}"
+
+
+def _tr_sse_format(event: Dict[str, Any]) -> str:
+    return (
+        f"id: {event['id']}\n"
+        f"event: {event['type']}\n"
+        f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+    )
+
+
+def _tr_buffer(scope_key: str) -> deque:
+    return _trading_room_sse_buffers.setdefault(scope_key, deque(maxlen=_TR_SSE_BUFFER_SIZE))
+
+
+def _tr_subscribers(scope_key: str) -> List[asyncio.Queue]:
+    return _trading_room_sse_subscribers.setdefault(scope_key, [])
+
+
+def _tr_publish(scope: Dict[str, str], event_type: str, data: Dict[str, Any], timestamp: str) -> str:
+    scope_key = _tr_scope_key(scope)
+    event_id = _tr_event_id()
+    event = {
+        "id": event_id,
+        "type": event_type,
+        "timestamp": timestamp,
+        "data": {"scope": {"tenant_id": scope["tenant_id"], "user_id": scope["user_id"]}, **data},
+    }
+    _tr_buffer(scope_key).append((event_id, event))
+    for queue in list(_tr_subscribers(scope_key)):
+        try:
+            queue.put_nowait(event)
+        except (asyncio.QueueFull, Exception):
+            pass
+    return event_id
+
+
+def _tr_replay_after(scope_key: str, last_event_id: str) -> List[Dict[str, Any]]:
+    found = False
+    replayed: List[Dict[str, Any]] = []
+    for event_id, event in _trading_room_sse_buffers.get(scope_key, ()):
+        if found:
+            replayed.append(event)
+        elif event_id == last_event_id:
+            found = True
+    return replayed
 
 
 def _get_store() -> TradingRoomStore:
@@ -2967,6 +3027,13 @@ def create_trading_room_router(
         if intent_ref:
             data["no_order_route_proof"] = "agora_intent_record_only"
 
+        _tr_publish(
+            _workspace_scope(identity),
+            "trading_room.decision.recorded",
+            data,
+            utc_now(),
+        )
+
         return {
             "status": "completed",
             "data": data,
@@ -2978,21 +3045,61 @@ def create_trading_room_router(
     # ------------------------------------------------------------------
 
     @router.get("/bff/agora/trading-room/stream")
-    def stream_trading_room(
+    async def stream_trading_room(
         authorization: Optional[str] = Header(default=None),
         pantheon_session: Optional[str] = Cookie(default=None),
-    ) -> Response:
-        """User-scoped Trading Room SSE stream stub.
-
-        Returns an empty SSE response.  Full typed-event streaming is
-        deferred pending SSE infrastructure task.
-        """
+        last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+    ) -> StreamingResponse:
+        """Typed, replayable SSE stream isolated to the authenticated user scope."""
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        scope = _workspace_scope(identity)
+        scope_key = _tr_scope_key(scope)
 
-        return Response(
-            content=": Trading Room SSE ready\n\n",
+        async def _event_stream() -> AsyncGenerator[str, None]:
+            queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+            subscribers = _tr_subscribers(scope_key)
+            subscribers.append(queue)
+            try:
+                if last_event_id:
+                    for event in _tr_replay_after(scope_key, last_event_id):
+                        yield _tr_sse_format(event)
+
+                ack_id = _tr_event_id()
+                ack = {
+                    "id": ack_id,
+                    "type": "trading_room.connected",
+                    "timestamp": utc_now(),
+                    "data": {
+                        "scope": {"tenant_id": scope["tenant_id"], "user_id": scope["user_id"]},
+                        "status": "ready",
+                        "no_order_route_proof": "agora_decision_support_only",
+                    },
+                }
+                _tr_buffer(scope_key).append((ack_id, ack))
+                yield _tr_sse_format(ack)
+
+                while True:
+                    try:
+                        yield _tr_sse_format(await asyncio.wait_for(queue.get(), timeout=30.0))
+                    except asyncio.TimeoutError:
+                        yield ": heartbeat\n\n"
+            finally:
+                if queue in subscribers:
+                    subscribers.remove(queue)
+
+        return StreamingResponse(
+            _event_stream(),
             media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-SSE-Channel": f"trading-room:{scope_key}",
+                "X-SSE-Replay-Supported": "true",
+                "X-SSE-Replay-Window-Events": str(_TR_SSE_BUFFER_SIZE),
+                "X-SSE-Resync-Routes": "/bff/agora/trading-room,/bff/agora/trading-room/decision-events",
+            },
         )
 
     # ------------------------------------------------------------------

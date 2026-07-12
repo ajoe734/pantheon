@@ -21,6 +21,9 @@
 - [AG-GAP-007 capabilities mismatch](AG-GAP-007-capabilities-mismatch.md): fixes the 
   BFF /bff/agora/capabilities endpoint silent projection loading failure and documents
   the dev journal dry-run residue cleanup procedure.
+- [AG-GAP-008 Trading Room typed SSE](AG-GAP-008-trading-room-typed-sse.md):
+  replaces the empty stream stub with immediate typed acknowledgement,
+  user-scope isolation, bounded replay, and typed trader-decision delivery.
 - [AG-GAP-010 design parity baseline](AG-GAP-010-design-parity-baseline.md):
   declares `AI Trading Desk Design.zip` formally lost after a final recorded
   search and replaces it with closure-pack specs plus TABS-GATE-011 hosted
