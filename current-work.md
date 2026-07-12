@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-07-12 08:37:05
+Last updated: 2026-07-12 09:35:53
 
 ## Objective
 
@@ -15,7 +15,6 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 - Sprint: `2026-06-09-mpos-full-loop-gap-closure`
 - Canonical files: `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl`, `current-work.md`, `TARGET_ARCHITECTURE.md`, `OPENCLAW_RUNTIME_CONTRACT.md`, `PERSONA_RUNTIME_MODEL.md`, `BINDING_AND_DEPLOYMENT_SEMANTICS.md`, `PAPER_CANARY_LIVE_POLICY.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`, `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`, `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`, `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`, `EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md`, `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md`, `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`, `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`, `CANONICAL_DOCUMENT_MAP.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`, `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, `OSS_INTEGRATION_CHECKLIST.md`, `WORKBENCH_DELIVERY_BACKLOG.md`, `DELIVERY_CLOSURE_AND_LOOP_STATES.md`, `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`, `CANONICAL_CONTRACT_MIGRATION_DECISION.md`, `WORK_REBASELINE.md`, `Pantheon_總索引版系統分析文件.md`, `Pantheon_資料表_Schema_設計版.md`, `Pantheon_API_Service_Contract_設計版.md`
 - Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Platform Architecture & Policy`, `L2 Planning & Execution`, `L3 Supporting Design & Migration`
-- Planning mode: `docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/README.md`
 - Canonical map: `CANONICAL_DOCUMENT_MAP.md`
 - Document boundary: `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`
 - Full backlog: `DEVELOPMENT_WORKBREAKDOWN.md`
@@ -23,17 +22,6 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 - Loop closure: `DELIVERY_CLOSURE_AND_LOOP_STATES.md`
 - Execution proof: `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`
 - Dashboard: `docs-site/index.html`
-
-## Discussion Planning
-
-- Session: `phase6-2026-05-01-pantheon-p0-paper-loop`
-- Status: `accepted`
-- Baton owner: `Codex`
-- Current round: `0`
-- Consensus: `accepted`
-- Human gate: `approved`
-- Ready for human: `True`
-- Ready to materialize execution: `True`
 
 ## Active Slices
 
@@ -62,7 +50,7 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 | `MGMT-PERF-IA-006` | Management Performance Ranking IA / Wave 2 integration | Contextual integration | Antigravity | todo | `MGMT-PERF-IA-003`, `MGMT-PERF-IA-004`, `MGMT-PERF-IA-005` | 把 Cockpit、Persona Fleet、entity details、Human Inbox 與 Agora 接到 canonical centers，保留上下文且不再新增重複分析頁。 |
 | `MGMT-PERF-IA-007` | Management Performance Ranking IA / Wave 2 cleanup | Migration cleanup and regression | Claude | todo | `MGMT-PERF-IA-003`, `MGMT-PERF-IA-004`, `MGMT-PERF-IA-005`, `MGMT-PERF-IA-006` | 完成 legacy alias、dead page、secondary navigation、route baseline 與 mobile/desktop regression 清理。 |
 | `MGMT-PERF-IA-008` | Management Performance Ranking IA / Wave 3 closeout | Hosted acceptance and closeout | Antigravity | todo | `MGMT-PERF-IA-001`, `MGMT-PERF-IA-002`, `MGMT-PERF-IA-003`, `MGMT-PERF-IA-004`, `MGMT-PERF-IA-005`, `MGMT-PERF-IA-006`, `MGMT-PERF-IA-007` | 彙整所有 PR、merge SHA、deploy、desktop/mobile smoke、legacy redirects 與 Human Review receipt，證明完整營運閉環。 |
-| `MGMT-OPS-003-GAP-004` | MGMT-OPS-003 Hosted Gap / Wave 2 review gate | Independent hosted difference closeout | Codex2 | in_progress | `MGMT-OPS-003-GAP-001`, `MGMT-OPS-003-GAP-002`, `MGMT-OPS-003-GAP-003` | 由獨立 reviewer 逐列核對 gap matrix、API、畫面、desktop/mobile 與部署 SHA；任何差異未關閉就退件。 |
+| `MGMT-OPS-003-GAP-004` | MGMT-OPS-003 Hosted Gap / Wave 2 review gate | Independent hosted difference closeout | Codex2 | review_approved | `MGMT-OPS-003-GAP-001`, `MGMT-OPS-003-GAP-002`, `MGMT-OPS-003-GAP-003` | 由獨立 reviewer 逐列核對 gap matrix、API、畫面、desktop/mobile 與部署 SHA；任何差異未關閉就退件。 |
 | `MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX` | MGMT-OPS-003 Hosted Gap / Wave 0 deploy repair | Fix Persona Fleet hosted deploy probe regression | Codex | blocked | - | 修正預設 Persona Fleet 在 production 為空時錯誤顯示 non-production rows，保留明確 persona focus 切頁行為，重新發布並通過 hosted probe。 |
 | `MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX` | MGMT-OPS-003 Hosted Gap / Wave 0 linked-page repair | Fix Persona Fleet focused pagination contract | Codex | blocked | - | 讓 Persona Fleet URL persona focus 與 page size 傳入 BFF q/page_size，避免 API 100 筆選到的 persona 在 UI 預設 20 筆中消失，完成 hosted linked-page workflow。 |
 | `TJ-E2E-003` | Trade Journey E2E / Wave 1 | Correlation envelope propagation | Codex | in_progress | `TJ-E2E-001`, `TJ-E2E-002` | 依 Trade Journey E2E gap 規格執行：Correlation envelope propagation。 |
@@ -89,31 +77,31 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-07-12 08:34:35
-- Terminal tasks archived: `2015` total, `1971` completed, `44` superseded
+- Archive updated: 2026-07-07 23:06:53
+- Terminal tasks archived: `1962` total, `1919` completed, `43` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
-| `OCLAW-PMEM-005` | OpenClaw Persona Memory Gap / Wave 3 gates closeout | Dev gates and gap closeout | Antigravity | completed | 2026-07-12 08:34:35 | `ai-task-archive/tasks/OCLAW-PMEM-005.json` |
-| `OCLAW-PMEM-004` | OpenClaw Persona Memory Gap / Wave 2 BFF UI surfaces | BFF and Management runtime surfaces | Codex | completed | 2026-07-12 08:22:51 | `ai-task-archive/tasks/OCLAW-PMEM-004.json` |
-| `MGMT-OPS-003-GAP-003` | MGMT-OPS-003 Hosted Gap / Wave 1 hosted E2E | Hosted Portfolio workflow E2E | Codex | completed | 2026-07-12 08:21:58 | `ai-task-archive/tasks/MGMT-OPS-003-GAP-003.json` |
-| `PTJ-004-SIDECAR-BFF-HANDOFF` | Persona Trade Journal / Wave 2 | Prepare PTJ-004 BFF and frontend handoff packet | Codex2 | completed | 2026-07-12 08:16:07 | `ai-task-archive/tasks/PTJ-004-SIDECAR-BFF-HANDOFF.json` |
-| `MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX` | MGMT-OPS-003 Hosted Gap / Wave 1 workflow repair | Repair hosted Portfolio workflow focus/context gaps | Codex2 | completed | 2026-07-12 08:11:36 | `ai-task-archive/tasks/MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX.json` |
-| `PTJ-003` | Persona Trade Journal / Wave 1 | Persona trade reflection pipeline | Codex | completed | 2026-07-12 08:02:09 | `ai-task-archive/tasks/PTJ-003.json` |
-| `TJ-E2E-002` | Trade Journey E2E / Wave 0 | Journey domain and state contract | Antigravity | completed | 2026-07-12 07:53:33 | `ai-task-archive/tasks/TJ-E2E-002.json` |
-| `PTJ-002` | Persona Trade Journal / Wave 1 | Trade episode projection and lineage replay | Antigravity | completed | 2026-07-12 07:40:57 | `ai-task-archive/tasks/PTJ-002.json` |
-| `OCLAW-PMEM-002` | OpenClaw Persona Memory Gap / Wave 1 agent reconcile | OpenClaw persona agent reconciliation | Codex | completed | 2026-07-12 07:27:57 | `ai-task-archive/tasks/OCLAW-PMEM-002.json` |
-| `MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF` | MGMT-OPS-003 Hosted Gap / Wave 1 workflow repair | Prepare MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX BFF and frontend handoff packet | Codex | completed | 2026-07-12 07:25:08 | `ai-task-archive/tasks/MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF.json` |
-| `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-18` | OpenClaw Persona Memory Gap / Wave 1 agent reconcile | Prepare OCLAW-PMEM-002 BFF and frontend handoff packet | Codex2 | completed | 2026-07-12 07:22:06 | `ai-task-archive/tasks/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-18.json` |
-| `TJ-E2E-001` | Trade Journey E2E / Wave 0 | Producer and correlation inventory | Codex2 | completed | 2026-07-12 07:13:00 | `ai-task-archive/tasks/TJ-E2E-001.json` |
-| `PTJ-001` | Persona Trade Journal / Wave 0 | Persona Trade Journal contract and schema lock | Antigravity | completed | 2026-07-12 07:11:47 | `ai-task-archive/tasks/PTJ-001.json` |
-| `MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | Management Performance Ranking IA / Wave 1 Governance Decisions | Prepare MGMT-PERF-IA-005 BFF and frontend handoff packet | Codex2 | completed | 2026-07-12 06:51:05 | `ai-task-archive/tasks/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.json` |
-| `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17` | OpenClaw Persona Memory Gap / Wave 1 agent reconcile | Prepare OCLAW-PMEM-002 BFF and frontend handoff packet | Codex2 | completed | 2026-07-12 06:19:33 | `ai-task-archive/tasks/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17.json` |
-| `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-16` | OpenClaw Persona Memory Gap / Wave 1 agent reconcile | Prepare OCLAW-PMEM-002 BFF and frontend handoff packet | Codex2 | completed | 2026-07-12 06:13:43 | `ai-task-archive/tasks/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-16.json` |
-| `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15` | OpenClaw Persona Memory Gap / Wave 1 agent reconcile | Prepare OCLAW-PMEM-002 BFF and frontend handoff packet | Codex2 | completed | 2026-07-12 06:08:36 | `ai-task-archive/tasks/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15.json` |
-| `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-SIDECAR-BFF-HANDOFF` | OpenClaw Persona Memory Gap / Wave 1 agent reconcile | Prepare OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13 BFF and frontend handoff packet | Codex | completed | 2026-07-12 06:00:37 | `ai-task-archive/tasks/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-SIDECAR-BFF-HANDOFF.json` |
-| `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` | OpenClaw Persona Memory Gap / Wave 1 agent reconcile | Prepare OCLAW-PMEM-002 BFF and frontend handoff packet | Codex2 | completed | 2026-07-12 06:00:12 | `ai-task-archive/tasks/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-14.json` |
-| `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` | OpenClaw Persona Memory Gap / Wave 1 agent reconcile | Prepare OCLAW-PMEM-002 BFF and frontend handoff packet | Codex2 | completed | 2026-07-12 05:54:08 | `ai-task-archive/tasks/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.json` |
+| `AG-DYNUI-FULL-007` | Agora DYNUI Full Production Recovery / Wave 5 closeout | Agora DYNUI production closeout and publish proof | Codex | superseded | 2026-07-07 23:06:53 | `ai-task-archive/tasks/AG-DYNUI-FULL-007.json` |
+| `AG-DYNUI-FULL-006` | Agora DYNUI Full Production Recovery / Wave 4 no-fixture hosted gate | Replace fixture-backed hosted E2E with production gate | Codex | completed | 2026-07-07 23:06:53 | `ai-task-archive/tasks/AG-DYNUI-FULL-006.json` |
+| `AG-DYNUI-FULL-005` | Agora DYNUI Full Production Recovery / Wave 3 live dynamic workflow | Connect live dynamic workspace workflow end to end | Codex | completed | 2026-07-07 23:06:53 | `ai-task-archive/tasks/AG-DYNUI-FULL-005.json` |
+| `AG-DYNUI-FULL-003` | Agora DYNUI Full Production Recovery / Wave 2 ready strategy projection | Materialize ready Strategy Workshop output into Trading Room | Codex | completed | 2026-07-07 23:06:53 | `ai-task-archive/tasks/AG-DYNUI-FULL-003.json` |
+| `MGMT-GAP-007` | MGMT Console Production Gap / Batch 5 oversight closeout | Management production closeout and archive proof | Claude | completed | 2026-07-02 04:27:20 | `ai-task-archive/tasks/MGMT-GAP-007.json` |
+| `MGMT-GAP-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` | MGMT Console Production Gap / Batch 5 oversight closeout | Prepare MGMT-GAP-007 BFF and frontend handoff packet | Claude2 | completed | 2026-07-02 04:21:20 | `ai-task-archive/tasks/MGMT-GAP-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.json` |
+| `MGMT-GAP-007-SIDECAR-BFF-HANDOFF` | MGMT Console Production Gap / Batch 5 oversight closeout | Prepare MGMT-GAP-007 BFF and frontend handoff packet | Claude2 | completed | 2026-07-02 04:05:48 | `ai-task-archive/tasks/MGMT-GAP-007-SIDECAR-BFF-HANDOFF.json` |
+| `MGMT-GAP-006-SIDECAR-REVIEW` | MGMT Console Production Gap / Batch 5 acceptance harness | Prepare MGMT-GAP-006 review packet and evidence summary | Claude2 | completed | 2026-07-02 03:52:46 | `ai-task-archive/tasks/MGMT-GAP-006-SIDECAR-REVIEW.json` |
+| `MGMT-GAP-006` | MGMT Console Production Gap / Batch 5 acceptance harness | Hosted management production acceptance harness | Claude | completed | 2026-07-02 03:47:39 | `ai-task-archive/tasks/MGMT-GAP-006.json` |
+| `MGMT-GAP-006-SIDECAR-ACCEPTANCE-FOLLOWUP-3` | MGMT Console Production Gap / Batch 5 acceptance harness | Prepare MGMT-GAP-006 acceptance packet and dependency map | Claude2 | completed | 2026-07-02 03:36:15 | `ai-task-archive/tasks/MGMT-GAP-006-SIDECAR-ACCEPTANCE-FOLLOWUP-3.json` |
+| `MGMT-GAP-006-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | MGMT Console Production Gap / Batch 5 acceptance harness | Prepare MGMT-GAP-006 acceptance packet and dependency map | Claude2 | completed | 2026-07-02 03:12:30 | `ai-task-archive/tasks/MGMT-GAP-006-SIDECAR-ACCEPTANCE-FOLLOWUP-2.json` |
+| `MGMT-GAP-006-SIDECAR-ACCEPTANCE` | MGMT Console Production Gap / Batch 5 acceptance harness | Prepare MGMT-GAP-006 acceptance packet and dependency map | Claude2 | completed | 2026-07-02 03:03:40 | `ai-task-archive/tasks/MGMT-GAP-006-SIDECAR-ACCEPTANCE.json` |
+| `MGMT-GAP-010` | MGMT Console Production Gap / Batch 5 load release gate | Management console load and release gate performance | Claude | completed | 2026-07-02 02:50:17 | `ai-task-archive/tasks/MGMT-GAP-010.json` |
+| `MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | MGMT Console Production Gap / Batch 5 load release gate | Prepare MGMT-GAP-010 BFF and frontend handoff packet | Claude2 | completed | 2026-07-02 02:15:19 | `ai-task-archive/tasks/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.json` |
+| `MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` | MGMT Console Production Gap / Batch 5 load release gate | Prepare MGMT-GAP-010 BFF and frontend handoff packet | Claude2 | completed | 2026-07-02 02:03:26 | `ai-task-archive/tasks/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.json` |
+| `MGMT-LOAD-007-SIDECAR-BFF-HANDOFF` | MGMT Console Load Gap / Wave 4 closeout | Prepare MGMT-LOAD-007 BFF and frontend handoff packet | Codex2 | completed | 2026-07-02 01:58:25 | `ai-task-archive/tasks/MGMT-LOAD-007-SIDECAR-BFF-HANDOFF.json` |
+| `MGMT-LOAD-007` | MGMT Console Load Gap / Wave 4 closeout | Load gap closeout and parent gate | Codex | completed | 2026-07-02 01:53:02 | `ai-task-archive/tasks/MGMT-LOAD-007.json` |
+| `MGMT-LOAD-006` | MGMT Console Load Gap / Wave 3 release gate | Management load release gate | Claude | completed | 2026-07-02 01:32:55 | `ai-task-archive/tasks/MGMT-LOAD-006.json` |
+| `MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6` | MGMT Console Load Gap / Wave 3 release gate | Prepare MGMT-LOAD-006 BFF and frontend handoff packet | Codex2 | completed | 2026-07-02 00:16:59 | `ai-task-archive/tasks/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.json` |
+| `MGMT-LOAD-003` | MGMT Console Load Gap / Wave 2 FE shell fanout | Frontend shell fanout reduction | Codex2 | completed | 2026-07-02 00:14:39 | `ai-task-archive/tasks/MGMT-LOAD-003.json` |
 
 ## Task Board
 
@@ -130,7 +118,7 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 | `MGMT-PERF-IA-006` | Management Performance Ranking IA / Wave 2 integration | Contextual integration | 把 Cockpit、Persona Fleet、entity details、Human Inbox 與 Agora 接到 canonical centers，保留上下文且不再新增重複分析頁。 | Antigravity | Claude | todo | `MGMT-PERF-IA-003`, `MGMT-PERF-IA-004`, `MGMT-PERF-IA-005` | 2026-07-12 01:13:11 | Integrate Fleet, Cockpit, entity details, Human Inbox, and Agora after Wave 1. |
 | `MGMT-PERF-IA-007` | Management Performance Ranking IA / Wave 2 cleanup | Migration cleanup and regression | 完成 legacy alias、dead page、secondary navigation、route baseline 與 mobile/desktop regression 清理。 | Claude | Antigravity | todo | `MGMT-PERF-IA-003`, `MGMT-PERF-IA-004`, `MGMT-PERF-IA-005`, `MGMT-PERF-IA-006` | 2026-07-12 01:13:11 | Clean aliases, dead pages, and duplicate navigation after center integration. |
 | `MGMT-PERF-IA-008` | Management Performance Ranking IA / Wave 3 closeout | Hosted acceptance and closeout | 彙整所有 PR、merge SHA、deploy、desktop/mobile smoke、legacy redirects 與 Human Review receipt，證明完整營運閉環。 | Antigravity | Claude | todo | `MGMT-PERF-IA-001`, `MGMT-PERF-IA-002`, `MGMT-PERF-IA-003`, `MGMT-PERF-IA-004`, `MGMT-PERF-IA-005`, `MGMT-PERF-IA-006`, `MGMT-PERF-IA-007` | 2026-07-12 01:13:43 | Auto-reassigned MGMT-PERF-IA-008 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude. |
-| `MGMT-OPS-003-GAP-004` | MGMT-OPS-003 Hosted Gap / Wave 2 review gate | Independent hosted difference closeout | 由獨立 reviewer 逐列核對 gap matrix、API、畫面、desktop/mobile 與部署 SHA；任何差異未關閉就退件。 | Codex2 | Codex | in_progress | `MGMT-OPS-003-GAP-001`, `MGMT-OPS-003-GAP-002`, `MGMT-OPS-003-GAP-003` | 2026-07-12 08:35:55 | REQUEST_CHANGES: exact hosted FE SHA a74e5869 desktop passed, but mobile Human Inbox rendered strict Failed to fetch / seed fallback blocked. Owner must route execute-plans mobile request repair, redeploy, and rerun authenticated desktop/mobile probes with zero required-request failures before review. |
+| `MGMT-OPS-003-GAP-004` | MGMT-OPS-003 Hosted Gap / Wave 2 review gate | Independent hosted difference closeout | 由獨立 reviewer 逐列核對 gap matrix、API、畫面、desktop/mobile 與部署 SHA；任何差異未關閉就退件。 | Codex2 | Codex | review_approved | `MGMT-OPS-003-GAP-001`, `MGMT-OPS-003-GAP-002`, `MGMT-OPS-003-GAP-003` | 2026-07-12 09:35:53 | APPROVED: deployed SHA 5647d4b matches /deployment.json; dev deploy run 29174965397 and post-merge integration gate 29174965400 succeeded; reviewer hosted rerun passed Portfolio desktop/mobile and Persona Fleet click-map. |
 | `MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX` | MGMT-OPS-003 Hosted Gap / Wave 0 deploy repair | Fix Persona Fleet hosted deploy probe regression | 修正預設 Persona Fleet 在 production 為空時錯誤顯示 non-production rows，保留明確 persona focus 切頁行為，重新發布並通過 hosted probe。 | Codex | Codex2 | blocked | - | 2026-07-11 22:45:54 | Core hosted probe now passes on e23aba15, but deploy run 29156252948 failed linked-page E2E because focused persona was absent from UI default page. Waiting for MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX and independent review. |
 | `MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX` | MGMT-OPS-003 Hosted Gap / Wave 0 linked-page repair | Fix Persona Fleet focused pagination contract | 讓 Persona Fleet URL persona focus 與 page size 傳入 BFF q/page_size，避免 API 100 筆選到的 persona 在 UI 預設 20 筆中消失，完成 hosted linked-page workflow。 | Codex | Antigravity | blocked | - | 2026-07-11 22:51:32 | Stopped before commit: worker created execute-plans branch from origin/main ce8e57e instead of required origin/dev e23aba15. Wrong-base diff preserved in old worktree and must not merge. Superseded operationally by V2 correct-base task. |
 | `TJ-E2E-003` | Trade Journey E2E / Wave 1 | Correlation envelope propagation | 依 Trade Journey E2E gap 規格執行：Correlation envelope propagation。 | Codex | Claude | in_progress | `TJ-E2E-001`, `TJ-E2E-002` | 2026-07-12 08:35:17 | Round 2 review: executor/risk/paper-telemetry/reconciliation-drift propagation verified as real wired call chains, accepted. Blocking gap: broker boundary wired on services/broker/sinopac/adapter.py (ShioajiBrokerAdapter), which is not on the live signal-driven paper order path; real path (executor -> paper_runtime.SubmitTaiwanBrokerOrder -> HTTP -> broker/main.py -> paper_simulation.py) still drops client_order_id/correlation_envelope. Required changes 1-4 recorded in docs/reviews/2026-07-12-tj-e2e-003-claude-review.md. |
@@ -163,6 +151,7 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 | `MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6` | Codex | Claude | Support-only handoff packet ready at support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md; commit cd70cf2c5. Please verify route claims, fail-closed capital boundary, and canonical non-mutation. | pending | 2026-07-12 07:39:03 |
 | `PTJ-004` | Codex2 | Codex | Review approved after fail-closed command-owner response regressions passed; returned to Codex for PR finalization and merge. | pending | 2026-07-12 08:35:02 |
 | `OCLAW-PMEM-000` | Claude | Antigravity | Ownership updated | pending | 2026-07-12 08:37:05 |
+| `MGMT-OPS-003-GAP-004` | Codex | Codex2 | APPROVED: deployed SHA 5647d4b matches /deployment.json; dev deploy run 29174965397 and post-merge integration gate 29174965400 succeeded; reviewer hosted rerun passed Portfolio desktop/mobile and Persona Fleet click-map. | pending | 2026-07-12 09:35:53 |
 
 ## Blockers
 
@@ -184,91 +173,49 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-03 18:57:30
-- Tracked features: `47`
-- Lovable-ready packets: `45`
+- Last coordination scan: -
+- Tracked features: `0`
+- Lovable-ready packets: `0`
 - Waiting for Lovable/front-end: `0`
-- UI-done returned: `46`
-- Frontend feedback returned: `46`
+- UI-done returned: `0`
+- Frontend feedback returned: `0`
 - Open BFF gaps: `0`
-- Backend route live: `46`
-- Pantheon handoff published: `46`
-- Mirrored to front default branch: `45`
-- Dispatch recorded in coordinator state: `47`
-- Receiver-visible payload on front default branch: `45`
-- Lovable consumed packet: `46`
-- UI activated: `46`
-- Runtime verified: `47`
+- Backend route live: `0`
+- Pantheon handoff published: `0`
+- Mirrored to front default branch: `0`
+- Dispatch recorded in coordinator state: `0`
+- Receiver-visible payload on front default branch: `0`
+- Lovable consumed packet: `0`
+- UI activated: `0`
+- Runtime verified: `0`
 
 | Feature | Screen | Stage | Lovable Ready | Mirrored | UI Done | Feedback | Next Action |
 |---|---|---|---|---|---|---|---|
-| `BFF-2026-05-07-final` | - | `backend_delivery` | no | no | no | no | backend-delivery |
-| `CW-01-consult-request` | consult-request | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `CW-02-debate-transcript` | consultation-debate-transcript | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `CW-03-committee-board` | consultation-committee-board | `loop_complete` | no | no | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `CW-04-redteam-memo` | redteam-memo | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `EW-05-mutation-review` | mutation-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `F-042` | promotion-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-01-institutional-memory` | institutional-memory | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-02-research-notes` | knowledge-research-notes | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-03-evidence-refs` | knowledge-evidence-refs | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-04-insight-cards` | knowledge-insight-cards | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-05-strategy-spec` | knowledge-strategy-spec | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-001-deployment-review` | deployment-review-console | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-001-governance-review-queue` | governance-review-queue | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-002-incident-action-drawer` | incident-action-drawer | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-002-incident-detail` | incident-detail | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-002-incident-home` | incident-home | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-evolution-center` | evolution-center | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-inspiration-graph` | inspiration-graph | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-lineage-view` | lineage-view | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-post-incident-review` | post-incident-review-console | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-capital-binding-drilldowns` | capital-binding-drilldowns | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-deployment-approval-drilldowns` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-persona-drilldowns` | persona-drilldowns | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-persona-management` | persona-management | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-005-degradation-banner` | global-degradation-banner | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-005-sse-substrate` | sse-reconciliation-substrate | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-006-approval-queue` | governance-approval-queue | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-007-deployment-diff` | governance-deployment-diff | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-008-rollback-review` | governance-rollback-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-009-governance-audit-rail` | governance-audit-rail | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-010-runtime-state-board` | operator-runtime-state-board | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-011-health-status-board` | operator-health-status-board | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-012-alerts-rail` | operator-alerts-rail | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-013-operator-home` | operator-home-dashboard | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-014-paper-live-drift` | operator-paper-live-drift | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-consultation-workbench` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-knowledge-workbench` | knowledge-workbench-overview | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-01-research-ticket` | research-ticket | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-02-search` | research-search | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-03-analyze` | research-analyze | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-04-experiment-launch` | experiment-launch | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-05-artifact-compare` | artifact-compare | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-01-teaching-dialog` | teaching-dialog | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-02-parameter-controls` | parameter-controls | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-03-before-after-compare` | before-after-compare | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-04-teaching-replay` | teaching-replay | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
+| _(none)_ | - | - | - | - | - | - | - |
+
+Tracked-feature note: the table above only lists modules that currently have coordination feature records.
+Archive-done route-live activation publication lanes that remain outside explicit feature rows: `CW-02`, `KW-04`, `KW-05`, `RW-02`, `RW-04`, `RW-05`, `KW-02`, `KW-03`, `TW-01`, `TW-02`, `TW-04`.
+Do not read those omitted modules as open Pantheon backlog purely because they are absent from the coordination feature table.
 
 ## Latest Checkpoints
 
-- 2026-07-12 08:35:53 Codex: `PTJ-004` Supervisor resumed PTJ-004 for finalize after successful dispatch.
-- 2026-07-12 08:35:55 Codex: `MGMT-OPS-003-GAP-004` REQUEST_CHANGES: exact hosted FE SHA a74e5869 desktop passed, but mobile Human Inbox rendered strict Failed to fetch / seed fallback blocked. Owner must route execute-plans mobile request repair, redeploy, and rerun authenticated desktop/mobile probes with zero required-request failures before review.
-- 2026-07-12 08:35:58 Orchestrator: `PTJ-004` Supervisor resumed PTJ-004 for finalize after successful dispatch.
-- 2026-07-12 08:36:01 Orchestrator: `OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF` worker_worktree_allocated
-- 2026-07-12 08:36:01 Orchestrator: `OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF` Worker started via codex: owned_ready_dispatch
-- 2026-07-12 08:36:01 Codex2: `OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF` Supervisor auto-started OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF after successful dispatch.
-- 2026-07-12 08:36:02 Orchestrator: Watchdog decision observe_only: supervisor_healthy
-- 2026-07-12 08:36:05 Orchestrator: `OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF` Supervisor auto-started OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF after successful dispatch.
-- 2026-07-12 08:36:05 Orchestrator: `MGMT-OPS-003-GAP-004` Worker superseded after task responsibility moved to another agent.
-- 2026-07-12 08:36:07 Orchestrator: Pruned 1 worker worktree(s): /tmp/pantheon-worker-worktrees/pantheon/tj-e2e-003
-- 2026-07-12 08:36:21 Claude: `MGMT-PERF-IA-005` Re-verified execute-plans#260 unchanged (head 2954481ba354, CLEAN/MERGEABLE, integration-gate 29162742365 SUCCESS, mergedAt null, autoMergeRequest null, zero reviews). Still blocked purely on human merge per governance policy; no owner action possible. Steady state, 56th+ consecutive no-op owned_finalize_dispatch pass.
-- 2026-07-12 08:36:41 Orchestrator: `MGMT-PERF-IA-005` Worker exited before the task reached a terminal status.
-- 2026-07-12 08:36:43 Orchestrator: Pruned 2 worker worktree(s): /tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-005, /tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-004
-- 2026-07-12 08:36:51 Antigravity: `OCLAW-PMEM-000` Handoff to Claude: Parent gap closeout report created. Ready for review.
-- 2026-07-12 08:36:55 Antigravity: `OCLAW-PMEM-000` Assigned OCLAW-PMEM-000 to Claude with reviewer Antigravity
-- 2026-07-12 08:36:58 Codex: `PTJ-004` Worker commit 37f93edb689d recorded 2 staged file(s) for PTJ-004.
-- 2026-07-12 08:37:00 Antigravity: `OCLAW-PMEM-000` Closeout report approved.
-- 2026-07-12 08:37:01 Orchestrator: Watchdog decision observe_only: supervisor_healthy
-- 2026-07-12 08:37:02 Codex2: `OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF` Preparing support-only BFF/frontend umbrella closeout handoff; canonical/runtime layers unchanged.
-- 2026-07-12 08:37:05 Antigravity: `OCLAW-PMEM-000` Assigned OCLAW-PMEM-000 to Antigravity with reviewer Claude
+- 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:47 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:48 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:52 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:53 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:57 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:57 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:53:02 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:53:02 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
+- 2026-07-11 19:20:34 Antigravity: `MGMT-OPS-003-GAP-001` Assigned MGMT-OPS-003-GAP-001 to Codex2 with reviewer Copilot
+- 2026-07-11 19:20:34 Antigravity: `MGMT-OPS-003-GAP-002` Assigned MGMT-OPS-003-GAP-002 to Copilot with reviewer Codex2
+- 2026-07-11 19:20:34 Antigravity: `MGMT-OPS-003-GAP-003` Assigned MGMT-OPS-003-GAP-003 to Codex with reviewer Copilot
+- 2026-07-11 19:20:34 Antigravity: `MGMT-OPS-003-GAP-004` Assigned MGMT-OPS-003-GAP-004 to Codex2 with reviewer Codex
+- 2026-07-12 09:35:48 Codex2: `MGMT-OPS-003-GAP-004` Handoff to Codex: Repair verified on deployed execute-plans SHA 5647d4b; closeout doc updated with dev deployment, post-merge gate, and hosted desktop/mobile reviewer rerun. Reviewer should approve final closeout.
+- 2026-07-12 09:35:53 Codex: `MGMT-OPS-003-GAP-004` APPROVED: deployed SHA 5647d4b matches /deployment.json; dev deploy run 29174965397 and post-merge integration gate 29174965400 succeeded; reviewer hosted rerun passed Portfolio desktop/mobile and Persona Fleet click-map.
