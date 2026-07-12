@@ -703,7 +703,7 @@ def create_trade_journeys_router(
         projection = materializer.get(journey_id, tenant_id=tenant_id, environment=environment) if materializer and _tenant_allowed(identity, tenant_id) else None
         if projection is None:
             return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
-        if request.expected_revision != materializer.revision:
+        if request.expected_revision != projection.snapshot.get("revision"):
             return _err(409, "STALE_JOURNEY_REVISION", "Canonical journey changed; refetch before retry")
 
         body = request.model_dump()

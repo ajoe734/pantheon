@@ -14,13 +14,20 @@ import trade_journeys as tj  # noqa: E402
 from services.trade_journey.materializer import JourneyMaterializer  # noqa: E402
 
 
-def _client(dispatch=None):
+def _client(dispatch=None, *, unrelated_events=0):
     materializer = JourneyMaterializer()
     materializer.rebuild([{
         "event_id": "event-1", "journey_id": "tj-8", "tenant_id": "tenant-a",
         "environment": "paper", "occurred_at": "2026-07-12T00:00:00Z",
         "source": "test", "stage": "order_submission", "stage_status": "succeeded",
     }])
+    for index in range(unrelated_events):
+        materializer.ingest({
+            "event_id": f"event-other-{index}", "journey_id": "tj-other",
+            "tenant_id": "tenant-a", "environment": "paper",
+            "occurred_at": f"2026-07-12T00:00:{index + 1:02d}Z",
+            "source": "test", "stage": "order_submission", "stage_status": "succeeded",
+        })
     store = tj.TradeJourneyEventStore()
     store.materializer = lambda: materializer
 
@@ -51,7 +58,10 @@ def _client(dispatch=None):
         action_ledger=tj.JourneyActionLedger(),
         utc_now=lambda: "2026-07-12T01:00:00Z",
     ))
-    return TestClient(app), materializer.revision
+    revision = materializer.get(
+        "tj-8", tenant_id="tenant-a", environment="paper",
+    ).snapshot["revision"]
+    return TestClient(app), revision
 
 
 def _post(client, revision, *, key="idem-key-0001", action="pause", reason="operator requested pause", roles="operator"):
@@ -71,6 +81,16 @@ def test_operator_action_returns_receipt_readback_and_refetch_contract():
     assert body["data"]["readback"]["state"] == "paused"
     assert body["meta"]["refetch_required"] is True
     assert body["data"]["human_inbox"]["return_to"].endswith("/tj-8")
+
+
+def test_action_revision_is_scoped_to_target_journey():
+    client, revision = _client(unrelated_events=2)
+
+    response = _post(client, revision, key="idem-multi-journey")
+
+    assert revision == 1
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "succeeded"
 
 
 def test_rbac_stale_duplicate_conflict_and_partial_failure():
