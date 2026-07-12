@@ -92,6 +92,16 @@ class PrivateContentStore(Protocol):
         """
         ...
 
+    def discard_failed_write(
+        self,
+        *,
+        private_content_ref: str,
+        tenant_id: str,
+        owner_user_id: str,
+    ) -> None:
+        """Purge a write whose referencing workshop transaction failed."""
+        ...
+
     def delete_for_owner(
         self,
         *,
@@ -397,6 +407,7 @@ class _StoredPrivateContent:
     envelope: _EncryptedEnvelope
     ciphertext: bytes
     idempotency_key: str
+    payload_hash: str
 
 
 class MemoryPrivateContentStore:
@@ -412,7 +423,7 @@ class MemoryPrivateContentStore:
         self._key_provider = key_provider
         self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
         self._objects: dict[str, _StoredPrivateContent] = {}
-        self._idempotency: dict[tuple[str, str, str], str] = {}
+        self._idempotency: dict[tuple[str, str, str, str, str], str] = {}
         self._audit: list[DecryptAuditRecord] = []
         self._lock = threading.RLock()
 
@@ -429,11 +440,17 @@ class MemoryPrivateContentStore:
             raise ValueError("Private content must be non-empty.")
         if retention_class not in RETENTION_DAYS:
             raise ValueError(f"Unknown retention class: {retention_class}")
-        idem = (tenant_id, owner_user_id, idempotency_key)
+        idem = (tenant_id, owner_user_id, workshop_id, event_id, idempotency_key)
+        payload_hash = hashlib.sha256(
+            b"\0".join((content_type.encode(), retention_class.encode(), plaintext))
+        ).hexdigest()
         with self._lock:
             existing_ref = self._idempotency.get(idem)
             if existing_ref:
-                return self._objects[existing_ref].descriptor
+                existing = self._objects[existing_ref]
+                if existing.payload_hash != payload_hash:
+                    raise ValueError("Idempotency-Key conflicts with different private content.")
+                return existing.descriptor
             created_at = self._now_fn()
             ref = generate_private_content_ref()
             ciphertext, _nonce, envelope = _encrypt_content(
@@ -450,9 +467,28 @@ class MemoryPrivateContentStore:
                 expires_at=compute_expires_at(retention_class, created_at),
                 state="active", created_at=created_at,
             )
-            self._objects[ref] = _StoredPrivateContent(descriptor, envelope, ciphertext, idempotency_key)
+            self._objects[ref] = _StoredPrivateContent(
+                descriptor, envelope, ciphertext, idempotency_key, payload_hash
+            )
             self._idempotency[idem] = ref
             return descriptor
+
+    def discard_failed_write(self, *, private_content_ref: str, tenant_id: str,
+                             owner_user_id: str) -> None:
+        """Hard-delete an uncommitted object and its retry index."""
+        with self._lock:
+            stored = self._objects.get(private_content_ref)
+            if stored is None:
+                return
+            d = stored.descriptor
+            if d.tenant_id != tenant_id or d.owner_user_id != owner_user_id:
+                raise PrivateContentAccessDenied("Private content is outside the owner scope.")
+            idem = (d.tenant_id, d.owner_user_id, d.workshop_id, d.event_id or "",
+                    stored.idempotency_key)
+            self._idempotency.pop(idem, None)
+            stored.ciphertext = b""
+            stored.envelope = dataclasses.replace(stored.envelope, encrypted_dek=b"")
+            del self._objects[private_content_ref]
 
     def get_for_owner(self, *, private_content_ref: str, tenant_id: str,
                       owner_user_id: str, purpose: str, request_id: str) -> bytes:

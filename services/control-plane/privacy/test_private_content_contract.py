@@ -137,6 +137,37 @@ def test_concrete_store_is_owner_scoped_idempotent_and_audited(monkeypatch: pyte
     assert "list" not in MemoryPrivateContentStore.__dict__
 
 
+def test_idempotency_is_bound_to_write_identity_and_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGORA_PRIVATE_CONTENT_DEV_KEK", DEV_KEK)
+    store = MemoryPrivateContentStore(key_provider=_DevKeyProvider())
+    base = dict(tenant_id="tenant-001", owner_user_id="user-001",
+                event_id="evt-001", content_type="text/plain",
+                plaintext=b"alpha", retention_class="workshop_default",
+                idempotency_key="shared-key")
+    first = store.put(workshop_id="ws-001", **base)
+    other_workshop = store.put(workshop_id="ws-002", **base)
+    assert other_workshop.private_content_ref != first.private_content_ref
+
+    with pytest.raises(ValueError, match="conflicts"):
+        store.put(workshop_id="ws-001", **{**base, "plaintext": b"changed"})
+
+
+def test_discard_failed_write_removes_retrievable_object(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGORA_PRIVATE_CONTENT_DEV_KEK", DEV_KEK)
+    store = MemoryPrivateContentStore(key_provider=_DevKeyProvider())
+    descriptor = store.put(
+        tenant_id="tenant-001", owner_user_id="user-001", workshop_id="ws-001",
+        event_id="evt-failed", content_type="text/plain", plaintext=b"orphan",
+        retention_class="workshop_default", idempotency_key="failed-key",
+    )
+    store.discard_failed_write(private_content_ref=descriptor.private_content_ref,
+                               tenant_id="tenant-001", owner_user_id="user-001")
+    with pytest.raises(PrivateContentAccessDenied):
+        store.get_for_owner(private_content_ref=descriptor.private_content_ref,
+                            tenant_id="tenant-001", owner_user_id="user-001",
+                            purpose="regression", request_id="req-failed")
+
+
 def test_policy_owner_only_decrypt_and_fail_closed_redaction() -> None:
     allowed = authorise_decrypt(
         tenant_id="tenant-001",

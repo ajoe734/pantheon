@@ -1137,6 +1137,11 @@ def create_strategy_workshop_router(
         })
         if event is None:
             from models import ErrorCode
+            private_content_store.discard_failed_write(
+                private_content_ref=private.private_content_ref,
+                tenant_id=scope.tenant_id,
+                owner_user_id=scope.user_id,
+            )
             # _new_version is the actual current lock_version (or None if not found)
             current_lock_version = _new_version if _new_version is not None else 1
             current_etag = f'W/"workshop:{workshop_id}:v{current_lock_version}"'

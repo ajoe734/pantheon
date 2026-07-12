@@ -1138,6 +1138,54 @@ class TestWorkshopConcurrencyContract:
             f"Stale ETag must return 409, got {msg_resp.status_code}: {msg_resp.text}"
         )
 
+    def test_stale_if_match_discards_private_content_orphan(self, monkeypatch):
+        from agora.strategy_workshop import MemoryWorkshopStore
+        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from fastapi import FastAPI, HTTPException
+        from privacy.private_content_models import PrivateContentAccessDenied
+        from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
+
+        workshop_store = MemoryWorkshopStore()
+        workshop_store.create_session({
+            "workshop_id": "ws-cas-orphan", "tenant_id": "tenant-alpha",
+            "user_id": "user-alpha",
+        })
+        private_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
+        written = []
+        original_put = private_store.put
+
+        def recording_put(**kwargs):
+            descriptor = original_put(**kwargs)
+            written.append(descriptor)
+            return descriptor
+
+        private_store.put = recording_put
+        identity = {"operator_id": "user-alpha", "roles": ["operator"],
+                    "claims": {"tenant_id": "tenant-alpha"}}
+        app = FastAPI()
+        app.include_router(create_strategy_workshop_router(
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda current: None,
+            bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
+            utc_now=lambda: "2026-07-12T00:00:00Z",
+            workshop_store=workshop_store,
+            private_content_store=private_store,
+        ))
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/bff/agora/workshops/ws-cas-orphan/messages",
+            headers={"Authorization": "Bearer ignored", "Idempotency-Key": "cas-fail",
+                     "If-Match": 'W/"workshop:ws-cas-orphan:v0"'},
+            json={"content": "must not survive"},
+        )
+        assert response.status_code == 409
+        assert len(written) == 1
+        with pytest.raises(PrivateContentAccessDenied):
+            private_store.get_for_owner(
+                private_content_ref=written[0].private_content_ref,
+                tenant_id="tenant-alpha", owner_user_id="user-alpha",
+                purpose="orphan-regression", request_id="req-orphan",
+            )
+
     def test_post_message_with_matching_if_match_succeeds(self, monkeypatch):
         """Correct If-Match must allow the mutation through."""
         client = _workshop_client(monkeypatch)
