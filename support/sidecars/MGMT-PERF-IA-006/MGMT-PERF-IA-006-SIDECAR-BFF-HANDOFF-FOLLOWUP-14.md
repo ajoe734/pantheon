@@ -128,3 +128,15 @@ AI_NAME=Antigravity ./scripts/ai-status.sh approve \
 - Inspected relevant BFF route and contract tests without changing runtime,
   registry, governance, canonical docs, or frontend files.
 - Did not scan `current-work.md` or the full `ai-activity-log.jsonl`.
+
+## 8. Approved Closeout Evidence
+
+- Reviewer `Antigravity` approved this support-only packet on `2026-07-12`;
+  the review record is
+  `support/sidecars/MGMT-PERF-IA-006/REVIEW-MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-14.md`.
+- Finalization rechecked the task brief, packet, review record, branch scope,
+  and diff boundary. The approved claim remains limited to parent absorption;
+  parent `MGMT-PERF-IA-006` remains independently owned and evaluated.
+- Verification: `git diff --check origin/dev...HEAD`; scoped diff and artifact
+  inspection; `AI_NAME=Codex ./scripts/ai-status.sh show
+  MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-14`.
