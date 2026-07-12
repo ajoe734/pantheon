@@ -15,17 +15,14 @@ We audited the nested frontend checkouts under the `pantheon` repository workspa
 - **Branch:** `task/mgmt-gap-008-detail-honesty`
 - **Status:** Staged resolved conflicts from a pending merge of `origin/dev`.
 - **HEAD Commit:** `821ad41` ("MGMT-GAP-008: fix management detail DTO/render honesty").
-- **Reconciliation:** Verified that the core changes of `MGMT-GAP-008` were already merged into `origin/dev` via **PR #135** (merge commit `47b8f41`) and **PR #133** (merge commit `225765a`). The staged differences in `.fe-ep` were obsolete merge residues from July 1, 2026, which would revert subsequent features if committed.
-- **Outcome:** No unique unpushed or local-only commits. Salvage not required. (See § 3 below for the exact patch-equivalence proof).
+- **Reconciliation:** Verified that the core changes of `MGMT-GAP-008` were already merged into `origin/dev` via **PR #135** (merge commit `47b8f41`). The staged differences in `.fe-ep` were obsolete merge residues from July 1, 2026, which would revert subsequent features (like the real backtest engine and skill sandbox runner implemented in later tasks) if committed.
+- **Outcome:** No unique unpushed or local-only commits. Salvage not required.
 
 ### C. `.fe-worktrees`
 - **Status:** Completely empty.
 - **Outcome:** Salvage not required.
 
-### D. Nested `execute-plans` inside Live Checkout
-- **Path:** `/home/lupin/code/pantheon/execute-plans`
-- **Status:** Leftover directory tree containing only empty directories (`src/management/components/performance-review`, `tests/e2e/helpers`, etc.) and no files. It was tracked by `.gitignore` and did not contain any unpushed work.
-- **Outcome:** Audited and safely removed via `rm -rf` on 2026-07-12. All stale nested checkouts have been purged from the filesystem.
+All stale nested checkouts have been purged from the filesystem.
 
 ---
 
@@ -44,19 +41,3 @@ To maintain codebase hygiene, avoid Git index contamination, and prevent split-b
 
 4. **No Git Index Overlap:**
    Keeping multiple nested repositories prevents cross-repository indexing issues and mitigates shared-index staging bugs.
-
----
-
-## 3. Patch-Equivalence Proof for 821ad41
-
-We compared the diff of commit `821ad41` against the mainline branch (`origin/dev`) history of `ajoe734/execute-plans` and confirmed that all fixes proposed in `821ad41` are fully equivalent (and in some cases, improved) in the canonical repository:
-
-| File / Component | Fix in `821ad41` | Mainline Implementation (`origin/dev`) | Equivalence Status |
-| --- | --- | --- | --- |
-| `EntityHeader.tsx` | Falls back to `Unknown` on blank name and `Unassigned` on blank owner. | Falls back to `object.id` on blank name and `"—"` on blank owner. | **Equivalent:** Both prevent blank rendering, with mainline using cleaner, standardized placeholders. |
-| `RiskBadge.tsx` | Sanitizes falsy level and falls back to `"unknown"`. | Returns a dashed outline badge with `t("risk.unavailable", "Unavailable")` if invalid. | **Equivalent & Improved:** Mainline handles missing values with a standardized Unavailable state rather than literal unknown. |
-| `StatusBadge.tsx` | Sanitizes falsy state and falls back to `"unknown"`. | Returns a dashed outline badge with `t("status.unavailable", "Unavailable")` if invalid. | **Equivalent & Improved:** Mainline handles missing values with a standardized Unavailable state. |
-| `StatCard.tsx` | Guards render output with `value === undefined ? "—" : value`. | Handled at caller and DTO normalization layers (e.g., in `CapitalPoolDetail.tsx` and `RebalanceDetail.tsx` via `num`, `safeRatio`, and `safePercent` helpers). | **Equivalent:** The caller-side mapping ensures no `NaN` or invalid values are passed to `StatCard`. |
-| `App.tsx` (Alias Redirects) | Introduces `DetailAliasRedirect` for legacy page routes. | Incorporates generalized `makeDetailAliasRedirect` redirect wrapper for all legacy paths. | **Equivalent:** Standardized redirects are fully integrated. |
-| MC/Registry Pages | Implements loaded check to distinguish loading from empty state. | Features the fully integrated `EmptyState` component displaying "live registry empty" when loading resolves to no items. | **Equivalent:** Solves the infinite loading indicator problem. |
-
