@@ -15,6 +15,10 @@
 - [AG-GAP-007 capabilities mismatch](AG-GAP-007-capabilities-mismatch.md): fixes the 
   BFF /bff/agora/capabilities endpoint silent projection loading failure and documents
   the dev journal dry-run residue cleanup procedure.
+- [AG-GAP-010 design parity baseline](AG-GAP-010-design-parity-baseline.md):
+  declares `AI Trading Desk Design.zip` formally lost after a final recorded
+  search and replaces it with closure-pack specs plus TABS-GATE-011 hosted
+  screenshots pinned to a deployed frontend SHA as the design-parity baseline.
 - [AG-GAP-011 FE checkout hygiene](AG-GAP-011-fe-checkout-hygiene.md): details
   the audit and removal of stale frontend checkouts and establishes rules for
   execute-plans workspace integrity.

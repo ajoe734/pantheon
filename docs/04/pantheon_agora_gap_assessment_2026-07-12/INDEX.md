@@ -24,6 +24,18 @@ The development compatibility record now targets the v1.5 additive bundle.
 It must remain `pending` until frontend v1.5 generated-contract evidence and a
 real frontend runtime commit are available.
 
+## Design parity baseline
+
+AG-GAP-010 ran a final recorded search for `AI Trading Desk Design.zip`
+(missing since at least 2026-07-03), found no copy anywhere on the machine,
+and formally declared it lost. Design parity is no longer gated on an
+unrecoverable file; it is now checked against closure-pack written specs plus
+TABS-GATE-011 hosted screenshots pinned to deployed frontend commit
+`9d60297e5c200d05214df7f758ee0c20c224db02`. See
+[`docs/04/agora_design_pack_dynui_2026-06-28/design-parity-baseline-declaration.md`](../agora_design_pack_dynui_2026-06-28/design-parity-baseline-declaration.md)
+and the execution packet at
+[AG-GAP-010-design-parity-baseline.md](../../bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-010-design-parity-baseline.md).
+
 ## Market-data activation
 
 SRCLIVE-001 activation evidence was merged in PR #3047. AG-GAP-013 owns the
