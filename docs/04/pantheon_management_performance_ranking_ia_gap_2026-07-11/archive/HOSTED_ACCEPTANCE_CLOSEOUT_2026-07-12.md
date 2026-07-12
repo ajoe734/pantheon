@@ -21,6 +21,7 @@ The canonical task archive records `MGMT-PERF-IA-001` through
 | 006 | execute-plans PR #268; Pantheon delivery merge `5ff81e46bde0af7df586532d0cc9bee4d8dc97b9` |
 | 007 | execute-plans PR #270, merge `a37a6ea32729f7ff6a6a7b6ea26eb8e9d4c37401`; Pantheon PRs #3413/#3415, final merge `8f9b8442b0b3670a54d2eb46fc4a203b16bf76b5` |
 | 008 frontend probe | execute-plans PR #271, merge `e4217ee6c49c40ef66284acec491b1b375971d0f` |
+| 008 gate closeout | execute-plans PRs #272/#273/#274, final merge `407d8227dc6508ad61a525d812199776f2db523b` |
 
 ## Hosted Deployment
 
@@ -29,16 +30,22 @@ Probe time: 2026-07-12 UTC.
 - Frontend: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
 - BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
 - `/deployment.json`: app `execute-plans`, environment `pantheon-dev-fe`,
-  source branch `dev`, deployed at `20260712T130220Z`, commit/source ref
-  `e4217ee6c49c40ef66284acec491b1b375971d0f`
+  source branch `dev`, deployed at `20260712T141422Z`, commit/source ref
+  `407d8227dc6508ad61a525d812199776f2db523b`
 - Build mode: `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`,
   `VITE_BFF_REAL_WRITES=false`
 - `GET /management/performance`: HTTP 200
 - BFF `GET /health`: HTTP 200
 
-The deployment commit is the merge commit of execute-plans PR #271, so the
-hosted bundle contains the final Persona Fleet-to-quarterly Rankings Center
-probe correction.
+The deployment commit is the merge commit of execute-plans PR #274. It contains
+the Persona Fleet-to-quarterly Rankings Center correction, current canonical
+link assertions, and the detail-route shell wiring needed for capital, ranking
+formula, and rebalance details to render instead of remaining blank.
+
+The post-merge `Pantheon FE-BFF Integration Gate` run `29195825381` completed
+successfully, including unit/integration tests, production build, BFF probes,
+hosted production acceptance, Playwright E2E, and the aggregate release gate.
+The paired Pantheon dev deploy run `29195825522` also completed successfully.
 
 ## Desktop, Mobile, And Legacy Route Evidence
 
@@ -58,8 +65,11 @@ families:
 Task 001 recorded 8/8 Playwright passes across desktop and mobile. Task 003's
 post-merge run 29188935347 passed task-owned specs 26 and 27 on chromium and
 mobile-chromium. Task 007 independently recorded 5/5 focused route crawl
-passes. PR #271 updates the remaining Persona Fleet quarterly deep-link probe
-to the canonical Rankings Center URL while retaining persona context.
+passes. PRs #272 and #273 aligned unit and browser coverage with canonical
+Performance, Rankings, detail-alias, and Human Review return-context behavior.
+PR #274 removed duplicate top-level detail routes that bypassed the management
+shell. The final gate's hosted acceptance and Playwright steps passed against
+the exact deployed revision.
 
 ## Operator Loop And Safety Disposition
 
@@ -82,10 +92,6 @@ apply receipt can exist.
 
 ## Residual Risks And Ownership
 
-- PR #270's post-merge integration run failed in the separately tracked Persona
-  Fleet focused-pagination probe; the task-owned route tests passed, and the
-  remaining issue is owned by `MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX` and
-  `MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX`.
 - A real apply receipt is intentionally absent because hosted dev has real
   writes disabled. Human/Ops owns any future authorized apply exercise.
 - Compatibility redirect telemetry emits
@@ -100,5 +106,7 @@ apply receipt can exist.
 curl -fsS https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json
 curl -fsS -o /dev/null -w '%{http_code}' https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/management/performance
 curl -fsS -o /dev/null -w '%{http_code}' https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/health
-gh pr view 271 -R ajoe734/execute-plans --json state,mergedAt,mergeCommit,statusCheckRollup
+gh pr view 274 -R ajoe734/execute-plans --json state,mergedAt,mergeCommit,statusCheckRollup
+gh run view 29195825381 -R ajoe734/execute-plans --json status,conclusion,headSha
+gh run view 29195825522 -R ajoe734/execute-plans --json status,conclusion,headSha
 ```
