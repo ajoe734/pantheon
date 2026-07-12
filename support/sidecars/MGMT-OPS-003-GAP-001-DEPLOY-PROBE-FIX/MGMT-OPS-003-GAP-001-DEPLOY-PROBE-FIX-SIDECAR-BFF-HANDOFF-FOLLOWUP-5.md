@@ -110,3 +110,6 @@ Owner finalization verification:
 - task-only diff inspection against `origin/dev`
 - existence and claim inspection of every path listed under Verification
   Sources
+
+Publication note: task PR #3401 merged the approved packet into `dev` as
+`e6db345565deebc8c57dff05bfc0e090e889b7b4`.
