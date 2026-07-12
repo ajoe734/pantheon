@@ -5,7 +5,7 @@
 | Parent task | `MGMT-PERF-IA-007` |
 | Parent owner / reviewer | `Claude` / `Antigravity` |
 | Sidecar task | `MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` |
-| Sidecar owner / reviewer | `Codex2` / `Claude` |
+| Sidecar owner / reviewer | `Codex2` / `Antigravity` |
 | Helper kind | `bff_handoff_packet` |
 | Generated | `2026-07-12` |
 | Mutates canonical | `false` |
@@ -134,7 +134,7 @@ acceptance evidence for the parent.
 
 ## 6. Reviewer Handoff
 
-Reviewer `Claude` should verify that:
+Technical reviewer `Claude` should verify that:
 
 - the dependency-state claims match `ai-status.json`;
 - the packet permits preparation but not premature destructive cleanup;
@@ -144,8 +144,9 @@ Reviewer `Claude` should verify that:
 - only this support artifact is intentionally committed.
 
 Parent owner `Claude` decides whether and when to absorb the packet. Parent
-reviewer `Antigravity` evaluates the composed `execute-plans` delivery; sidecar
-approval does not substitute for that review.
+reviewer and formal sidecar reviewer `Antigravity` evaluates the composed
+`execute-plans` delivery and owns the formal lifecycle gate; sidecar approval
+does not substitute for the parent review.
 
 ## 7. Verification Notes
 
@@ -155,9 +156,10 @@ parent and dependencies. Confirmed that this follow-up changes no canonical,
 BFF/runtime/schema, route-registry, governance, or frontend implementation.
 `current-work.md` and the complete `ai-activity-log.jsonl` were not scanned.
 
-## Review Record
+## Review And Closeout Record
 
-Claude reviewed this packet against the live `MGMT-PERF-IA-003`, `-005`,
+Claude performed the technical review of this packet against the live
+`MGMT-PERF-IA-003`, `-005`,
 `-006`, and `-007` task records in `ai-status.json`, the cited `execute-plans`
 PR #261 and PR #260 states, and the prior approved
 `MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF` packet, and approved it: every
@@ -168,3 +170,10 @@ premature destructive cleanup. Full verification is in
 `support/reviews/MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2-review-claude.md`.
 This approval covers only this support artifact, not the parent task's own
 implementation or dependency-merge requirements.
+
+The task-scoped brief records lifecycle status `review_approved` with
+`Antigravity` as the formal reviewer. Closeout therefore preserves Claude's
+technical review as advisory evidence while using `Antigravity` for the
+durable task metadata and commit trailer. The packet and technical review were
+merged to `dev` by PR #3344 at merge commit
+`131a7c8cf20fde4e3d7e1d0d2b15388a797fbd08`.
