@@ -244,7 +244,9 @@ class JourneyMaterializer:
             parsed = datetime.fromisoformat(result["occurred_at"].replace("Z", "+00:00"))
             if parsed.tzinfo is None:
                 raise ValueError
-            result["occurred_at"] = parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            result["occurred_at"] = parsed.astimezone(timezone.utc).isoformat(
+                timespec="microseconds"
+            ).replace("+00:00", "Z")
         except ValueError as exc:
             raise MaterializationError("occurred_at must be timezone-aware ISO-8601") from exc
         return result

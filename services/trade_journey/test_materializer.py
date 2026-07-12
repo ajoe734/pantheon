@@ -32,6 +32,22 @@ def test_duplicate_out_of_order_late_and_rebuild_are_deterministic():
     assert rebuilt.rebuild_status == "complete"
 
 
+def test_mixed_timestamp_precision_is_ordered_chronologically():
+    whole_second = event("e1", "signal_generation", "succeeded", 0)
+    whole_second["occurred_at"] = "2026-07-12T00:00:00Z"
+    fractional_second = event("e2", "trade_decision", "succeeded", 0)
+    fractional_second["occurred_at"] = "2026-07-12T00:00:00.500000Z"
+
+    materializer = JourneyMaterializer()
+    materializer.rebuild([fractional_second, whole_second])
+
+    projection = materializer.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert [item["event_id"] for item in projection.timeline] == ["e1", "e2"]
+    assert projection.snapshot["created_at"] == "2026-07-12T00:00:00.000000Z"
+    assert projection.snapshot["updated_at"] == "2026-07-12T00:00:00.500000Z"
+    assert materializer.source_watermarks["test"] == "2026-07-12T00:00:00.500000Z"
+
+
 def test_conflicting_duplicate_fails_closed_without_mutating_projection():
     materializer = JourneyMaterializer()
     materializer.ingest(event("e1", "signal_generation", "succeeded", 1))
