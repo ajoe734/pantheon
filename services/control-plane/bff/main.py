@@ -21270,6 +21270,7 @@ async def patch_agora_journal_entry(
 # --------------------------------------------------------------------------- #
 
 _AGORA_CORE_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_ASK_SESSIONS_IDEMPOTENCY = _AGORA_CORE_BFF_IDEMPOTENCY
 _AGORA_SIGNAL_DECISIONS = {"agree", "disagree", "flag_suspicious"}
 _AGORA_SIGNAL_SEVERITIES = {"info", "warn", "alert"}
 _AGORA_SIGNAL_WRITE_ROLES = {"analyst", "operator", "approver", "admin", "reviewer"}
