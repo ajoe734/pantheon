@@ -10,3 +10,9 @@ disposition and implementation boundaries are recorded in
 The development compatibility record now targets the v1.5 additive bundle.
 It must remain `pending` until frontend v1.5 generated-contract evidence and a
 real frontend runtime commit are available.
+
+AG-GAP-008 replaces the Trading Room's empty SSE stub with an authenticated,
+typed, replayable stream. The stream is isolated by tenant and user scope and
+immediately emits `trading_room.connected`; trader decisions emit
+`trading_room.decision.recorded` without expanding the decision-support-only
+capital boundary.
