@@ -3,6 +3,9 @@
 - [AG-GAP-001 durable workshop storage](AG-GAP-001-workshop-postgres-live.md):
   pins the dev workshop backend to Postgres and gates deployment on restart
   persistence.
+- [AG-GAP-002 durable Trading Room storage](AG-GAP-002-trading-room-postgres.md):
+  adds the optional Postgres backend, pins it for dev, and defines restart
+  persistence evidence without widening the order-routing boundary.
 - [AG-GAP-005 contract honesty](AG-GAP-005-contract-honesty.md): formally
   defers six workshop 501 operations and refreshes dev compatibility tracking
   from the stale v1.1 snapshot to the v1.5 additive contract.
