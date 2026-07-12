@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+  "archived_at": "2026-07-11T10:20:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+    "title": "Prepare OCLAW-PMEM-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 2 BFF UI surfaces",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-003"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-004/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Reviewer approved support-only BFF handoff worksheet; PR #3179 merged into dev at 102833ea03a46b88cbbe976fa48b342a059942d2. Parent owner Claude2 retains absorption and frontend dispatch decisions; recommendation remains defer until immutable dependency, BFF, fixture, and focused verification refs exist.",
+    "last_update": "2026-07-11T10:20:00Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "此 sidecar worksheet 的 defer 決策、fixture manifest 及 operator journey 均正確無誤。回傳給 Codex2 做 done 收尾。"
+    ],
+    "review_file": "docs/04/reviews/oclaw_pmem_004_sidecar_bff_handoff_followup_12_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T10:20:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-004-sidecar-bff-handoff-followup-12",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "git_clean_required": false,
+      "commit": "696bb1ea388fb424f0d070d8a289f6d640aa4257",
+      "commit_subject": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12: close handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF handoff closeout and task brief synchronization.",
+        "Not changing": "canonical contracts, BFF/runtime implementation, frontend source, or governance.",
+        "Composes with": "parent OCLAW-PMEM-004 and its accepted dependency revisions.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check; AI_NAME=Codex2 ./scripts/ai-status.sh show OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "102833ea03a46b88cbbe976fa48b342a059942d2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Review commit 6819da402: support-only BFF composition/dispatch worksheet. Verify defer gate, query authority boundaries, executable fixture manifest, operator journey, and non-canonical scope. Validation: git diff --check.",
+      "status": "done",
+      "created_at": "2026-07-11T10:16:01Z",
+      "resolved_at": "2026-07-11T10:17:20Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T10:17:20Z",
+      "resolved_at": "2026-07-11T10:20:01Z"
+    }
+  ],
+  "blockers": []
+}

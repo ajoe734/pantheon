@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-11T05:32:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved support-only BFF/frontend query orchestration handoff; PR #3117 merged as f58ce94850037721c98b0dfe68c2ce443b26f0d8; verified git diff --check and Branch CI Gate (commit trailers, runtime mirror guard, smoke acceptance).",
+    "last_update": "2026-07-11T05:32:55Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Boundary 確認：僅新增 support/sidecars 檔案，未變更 canonical/BFF/runtime/registry/governance/前端實作",
+      "內容與已核准的 FOLLOWUP-2 envelope/mutation 事實一致，未新增矛盾之路由或狀態聲明",
+      "row shape 明確標註為 illustrative 非新 wire contract，acceptance cases 保持 support-only guidance",
+      "trailing whitespace 為既有 markdown 兩空白換行慣例，非引入問題"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T05:32:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "873e32038fc9e431c27d5d2eca8d0f359c9b1878",
+      "commit_subject": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: add query handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend query orchestration handoff.",
+        "Not changing": "canonical policy, BFF/runtime contracts, or frontend source.",
+        "Composes with": "PPL-ALLOC-003, PPL-ALLOC-004, and parent PPL-ALLOC-006.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; scoped artifact presence and boundary checks"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f58ce94850037721c98b0dfe68c2ce443b26f0d8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: support-only follow-up packet adds stable join keys, independent query/failure states, mutation refresh rules, idempotent replay behavior, and parent adapter acceptance cases. No canonical, BFF/runtime, governance, or frontend implementation changes. Verification: git diff --check and scoped boundary/content checks. Commit: 873e32038.",
+      "status": "done",
+      "created_at": "2026-07-11T05:23:54Z",
+      "resolved_at": "2026-07-11T05:30:12Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved: support-only query orchestration/refresh/failure-state handoff packet stays in scope, consistent with prior two approved packets, no canonical/BFF/runtime/frontend changes. Returning to owner (Codex) for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T05:30:12Z",
+      "resolved_at": "2026-07-11T05:32:56Z"
+    }
+  ],
+  "blockers": []
+}

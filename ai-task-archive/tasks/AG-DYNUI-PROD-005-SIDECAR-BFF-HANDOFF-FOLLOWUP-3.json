@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-04T02:30:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare AG-DYNUI-PROD-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Dynamic Workflow",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar closeout complete: packet re-verified no drift since FOLLOWUP-2, dependency-chain stall on two human gates characterized, reader's guide across three packets provided. PR #2880 (packet) and PR #2881 (closeout record) both merged into dev. Handed off to parent owner Claude for AG-DYNUI-PROD-005 absorption decision.",
+    "last_update": "2026-07-04T02:30:01Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up 3 核准：重新驗證前兩份 packet 的所有發現皆未變動（元件掛載、no-op callbacks、V11 client function 缺口、onAddToTradingRoom 缺口、widget allowlist/blocklist、SSE stub）；新增發現依賴鏈（PROD-002/PROD-003）目前卡在兩個獨立的人工審批關卡（execute-plans PR #171 self-merge、hosted deploy dispatch），而非缺少實作；並提供三份 sidecar packet 的統整導覽。未修改 canonical truth 或 runtime 檔案。"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T02:30:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-005-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "e1916593d9e8bb812fbe05c253d86ce7f78d9be1",
+      "commit_subject": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: closeout record",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "local worker-workspace task-brief mirror for this sidecar,",
+        "Not changing": "the packet content itself (support/sidecars/AG-DYNUI-PROD-005/",
+        "Composes with": "PR #2880 (task branch -> dev, merged) and the eventual",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Claude",
+        "Verified": "AI_NAME=Claude2 python3 scripts/ai_status.py show AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3 (status review_approved, review_notes_zh present); git merge-base --is-ancestor 28ec85a2b origin/dev (YES); gh pr view 2880 --repo ajoe734/pantheon (MERGED into dev at 2026-07-04T02:25:44Z)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0f12e404d87849c8a0126905c1bfd43f5f6c1336",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only follow-up 3 packet ready for review. Re-verified all findings from the original sidecar and FOLLOWUP-2 (component mounting, no-op callbacks, missing V11 client functions, onAddToTradingRoom gap) — all unchanged in this worktree. New finding: the AG-DYNUI-PROD-002/003 dependency chain is stalled behind two independent human-gated actions (execute-plans PR #171 self-merge approval, hosted deploy dispatch for screenshot evidence), not missing work. Added a consolidated reader's guide across all three sidecar packets. Committed 28ec85a2b on task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3, PR #2880 open with auto-merge enabled. No canonical truth, BFF runtime, registry/governance, or frontend code changed.",
+      "status": "done",
+      "created_at": "2026-07-04T02:24:57Z",
+      "resolved_at": "2026-07-04T02:26:53Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support-only AG-DYNUI-PROD-005 follow-up 3 approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-07-04T02:26:53Z",
+      "resolved_at": "2026-07-04T02:30:02Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-LIVE-AUTH-003",
+  "archived_at": "2026-07-03T14:20:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-LIVE-AUTH-003",
+    "title": "Agora Trading Room frontend BFF auth headers",
+    "summary_zh": "修 execute-plans Agora Trading Room frontend client: 所有 tradingRoom.ts read/write fetch 必須使用 shared BFF auth headers, 保留動態 BFF data flow, 補 Authorization 測試, PR merge 後等待 dev FE deploy 並用 live browser probe 證明 /bff/agora/trading-room 與 decision-events 都回 200。不得重做靜態 UI; 設計/合約不明時先開 blocker。",
+    "phase": "Agora Dynamic UI Live Recovery / frontend auth transport",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-LIVE-DEFAULT-001",
+      "AG-DYNUI-LIVE-AUTH-002"
+    ],
+    "artifacts": [
+      "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts",
+      "execute-plans/src/lib/bff-v1/agora/tradingRoom.test.ts",
+      "execute-plans/src/lib/bff-v1/headers.ts",
+      "docs/04/pantheon_agora_dynamic_ui_live_recovery_2026-07-03/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-03-agora-dynamic-ui-live-auth/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-03-agora-dynamic-ui-live-auth/AG-DYNUI-LIVE-AUTH-003-frontend-auth-headers.md",
+      "/tmp/agora-live-after-auth002.json",
+      "/tmp/agora-live-after-auth002.png"
+    ],
+    "acceptance": [
+      "all Trading Room BFF calls in tradingRoom.ts use shared BFF auth headers",
+      "tests prove Authorization for getTradingRoom and listDecisionEvents",
+      "tests prove Authorization for at least one decision event mutation",
+      "tests prove Authorization for at least one strategy/workspace mutation",
+      "caller-provided If-Match, Idempotency-Key, and request/correlation IDs stay intact",
+      "execute-plans PR is reviewed, merged, and records merge commit SHA",
+      "dev FE deploy from merged commit succeeds",
+      "live browser probe shows /bff/agora/trading-room returns 200",
+      "live browser probe shows /bff/agora/trading-room/decision-events returns 200",
+      "live /agora/trading-room does not show Failed to load Trading Room or old white layout markers"
+    ],
+    "next": "Closeout finalized: execute-plans tradingRoom.ts fix (PR #2820/75a0e857c, merged) plus execute-plans PR #168 (ffbc2357f) and dev FE deploy 28664312966 confirmed all bff-v1 auth-header tests passing (npx vitest run src/lib/bff-v1: 68/68). Backend 500 fix PR #2834/2dd82311d merged and deployed (Nonprod Deploy 28664660985). Live browser probe 2026-07-03T14:18:59Z reconfirms /agora/trading-room nav 200, /bff/agora/trading-room 200, /bff/agora/trading-room/decision-events 200, no console errors, no Failed to load Trading Room. All closeout evidence already durable on dev via merged PRs #2835/#2836; HEAD is ancestor of origin/dev. Worktree clean.",
+    "last_update": "2026-07-03T14:20:57Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynamic_ui_live_auth_2026-07-03",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "fleet_lane": "agora-frontend-auth-live-recovery",
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynamic_ui_live_recovery_2026-07-03/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynamic-ui-live-auth/INDEX.md",
+      "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynamic-ui-live-auth/AG-DYNUI-LIVE-AUTH-003-frontend-auth-headers.md",
+      "execute_plans_ui_pr": "https://github.com/ajoe734/execute-plans/pull/147",
+      "pantheon_backend_pr": "https://github.com/ajoe734/pantheon/pull/2808"
+    },
+    "review_notes_zh": [
+      "Review approved: PR #2820 is merged into dev as c04a7db9452ccca07e5af3b3f1c313f51d861beb; local reviewer verification passed with npx vitest run src/lib/bff-v1 (68 tests) and npm run gate:agora (Vite build succeeded with existing chunk-size warning); no blocking findings in the frontend auth header patch. Owner closeout must still wait for dev FE deploy from the merged commit and run the live browser probe proving /bff/agora/trading-room and /bff/agora/trading-room/decision-events return 200 and the page no longer shows Failed to load Trading Room."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-03T14:20:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-live-auth-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-LIVE-AUTH-003",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "905fc4c7effaa0bb6ef0db9b5317d42eaedaf47d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-DYNUI-LIVE-AUTH-003",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-LIVE-AUTH-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "12133b760c4fce274adf85d6e1648831c29a72d2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-LIVE-AUTH-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implemented shared BFF auth headers: added execute-plans/src/lib/bff-v1/headers.ts (buildHeaders() with Authorization/X-Tenant-Id from a test-injectable provider, storage keys, or VITE_BFF_DEV_BEARER_TOKEN), routed all 5 tradingRoom.ts functions (getTradingRoom, getTradingRoomStrategy, listDecisionEvents, getDecisionEvent, decideOnEvent) through it, kept credentials:include and all existing If-Match/Idempotency-Key/X-Request-Id behavior. Added headers.test.ts (8 tests) and Authorization coverage in tradingRoom.test.ts (7 new tests); npx vitest run src/lib/bff-v1 = 68 passed; npm run gate:agora build succeeded. Note: tradingRoom.ts only has these 5 functions in this repo (no workspace/proposal/widget-revision endpoints), so the task's 'workspace mutation' acceptance bullet does not apply here. PR https://github.com/ajoe734/pantheon/pull/2820 open with auto-merge. Live browser probe of /bff/agora/trading-room + decision-events still needed after merge/deploy during closeout.",
+      "status": "done",
+      "created_at": "2026-07-03T12:22:47Z",
+      "resolved_at": "2026-07-03T12:29:01Z"
+    },
+    {
+      "task_id": "AG-DYNUI-LIVE-AUTH-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: PR #2820 merged at c04a7db9452ccca07e5af3b3f1c313f51d861beb; focused bff-v1 tests and Agora build passed. Owner closeout still requires dev FE deploy plus live browser probe for Trading Room and decision-events 200 before done.",
+      "status": "done",
+      "created_at": "2026-07-03T12:29:01Z",
+      "resolved_at": "2026-07-03T14:20:59Z"
+    }
+  ],
+  "blockers": []
+}

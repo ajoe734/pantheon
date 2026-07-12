@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "PTJ-002",
+  "archived_at": "2026-07-11T23:40:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PTJ-002",
+    "title": "Trade episode projection and lineage replay",
+    "summary_zh": "依 Persona Trade Journal gap 文件執行 Trade episode projection and lineage replay。",
+    "phase": "Persona Trade Journal / Wave 1",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PTJ-001"
+    ],
+    "artifacts": [
+      "services/telemetry",
+      "services/lineage-read",
+      "services/execution/runtime-manager",
+      "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
+    ],
+    "acceptance": [
+      "replay covers duplicate late correction partial scale reversal and forced exit",
+      "projection exposes source as_of coverage and missing refs without guessed joins"
+    ],
+    "next": "Owner finalized PTJ-002: TradeEpisodeProjectionStore + trade-episodes endpoints verified after the zero-quantity-fill slippage crash fix (PR #3302) merged into dev. 223 telemetry + 28 lineage-read tests pass.",
+    "last_update": "2026-07-11T23:40:57Z",
+    "source_ref": {
+      "doc": "docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "wave": 1,
+    "fleet_lane": "episode-projection",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_trade_journal_2026_07_11",
+    "auto_generated": true,
+    "live_order_side_effects_allowed": false,
+    "review_notes_zh": [
+      "PR #3297 實作 TradeEpisodeProjectionStore + Flask 端點，覆蓋 replay/out-of-order/as-of/cursor pagination/coverage；審查發現 zero-quantity fill + slippage 造成 UnboundLocalError 崩潰，已於 PR #3302 修復並補迴歸測試",
+      "services/telemetry 223 tests pass、services/lineage-read 28 tests pass，端點與 ingest 串接正確，無其餘阻斷性問題"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T23:40:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ptj-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PTJ-002",
+      "git_clean_required": false,
+      "commit": "796369497e61e992b5e10177c63c6cc28aefb463",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PTJ-002",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 3,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PTJ-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6a2fb8c490068643de2eee5bc9e1fdd62a86212d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PTJ-002",
+      "from": "Gemini2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PTJ-002 away from unavailable lane Gemini2, Claude2 (disabled, paused, sidecar-only, or auth-down); owner Gemini2 -> Antigravity, reviewer Claude2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T22:59:13Z",
+      "resolved_at": "2026-07-11T23:12:02Z"
+    },
+    {
+      "task_id": "PTJ-002",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Implementation complete, PR #3297 merged. Ready for review.",
+      "status": "done",
+      "created_at": "2026-07-11T23:21:08Z",
+      "resolved_at": "2026-07-11T23:37:55Z"
+    },
+    {
+      "task_id": "PTJ-002",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Reviewed PTJ-002: TradeEpisodeProjectionStore + trade-episodes endpoints are correct after the zero-quantity-fill slippage crash fix (PR #3302) merged into dev. 223 telemetry + 28 lineage-read tests pass. Approved; returning to Antigravity for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T23:37:55Z",
+      "resolved_at": "2026-07-11T23:40:58Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-LIVE-WORKSHOP-009",
+  "archived_at": "2026-07-08T01:20:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "AG-DYNUI-LIVE-WORKSHOP-009",
+    "title": "Agora Strategy Workshop production tab completion",
+    "summary_zh": "修正 live /agora/trading-room 的 Strategy Workshop tab：目前只裸露 workshop UUID，必須改為依 BFF workshop/cards/readiness/events/messages contract 呈現完整可操作工作坊，不可用靜態頁或 debug list 代替。",
+    "phase": "Agora DYNUI Live Tabs Production Recovery / 2026-07-08 workshop",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-LIVE-READBACK-008"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/",
+      "execute-plans/src/lib/bff-v1/",
+      "execute-plans/e2e/",
+      "services/control-plane/bff/agora/strategy_workshop/",
+      "docs/deployment/evidence/ag-dynui-live-tabs-009/",
+      "docs/bff/execution-tasks/2026-07-08-agora-live-tabs-production/AG-DYNUI-LIVE-WORKSHOP-009.md"
+    ],
+    "acceptance": [
+      "Reproduce hosted Strategy Workshop tab showing raw UUIDs on pantheon-lupin-dev-fe without mocks",
+      "Use live BFF workshop list/detail/cards/readiness/events/messages or add missing BFF contract in Pantheon branch",
+      "Render workshop title/status/cards/readiness/evidence and operator actions instead of raw UUID text",
+      "Preserve dynamic UI semantics and backend-authored state; no static design-only page and no fixture-only proof",
+      "Add focused frontend/BFF contract tests and hosted Playwright coverage for Strategy Workshop tab",
+      "Open PRs for changed repos, wait for CI, merge, deploy, and record commit/deploy SHA",
+      "Hosted desktop and mobile screenshots must show Strategy Workshop loaded with no raw UUID debug list"
+    ],
+    "next": "Superseded by AG-DYNUI-LIVE-WORKSHOP-FE-013 because 009 repaired the Pantheon mirror/duplicate PR line while the active live FE is ajoe734/execute-plans. Correct live repair is execute-plans PR #218 merged to dev at 9d60297e5c200d05214df7f758ee0c20c224db02 and deployed to pantheon dev FE; duplicate execute-plans PR #217 was closed.",
+    "last_update": "2026-07-08T01:20:58Z",
+    "terminal_outcome": "superseded",
+    "superseded_by": "AG-DYNUI-LIVE-WORKSHOP-FE-013"
+  },
+  "handoffs": [],
+  "blockers": []
+}

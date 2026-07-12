@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-002",
+  "archived_at": "2026-07-04T13:26:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-002",
+    "title": "Agora standalone workbench shell",
+    "summary_zh": "修 execute-plans Agora shell 架構：/agora/* 不應只是被包在 Management PlatformShell 裡的 tab skeleton；建立符合設計稿的 Agora workbench shell 或提交明確批准的例外，並保留 auth/live 狀態。",
+    "phase": "Agora DYNUI Production Gap / Shell Architecture",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001"
+    ],
+    "artifacts": [
+      "execute-plans/src/App.tsx",
+      "execute-plans/src/platform/PlatformShell.tsx",
+      "execute-plans/src/agora/TradingDeskLayout.tsx",
+      "execute-plans/src/routes/agora.tsx",
+      "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-002-standalone-workbench-shell.md"
+    ],
+    "acceptance": [
+      "hosted /agora/trading-room shell is intentionally standalone or has documented approved exception",
+      "Agora workbench IA is not reduced to the old three-tab empty shell",
+      "desktop and mobile screenshots show corrected shell",
+      "Do not rebuild from imagination or static screenshots.",
+      "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+      "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+      "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+      "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+    ],
+    "next": "PR #2968 merged at 122074c144f291302eebf1319407229bc85c551b; branch head 1498e2410f752ef463e1a80ec388b72e34e7e0ba; checks green; hosted shell proof recorded in task doc and /tmp/agora-dynui-prod-002-hosted-proof-20260704T1308Z.",
+    "last_update": "2026-07-04T13:26:50Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+      "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-002-standalone-workbench-shell.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "fleet_lane": "agora-dynui-production-gap",
+    "review_notes_zh": [
+      "已獨立重跑 ajoe734/execute-plans PR #171 (commit 67c0b048) 驗證：npx vitest run 118 files/1102 tests、tsc --noEmit、npm run build、eslint 全部通過；確認 AgoraLayoutRoute 的 useParams()->workshopId 傳遞是 React Router v6 正確行為，非 bug",
+      "Approve 但保留收尾條件：此任務 acceptance 仍要求 hosted desktop/mobile screenshots，已明確 defer 給 AG-DYNUI-PROD-006 (wave 3 hosted E2E gate)；owner 在拿到 006 的 hosted 截圖佐證前不可對本任務執行 ai-status.sh done"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-002-standalone-workbench-shell.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T13:26:50Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-pr2968-update",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implemented Agora standalone workbench shell in the REAL frontend repo (ajoe734/execute-plans PR #170, task/AG-DYNUI-PROD-002-agora-standalone-shell -> dev), not the pantheon-vendored execute-plans/ mirror. Critical finding: the vendored copy is a .gitignore'd sibling-repo checkout that has drifted to a different architecture (no App.tsx/PlatformShell/router); AG-FE-DYNUI-*/AG-DYNUI-PROD-004 edited that mirror by mistake and never reached the real hosted app -- flagged for AG-DYNUI-PROD-006. Fix moves /agora out of PlatformShellRoute (stays in AuthProvider/TooltipProvider/ErrorBoundary), preserves live-status via extracted useLiveSseConnection() + LiveStatusBanner without Management-only overlay chrome, wires the previously-dead :workshopId param into TradingDeskLayout/ServantDrawer with real getWorkshop() context instead of a placeholder, and makes the drawer/tab bar mobile-safe. Verified: npm test 118 files/1102 tests, npm run build, tsc --noEmit, eslint clean. execute-plans PR #170 CI (Pantheon FE-BFF Integration Gate) was still running at handoff. Full details in docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-002-standalone-workbench-shell.md (Implementation Notes section). Pantheon-side doc PR: https://github.com/ajoe734/pantheon/pull/2864 (auto-merge enabled).",
+      "status": "done",
+      "created_at": "2026-07-04T01:09:44Z",
+      "resolved_at": "2026-07-04T01:29:04Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex to Claude2: Task entered review status at 01:09:44Z with reviewer Codex, but Codex (quota_group codex1) hit quota_terminal at 00:59:10Z and its dispatch_pauses.hint_blocked_until is 2026-07-04T19:17:00Z (~18h), far past the 30-min reviewer-quota-blocking threshold. Zero live workers have ever started against this task. Claude2 is healthy, unpaused, currently running 2 successful workers, and is not this task's owner (owner is Claude).",
+      "status": "done",
+      "created_at": "2026-07-04T01:29:04Z",
+      "resolved_at": "2026-07-04T01:42:20Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Reviewed PR #171 (compliant replacement for closed PR #170): independently re-ran full test suite (118/1102 pass), tsc, build, eslint — all green. Verified the AgoraLayoutRoute workshopId propagation via useParams() is correct React Router v6 behavior, not a bug. Approving to review_approved; owner must not finalize to done until AG-DYNUI-PROD-006 hosted desktop/mobile screenshots exist or an equivalent hosted proof is captured for this task.",
+      "status": "done",
+      "created_at": "2026-07-04T01:42:20Z",
+      "resolved_at": "2026-07-04T06:38:49Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-07-04T06:38:49Z",
+      "resolved_at": "2026-07-04T06:39:38Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T06:39:38Z",
+      "resolved_at": "2026-07-04T07:40:47Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T07:40:47Z",
+      "resolved_at": "2026-07-04T07:41:35Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-04T07:41:35Z",
+      "resolved_at": "2026-07-04T13:26:51Z"
+    }
+  ],
+  "blockers": []
+}

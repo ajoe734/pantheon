@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+  "archived_at": "2026-07-11T11:52:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-16.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3205 merged as 4621f71a4108115b9bdd2ba5f518e12fd5ea5687; reviewer-approved support-only no-delta checkpoint finalized. Verified execute-plans PR #251 remains OPEN/MERGEABLE at head 436aa32eaa24b4f048ae0b08c8a46686ceb56659 with integration-gate successful; repeated dispatch pattern escalated to dispatch/supervisor policy owner.",
+    "last_update": "2026-07-11T11:52:59Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "覆核確認：gh pr view 251 (ajoe734/execute-plans) 重新查證 OPEN/MERGEABLE，head 436aa32e 不變，mergeCommit 為 null，integration-gate 綠燈，與 packet 主張完全一致",
+      "此為第三次連續 no-delta 派工 (Follow-Up 14/15/16)，建議升級給 dispatch/supervisor policy owner 處理，而非再產出第四份相同 checkpoint"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T11:52:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-16",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "git_clean_required": false,
+      "commit": "4eb208154bd89f723b3fdc126fc9628b5ceb8471",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4621f71a4108115b9bdd2ba5f518e12fd5ea5687",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only packet is committed at a42919a14 and PR #3205 is open with green checks. Revalidated execute-plans PR #251 remains OPEN/MERGEABLE at unchanged head 436aa32e with no review or merge commit. Please review the no-delta boundary and dispatch-suppression handoff; this does not close any BFF gap or parent task.",
+      "status": "done",
+      "created_at": "2026-07-11T11:34:18Z",
+      "resolved_at": "2026-07-11T11:49:49Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewer verified PR #251 no-delta claims exactly match GitHub state; approving support-only checkpoint and returning to owner for finalization. Repeat-dispatch pattern (3rd consecutive no-delta follow-up) should be escalated to dispatch/supervisor policy owner.",
+      "status": "done",
+      "created_at": "2026-07-11T11:49:49Z",
+      "resolved_at": "2026-07-11T11:53:00Z"
+    }
+  ],
+  "blockers": []
+}

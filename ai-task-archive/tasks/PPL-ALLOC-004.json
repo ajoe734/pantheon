@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-004",
+  "archived_at": "2026-07-11T04:44:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-004",
+    "title": "Ranking allocation policy and rebalance proposal contract",
+    "summary_zh": "實作 stage-aware ranking、real allocation target weights、caps/smoothing/exclusions，並產出 auditable rebalance proposal 而非直接改資金。",
+    "phase": "Persona Promotion Allocation / Wave 1 allocation policy",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-001",
+      "PPL-ALLOC-003"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/control-plane/bff/tests/test_bff_persona_allocation_policy.py",
+      "services/control-plane/bff/tests/test_bff_rebalance_proposals.py"
+    ],
+    "acceptance": [
+      "target weights include current/target/delta/cap reason/evidence; live increases require human approval; emergency reduction cannot promote or increase"
+    ],
+    "next": "Finalized approved allocation policy after PR #3112 merged at cec3660e4ba377cafc8388dd03d8346decdbdc4d; zero-weight bootstrap fix and auditable rebalance proposal contract verified by focused pytest (6 passed).",
+    "last_update": "2026-07-11T04:44:38Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+      "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+      "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "persona_promotion_allocation_execution_slice",
+    "wave": 1,
+    "fleet_lane": "allocation-policy-rebalance",
+    "review_notes_zh": [
+      "第二輪審查通過：quarterly +25% smoothing 已修正為 current_weight>0 才套用，新進 canary/live persona 可拿到首次真實配置；新增回歸測試",
+      "非阻塞：_tier_cap 對 paper_running 的 fallthrough 標籤仍建議後續補一個明確分支"
+    ],
+    "review_file": "support/reviews/PPL-ALLOC-004-review-claude-round2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T04:44:38Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-004",
+      "git_clean_required": false,
+      "commit": "94f4153b1dfb2b228099a49500055f2d01d0c247",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PPL-ALLOC-004",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cec3660e4ba377cafc8388dd03d8346decdbdc4d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-004",
+      "from": "Gemini",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PPL-ALLOC-004 away from unavailable lane Gemini, Claude2 (disabled, paused, sidecar-only, or auth-down); owner Gemini -> Antigravity, reviewer Claude2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T02:58:23Z",
+      "resolved_at": "2026-07-11T04:13:45Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Stage-aware allocation and auditable rebalance proposal implementation ready. Verified task and compatibility tests: 33 passed; anchor 72f82c41f.",
+      "status": "done",
+      "created_at": "2026-07-11T04:20:00Z",
+      "resolved_at": "2026-07-11T04:29:37Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Blocking: quarterly +25% increase-cap smoothing (target=min(target, current_weight*1.25)) zeroes out every first-time canary/live allocation because current_weight starts at 0 for newly promoted personas -- paper-to-canary and canary-to-live promotions can never receive real capital through this policy. No override path exists as the spec requires (PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md Caps And Smoothing). Fix: only apply the *1.25 ceiling when current_weight > 0; let current_weight==0 entrants reach the stage/tier cap directly, plus a test covering a fresh canary/live entrant. Full review: support/reviews/PPL-ALLOC-004-review-claude.md (commit b628aa6fa).",
+      "status": "done",
+      "created_at": "2026-07-11T04:29:37Z",
+      "resolved_at": "2026-07-11T04:29:37Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Fixed blocking zero-weight bootstrap: quarterly +25% smoothing now applies only when current_weight > 0; fresh canary/live regression coverage added. Focused tests: 6 passed; broader suite: 47 passed, 2 pre-existing path-dedupe failures documented in reviewer note. Commit d15845796 ready for re-review.",
+      "status": "done",
+      "created_at": "2026-07-11T04:32:30Z",
+      "resolved_at": "2026-07-11T04:36:01Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Round 2 review approved: bootstrap fix for zero-weight smoothing verified independently, tests pass; returned to owner Codex for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T04:36:01Z",
+      "resolved_at": "2026-07-11T04:44:39Z"
+    }
+  ],
+  "blockers": []
+}

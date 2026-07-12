@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-004",
+  "archived_at": "2026-07-09T14:18:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-004",
+    "title": "Performance attribution drilldown and diagnostics",
+    "summary_zh": "修正從 Persona Fleet 點績效進去的頁面：formal attribution、fallback summary、missing holdings 與 degraded diagnostics 必須分清楚。",
+    "phase": "Management Console Operations / Wave 1 attribution drilldown",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-001",
+      "MGMT-OPS-002"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "execute-plans:src/management/pages",
+      "execute-plans:src/lib",
+      "execute-plans:e2e",
+      "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/MGMT-OPS-004-performance-attribution-drilldown.md"
+    ],
+    "acceptance": [
+      "screenshot focus persona is labeled fallback or degraded diagnostic when formal rows are absent",
+      "formal matches fallback summaries and diagnostics have separate counts",
+      "missing holdings are explicit and actionable",
+      "route and component tests cover persona-20260528-04688755 fallback case"
+    ],
+    "next": "Owner Antigravity finalized task and closed it. Merged closeout commit e768b1684 under merge commit 795e45f7b68fb71d4f3f889df997e0fdfb47d281. All backend/frontend tests pass successfully.",
+    "last_update": "2026-07-09T14:18:30Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_ops_workflow_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_operations_workflow_2026-07-07/MANAGEMENT_CONSOLE_OPERATIONS_WORKFLOW_PLAN.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/INDEX.md",
+      "trigger": "2026-07-07 management console persona fleet/performance attribution operations review",
+      "focus_persona": "persona-20260528-04688755"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_console_operations_workflow_execution_slice",
+    "wave": 1,
+    "fleet_lane": "performance-attribution-drilldown",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-09T14:18:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-004",
+      "git_clean_required": false,
+      "commit": "308bc484b55f4efd010eb3d7eeb2b1c89517c8aa",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-OPS-004",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "795e45f7b68fb71d4f3f889df997e0fdfb47d281",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-004",
+      "from": "Antigravity2",
+      "to": "Codex",
+      "message": "Auto-reassigned MGMT-OPS-004 away from unavailable lane Antigravity2 (disabled, paused, sidecar-only, or auth-down); owner Antigravity2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-07-07T15:18:44Z",
+      "resolved_at": "2026-07-09T13:38:11Z"
+    },
+    {
+      "task_id": "MGMT-OPS-004",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "PR #3068 merged; verified with local unit tests (FastAPI/pytest: 11 tests passed; vitest: 7 tests passed) and successful production build.",
+      "status": "done",
+      "created_at": "2026-07-09T13:57:28Z",
+      "resolved_at": "2026-07-09T14:01:42Z"
+    },
+    {
+      "task_id": "MGMT-OPS-004",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Reviewer (Claude): reopening for a correctness bug. ManagementPerformanceReviewPanel.tsx:1011 renders the fallback attribution row's persona label as readModel?.identity.persona_label || \"Crypto-Alt-Hunter\" — a hardcoded literal copied from the persona-20260528-04688755 test fixture. operations_read_model.py:60/142 confirms persona_label is Optional and is None whenever no persona_fleet_summary row supplies a label, so any OTHER persona that hits fallback/degraded confidence without a fleet-summary label will incorrectly display the unrelated name 'Crypto-Alt-Hunter' in both the Focus Persona metadata panel context and the Fallback Summary Rows table. This directly contradicts the task's goal of a trustworthy, non-misleading drilldown. Required change: replace the hardcoded fallback with a generic placeholder (e.g. focus.personaId or 'Persona label unavailable'), and add a regression assertion that the fallback row never renders a different persona's name when persona_label is null. Rest of the drilldown (confidence banner, metadata panel, source coverage, diagnostics cards) reviewed and looks correct against acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-07-09T14:01:42Z",
+      "resolved_at": "2026-07-09T14:01:42Z"
+    },
+    {
+      "task_id": "MGMT-OPS-004",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Replaced the hardcoded 'Crypto-Alt-Hunter' fallback label with a generic 'Persona label unavailable' placeholder, and added a regression test asserting that it is never rendered when persona_label is null. The changes have been compiled, verified with tests, committed, and merged via PR #3070.",
+      "status": "done",
+      "created_at": "2026-07-09T14:07:46Z",
+      "resolved_at": "2026-07-09T14:10:39Z"
+    },
+    {
+      "task_id": "MGMT-OPS-004",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Reviewed PR #3068/#3070: attribution view model, confidence banner, split formal/fallback sections, source coverage, and actionable missing-holdings diagnostics meet MGMT-OPS-004 acceptance. Verified frontend: npx vitest run ManagementPerformanceReviewPanel.test.tsx (8/8 pass). Backend: pytest test_bff_mgmt_ops_001_operations_read_model_contract.py (11/11 pass). npm run build:management succeeds. Fallback persona label no longer hardcodes 'Crypto-Alt-Hunter'; regression test confirms. Approved and returned to owner Antigravity for finalization.",
+      "status": "done",
+      "created_at": "2026-07-09T14:10:39Z",
+      "resolved_at": "2026-07-09T14:18:33Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+  "archived_at": "2026-07-11T10:03:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only absorption checkpoint merged via PR #3175 at merge commit 90b78dbe333a129c80b0a17f60e071d05be0dab2; artifact preserves fail-closed CI/merge/deploy/readback/emergency-mutation distinctions; parent owner retains absorption decision.",
+    "last_update": "2026-07-11T10:03:25Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Verified execute-plans PR #251 live via gh: OPEN, non-draft, MERGEABLE, head 436aa32eaa24b4f048ae0b08c8a46686ceb56659, integration-gate SUCCESS — matches packet claims exactly.",
+      "Confirmed Pantheon PR #3175 merge commit 90b78dbe3 is an ancestor descendant of this task's own commit 9fdb0477e, so the checkpoint is already merged into dev.",
+      "Packet keeps the four fail-closed distinctions (CI vs merge, merge vs hosted deploy, command acceptance vs authoritative readback, inspection vs installed emergency mutation) explicit and does not overclaim.",
+      "No canonical truth, BFF route, or frontend source touched; only the new sidecar markdown file was added."
+    ],
+    "review_file": "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T10:03:25Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-10",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "git_clean_required": false,
+      "commit": "90b78dbe333a129c80b0a17f60e071d05be0dab2",
+      "commit_subject": "Merge pull request #3175 from ajoe734/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-10": "add absorption checkpoint"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "acc2bbec4e9abae08690e6d71abdd0993c3a202c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only absorption checkpoint is merged via Pantheon PR #3175 (merge 90b78dbe333a129c80b0a17f60e071d05be0dab2). Verified execute-plans PR #251 remains open, mergeable, green at 436aa32eaa24b4f048ae0b08c8a46686ceb56659. Please review the packet's fail-closed distinctions between CI, merge, hosted deployment, authoritative allocation readback, and emergency mutation.",
+      "status": "done",
+      "created_at": "2026-07-11T09:59:30Z",
+      "resolved_at": "2026-07-11T10:02:38Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed Follow-Up 10 checkpoint: PR #251 live state matches the packet's claims (open, mergeable, integration-gate green at cited head); fail-closed distinctions for CI/merge/deploy/readback/emergency-mutation are intact. Approved and returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T10:02:38Z",
+      "resolved_at": "2026-07-11T10:03:26Z"
+    }
+  ],
+  "blockers": []
+}

@@ -136,7 +136,17 @@ def create_trade_journal_router(*, extract_identity: Callable[..., Any], require
         if not idempotency_key: return _err(400, "VALIDATION_FAILED", "Idempotency-Key is required")
         body = await request.json()
         if not str(body.get("reason", "")).strip(): return _err(422, "VALIDATION_FAILED", "reason is required")
-        payload = {"action": action, "persona_id": persona_id, "resource_id": resource_id, "reason": body["reason"], "facts_snapshot_ref": body.get("facts_snapshot_ref"), "decision": body.get("decision"), "actor": who.operator_id, "idempotency_key": idempotency_key}
+        payload = {
+            "action": action,
+            "persona_id": persona_id,
+            "resource_id": resource_id,
+            "reason": body["reason"],
+            "facts_snapshot_ref": body.get("facts_snapshot_ref"),
+            "decision": body.get("decision"),
+            "variance_attribution": body.get("variance_attribution"),
+            "actor": who.operator_id,
+            "idempotency_key": idempotency_key
+        }
         try:
             status, downstream = dispatch_command(payload)
         except RuntimeError:

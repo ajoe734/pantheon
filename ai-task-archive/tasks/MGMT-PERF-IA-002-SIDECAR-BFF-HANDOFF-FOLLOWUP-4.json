@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-07-11T07:29:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare MGMT-PERF-IA-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 BFF contract",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3134 merged into dev at a82f1e844889354cb6709d84e432b58bca98c700; support-only BFF/frontend recovery handoff finalized; verified git diff --check; canonical truth and runtime unchanged.",
+    "last_update": "2026-07-11T07:29:25Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "Sidecar 支援文件內容正確",
+      "無 canonical 變更"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T07:29:25Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-002-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "50b22d6bc3e8a9fe1af2f036f77d4b43e88ba88d",
+      "commit_subject": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4: recovery handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF query, operator journey, and frontend recovery handoff.",
+        "Not changing": "canonical truth, BFF runtime/tests, frontend source, ranking formulas, registry, or governance.",
+        "Composes with": "MGMT-PERF-IA-002 clean-branch recovery and parent owner absorption.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check on the sidecar artifact"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a82f1e844889354cb6709d84e432b58bca98c700",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only recovery handoff committed at 50b22d6bc. Please verify the parent branch-contamination blocker, clean replay boundary, query/frontend fail-closed guidance, and non-canonical scope; parent owner retains selective absorption.",
+      "status": "done",
+      "created_at": "2026-07-11T07:25:58Z",
+      "resolved_at": "2026-07-11T07:26:45Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T07:26:45Z",
+      "resolved_at": "2026-07-11T07:29:26Z"
+    }
+  ],
+  "blockers": []
+}

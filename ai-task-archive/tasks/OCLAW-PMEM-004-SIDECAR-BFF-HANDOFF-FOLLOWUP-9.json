@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+  "archived_at": "2026-07-11T09:24:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+    "title": "Prepare OCLAW-PMEM-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 2 BFF UI surfaces",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-003"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-004/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved support-only BFF/frontend handoff packet; PRs #3164 and #3165 merged, final merge b2ddbf9350caaaf7c82b54c0a698f82a34a29032; verified git diff --check, single-artifact scope, defer/canonical-boundary/parent-ownership assertions, required CI, and HEAD ancestry in origin/dev.",
+    "last_update": "2026-07-11T09:24:42Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：封包結構與內容符合 sidecar support slice 需求，無 canonical 變更",
+      "後續追蹤：待 parent owner (Claude2) 補齊 freeze table 及後續 absorption 記錄"
+    ],
+    "review_file": "support/sidecars/OCLAW-PMEM-004/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T09:24:42Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-004-sidecar-bff-handoff-followup-9",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "git_clean_required": false,
+      "commit": "4e658e621c7f3b2b1ab5950691c4e68c9d44657b",
+      "commit_subject": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9: fix packet format",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend handoff packet formatting.",
+        "Not changing": "canonical truth, contracts, runtime, or frontend implementation.",
+        "Composes with": "anchor 564dbdeb4 and Antigravity sidecar review.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check; targeted packet assertions"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b2ddbf9350caaaf7c82b54c0a698f82a34a29032",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only BFF/frontend contract-freeze handoff packet at commits 564dbdeb4 and 4e658e621. Frontend dispatch remains defer until reviewed dependency, BFF DTO, fixture, and execute-plans refs are filled. Verified with git diff --check, single-artifact scope assertion, and targeted invariant assertions; no canonical or runtime changes.",
+      "status": "done",
+      "created_at": "2026-07-11T09:19:56Z",
+      "resolved_at": "2026-07-11T09:21:09Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved. The handoff packet correctly defines the contract freeze boundaries and defers frontend dispatch as required.",
+      "status": "done",
+      "created_at": "2026-07-11T09:21:09Z",
+      "resolved_at": "2026-07-11T09:24:43Z"
+    }
+  ],
+  "blockers": []
+}

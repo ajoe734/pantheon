@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18",
+  "archived_at": "2026-07-12T06:59:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18",
+    "title": "Prepare MGMT-PERF-IA-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 2 integration",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-006/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only query-gap evidence ledger and BFF cut line approved and finalized in PR #3376 (merge 3766de85e02b9a5570ec4fc931a4b7bdebb01ed2); parent MGMT-PERF-IA-006 remains responsible for implementation and hosted proof.",
+    "last_update": "2026-07-12T06:59:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：BFF/前端 handoff 封包內容完整，包含 query-gap 證據台賬與運作流程圖，無 canonical 變更"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-006/REVIEW-MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T06:59:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-006-sidecar-bff-handoff-followup-18",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18",
+      "git_clean_required": false,
+      "commit": "80a6eea8e79478991a7140df9c6c3a3f2009be8a",
+      "commit_subject": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18: finalize packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only query-gap ledger closeout evidence and task brief approval sync.",
+        "Not changing": "canonical truth, runtime contracts, BFF/frontend implementation, registry, or governance.",
+        "Composes with": "parent MGMT-PERF-IA-006 contextual integration owned by Antigravity.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check; scoped disposition and boundary phrase checks"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3766de85e02b9a5570ec4fc931a4b7bdebb01ed2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only query-gap evidence ledger and BFF/frontend cut line ready in commit 0900a88bb; verify requested-versus-fulfilled separation, fail-closed dispositions, bounded ticket scope, and canonical non-mutation.",
+      "status": "done",
+      "created_at": "2026-07-12T06:52:29Z",
+      "resolved_at": "2026-07-12T06:55:29Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Support-only query-gap evidence ledger and BFF cut line approved for parent absorption.",
+      "status": "done",
+      "created_at": "2026-07-12T06:55:29Z",
+      "resolved_at": "2026-07-12T06:59:20Z"
+    }
+  ],
+  "blockers": []
+}

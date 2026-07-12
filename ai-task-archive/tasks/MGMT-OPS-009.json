@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-009",
+  "archived_at": "2026-07-10T10:41:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-009",
+    "title": "Persona Fleet and Evolution Journal link semantics",
+    "summary_zh": "修正 Persona Fleet 最近 MUTATION 點到 Evolution Journal 的語義：有正式 id 就進正式 entry，沒有正式 id 就進 persona fallback summary；頁面不得顯示 mutation:nan，也不得把日期顯示成 Action。",
+    "phase": "Management Console Operations / Mutation Evolution Wave 1 frontend",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-008"
+    ],
+    "artifacts": [
+      "execute-plans:src/management/pages/oversight/personaFleetLinks.ts",
+      "execute-plans:src/management/pages/oversight/evolutionJournalFocus.ts",
+      "execute-plans:src/management/pages/oversight/_core.tsx",
+      "execute-plans:e2e",
+      "docs/bff/execution-tasks/2026-07-10-persona-fleet-mutation-evolution-gap/MGMT-OPS-009-persona-fleet-evolution-links.md"
+    ],
+    "acceptance": [
+      "Persona Fleet recent mutation links remain present for formal and useful fallback states",
+      "Evolution Journal shows exact formal entry content when a formal id exists",
+      "fallback content says Persona Fleet status summary and no formal mutation id is available",
+      "operator-facing UI and URLs do not contain mutation=nan mutation:nan source=nan or fake keys",
+      "date strings render only as dates or timestamps and never as action ids"
+    ],
+    "next": "Closed MGMT-OPS-009. Fully resolved Persona Fleet recent mutation links and Evolution Journal fallbacks. PR #235 in execute-plans and documentation PR #3078 in pantheon are both successfully merged into dev.",
+    "last_update": "2026-07-10T10:41:11Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_fleet_mutation_evolution_gap_2026-07-10",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_mutation_evolution_gap_2026-07-10/PERSONA_FLEET_MUTATION_EVOLUTION_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-10-persona-fleet-mutation-evolution-gap/INDEX.md",
+      "extends": "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/INDEX.md",
+      "trigger": "2026-07-10 Persona Fleet recent mutation links open Evolution Journal fallback with mutation:nan",
+      "focus_persona": "persona-20260528-04688755"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "persona_fleet_mutation_evolution_gap_execution_slice",
+    "wave": 1,
+    "fleet_lane": "fe-persona-fleet-evolution-links",
+    "review_notes_zh": [
+      "審查通過：personaFleetMutationHref／fallback 卡片／Evolution Journal focus banner 皆符合驗收條件，31+1189 個測試與 tsc 皆過",
+      "後續追蹤：focusText 現為硬編碼中文，未走 t() i18n，之後可考慮補英文翻譯",
+      "Hosted click-map 截圖屬 MGMT-OPS-010 範圍，非本任務驗收項"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-10-persona-fleet-mutation-evolution-gap/MGMT-OPS-009-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-10T10:41:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-009",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-009",
+      "git_clean_required": false,
+      "commit": "28359977aff919347ab434bde26c250e7f999585",
+      "commit_subject": "MGMT-OPS-009: closeout documentation and review logs",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "MGMT-OPS-009",
+        "Reviewer": "Claude",
+        "Verified": "documentation only"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/dev",
+      "ahead": 0,
+      "behind": 1,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "166b1f4630c45d3cc3f3fe1bf3cdc4693b6b596f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-009",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Antigravity completed Persona Fleet links and Evolution Journal fallback refactoring. Unit tests passed. PR opened at execute-plans#235.",
+      "status": "done",
+      "created_at": "2026-07-10T09:50:07Z",
+      "resolved_at": "2026-07-10T10:01:56Z"
+    },
+    {
+      "task_id": "MGMT-OPS-009",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Reviewed execute-plans PR #235: personaFleetMutationHref, fallback card labeling, and Evolution Journal focus banner all satisfy MGMT-OPS-009 acceptance. 31 unit tests (incl. 4 new) + full 1189-test suite + tsc --noEmit all clean. Non-blocking note: focus banner text is now hardcoded zh-TW instead of using t(). Hosted click-map evidence is MGMT-OPS-010 scope. Owner: wait for PR #235 integration-gate + merge into dev before running done.",
+      "status": "done",
+      "created_at": "2026-07-10T10:01:56Z",
+      "resolved_at": "2026-07-10T10:41:12Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+  "archived_at": "2026-07-12T01:37:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+    "title": "Repair hosted mobile Human Inbox workflow failure",
+    "summary_zh": "修復 MGMT-OPS-003-GAP-004 發現的 hosted mobile Human Inbox strict Failed to fetch / seed fallback blocked；需從 execute-plans dev 修復、merge、deploy，並重跑 desktop/mobile hosted workflow。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 mobile repair",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-003-GAP-001",
+      "MGMT-OPS-003-GAP-002",
+      "MGMT-OPS-003-GAP-003"
+    ],
+    "artifacts": [
+      "execute-plans:e2e/21-portfolio-workflow-hosted.spec.ts",
+      "execute-plans:src/management/pages/oversight",
+      "execute-plans:src/lib/bff-v1",
+      "execute-plans:hosted-dev-evidence",
+      "docs/deployment/evidence/mgmt-ops-003-gap/gap-004"
+    ],
+    "acceptance": [
+      "execute-plans PR merges to dev",
+      "dev FE deploy succeeds and deployment.json reports repaired SHA",
+      "post-merge execute-plans integration gate succeeds",
+      "hosted desktop and mobile Portfolio workflow reaches Human Inbox with target context visible",
+      "console errors failed required requests BFF 4xx/5xx lazy chunk failures and fallback indicators are zero",
+      "evidence records PR merge SHA deploy run gate run desktop/mobile command output and failure counts"
+    ],
+    "next": "Closeout complete: execute-plans PRs #265/#267 merged to dev at 5647d4b03b42c8f4487c63f604fd39555660dee3; deployment run 29174965397 and integration gate 29174965400 succeeded; /deployment.json matched; hosted strict desktop/mobile Portfolio-to-Human-Inbox probes passed 2/2 with zero console, required-request, BFF 4xx/5xx, chunk, or fallback failures; Pantheon evidence PR #3327 merged as 2b473bc7e98e1983c246343d01a0a2c53aabea1e.",
+    "last_update": "2026-07-12T01:37:58Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T01:37:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-004-mobile-human-inbox-fix",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+      "git_clean_required": false,
+      "commit": "5079326a0a799566e7a963bc5c8a1a4f0357513d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2b473bc7e98e1983c246343d01a0a2c53aabea1e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review execute-plans PR #265 (merged b65bae467a2439a2d83ed73e44ccd67597103dee), deploy run 29174258079, integration gate 29174258016, and evidence docs/deployment/evidence/mgmt-ops-003-gap/gap-004/mobile-human-inbox-fix.md. Hosted desktop/mobile both passed with zero required-request, console, BFF, chunk, or fallback failures. Pantheon evidence PR #3327.",
+      "status": "done",
+      "created_at": "2026-07-12T00:54:07Z",
+      "resolved_at": "2026-07-12T01:08:27Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested: recorded post-merge execute-plans integration gate run 29174258016 concluded failure, with Aggregate release gate failing, while the evidence claims it succeeded. Acceptance explicitly requires a successful post-merge integration gate. Rerun or repair the gate against merge b65bae467a2439a2d83ed73e44ccd67597103dee, provide a successful run ID, and update docs/deployment/evidence/mgmt-ops-003-gap/gap-004/mobile-human-inbox-fix.md. Deployment run 29174258079 and deployment.json SHA match were verified; PR #265 diff preserves strict-live behavior and hosted request assertion.",
+      "status": "done",
+      "created_at": "2026-07-12T01:08:27Z",
+      "resolved_at": "2026-07-12T01:08:27Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation and hosted verification complete. Please review execute-plans PRs #265/#267, final dev merge 5647d4b03b42c8f4487c63f604fd39555660dee3, successful deploy run 29174965397, successful post-merge gate 29174965400, and docs/deployment/evidence/mgmt-ops-003-gap/gap-004/mobile-human-inbox-fix.md. Hosted desktop/mobile both pass with target context and zero request/console/BFF/chunk/fallback failures.",
+      "status": "done",
+      "created_at": "2026-07-12T01:34:17Z",
+      "resolved_at": "2026-07-12T01:36:02Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: execute-plans PRs #265 and #267 are merged to dev; integration gates succeeded; deployed /deployment.json matches 5647d4b03b42c8f4487c63f604fd39555660dee3 in strict live mode; hosted desktop/mobile evidence records 2 passed with required Human Inbox HTTP 200, preserved target context, and zero console/request/BFF/fallback failures. Pantheon evidence PR #3327 is merged at 2b473bc7e98e1983c246343d01a0a2c53aabea1e.",
+      "status": "done",
+      "created_at": "2026-07-12T01:36:02Z",
+      "resolved_at": "2026-07-12T01:38:00Z"
+    }
+  ],
+  "blockers": []
+}

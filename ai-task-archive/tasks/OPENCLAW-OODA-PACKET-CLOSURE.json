@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "OPENCLAW-OODA-PACKET-CLOSURE",
+  "archived_at": "2026-07-04T18:03:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPENCLAW-OODA-PACKET-CLOSURE",
+    "title": "Close cron-turn -> persisted OODA packet loop",
+    "summary_zh": "把『cron 喚醒 persona agent 跑一輪』與『持久化一筆 OODA packet』接起來。現在 cron run status ok 但不產出 packet:packet 由 ooda_cycle_runtime 的靜態 AlphaSeedSource batch 產生,跟 cron dispatch 完全沒接(設計缺口,非 bug)。需先做設計決策(agent 具寫回 tool / Pantheon 監看 cron runs / upstream_entrypoint 觸發 workflow),再實作。禁止用靜態 seed 或讀時合成冒充 cron 產出。",
+    "phase": "OpenClaw live wiring / OODA packet closure",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "OPENCLAW-PERSONA-CRON-BACKFILL"
+    ],
+    "artifacts": [
+      ".orchestrator/task-briefs/openclaw_ooda_packet_closure.md",
+      "services/persona/ooda_cycle_runtime.py",
+      "integrations/openclaw/adapter/cron_transport.py",
+      "services/control-plane/cron/persona_cron_registrar.py"
+    ],
+    "acceptance": [
+      "force-run a persona OODA cron job -> /bff/ooda/packets count +1",
+      "new packet carries real producer fingerprint (cron runId / trace_id / upstream ts), not fixture/synthesized",
+      "evidence chain links the cron run to the new packet",
+      "existing tests green; add a live smoke proving cron->packet closure"
+    ],
+    "next": "Closeout: re-verified PR #2993 (Option B cron->OODA packet closure) merged into dev at 323cb2ec9, confirmed ancestor of origin/dev. Re-ran pytest services/control-plane/cron/ services/control-plane/ooda/ services/persona/test_cron_ooda_closure.py -q: 91 passed. Live smoke explicitly skipped (no live gateway in this worker env), consistent with reviewer's own re-run and the independent sidecar re-verification packet. No canonical contract files touched. Reviewer Codex's review_approved evidence and sidecar re-verification packet both hold in current worktree.",
+    "last_update": "2026-07-04T18:03:10Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_openclaw_live_wiring_followups_2026-07-03",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "fleet_lane": "openclaw-live-wiring-followups",
+    "source_ref": {
+      "predecessor_prs": [
+        "https://github.com/ajoe734/pantheon/pull/2812",
+        "https://github.com/ajoe734/pantheon/pull/2818"
+      ],
+      "briefs_dir": ".orchestrator/task-briefs"
+    },
+    "needs_design_decision": true,
+    "review_notes_zh": [
+      "PR #2993 already merged into dev at merge commit 323cb2ec9; Codex reviewed the Option B implementation and sidecar evidence and found it satisfies the cron.run -> cron.runs -> persisted OODA packet acceptance path without static AlphaSeedSource/read-time synthesis.",
+      "Reviewer re-ran `python3 -m pytest services/control-plane/cron/ services/control-plane/ooda/ services/persona/test_cron_ooda_closure.py -q` in the task worktree: 91 passed.",
+      "Reviewer re-ran `python3 -m pytest services/persona/test_cron_ooda_closure_live_smoke.py -v`: 1 skipped because this worker has no live OpenClaw gateway env; live end-to-end evidence remains the owner merge-message run plus merged sidecar review packet."
+    ],
+    "review_file": "support/sidecars/OPENCLAW-OODA-PACKET-CLOSURE/OPENCLAW-OODA-PACKET-CLOSURE-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T18:03:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/openclaw-ooda-packet-closure",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPENCLAW-OODA-PACKET-CLOSURE",
+      "git_clean_required": false,
+      "commit": "ef928f8f401daa6cbe2da8d57fc5e81374938f92",
+      "commit_subject": "Merge pull request #2996 from ajoe734/task/OPENCLAW-OODA-PACKET-CLOSURE-SIDECAR-REVIEW",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "OPENCLAW-OODA-PACKET-CLOSURE-SIDECAR-REVIEW": "sync brief status"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPENCLAW-OODA-PACKET-CLOSURE",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d75119929e7a967d8b85bcc478704148d24b5b35",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPENCLAW-OODA-PACKET-CLOSURE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implementation complete: PR #2993 closes the cron-turn -> persisted OODA packet gap via Option B (Pantheon-side observer). cron_transport.py gained reusable force_run_job()/_poll_for_terminal_run()/_select_run() helpers; new services/persona/cron_ooda_closure.py force-runs an already-registered persona cron job, drives one real synchronous OpenClaw agent turn, and persists an OodaLoopPacket carrying the real cron run_id/job_id fingerprint (fail-closed if the cron run does not reach status ok; honestly stays at 'observing' with an agent-turn-unavailable audit ref if the live agent turn errors/empty, never fabricates forward). New scripts/openclaw-close-persona-cron-ooda.py ops CLI, 7 unit tests (fake gateway), and a live smoke test that skips explicitly without a live gateway. pytest services/control-plane/cron, services/control-plane/ooda, services/persona/test_cron_ooda_closure.py -> 91 passed. Live smoke run against local gateway/adapter stack: forced persona-tw-equity's cron job, cron.runs status ok with real run id, real (non-fabricated) agent decision, packet round-tripped through BFF ServiceBackedReadAdapter with matching cron_run_id fingerprint; also verified /bff/ooda/packets count 0->1 in the live dev BFF container using a produced packet, then cleaned up. PR is CLEAN/mergeable, all 3 required checks green, just refreshed against latest dev. Please review PR https://github.com/ajoe734/pantheon/pull/2993.",
+      "status": "done",
+      "created_at": "2026-07-04T17:30:51Z",
+      "resolved_at": "2026-07-04T17:58:11Z"
+    },
+    {
+      "task_id": "OPENCLAW-OODA-PACKET-CLOSURE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved by Codex: PR #2993 is merged; required checks are green; focused local suite passed (91); live smoke skip was explicit in this worker, with live evidence retained from the owner/sidecar packet. Owner Claude2 should finalize review_approved -> done.",
+      "status": "done",
+      "created_at": "2026-07-04T17:58:11Z",
+      "resolved_at": "2026-07-04T18:03:11Z"
+    }
+  ],
+  "blockers": []
+}

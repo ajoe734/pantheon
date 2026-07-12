@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-07-03T14:36:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE",
+    "title": "Prepare OPENCLAW-CRON-WRITE-SCOPE acceptance packet and dependency map",
+    "summary_zh": "平行支援 OPENCLAW-CRON-WRITE-SCOPE，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "OpenClaw live wiring / gateway device scope",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OPENCLAW-CRON-WRITE-SCOPE/OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar acceptance packet closeout complete: PR #2839 (packet + dependency map) and PR #2840 (closeout scope-drift note) both merged into dev; commit 6364000fc confirmed ancestor of origin/dev; router-layer channel=cron gap documented for parent OPENCLAW-CRON-WRITE-SCOPE owner (Claude).",
+    "last_update": "2026-07-03T14:36:46Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OPENCLAW-CRON-WRITE-SCOPE",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：acceptance checklist 與 dependency map 皆可獨立驗證（router main.py 的 deployment tool_class 規則、workflows.py 的 allowed_tool_classes/approval_required、以及三組 pytest 通過數皆逐一核對相符）。",
+      "確認 parent OPENCLAW-CRON-WRITE-SCOPE 目前確實無 ai-status.json 條目，且 router 層 cron+deployment 落到預設 ALLOW 的 gap 屬實，缺少 channel=cron 測試覆蓋。",
+      "此 sidecar 僅新增支援性文件，未觸及 canonical/runtime/router/cron 實作，符合 helper_kind=acceptance_packet 的範圍限制。"
+    ],
+    "review_file": "support/sidecars/OPENCLAW-CRON-WRITE-SCOPE/OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-03T14:36:46Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/openclaw-cron-write-scope-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "6364000fcfe99661c4bb25fa3872f0fbeb781877",
+      "commit_subject": "OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Record final sidecar closeout": "PR #2839 merged the acceptance packet and",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verified": "git merge-base --is-ancestor HEAD origin/dev (prior to this commit); gh pr view 2839 confirms MERGED"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d663fbe21703967e38a5d53e33b01cae64a76201",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Acceptance packet and dependency map committed (b4ea1eaab) and opened as PR #2839 (task/OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE -> dev, auto-merge enabled). Please review support/sidecars/OPENCLAW-CRON-WRITE-SCOPE/OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE.md: flags that parent OPENCLAW-CRON-WRITE-SCOPE has no ai-status.json entry yet, and identifies a router-layer gap (channel=cron + deployment intent falls through to plain ALLOW, no test coverage) as the likely real deliverable.",
+      "status": "done",
+      "created_at": "2026-07-03T14:13:30Z",
+      "resolved_at": "2026-07-03T14:16:14Z"
+    },
+    {
+      "task_id": "OPENCLAW-CRON-WRITE-SCOPE-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Reviewed and approved: acceptance checklist and dependency map independently verified against router main.py, cron/workflows.py, and three pytest suites (21+19 passed). Router-layer gap (cron+deployment falls through to default ALLOW, no channel=cron test) confirmed accurate. Handing back to Claude2 for closeout to done; recommend parent owner create the OPENCLAW-CRON-WRITE-SCOPE ai-status.json entry next.",
+      "status": "done",
+      "created_at": "2026-07-03T14:16:14Z",
+      "resolved_at": "2026-07-03T14:36:47Z"
+    }
+  ],
+  "blockers": []
+}

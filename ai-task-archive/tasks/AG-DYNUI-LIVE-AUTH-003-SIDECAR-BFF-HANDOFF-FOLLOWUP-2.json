@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-LIVE-AUTH-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-03T12:58:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-LIVE-AUTH-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare AG-DYNUI-LIVE-AUTH-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-LIVE-AUTH-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora Dynamic UI Live Recovery / frontend auth transport",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-LIVE-DEFAULT-001",
+      "AG-DYNUI-LIVE-AUTH-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-LIVE-AUTH-003/AG-DYNUI-LIVE-AUTH-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized reviewed support-only BFF/frontend handoff follow-up; packet PR #2824 merged at 787cc5a574adf0efeccc7c0482ce9a6a5285439e, closeout PR #2826 merged at 647e9850a51bc403c09a38d9c1d0cf9a4ee38536; no canonical/runtime changes.",
+    "last_update": "2026-07-03T12:58:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-LIVE-AUTH-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Review approved: packet is support-only (PR #2824 touched only the sidecar task brief and this packet, no canonical/runtime/registry files)",
+      "Verified live: dev BFF /health returns 200, unauthenticated GET /bff/agora/trading-room and /decision-events both return 401 AUTH_REQUIRED, matching the packet's fail-closed claim",
+      "Verified deployed execute-plans tradingRoom.ts (checked at current live commit 745ddd4b, newer than the packet's recorded ea22b56c snapshot) still has no Authorization/authHeaders call sites, confirming the bearer-header gap the packet reports is still real",
+      "Confirmed execute-plans PR #148 is open at head c0e256aff, matches packet's description as the frontend absorption PR",
+      "Confirmed parent AUTH-003 is review_approved with owner Claude/reviewer Codex and review_notes already flag the same pending live-browser-proof gap this sidecar documents",
+      "No secrets, tokens, or cookies are committed in the packet"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-03T12:58:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-live-auth-003-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-LIVE-AUTH-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "a8622889a7014826a9b1ba4d30588fcb18a86450",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-DYNUI-LIVE-AUTH-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-LIVE-AUTH-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "647e9850a51bc403c09a38d9c1d0cf9a4ee38536",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-LIVE-AUTH-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only follow-up BFF/frontend handoff packet is merged in PR #2824 at 787cc5a574adf0efeccc7c0482ce9a6a5285439e. Packet path: support/sidecars/AG-DYNUI-LIVE-AUTH-003/AG-DYNUI-LIVE-AUTH-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md. It records that dev BFF is now healthy and unauthenticated Trading Room routes fail closed with 401 AUTH_REQUIRED, while current dev FE deployment ea22b56c7747d0f0968e91188559ceff7a2dc7e1 still lacks bearer auth headers in live execute-plans tradingRoom.ts. It identifies execute-plans PR #148 as the current frontend absorption PR before parent AUTH-003 can claim authenticated live browser success. Please review for support-only accuracy and parent absorption.",
+      "status": "done",
+      "created_at": "2026-07-03T12:49:19Z",
+      "resolved_at": "2026-07-03T12:52:31Z"
+    },
+    {
+      "task_id": "AG-DYNUI-LIVE-AUTH-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed for support-only accuracy: BFF health/401 fail-closed and FE bearer-header gap claims independently reverified live; PR #148 open and correctly identified as the frontend absorption path. Approved; returning to owner Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-07-03T12:52:31Z",
+      "resolved_at": "2026-07-03T12:58:17Z"
+    }
+  ],
+  "blockers": []
+}

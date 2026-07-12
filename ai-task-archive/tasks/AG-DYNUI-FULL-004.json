@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-FULL-004",
+  "archived_at": "2026-07-05T15:32:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-FULL-004",
+    "title": "Wire frontend Workshop to Trading Room handoff",
+    "summary_zh": "修 execute-plans Strategy Workshop CTA：ready 後必須帶 strategyId/strategyVersion/readiness context 進 /agora/trading-room/:strategyId，不可只 navigate('/agora/trading-room')。",
+    "phase": "Agora DYNUI Full Production Recovery / Wave 2 frontend handoff",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-FULL-002"
+    ],
+    "artifacts": [
+      "execute-plans/src/routes/agora.tsx",
+      "execute-plans/src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx",
+      "execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx",
+      "execute-plans/src/lib/bff-v1/agora/workshops.ts",
+      "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts",
+      "execute-plans/e2e/agora-winner-branch-hosted.spec.ts"
+    ],
+    "acceptance": [
+      "Add to Trading Room is enabled only by live readiness reaching trading_room",
+      "CTA navigates to /agora/trading-room/{strategyId}?strategyVersion={version}",
+      "explicit strategy route loads even when aggregate default route initially has no selected strategy",
+      "frontend does not fabricate ready strategies if BFF readiness is blocked",
+      "unit tests cover blocked, ready, missing strategy id, and explicit strategy route cases",
+      "execute-plans PR, checks, merge SHA, dev FE deploy, and hosted screenshot are recorded"
+    ],
+    "next": "Frontend handoff partial finalized after independent merge proof: execute-plans PR #185 merged into dev at 4cce2d10, integration gate and dev FE deploy succeeded, Pantheon PR #3028 merged hosted no-fixture screenshot evidence at docs/deployment/evidence/ag-dynui-full-004/20260705T152800Z. Status done used TASK_REQUIRE_MERGED_PR=false because the status registry still targets execute-plans origin/main while PR #185 and origin/HEAD use dev; live browser-scoped BFF still has zero ready strategies, so AG-DYNUI-FULL-005 remains open for ready-strategy materialization.",
+    "last_update": "2026-07-05T15:32:54Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_full_production_recovery_2026-07-05",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "prior_packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+      "prior_hosted_gate": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-006-hosted-e2e-publish-gate.md",
+      "live_bff_deploy_sha": "96d6a7288061047ceca7b911843555d6296d8425",
+      "runtime_lane_repair_sha": "aab5c301f7ba5e5872e9f0f5b195832be34acbeb",
+      "codex_adapter_fix_sha": "532332a949a15e770285055c013b1f19adf767f7"
+    },
+    "production_recovery_children": [
+      "AG-DYNUI-FULL-001",
+      "AG-DYNUI-FULL-002",
+      "AG-DYNUI-FULL-003",
+      "AG-DYNUI-FULL-004",
+      "AG-DYNUI-FULL-005",
+      "AG-DYNUI-FULL-006",
+      "AG-DYNUI-FULL-007"
+    ],
+    "wave": 2,
+    "fleet_lane": "agora-frontend-handoff",
+    "review_notes_zh": [
+      "無 blocking findings；PR #185 diff 覆蓋 Strategy Workshop ready CTA 只從 live readiness trading_room 產生 handoff，並導向 /agora/trading-room/{strategyId}?strategyVersion=...。",
+      "Trading Room explicit route 可在 aggregate 沒有 selected strategy 時載入，並把 readinessAssessmentId/readinessGate/strategyVersion 傳入 proposal personalization；blocked readiness 不會被標成 ready。",
+      "第二個 mobile shell gate commit 已納入 review；local validation 通過 git diff --check、focused Vitest 89 passed、development build 成功。",
+      "PR #185 已於 2026-07-05T15:17:40Z merge，merge commit 4cce2d10f14abcc7af5f15638e0e0efa63885944；owner done 前仍需補齊 dev FE deploy / hosted screenshot 記錄。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-05T15:32:54Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "dev",
+      "git_clean_required": false,
+      "commit": "4cce2d10f14abcc7af5f15638e0e0efa63885944",
+      "commit_subject": "Merge pull request #185 from ajoe734/task/AG-DYNUI-FULL-004",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-DYNUI-FULL-004": "wire Strategy Workshop Trading Room handoff"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/dev",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-FULL-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned AG-DYNUI-FULL-004 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-05T12:16:53Z",
+      "resolved_at": "2026-07-05T12:43:00Z"
+    },
+    {
+      "task_id": "AG-DYNUI-FULL-004",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Auto-reassigned AG-DYNUI-FULL-004 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "status": "done",
+      "created_at": "2026-07-05T13:11:09Z",
+      "resolved_at": "2026-07-05T13:11:09Z"
+    },
+    {
+      "task_id": "AG-DYNUI-FULL-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-07-05T13:20:34Z",
+      "resolved_at": "2026-07-05T13:20:34Z"
+    },
+    {
+      "task_id": "AG-DYNUI-FULL-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-07-05T14:12:21Z",
+      "resolved_at": "2026-07-05T14:12:21Z"
+    },
+    {
+      "task_id": "AG-DYNUI-FULL-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-07-05T14:21:41Z",
+      "resolved_at": "2026-07-05T14:21:41Z"
+    },
+    {
+      "task_id": "AG-DYNUI-FULL-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "execute-plans PR #185 is ready for Codex2 review: head 722cb18fd6d5e5e33b2c4e4866c72bcdd17a8571, GitHub integration-gate success, local git diff --check clean, focused Vitest 84 passed. Not merged or deployed yet.",
+      "status": "done",
+      "created_at": "2026-07-05T15:17:08Z",
+      "resolved_at": "2026-07-05T15:22:56Z"
+    },
+    {
+      "task_id": "AG-DYNUI-FULL-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 review approved for execute-plans PR #185 at 722cb18; PR is merged as 4cce2d10, integration-gate succeeded, local diff/test/build validation passed. Codex owner should finalize only after recording dev FE deploy and hosted screenshot evidence.",
+      "status": "done",
+      "created_at": "2026-07-05T15:22:56Z",
+      "resolved_at": "2026-07-05T15:32:54Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "AG-DYNUI-FULL-004",
+      "owner": "Codex",
+      "waiting_for": "Codex2",
+      "message": "Opened execute-plans draft PR #185 at 4668d52bd76c973946d8466f1d65ab1f43358cc2. Local focused tests/build passed and GitHub gate passed F13 Agora, but overall integration-gate failed at aggregate release gate due broader management F04-F07 plus a11y/perf failures outside this frontend handoff scope. Merge blocked pending reviewer/coordination decision.",
+      "status": "resolved",
+      "created_at": "2026-07-05T14:49:34Z",
+      "resolved_at": "2026-07-05T15:05:12Z"
+    }
+  ]
+}
