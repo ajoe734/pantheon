@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: 7th stale rewake (review_ready_dispatch): task already approved+merged (PR #3352/#3354/#3364/#3367/#3370). HEAD is still an ancestor of origin/dev (bc615232e) with zero commits ahead and zero file drift on the sidecar artifact. No new review work performed; parent owner Antigravity still decides on absorption into MGMT-PERF-IA-008.
+- Next: 7th stale rewake: reconfirmed and pushed commit 6d5e1f6a8 (merged origin/dev to clear BEHIND), opened PR #3372. Self-merge/auto-merge denied by classifier (requires human review, per prior governance pattern) — PR left open for parent owner Antigravity / a human to merge. No canonical truth changed.
 
 ## Summary
 平行支援 MGMT-PERF-IA-008，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
