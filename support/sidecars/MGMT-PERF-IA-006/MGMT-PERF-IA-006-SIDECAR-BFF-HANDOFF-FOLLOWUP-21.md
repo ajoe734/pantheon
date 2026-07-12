@@ -136,3 +136,17 @@ AI_NAME=Codex2 ./scripts/ai-status.sh handoff \
 - Changed only this support artifact. No canonical truth, Pantheon BFF/runtime
   code, schema, registry/governance implementation, or frontend source was
   changed.
+
+## 7. Finalization Record
+
+- Sidecar reviewer `Antigravity` approved the packet and returned it to owner
+  `Codex2` for closeout; the approval record is
+  `docs/reviews/2026-07-12-mgmt-perf-ia-006-sidecar-bff-handoff-followup-21-antigravity-review.md`.
+- Final scope inspection retains only this packet and that reviewer record
+  relative to `origin/dev`; supervisor-generated planning pointer/session and
+  task-brief changes were explicitly excluded from delivery.
+- Final verification: `git diff --check origin/dev...HEAD`; support artifact
+  existence check; allow-list check limiting the task diff to the packet and
+  reviewer record.
+- Approval closes only this support slice. Parent owner `Antigravity` still
+  decides whether and how to absorb it into `MGMT-PERF-IA-006`.
