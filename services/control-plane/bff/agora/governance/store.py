@@ -13,7 +13,7 @@ class ProposalConflict(Exception):
 
 
 class ProposalStore:
-    """Process-safe proposal store interface; records are immutable revision snapshots."""
+    """Thread-safe proposal store; records are immutable revision snapshots."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -26,7 +26,8 @@ class ProposalStore:
         return '"' + hashlib.sha256(raw).hexdigest() + '"'
 
     def create(self, record: Dict[str, Any], key: str) -> Dict[str, Any]:
-        fingerprint = hashlib.sha256(json.dumps(record, sort_keys=True, default=str).encode()).hexdigest()
+        stable = {key: value for key, value in record.items() if key not in {"proposal_id", "created_at", "updated_at", "audit"}}
+        fingerprint = hashlib.sha256(json.dumps(stable, sort_keys=True, default=str).encode()).hexdigest()
         scope_key = f"{record['tenant_id']}:{record['owner_user_id']}:{key}"
         with self._lock:
             replay = self._idempotency.get(scope_key)
@@ -60,4 +61,3 @@ class ProposalStore:
                 raise ProposalConflict("proposal ETag is stale")
             rows.append(copy.deepcopy(record))
             return copy.deepcopy(record)
-

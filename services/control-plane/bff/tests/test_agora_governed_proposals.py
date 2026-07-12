@@ -52,3 +52,15 @@ def test_conflicts_and_governance_ceiling_fail_closed(monkeypatch):
     action = {"action": "modify", "reason": "change", "proposed_value": {"risk": .05}}
     assert c.post(f"/bff/agora/proposals/{pid}/actions", headers={"Authorization": HEADERS["Authorization"], "If-Match": '"stale"'}, json=action).status_code == 412
     assert c.post(f"/bff/agora/proposals/{pid}/actions", headers={"Authorization": HEADERS["Authorization"], "If-Match": created.headers["etag"]}, json={"action": "approve", "reason": "premature"}).status_code == 422
+
+
+def test_create_idempotency_replays_and_payload_mismatch_conflicts(monkeypatch):
+    c = client(monkeypatch)
+    headers = {**HEADERS, "Idempotency-Key": "replay-key"}
+    original = payload()
+    first = c.post("/bff/agora/proposals", headers=headers, json=original)
+    replay = c.post("/bff/agora/proposals", headers=headers, json=original)
+    assert replay.status_code == 201
+    assert replay.json()["data"]["proposal_id"] == first.json()["data"]["proposal_id"]
+    changed = payload(); changed["proposed_value"] = {"risk": .01}
+    assert c.post("/bff/agora/proposals", headers=headers, json=changed).status_code == 409
