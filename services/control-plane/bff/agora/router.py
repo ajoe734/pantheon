@@ -40,7 +40,7 @@ from .governance.router import create_governance_router
 
 _CAPABILITY_MANIFEST_PATH = os.path.join(
     os.path.dirname(__file__),
-    "..", "..", "..", "specs", "agora", "capability_manifest.json",
+    "..", "..", "specs", "agora", "capability_manifest.json",
 )
 
 
