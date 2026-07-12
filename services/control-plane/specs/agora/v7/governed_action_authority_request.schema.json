@@ -1,0 +1,282 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/governed_action_authority_request/v1",
+  "title": "GovernedActionAuthorityRequest",
+  "description": "Canonical cross-repo event contract that closes the persona action-authority question. Operationalizes PERSONA_RUNTIME_MODEL.md section 6 Consult Policy (required reviewers, required committees, trigger rules, forbidden solo actions, escalation rules) as a wire contract, and preserves the ownership split from docs/decisions/control-plane-persona-boundary.md and docs/decisions/control-plane-router-enforcement-ownership.md: persona service supplies consult_policy_id and the solo_eligibility evaluation (persona-owned policy truth); governance/promotion is the only surface allowed to set `decision`. This contract records the authority evaluation and outcome; it never itself executes the underlying command, which stays owned by the domain service per the router enforcement ownership matrix.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "authority_request_id",
+    "action_type",
+    "requested_by",
+    "solo_eligibility",
+    "status",
+    "execution_authority_proof",
+    "trace_id",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "authority_request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action_type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Route/Consult Policy trigger identifier for the action being evaluated, e.g. paper_promotion, macro_regime_response, high_risk_patch."
+    },
+    "requested_by": {
+      "$ref": "#/definitions/sessionActorRef"
+    },
+    "consult_policy_id": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "persona_lifecycle_state": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "solo_eligibility": {
+      "$ref": "#/definitions/soloEligibility"
+    },
+    "required_reviewers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "required_committees": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "linked_opinion_consultation_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "linked_consult_request_id": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "authorized",
+        "authorized_with_conditions",
+        "denied",
+        "escalated"
+      ],
+      "default": "pending"
+    },
+    "decision_ref": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "decision_by": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/sessionActorRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_authority_proof": {
+      "type": "string",
+      "enum": [
+        "governed_action_authority_request_does_not_execute_command"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "evaluating",
+        "awaiting_decision",
+        "resolved",
+        "expired"
+      ]
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "minLength": 1
+    },
+    "resolved_at": {
+      "$ref": "#/definitions/nullableDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "resolved"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "authorized",
+              "authorized_with_conditions",
+              "denied",
+              "escalated"
+            ]
+          },
+          "decision_by": {
+            "$ref": "#/definitions/sessionActorRef"
+          },
+          "resolved_at": {
+            "type": "string",
+            "format": "date-time",
+            "minLength": 1
+          }
+        },
+        "required": ["decision", "decision_by", "resolved_at"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "solo_eligibility": {
+            "properties": {
+              "forbidden_solo_action": {
+                "const": true
+              }
+            },
+            "required": ["forbidden_solo_action"]
+          }
+        },
+        "required": ["solo_eligibility"]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": ["required_committees"],
+            "properties": {
+              "required_committees": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": ["required_reviewers"],
+            "properties": {
+              "required_reviewers": {
+                "minItems": 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "sessionActorRef": {
+      "type": "object",
+      "required": ["actor_type", "actor_id"],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": ["persona_session", "human", "committee", "system"]
+        },
+        "actor_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "display_name": {
+          "$ref": "#/definitions/nullableString"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "actor_type": {
+                "const": "persona_session"
+              }
+            },
+            "required": ["actor_type"]
+          },
+          "then": {
+            "properties": {
+              "session_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["session_id"]
+          }
+        }
+      ]
+    },
+    "soloEligibility": {
+      "type": "object",
+      "description": "Persona-owned Consult Policy evaluation result. This is an evaluation, not an approval -- approval authority stays with governance/promotion via `decision`.",
+      "required": ["evaluated", "forbidden_solo_action"],
+      "properties": {
+        "evaluated": {
+          "type": "boolean"
+        },
+        "forbidden_solo_action": {
+          "type": "boolean"
+        },
+        "trigger_rules_matched": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "nullableString": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableDateTime": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}
