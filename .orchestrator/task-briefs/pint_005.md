@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Strategy Workshop Persona interaction UX
-- Status: todo
+- Status: review_approved
 - Owner: Antigravity
 - Reviewer: Codex
-- Next: Helper-claimed by idle Antigravity; previous owner Codex becomes reviewer.
+- Next: Review approved: execute-plans PR #276 merged at c6eeff25; focused StrategyWorkshopPage tests 11/11 pass and production build succeeds. Owner Antigravity must finalize closeout to done.
 
 ## Summary
 Implement Workshop context mode participant UX and opinion rendering.
