@@ -788,6 +788,27 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(event["metadata"]["engine_bridge_commit"], "abc1234")
         self.assertEqual(event["metadata"]["context_source"], "launch_manifest")
 
+    def test_runtime_telemetry_emitter_build_event_propagates_correlation_envelope(self):
+        from services.trade_journey.correlation_envelope import mint_trade_envelope
+
+        incoming = mint_trade_envelope(
+            {"tenant_id": "tenant-1", "environment": "paper"},
+            producer="control_plane.signal",
+        )
+        emitter = RuntimeTelemetryEmitter(self._identity(), _FakeBindingResolver(self._binding()))
+
+        event = emitter.build_event(
+            "heartbeat",
+            {"heartbeat": 1},
+            metadata={"correlation_envelope": incoming},
+        )
+
+        self.assertIsNotNone(event)
+        outgoing = event["correlation_envelope"]
+        self.assertEqual(outgoing["journey_id"], incoming["journey_id"])
+        self.assertEqual(outgoing["causation_event_id"], incoming["event_id"])
+        self.assertEqual(outgoing["producer"], "execution.paper_runtime")
+
     def test_runtime_telemetry_emitter_rejects_non_paper_stage(self):
         binding = self._binding()
         binding["deployment_mode"] = "live"
@@ -869,6 +890,34 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
         self.assertEqual(ev.metadata["currency"], "TWD")
         self.assertEqual(ev.metadata["exchange"], "TSE")
         self.assertEqual(algo._holding("2330.TW").Quantity, -1)
+
+    def test_taiwan_submit_posts_signal_client_id_and_correlation_envelope(self):
+        from services.trade_journey.correlation_envelope import mint_trade_envelope
+
+        algo, _ = self._algo()
+        incoming = mint_trade_envelope(
+            {"tenant_id": "tenant-1", "environment": "paper"},
+            producer="strategy.signal",
+        )
+        algo.SetCurrentSignalContext({"correlation_envelope": incoming})
+        captured = {}
+
+        def capture(url, payload):
+            captured.update(payload)
+            return {"order_id": "ord-tw-envelope", "fill_price": 100.0, "fill_qty": 1}
+
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            staticmethod(capture),
+        ):
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW", signal_id="signal-envelope-1", side="buy", quantity=1,
+                quantity_type="SHARES", action="BUY",
+            )
+
+        self.assertEqual(captured["client_order_id"], "signal-envelope-1")
+        self.assertEqual(captured["correlation_envelope"], incoming)
 
     def test_taiwan_broker_error_records_rejection(self):
         algo, events = self._algo()
