@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Response, Header
 from pydantic import BaseModel
 
 from services.foundation.health import register_fastapi_health_routes
@@ -36,6 +36,7 @@ from services.persona.lesson_governance import (
     TradeLessonCandidateStore,
     LessonGovernanceService,
     TradeLessonCandidateError,
+    is_sensitive_change,
 )
 
 
@@ -105,6 +106,61 @@ def _candidate_store() -> TradeLessonCandidateStore:
 
 def _governance_service() -> LessonGovernanceService:
     return LessonGovernanceService(_candidate_store())
+
+
+def _fetch_governance_approval(decision_id: str) -> Optional[Dict[str, Any]]:
+    # In local mode, read the json file directly
+    if os.getenv("PANTHEON_MEMORY_AUTHZ_MODE", "").strip().lower() == "local":
+        gov_dir = os.getenv("PANTHEON_GOVERNANCE_DATA_DIR") or "/tmp/pantheon/governance"
+        store_path = Path(gov_dir) / "approval_decisions.json"
+        if not store_path.exists():
+            workspace_path = Path(__file__).resolve().parents[2] / "services" / "governance" / "data" / "approval_decisions.json"
+            if workspace_path.exists():
+                store_path = workspace_path
+        if store_path.exists():
+            try:
+                decisions = json.loads(store_path.read_text(encoding="utf-8"))
+                for d in decisions:
+                    if d.get("decision_id") == decision_id:
+                        return d
+            except Exception:
+                pass
+        return None
+
+    # In live mode, query the governance API
+    base = (
+        os.getenv("PANTHEON_GOVERNANCE_API_URL")
+        or os.getenv("PANTHEON_GOVERNANCE_SERVICE_URL")
+        or ""
+    ).strip().rstrip("/")
+    if not base:
+        return None
+    url = f"{base}/api/governance/approvals/{decision_id}"
+    headers = {}
+    token = os.getenv("PANTHEON_GOVERNANCE_AUTH_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=2.0) as response:
+            return json.loads(response.read().decode("utf-8") or "{}")
+    except Exception:
+        return None
+
+
+def _authorize_lesson_action(actor_id: Optional[str], actor_roles: Optional[List[str]]) -> None:
+    if not actor_id or not actor_id.strip():
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "unauthorized", "message": "Missing actor ID."}
+        )
+    normalized_roles = {str(role).strip().lower() for role in actor_roles or [] if str(role).strip()}
+    authorized_set = {"operator", "admin", "reviewer", "governance_reviewer", "governance_committee"}
+    if not normalized_roles.intersection(authorized_set):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "unauthorized", "message": f"Actor roles {list(normalized_roles)} not authorized for governance action."}
+        )
 
 
 def _governance_authz_url() -> str:
@@ -397,10 +453,63 @@ class DecidePayload(BaseModel):
     reason: str
     audit_receipt_id: str
     episodes: Optional[List[Dict[str, Any]]] = None
+    actor_roles: Optional[List[str]] = None
+    target_env: Optional[str] = None
+    promotion_stage: Optional[str] = None
 
 
 @app.post("/api/memory/trade-lessons/{candidate_id}/decide")
-async def decide_trade_lesson(candidate_id: str, payload: DecidePayload):
+async def decide_trade_lesson(
+    candidate_id: str,
+    payload: DecidePayload,
+    x_actor_id: Optional[str] = Header(None, alias="X-Actor-ID"),
+    x_actor_roles: Optional[str] = Header(None, alias="X-Actor-Roles"),
+):
+    actor_id = x_actor_id or payload.operator_id
+    actor_roles = payload.actor_roles
+    if not actor_roles and x_actor_roles:
+        actor_roles = [r.strip() for r in x_actor_roles.split(",") if r.strip()]
+
+    _authorize_lesson_action(actor_id, actor_roles)
+
+    candidate = _candidate_store().get(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail={"error": "candidate_not_found", "candidate_id": candidate_id})
+
+    req_env = payload.target_env or candidate.get("target_env", "paper")
+    is_sensitive = is_sensitive_change(candidate)
+
+    if payload.action == "endorse" and (is_sensitive or req_env in {"canary", "live"}):
+        decision = _fetch_governance_approval(payload.audit_receipt_id)
+        if not decision:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision {payload.audit_receipt_id} not found."
+                }
+            )
+        is_approved = (
+            str(decision.get("decision")).lower() == "approved" or
+            str(decision.get("decision_state")).lower() == "decided" and str(decision.get("decision")).lower() == "approved"
+        )
+        if not is_approved:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision {payload.audit_receipt_id} is not approved."
+                }
+            )
+        if decision.get("persona_id") != candidate["persona_id"]:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": f"Governance decision persona mismatch. Candidate: {candidate['persona_id']}, Decision: {decision.get('persona_id')}."
+                }
+            )
+
     try:
         updated = _governance_service().decide(
             candidate_id,
@@ -409,6 +518,8 @@ async def decide_trade_lesson(candidate_id: str, payload: DecidePayload):
             reason=payload.reason,
             audit_receipt_id=payload.audit_receipt_id,
             episodes=payload.episodes,
+            target_env=payload.target_env,
+            promotion_stage=payload.promotion_stage,
         )
     except TradeLessonCandidateError as exc:
         raise HTTPException(status_code=422, detail={"error": "decision_failed", "message": str(exc)}) from exc
@@ -416,7 +527,22 @@ async def decide_trade_lesson(candidate_id: str, payload: DecidePayload):
 
 
 @app.post("/api/memory/trade-lessons/{candidate_id}/merge")
-async def merge_trade_lesson(candidate_id: str):
+async def merge_trade_lesson(
+    candidate_id: str,
+    actor_id: Optional[str] = Query(None),
+    actor_roles: Optional[List[str]] = Query(None),
+    x_actor_id: Optional[str] = Header(None, alias="X-Actor-ID"),
+    x_actor_roles: Optional[str] = Header(None, alias="X-Actor-Roles"),
+):
+    effective_id = actor_id or x_actor_id
+    effective_roles = actor_roles
+    if not effective_roles and x_actor_roles:
+        effective_roles = [r.strip() for r in x_actor_roles.split(",") if r.strip()]
+    elif effective_roles:
+        effective_roles = _split_csv_values(effective_roles)
+
+    _authorize_lesson_action(effective_id, effective_roles)
+
     try:
         updated = _governance_service().merge_to_memory(candidate_id, _persona_store())
     except TradeLessonCandidateError as exc:

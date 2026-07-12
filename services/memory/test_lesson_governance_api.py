@@ -50,6 +50,7 @@ def make_valid_candidate_payload(overrides: dict | None = None) -> dict:
         "created_at": utc_now(),
         "updated_at": utc_now(),
         "expiry": utc_now(),
+        "reflection_version": "v1",
     }
     if overrides:
         base.update(overrides)
@@ -96,7 +97,8 @@ def test_api_decide_gate_check_failure(client: TestClient) -> None:
         "operator_id": "op-alice",
         "reason": "Approved",
         "audit_receipt_id": str(uuid.uuid4()),
-        "episodes": []
+        "episodes": [],
+        "actor_roles": ["operator"],
     }
     resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
     assert resp.status_code == 422
@@ -121,13 +123,17 @@ def test_api_decide_and_merge_success(client: TestClient) -> None:
         "reason": "Approved",
         "audit_receipt_id": str(uuid.uuid4()),
         "episodes": episodes,
+        "actor_roles": ["operator"],
     }
     resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
     assert resp.status_code == 200
     assert resp.json()["review_state"] == "endorsed"
 
     # Merge to memory
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge")
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge", params={
+        "actor_id": "op-alice",
+        "actor_roles": "operator",
+    })
     assert resp.status_code == 200
     assert resp.json()["review_state"] == "merged"
 
@@ -143,3 +149,163 @@ def test_api_decide_and_merge_success(client: TestClient) -> None:
     hits = resp.json()["hits"]
     assert len(hits) == 1
     assert hits[0]["entry"]["memory_id"] == f"pmem-lesson-{payload['lesson_candidate_id']}"
+
+
+def test_api_rbac_authorization_failures(client: TestClient) -> None:
+    payload = make_valid_candidate_payload()
+    client.post("/api/memory/trade-lessons", json=payload)
+
+    # 1. Decide with unauthorized role (e.g. trainer_session) -> 403
+    decide_payload = {
+        "action": "endorse",
+        "operator_id": "op-alice",
+        "reason": "Approved",
+        "audit_receipt_id": str(uuid.uuid4()),
+        "actor_roles": ["trainer_session"]
+    }
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    assert resp.status_code == 403
+    assert "not authorized" in resp.json()["detail"]["message"]
+
+    # 2. Decide without actor_roles -> 403
+    decide_payload_no_roles = {
+        "action": "endorse",
+        "operator_id": "op-alice",
+        "reason": "Approved",
+        "audit_receipt_id": str(uuid.uuid4()),
+    }
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload_no_roles)
+    assert resp.status_code == 403
+
+    # 3. Merge with unauthorized role -> 403
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge", params={
+        "actor_id": "op-alice",
+        "actor_roles": "trainer_session",
+    })
+    assert resp.status_code == 403
+    assert "not authorized" in resp.json()["detail"]["message"]
+
+    # 4. Merge without role -> 403
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge")
+    assert resp.status_code == 403
+
+
+def test_api_decide_receipt_validation_sensitive(client: TestClient, monkeypatch) -> None:
+    # Sensitive change: scope is 'risk'
+    payload = make_valid_candidate_payload({
+        "scope": "risk",
+        "proposed_change": "Change leverage limit from 2x to 3x",
+    })
+    client.post("/api/memory/trade-lessons", json=payload)
+
+    audit_receipt_id = str(uuid.uuid4())
+    decide_payload = {
+        "action": "endorse",
+        "operator_id": "op-alice",
+        "reason": "Approved decision app-123 and deployment plan-456",
+        "audit_receipt_id": audit_receipt_id,
+        "actor_roles": ["operator"],
+    }
+
+    # Case A: Mock governance approval to return None (not found / spoofed) -> 403
+    monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: None)
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    assert resp.status_code == 403
+    assert "not found" in resp.json()["detail"]["message"]
+
+    # Case B: Mock governance approval with mismatched persona_id -> 403
+    mock_mismatched_decision = {
+        "decision_id": audit_receipt_id,
+        "decision": "approved",
+        "decision_state": "decided",
+        "persona_id": "persona-micro",  # candidate is persona-macro
+    }
+    monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_mismatched_decision)
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    assert resp.status_code == 403
+    assert "persona mismatch" in resp.json()["detail"]["message"]
+
+    # Case C: Mock governance approval in unapproved state -> 403
+    mock_unapproved_decision = {
+        "decision_id": audit_receipt_id,
+        "decision": "rejected",
+        "decision_state": "decided",
+        "persona_id": "persona-macro",
+    }
+    monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_unapproved_decision)
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    assert resp.status_code == 403
+    assert "is not approved" in resp.json()["detail"]["message"]
+
+    # Case D: Mock governance approved decision matching persona_id -> 200
+    mock_approved_decision = {
+        "decision_id": audit_receipt_id,
+        "decision": "approved",
+        "decision_state": "decided",
+        "persona_id": "persona-macro",
+    }
+    monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_approved_decision)
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_payload)
+    assert resp.status_code == 200
+    assert resp.json()["review_state"] == "endorsed"
+
+
+def test_api_promotion_gates(client: TestClient, monkeypatch) -> None:
+    # Set up mock governance decision
+    audit_receipt_id = str(uuid.uuid4())
+    mock_approved_decision = {
+        "decision_id": audit_receipt_id,
+        "decision": "approved",
+        "decision_state": "decided",
+        "persona_id": "persona-macro",
+    }
+    monkeypatch.setattr(main, "_fetch_governance_approval", lambda d_id: mock_approved_decision)
+
+    episodes = [
+        {"trade_episode_id": "ep1", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "regime": "bear_market"},
+        {"trade_episode_id": "ep3", "regime": "bull_market"},
+    ]
+    payload = make_valid_candidate_payload({
+        "scope": "strategy",
+        "trade_episode_ids": ["ep1", "ep2", "ep3"],
+        "target_env": "paper",
+        "promotion_stage": "proposed",
+    })
+    client.post("/api/memory/trade-lessons", json=payload)
+
+    # 1. Promote to live directly from paper -> 422 (TradeLessonCandidateError block)
+    decide_live_payload = {
+        "action": "endorse",
+        "operator_id": "op-alice",
+        "reason": "Approved decision app-123 and deployment plan-456",
+        "audit_receipt_id": audit_receipt_id,
+        "actor_roles": ["operator"],
+        "target_env": "live",
+        "episodes": episodes,
+    }
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_live_payload)
+    assert resp.status_code == 422
+    assert "Promotion to live is blocked" in resp.json()["detail"]["message"]
+
+    # 2. Promote to canary -> 200
+    decide_canary_payload = {
+        "action": "endorse",
+        "operator_id": "op-alice",
+        "reason": "Approved decision app-123 and deployment plan-456",
+        "audit_receipt_id": audit_receipt_id,
+        "actor_roles": ["operator"],
+        "target_env": "canary",
+        "episodes": episodes,
+    }
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_canary_payload)
+    assert resp.status_code == 200
+    assert resp.json()["target_env"] == "canary"
+    assert resp.json()["promotion_stage"] == "canary_approved"
+
+    # 3. Promote to live from canary_approved -> 200
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide", json=decide_live_payload)
+    assert resp.status_code == 200
+    assert resp.json()["target_env"] == "live"
+    assert resp.json()["promotion_stage"] == "live_approved"
+
