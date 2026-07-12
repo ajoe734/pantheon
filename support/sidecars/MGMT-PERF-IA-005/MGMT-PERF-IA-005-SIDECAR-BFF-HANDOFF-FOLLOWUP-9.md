@@ -106,3 +106,18 @@ evidence responsibility.
 - Confirmed this task changes only its generated task brief and this support
   packet; no canonical or implementation layer is changed.
 - Did not scan `current-work.md` or the complete `ai-activity-log.jsonl`.
+
+## 6. Sidecar Closeout
+
+Sidecar reviewer `Codex` approved this support-only packet as accurate and
+bounded. Owner `Codex2` rechecked the approval, task brief, packet, and current
+PR #260 metadata on `2026-07-12`; the recorded frontend SHA, open delivery
+state, and successful integration gate remain unchanged. This closes only the
+sidecar handoff task. Parent absorption, frontend merge/deployment, hosted
+evidence, and any future BFF command contract remain owned by their respective
+parent or implementation lanes.
+
+Closeout verification:
+
+- `gh pr view 260 --repo ajoe734/execute-plans --json number,state,headRefOid,baseRefName,mergeable,reviewDecision,autoMergeRequest,mergedAt,mergeCommit,statusCheckRollup,url`
+- `git diff --check`
