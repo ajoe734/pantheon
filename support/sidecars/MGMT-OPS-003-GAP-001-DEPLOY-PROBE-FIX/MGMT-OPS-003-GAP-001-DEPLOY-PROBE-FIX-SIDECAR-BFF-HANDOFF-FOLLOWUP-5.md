@@ -113,3 +113,5 @@ Owner finalization verification:
 
 Publication note: task PR #3401 merged the approved packet into `dev` as
 `e6db345565deebc8c57dff05bfc0e090e889b7b4`.
+The follow-up publication commit preserves the full task identity required by
+the canonical closeout command after synchronizing the task branch with `dev`.
