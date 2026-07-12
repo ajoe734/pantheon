@@ -8966,6 +8966,29 @@ def sidecar_support_artifact(parent_task_id: str, sidecar_id: str) -> str:
     return f"support/sidecars/{parent_task_id}/{sidecar_id}.md"
 
 
+def sidecar_parent_owner_unavailable(
+    config: dict[str, Any], state: dict[str, Any], candidate: dict[str, Any]
+) -> bool:
+    """True when a sidecar candidate's parent owner cannot run (disabled or
+    dispatch-paused).
+
+    Underutilization mints support sidecars whose reviewer is the parent's owner
+    and whose purpose is to feed that parent forward. If the owner can't run --
+    parked in disabled_agents, or its provider quota/auth paused -- the parent
+    never progresses, so minting more sidecars just spins. e.g. on 2026-07-12
+    MGMT-PERF-IA-006 owned by quota-dead Antigravity spawned 29 handoff-packet
+    followups while the parent sat un-runnable.
+    """
+    owner = str(
+        (candidate.get("parent_task") or {}).get("owner")
+        or candidate.get("reviewer")
+        or ""
+    ).strip()
+    if not owner:
+        return False
+    return agent_dispatch_paused(config, state, owner)
+
+
 def build_catalog_sidecar_candidates(
     config: dict[str, Any],
     status: dict[str, Any],
@@ -10385,6 +10408,29 @@ def dispatch_underutilization_sidecars(
     blocked_sidecar_parents = {str(item) for item in rotation.get("sidecar_blocked_parents", []) or [] if str(item).strip()}
     if blocked_sidecar_parents:
         candidates = [candidate for candidate in candidates if str(candidate.get("parent_task_id") or "") not in blocked_sidecar_parents]
+    owner_unavailable_parents = sorted(
+        {
+            str(candidate.get("parent_task_id") or "")
+            for candidate in candidates
+            if sidecar_parent_owner_unavailable(config, state, candidate)
+        }
+    )
+    if owner_unavailable_parents:
+        candidates = [
+            candidate
+            for candidate in candidates
+            if not sidecar_parent_owner_unavailable(config, state, candidate)
+        ]
+        write_activity_log(
+            config,
+            {
+                "type": "sidecar_wave_owner_unavailable_skipped",
+                "message": (
+                    "Skipped sidecar minting for parents whose owner is disabled or "
+                    "dispatch-paused: " + ", ".join(owner_unavailable_parents)
+                ),
+            },
+        )
     if not candidates:
         tracking["last_sidecar_wave_at"] = now
         tracking["last_sidecar_wave_reason"] = "underutilized but no sidecar candidates matched the catalog or dynamic fallback"
