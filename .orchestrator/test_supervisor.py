@@ -556,6 +556,38 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
         self.assertIsNone(supervisor.parse_quota_retry_hint(None))
 
+    def test_sidecar_parent_owner_unavailable_when_owner_disabled(self) -> None:
+        config = {"ready_dispatcher": {"disabled_agents": ["Antigravity"]}, "agents": {}}
+        candidate = {
+            "parent_task_id": "MGMT-PERF-IA-006",
+            "parent_task": {"owner": "Antigravity"},
+            "reviewer": "Antigravity",
+        }
+        self.assertTrue(
+            supervisor.sidecar_parent_owner_unavailable(config, {}, candidate)
+        )
+
+    def test_sidecar_parent_owner_unavailable_when_owner_paused(self) -> None:
+        config = {"ready_dispatcher": {"disabled_agents": []}, "agents": {}}
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity": {"blocked_until": "2099-01-01T00:00:00Z"}
+                }
+            }
+        }
+        candidate = {"parent_task_id": "X", "parent_task": {"owner": "Antigravity"}}
+        self.assertTrue(
+            supervisor.sidecar_parent_owner_unavailable(config, state, candidate)
+        )
+
+    def test_sidecar_parent_owner_available_when_owner_healthy(self) -> None:
+        config = {"ready_dispatcher": {"disabled_agents": ["Antigravity"]}, "agents": {}}
+        candidate = {"parent_task_id": "MGMT-PERF-IA-008", "parent_task": {"owner": "Codex"}}
+        self.assertFalse(
+            supervisor.sidecar_parent_owner_unavailable(config, {}, candidate)
+        )
+
     def test_mark_provider_dispatch_paused_honors_codex_retry_at(self) -> None:
         from datetime import datetime, timezone
 
