@@ -110,7 +110,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             reasons = []
             if not pid:
                 continue
-            if str(persona.get("tenant_id") or resolved.tenant_id) != resolved.tenant_id:
+            if persona.get("tenant_id") != resolved.tenant_id:
                 reasons.append("tenant_mismatch")
             if str(persona.get("lifecycle_state") or "unknown") != "active":
                 reasons.append("persona_not_active")

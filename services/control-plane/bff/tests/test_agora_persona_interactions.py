@@ -14,9 +14,10 @@ AUTH = {"Authorization": "Bearer interaction-user:operator", "Idempotency-Key": 
 class FakeReadStore:
     def list_personas(self, **kwargs):
         return [
-            {"persona_id": "ready", "display_name": "Ready", "lifecycle_state": "active", "environment_ceiling": "paper"},
-            {"persona_id": "draft", "display_name": "Draft", "lifecycle_state": "draft", "environment_ceiling": "paper"},
-            {"persona_id": "research", "display_name": "Research", "lifecycle_state": "active", "environment_ceiling": "research"},
+            {"persona_id": "ready", "tenant_id": "pantheon-dev", "display_name": "Ready", "lifecycle_state": "active", "environment_ceiling": "paper"},
+            {"persona_id": "draft", "tenant_id": "pantheon-dev", "display_name": "Draft", "lifecycle_state": "draft", "environment_ceiling": "paper"},
+            {"persona_id": "research", "tenant_id": "pantheon-dev", "display_name": "Research", "lifecycle_state": "active", "environment_ceiling": "research"},
+            {"persona_id": "unscoped", "tenant_id": None, "display_name": "Unscoped", "lifecycle_state": "active", "environment_ceiling": "paper"},
         ]
 
     def get_capability_snapshot_for_persona(self, persona_id):
@@ -62,6 +63,7 @@ def test_eligibility_includes_and_excludes_with_reasons(monkeypatch):
     excluded = {x["persona_id"]: x["reasons"] for x in body["excluded"]}
     assert "persona_not_active" in excluded["draft"]
     assert "environment_ceiling_exceeded" in excluded["research"]
+    assert "tenant_mismatch" in excluded["unscoped"]
 
 
 def test_typed_submission_is_idempotent_and_has_no_write_authority(monkeypatch):
