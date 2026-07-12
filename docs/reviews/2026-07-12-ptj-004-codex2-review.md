@@ -27,6 +27,30 @@ Required changes:
   behavior for POST routes, durable/idempotent delegation, and no false audit
   claim.
 
+## Re-review of `5dfcd3989`
+
+Disposition remains changes required.
+
+The patch now validates target existence/state and replaces the process-local
+dictionary with an fsync-backed JSONL admission record. That fixes restart
+replay for a single BFF process, but it does not connect any route to the
+reflection or persona-governance command owner. The JSONL record proves only
+that the BFF admitted the request; retry, submit-review, and decide perform no
+downstream command and capture no downstream acceptance receipt. Returning
+`202 accepted` and `audit.durable: true` therefore still overstates the
+governed command outcome.
+
+The configured file is also not a safe multi-replica idempotency boundary:
+`_LOCK` is process-local and the read/check/append sequence is not atomic
+across BFF workers. Two workers can append duplicate records for the same
+idempotency scope.
+
+To clear the blocker, delegate to a configured durable command adapter/owner
+that atomically owns idempotency and returns its receipt, and fail closed when
+that adapter is absent or rejects the command. Tests must exercise adapter
+invocation/rejection and durable replay (including concurrent admission), not
+only local-file append/reload.
+
 ## Verification
 
 The submitted focused suite passes but does not cover the blocking behavior:
