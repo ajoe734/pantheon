@@ -1,6 +1,6 @@
 # MGMT-OPS-003 GAP-001 Deploy Probe Fix BFF Handoff Follow-up 3
 
-Status: support packet ready for reviewer and parent-owner absorption
+Status: reviewer approved; support packet finalized for parent-owner absorption
 
 Parent task: `MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX`
 
