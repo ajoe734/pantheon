@@ -1,14 +1,14 @@
-"""Agora research plan store — in-memory backend for dev / tests.
+"""Agora research plan store — memory and durable Postgres backends.
 
 Backend env:
-  AGORA_RESEARCH_PLAN_STORE_BACKEND   off | postgres  (default: off)
-
-Only the in-memory backend is implemented here. A Postgres backend
-can be added as a later task once the BFF facade contract is stable.
+  AGORA_RESEARCH_STORE_BACKEND        off | postgres  (default: off)
+  AGORA_RESEARCH_STORE_DSN            Postgres DSN (falls back to DATABASE_URL)
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -330,8 +330,161 @@ class MemoryResearchPlanStore:
             return sorted(entries, key=lambda entry: entry.get("added_at", ""))
 
 
-def make_research_plan_store() -> MemoryResearchPlanStore:
-    """Factory: return the configured store backend (only memory for now)."""
-    # AGORA_RESEARCH_PLAN_STORE_BACKEND is reserved for a future Postgres backend.
-    _ = os.environ.get("AGORA_RESEARCH_PLAN_STORE_BACKEND", "off")
-    return MemoryResearchPlanStore()
+class PostgresResearchPlanStore:
+    """Durable JSONB aggregate store implementing ``MemoryResearchPlanStore``.
+
+    Keeping the route-shaped documents intact makes the memory and Postgres
+    backends contract-equivalent while the primary key includes aggregate kind,
+    preventing identifiers in different research aggregate families colliding.
+    """
+
+    _KINDS = ("plan", "run", "candidate_pool", "candidate_score", "candidate_review",
+              "candidate_discussion", "candidate_monitoring", "candidate_metrics")
+
+    def __init__(self, *, dsn: str, schema: str = "agora_research") -> None:
+        if not dsn:
+            raise ValueError("Postgres DSN is required for PostgresResearchPlanStore")
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema) is None:
+            raise ValueError("Invalid Postgres schema")
+        self.dsn = dsn
+        self.schema = schema
+        self._records = f'"{schema}"."research_aggregate"'
+        self._keys = f'"{schema}"."research_idempotency_key"'
+        self._bootstrap()
+
+    def _connect(self):
+        try:
+            import psycopg  # type: ignore[import]
+        except ImportError as exc:
+            raise RuntimeError("psycopg is required for PostgresResearchPlanStore") from exc
+        return psycopg.connect(self.dsn)
+
+    def _bootstrap(self) -> None:
+        with self._connect() as conn:
+            conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"')
+            conn.execute(f"""CREATE TABLE IF NOT EXISTS {self._records} (
+                aggregate_kind TEXT NOT NULL, aggregate_id TEXT NOT NULL,
+                parent_id TEXT, subject_id TEXT, payload JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (aggregate_kind, aggregate_id))""")
+            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_research_parent ON {self._records} (aggregate_kind, parent_id)")
+            conn.execute(f"""CREATE TABLE IF NOT EXISTS {self._keys} (
+                scope TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+                recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (scope, idempotency_key))""")
+
+    @staticmethod
+    def _payload(row):
+        if row is None:
+            return None
+        value = row[0] if not isinstance(row, dict) else row["payload"]
+        return json.loads(value) if isinstance(value, str) else dict(value)
+
+    def _put(self, kind: str, record_id: str, payload: Dict[str, Any], *, parent_id=None, subject_id=None):
+        document = json.loads(json.dumps(payload))
+        with self._connect() as conn:
+            row = conn.execute(f"""INSERT INTO {self._records}
+                (aggregate_kind, aggregate_id, parent_id, subject_id, payload)
+                VALUES (%s,%s,%s,%s,%s::jsonb)
+                ON CONFLICT (aggregate_kind, aggregate_id) DO UPDATE SET
+                  parent_id=EXCLUDED.parent_id, subject_id=EXCLUDED.subject_id,
+                  payload=EXCLUDED.payload, updated_at=now() RETURNING payload""",
+                (kind, record_id, parent_id, subject_id, json.dumps(document))).fetchone()
+        return self._payload(row)
+
+    def _get(self, kind: str, record_id: str):
+        with self._connect() as conn:
+            row = conn.execute(f"SELECT payload FROM {self._records} WHERE aggregate_kind=%s AND aggregate_id=%s",
+                               (kind, record_id)).fetchone()
+        return self._payload(row)
+
+    def _list(self, kind: str, *, parent_id=None):
+        where, params = "aggregate_kind=%s", [kind]
+        if parent_id is not None:
+            where += " AND parent_id=%s"; params.append(parent_id)
+        with self._connect() as conn:
+            rows = conn.execute(f"SELECT payload FROM {self._records} WHERE {where} ORDER BY created_at, aggregate_id", tuple(params)).fetchall()
+        return [self._payload(row) for row in rows]
+
+    def check_and_record_idempotency_key(self, scope: str, key: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(f"INSERT INTO {self._keys} (scope,idempotency_key) VALUES (%s,%s) ON CONFLICT DO NOTHING RETURNING scope", (scope, key)).fetchone()
+        return row is None
+
+    def create_plan(self, plan): return self._put("plan", plan["plan_id"], plan, parent_id=plan.get("workshop_id"))
+    def get_plan(self, plan_id): return self._get("plan", plan_id)
+    def update_plan(self, plan_id, updates):
+        current = self.get_plan(plan_id)
+        if current is None: return None
+        current.update(updates); return self.create_plan(current)
+    def list_plans_for_workshop(self, workshop_id): return self._list("plan", parent_id=workshop_id)
+    def create_run(self, run): return self._put("run", run["run_id"], run, parent_id=run.get("plan_id"))
+    def get_run(self, run_id): return self._get("run", run_id)
+    def update_run(self, run_id, updates):
+        current = self.get_run(run_id)
+        if current is None: return None
+        current.update(updates); return self.create_run(current)
+    def list_runs_for_plan(self, plan_id): return self._list("run", parent_id=plan_id)
+    def create_candidate_pool(self, pool, *, metrics_by_artifact=None):
+        result = self._put("candidate_pool", pool["pool_id"], pool)
+        for artifact_id, metrics in (metrics_by_artifact or {}).items():
+            self._put("candidate_metrics", f'{pool["pool_id"]}:{artifact_id}', metrics, parent_id=pool["pool_id"], subject_id=artifact_id)
+        return result
+    def get_candidate_pool(self, pool_id): return self._get("candidate_pool", pool_id)
+    def list_candidate_pools(self, *, user_id, tenant_id, lifecycle_state=None, strategy_family=None):
+        result = []
+        for pool in self._list("candidate_pool"):
+            if pool.get("user_id") != user_id or pool.get("tenant_id") != tenant_id: continue
+            families = (pool.get("filter") or {}).get("strategy_families") or []
+            if strategy_family and strategy_family not in families and strategy_family != (pool.get("metadata") or {}).get("strategy_family"): continue
+            candidates = pool.get("candidates", [])
+            if lifecycle_state:
+                candidates = [dict(c) for c in candidates if c.get("lifecycle_state") == lifecycle_state]
+                if not candidates: continue
+                pool = {**pool, "candidates": candidates, "total": len(candidates)}
+            result.append(pool)
+        return sorted(result, key=lambda p: p.get("snapshot_at", ""), reverse=True)
+    def update_candidate_pool(self, pool_id, updates):
+        current = self.get_candidate_pool(pool_id)
+        if current is None: return None
+        current.update(updates); return self._put("candidate_pool", pool_id, current)
+    def get_candidate_member(self, pool_id, artifact_id):
+        pool = self.get_candidate_pool(pool_id)
+        return next((dict(c) for c in (pool or {}).get("candidates", []) if c.get("artifact_id") == artifact_id), None)
+    def update_candidate_member(self, pool_id, artifact_id, updates):
+        pool = self.get_candidate_pool(pool_id)
+        if pool is None: return None
+        for index, candidate in enumerate(pool.get("candidates", [])):
+            if candidate.get("artifact_id") == artifact_id:
+                updated = {**candidate, **updates}; pool["candidates"][index] = updated
+                pool["total"] = len(pool["candidates"]); self._put("candidate_pool", pool_id, pool); return updated
+        return None
+    def get_candidate_metrics(self, pool_id, artifact_id): return self._get("candidate_metrics", f"{pool_id}:{artifact_id}") or {}
+    def replace_candidate_scores(self, pool_id, scores_by_artifact):
+        with self._connect() as conn: conn.execute(f"DELETE FROM {self._records} WHERE aggregate_kind='candidate_score' AND parent_id=%s", (pool_id,))
+        for artifact_id, score in scores_by_artifact.items(): self._put("candidate_score", f"{pool_id}:{artifact_id}", score, parent_id=pool_id, subject_id=artifact_id)
+    def list_candidate_scores(self, pool_id): return self._list("candidate_score", parent_id=pool_id)
+    def get_candidate_score(self, pool_id, artifact_id): return self._get("candidate_score", f"{pool_id}:{artifact_id}")
+    def add_candidate_review(self, pool_id, artifact_id, review): return self._put("candidate_review", f'{pool_id}:{artifact_id}:{review["review_id"]}', review, parent_id=pool_id, subject_id=artifact_id)
+    def list_candidate_reviews(self, pool_id, artifact_id): return [r for r in self._list("candidate_review", parent_id=pool_id) if r.get("artifact_id", artifact_id) == artifact_id]
+    def add_candidate_discussion(self, discussion): return self._put("candidate_discussion", discussion["discussion_id"], discussion, parent_id=discussion["pool_id"])
+    def list_candidate_discussions(self, pool_id, *, subject_type=None, subject_id=None, kind=None, resolved=None):
+        rows = self._list("candidate_discussion", parent_id=pool_id)
+        rows = [d for d in rows if (not subject_type or d.get("subject_type") == subject_type) and (not subject_id or d.get("subject_id") == subject_id) and (not kind or d.get("kind") == kind) and (resolved is None or bool(d.get("resolved")) == resolved)]
+        return sorted(rows, key=lambda d: d.get("created_at", ""))
+    def upsert_candidate_monitoring(self, pool_id, artifact_id, monitoring): return self._put("candidate_monitoring", f"{pool_id}:{artifact_id}", monitoring, parent_id=pool_id, subject_id=artifact_id)
+    def get_candidate_monitoring(self, pool_id, artifact_id): return self._get("candidate_monitoring", f"{pool_id}:{artifact_id}")
+    def list_candidate_monitoring(self, pool_id, *, monitoring_state=None):
+        rows = self._list("candidate_monitoring", parent_id=pool_id)
+        if monitoring_state: rows = [r for r in rows if r.get("monitoring_state") == monitoring_state]
+        return sorted(rows, key=lambda r: r.get("added_at", ""))
+
+
+def make_research_plan_store():
+    backend = os.environ.get("AGORA_RESEARCH_STORE_BACKEND", os.environ.get("AGORA_RESEARCH_PLAN_STORE_BACKEND", "off")).strip().lower()
+    if backend in ("", "off", "memory"): return MemoryResearchPlanStore()
+    if backend != "postgres": raise ValueError("AGORA_RESEARCH_STORE_BACKEND must be off or postgres")
+    dsn = os.environ.get("AGORA_RESEARCH_STORE_DSN") or os.environ.get("DATABASE_URL")
+    if not dsn: raise ValueError("AGORA_RESEARCH_STORE_DSN or DATABASE_URL is required")
+    return PostgresResearchPlanStore(dsn=dsn, schema=os.environ.get("AGORA_RESEARCH_STORE_SCHEMA", "agora_research"))
