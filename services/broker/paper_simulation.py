@@ -21,6 +21,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from services.trade_journey.correlation_envelope import propagate_envelope
+
 
 def _utc_now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -61,6 +63,8 @@ class PaperOrder:
     is_real_capital: bool = False
     deployment_stage: str = "paper"
     reject_reason: Optional[str] = None
+    client_order_id: Optional[str] = None
+    correlation_envelope: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
@@ -132,6 +136,8 @@ def simulate_paper_order(
     *,
     capital_pool_id: str,
     strategy_id: str,
+    client_order_id: Optional[str] = None,
+    correlation_envelope: Optional[Dict[str, Any]] = None,
     symbol: str,
     qty: float,
     side: str,
@@ -162,8 +168,10 @@ def simulate_paper_order(
         fill_price = float(market_price)
     else:
         fill_price = 100.0
+    order_id = uuid.uuid4().hex
     return PaperOrder(
-        order_id=uuid.uuid4().hex,
+        order_id=order_id,
+        client_order_id=str(client_order_id or order_id),
         capital_pool_id=capital_pool_id,
         strategy_id=strategy_id,
         symbol=symbol,
@@ -176,4 +184,14 @@ def simulate_paper_order(
         fill_price=fill_price,
         fill_qty=qty,
         status="filled",
+        correlation_envelope=(
+            propagate_envelope(
+                correlation_envelope,
+                producer="broker.paper_sidecar",
+                event_id=f"broker-paper-order:{order_id}",
+                event_time=now,
+            )
+            if correlation_envelope is not None
+            else None
+        ),
     )
