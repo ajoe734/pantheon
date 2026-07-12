@@ -6,6 +6,9 @@
 - [AG-GAP-004 durable dashboard recipe storage](AG-GAP-004-dashboard-postgres.md):
   moves recipe identity/version/idempotency state behind a Postgres-capable
   store while retaining ETag CAS, append-only history, and rollback semantics.
+- [AG-GAP-002 durable Trading Room storage](AG-GAP-002-trading-room-postgres.md):
+  adds the optional Postgres backend, pins it for dev, and defines restart
+  persistence evidence without widening the order-routing boundary.
 - [AG-GAP-005 contract honesty](AG-GAP-005-contract-honesty.md): formally
   defers six workshop 501 operations and refreshes dev compatibility tracking
   from the stale v1.1 snapshot to the v1.5 additive contract.
@@ -15,6 +18,10 @@
 - [AG-GAP-007 capabilities mismatch](AG-GAP-007-capabilities-mismatch.md): fixes the 
   BFF /bff/agora/capabilities endpoint silent projection loading failure and documents
   the dev journal dry-run residue cleanup procedure.
+- [AG-GAP-010 design parity baseline](AG-GAP-010-design-parity-baseline.md):
+  declares `AI Trading Desk Design.zip` formally lost after a final recorded
+  search and replaces it with closure-pack specs plus TABS-GATE-011 hosted
+  screenshots pinned to a deployed frontend SHA as the design-parity baseline.
 - [AG-GAP-011 FE checkout hygiene](AG-GAP-011-fe-checkout-hygiene.md): details
   the audit and removal of stale frontend checkouts and establishes rules for
   execute-plans workspace integrity.
