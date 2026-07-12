@@ -1,0 +1,9 @@
+
+Running 5 tests using 1 worker
+
+[1A[2K[1/5] [mobile-chromium] › e2e/24-trade-journeys.spec.ts:39:1 › renders all five outcomes and honest degraded detail
+[1A[2K[2/5] [mobile-chromium] › e2e/28-trade-journeys-cross-links.spec.ts:41:3 › Trade Journeys cross-entry integration › sidebar exposes a Trade Journeys entry that navigates to the canonical route
+[1A[2K[3/5] [mobile-chromium] › e2e/28-trade-journeys-cross-links.spec.ts:55:3 › Trade Journeys cross-entry integration › the Cockpit exposes a Trade Journeys destination that round-trips back to Cockpit
+[1A[2K[4/5] [mobile-chromium] › e2e/28-trade-journeys-cross-links.spec.ts:70:3 › Trade Journeys cross-entry integration › a persona_id deep link forwards the filter to the BFF query and renders a clearable focus banner
+[1A[2K[5/5] [mobile-chromium] › e2e/28-trade-journeys-cross-links.spec.ts:87:3 › Trade Journeys cross-entry integration › a real cross-entry click: Runtimes -> filtered Trade Journeys list -> journey detail -> back to Runtimes with filters intact
+[1A[2K  5 passed (12.5s)

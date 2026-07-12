@@ -1,0 +1,50 @@
+[
+  {
+    "ref_type": "raw_dataset",
+    "ref_id": "raw-us-equity-ohlcv-20260413"
+  },
+  {
+    "ref_type": "normalized_dataset",
+    "ref_id": "norm-us-equity-daily-v1"
+  },
+  {
+    "ref_type": "feature_dataset",
+    "ref_id": "feat-us-equity-momentum-v1"
+  },
+  {
+    "ref_type": "dataset_version",
+    "ref_id": "dv-20260413-us-equity-universe-v1"
+  },
+  {
+    "ref_type": "regime_state",
+    "ref_id": "regime-20260413-001"
+  },
+  {
+    "ref_type": "universe_selection",
+    "ref_id": "universe-20260413-001"
+  },
+  {
+    "ref_type": "signal_inference",
+    "ref_id": "signal-20260413-001"
+  },
+  {
+    "ref_type": "allocation_decision",
+    "ref_id": "alloc-20260413-001"
+  },
+  {
+    "ref_type": "risk_adjudication",
+    "ref_id": "risk-20260413-001"
+  },
+  {
+    "ref_type": "approval_decision",
+    "ref_id": "approval-20260413-001"
+  },
+  {
+    "ref_type": "deployment_plan",
+    "ref_id": "deploy-20260413-001"
+  },
+  {
+    "ref_type": "runtime_binding",
+    "ref_id": "binding-20260413-001"
+  }
+]
