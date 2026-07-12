@@ -16,3 +16,8 @@ real frontend runtime commit are available.
 SRCLIVE-001 activation evidence was merged in PR #3047. AG-GAP-013 owns the
 remaining read-model projection and live Agora readback proof; see the Agora
 gap-closure execution packet.
+
+## Checkout hygiene
+
+AG-GAP-011 establishes frontend checkout hygiene rules, audits and removes stale nested `.fe-ep`, `.fe-human-inbox-persona-focus`, and `.fe-worktrees` checkouts inside the backend repository, and mandates that all frontend work is routed canonically through `ajoe734/execute-plans@dev`. The details of this audit are documented in [AG-GAP-011-fe-checkout-hygiene.md](../../bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-011-fe-checkout-hygiene.md).
+
