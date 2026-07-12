@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-004",
+  "archived_at": "2026-07-12T01:40:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-004",
+    "title": "Independent hosted difference closeout",
+    "summary_zh": "由獨立 reviewer 逐列核對 gap matrix、API、畫面、desktop/mobile 與部署 SHA；任何差異未關閉就退件。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 review gate",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-003-GAP-001",
+      "MGMT-OPS-003-GAP-002",
+      "MGMT-OPS-003-GAP-003"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/archive",
+      "docs/deployment/evidence/mgmt-ops-003-gap",
+      "execute-plans:hosted-dev-evidence",
+      "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-004-review-closeout.md",
+      "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md"
+    ],
+    "acceptance": [
+      "every hosted gap matrix row has a pass verdict and direct evidence",
+      "reviewer personally reruns authenticated API desktop and mobile probes",
+      "reviewer records console and failed-request counts",
+      "stale mock-only or mismatched-SHA evidence is rejected",
+      "MGMT-PERF-IA-003 receives a behavior-preserving handoff"
+    ],
+    "next": "DONE: root board mirror synced to completed. Formal delivery evidence: execute-plans PR #267 merged to dev at 5647d4b03b42c8f4487c63f604fd39555660dee3; Pantheon dev deploy 29174965397; post-merge FE-BFF gate 29174965400; Pantheon evidence PR #3327 merged 2b473bc7; parent closeout PR #3333 merged 770fe995; reviewer hosted rerun 3 passed.",
+    "last_update": "2026-07-12T01:40:40Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/MGMT_OPS_003_HOSTED_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/INDEX.md",
+      "review_checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+      "trigger": "2026-07-11 hosted plan-to-live verification",
+      "frontend_repo": "ajoe734/execute-plans",
+      "backend_repo": "ajoe734/pantheon",
+      "dev_frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+      "dev_bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "mgmt_ops_003_hosted_gap_closure",
+    "review_contract": {
+      "mode": "fail_closed_hosted_delta",
+      "checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+      "approval_forbidden_without": [
+        "merged_pr_and_merge_sha",
+        "deployed_sha_ancestry",
+        "authenticated_api_capture",
+        "desktop_and_mobile_hosted_evidence",
+        "ui_to_api_count_and_label_comparison",
+        "console_and_network_failure_counts"
+      ],
+      "request_changes_when": [
+        "any_gap_matrix_row_is_not_pass",
+        "ui_confidence_exceeds_source_truth",
+        "incident_or_filter_is_hidden",
+        "evidence_is_mock_only_or_stale",
+        "tested_sha_differs_from_deployed_sha"
+      ]
+    },
+    "wave": 2,
+    "target_repo": "pantheon+execute-plans",
+    "review_file": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-004-review-closeout.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T01:40:40Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/clear-default-market-blockers",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 276,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reopen: blocker used stale dependency state. Correct dependency evidence is archived done for MGMT-OPS-003-GAP-001, MGMT-OPS-003-GAP-002, and MGMT-OPS-003-GAP-003; rerun fail-closed closeout against archive/evidence paths and current dev deployment. Do not rely on active stale superseded subtasks.",
+      "status": "done",
+      "created_at": "2026-07-12T00:24:06Z",
+      "resolved_at": "2026-07-12T00:24:06Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "PR #3321 records the independent fail-closed rerun. Exact hosted FE SHA a74e5869: desktop passed, mobile failed with strict Failed to fetch / seed fallback blocked. Verdict REQUEST_CHANGES; please review evidence and route frontend repair before another closeout rerun.",
+      "status": "done",
+      "created_at": "2026-07-12T00:33:43Z",
+      "resolved_at": "2026-07-12T00:35:55Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "REQUEST_CHANGES: exact hosted FE SHA a74e5869 desktop passed, but mobile Human Inbox rendered strict Failed to fetch / seed fallback blocked. Owner must route execute-plans mobile request repair, redeploy, and rerun authenticated desktop/mobile probes with zero required-request failures before review.",
+      "status": "done",
+      "created_at": "2026-07-12T00:35:55Z",
+      "resolved_at": "2026-07-12T00:35:55Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Root mirror sync: repair and parent closeout are verified; reviewer approval should mirror PR #3333 and hosted rerun evidence.",
+      "status": "done",
+      "created_at": "2026-07-12T01:40:33Z",
+      "resolved_at": "2026-07-12T01:40:37Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "APPROVED: PR #3333 merged as 770fe995; execute-plans /deployment.json matches 5647d4b; deploy 29174965397 and post-merge FE-BFF gate 29174965400 succeeded; hosted rerun passed Portfolio desktop/mobile and Persona Fleet click-map.",
+      "status": "done",
+      "created_at": "2026-07-12T01:40:37Z",
+      "resolved_at": "2026-07-12T01:40:40Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-004",
+      "owner": "Codex2",
+      "waiting_for": "Codex",
+      "message": "Fail-closed closeout cannot begin: dependencies GAP-001 is still review, GAP-002 and GAP-003 are todo; the hosted evidence directories/captures are absent and every current gap-matrix row remains Fail. Resume only after all three dependencies are merged/deployed and current authenticated desktop/mobile evidence exists.",
+      "status": "resolved",
+      "created_at": "2026-07-12T00:23:02Z",
+      "resolved_at": "2026-07-12T00:24:06Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004",
+      "owner": "Codex2",
+      "waiting_for": "Codex2",
+      "message": "Fail-closed closeout is waiting for MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX to merge into execute-plans dev, deploy, and provide a repaired SHA; current hosted SHA a74e5869 fails mobile Human Inbox with strict Failed to fetch / seed fallback blocked. Parent branch cannot implement the child repair.",
+      "status": "resolved",
+      "created_at": "2026-07-12T00:40:17Z",
+      "resolved_at": "2026-07-12T01:40:30Z"
+    }
+  ]
+}

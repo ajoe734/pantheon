@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-002",
+  "archived_at": "2026-07-11T04:00:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-002",
+    "title": "BFF create paper persona bundle",
+    "summary_zh": "新增 idempotent create-paper-bundle：建立 persona 時一次完成 mandate、資料源、風險偏好、paper ledger、paper runtime、paper deployment plan。",
+    "phase": "Persona Promotion Allocation / Wave 1 BFF create bundle",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py"
+    ],
+    "acceptance": [
+      "successful create returns stage=paper_running with paper_ledger_id and runtime_binding_id; partial failure is repairable; no live capital or broker side effects"
+    ],
+    "next": "Owner closeout complete: PR #3104 merged to dev at a8005fbb673ece7c86a7bf08a84687b0017b91e0; focused pytest tests/test_bff_persona_create_paper_bundle.py passed 2/2; create-paper-bundle route and idempotent paper persona bundle behavior finalized.",
+    "last_update": "2026-07-11T04:00:41Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+      "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+      "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "persona_promotion_allocation_execution_slice",
+    "wave": 1,
+    "fleet_lane": "bff-create-paper-bundle",
+    "review_notes_zh": [
+      "審查通過：新路由 POST /bff/management/personas/create-paper-bundle 正確委派至既有 bff_create_persona；required_data_sources 依 payload 或 market=TW fallback 正確帶入 create_persona/read_store",
+      "驗證：pytest tests/test_bff_persona_create_paper_bundle.py 2/2 通過，並比對 baseline commit 6acbf5d07 確認 test_pathreon_market_persona_fleet_contract.py 的 2 個既有失敗與此變更無關（pre-existing，非本次引入）",
+      "符合 acceptance：成功建立回傳 state=paper_running、paperLedgerId、runtimeBindingId，且 live_capital_side_effects=false"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T04:00:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-002",
+      "git_clean_required": false,
+      "commit": "a8005fbb673ece7c86a7bf08a84687b0017b91e0",
+      "commit_subject": "Merge pull request #3104 from ajoe734/task/PPL-ALLOC-002",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "PPL-ALLOC-002": "add bff create paper persona bundle route and tests"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-002",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a8005fbb673ece7c86a7bf08a84687b0017b91e0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-002",
+      "from": "Claude2",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PPL-ALLOC-002 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); owner Claude2 -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T02:58:13Z",
+      "resolved_at": "2026-07-11T03:00:32Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned PPL-ALLOC-002 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T03:00:32Z",
+      "resolved_at": "2026-07-11T03:39:00Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-002",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Please review the PR #3104 (merged as a8005fbb6) containing the new create-paper-bundle route and tests.",
+      "status": "done",
+      "created_at": "2026-07-11T03:47:56Z",
+      "resolved_at": "2026-07-11T03:56:45Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-002",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Reviewed PR #3104 (a8005fbb6): new create-paper-bundle route correctly delegates to bff_create_persona; required_data_sources wiring verified; tests 2/2 pass; 2 unrelated pre-existing failures in test_pathreon_market_persona_fleet_contract.py confirmed present at baseline commit 6acbf5d07 (not a regression). Approved and returned to owner (Antigravity) for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T03:56:45Z",
+      "resolved_at": "2026-07-11T03:59:41Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Antigravity to Codex after repeated Antigravity terminal: Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h36m30s.",
+      "status": "done",
+      "created_at": "2026-07-11T03:59:41Z",
+      "resolved_at": "2026-07-11T04:00:42Z"
+    }
+  ],
+  "blockers": []
+}

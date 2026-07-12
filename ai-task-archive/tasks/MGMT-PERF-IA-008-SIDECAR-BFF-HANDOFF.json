@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-12T04:16:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-PERF-IA-008 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-008，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 3 closeout",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002",
+      "MGMT-PERF-IA-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-008/MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only BFF/frontend handoff after Antigravity approval; PR #3351 merged as 52fc963951a2a663fc50d3c1bee372ec788f3777. Verified: git diff --check; required PR checks passed. Parent Antigravity decides absorption; no canonical/runtime/frontend changes.",
+    "last_update": "2026-07-12T04:16:07Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-008",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過，此為支援性質 packet，無 runtime 或主線 canonical 變更"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-008/MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T04:16:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-mgmt-perf-ia-008-closeout",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "52fc963951a2a663fc50d3c1bee372ec788f3777",
+      "commit_subject": "Merge pull request #3351 from ajoe734/task/MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF": "add hosted handoff"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "52fc963951a2a663fc50d3c1bee372ec788f3777",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only BFF/frontend hosted acceptance packet ready for review in PR #3351; commit b250f465d. Parent owner decides absorption; no canonical/runtime/frontend changes.",
+      "status": "done",
+      "created_at": "2026-07-12T04:12:55Z",
+      "resolved_at": "2026-07-12T04:14:48Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-008-SIDECAR-BFF-HANDOFF",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Support-only hosted BFF/frontend evidence handoff approved for parent absorption.",
+      "status": "done",
+      "created_at": "2026-07-12T04:14:48Z",
+      "resolved_at": "2026-07-12T04:16:09Z"
+    }
+  ],
+  "blockers": []
+}

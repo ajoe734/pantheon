@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-07-11T08:31:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare OCLAW-PMEM-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 2 BFF UI surfaces",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-003"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-004/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3151 merged into dev at 4deeebb8cff09bfe1e8547acbafba7caba6e96a5; approved support-only BFF/frontend handoff packet finalized. Verified git diff --check and focused artifact scope/terminology review; parent Claude2 retains canonical implementation and absorption decisions.",
+    "last_update": "2026-07-11T08:31:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T08:31:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-004-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "git_clean_required": false,
+      "commit": "4deeebb8cff09bfe1e8547acbafba7caba6e96a5",
+      "commit_subject": "Merge pull request #3151 from ajoe734/task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6": "add handoff gate"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4deeebb8cff09bfe1e8547acbafba7caba6e96a5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only dependency gate and BFF/frontend handoff manifest committed at 94507bb2e; please review scope accuracy and parent usefulness.",
+      "status": "done",
+      "created_at": "2026-07-11T08:29:05Z",
+      "resolved_at": "2026-07-11T08:30:08Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Reviewed and approved sidecar handoff packet for OCLAW-PMEM-004. The packet establishes solid composition boundaries and dependency gates without touching canonical truth.",
+      "status": "done",
+      "created_at": "2026-07-11T08:30:08Z",
+      "resolved_at": "2026-07-11T08:31:17Z"
+    }
+  ],
+  "blockers": []
+}

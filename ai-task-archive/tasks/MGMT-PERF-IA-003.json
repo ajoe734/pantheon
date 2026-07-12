@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-003",
+  "archived_at": "2026-07-12T11:24:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-003",
+    "title": "Performance Center consolidation",
+    "summary_zh": "合併 Portfolio Book 與 Performance Attribution 成為 Overview、Attribution、Exposure and Holdings 三個 tabs 的正式 Performance Center。",
+    "phase": "Management Performance Ranking IA / Wave 1 Performance Center",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002"
+    ],
+    "artifacts": [
+      "execute-plans:src/management",
+      "execute-plans:src/lib",
+      "execute-plans:e2e",
+      "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/MGMT-PERF-IA-003-performance-center.md"
+    ],
+    "acceptance": [
+      "one center covers performance attribution exposure holdings and coverage",
+      "fallback summaries never appear as formal attribution",
+      "nan undefined and false zero metrics are not operator facing",
+      "legacy routes and hosted desktop mobile behavior are proven"
+    ],
+    "next": "Finalized: frontend PR execute-plans#261 merged to dev (cdeac3aabaa6) and deployed on pantheon-lupin-dev-fe; backend closeout-evidence commit merged via pantheon PR #3407 (38dbff685); Antigravity PASS review on record (docs/reviews/2026-07-12-mgmt-perf-ia-003-antigravity-review.md); post-merge e2e/26+e2e/27 pass on chromium+mobile-chromium (run 29188935347); unrelated e2e/25 failure tracked separately under MGMT-OPS-003-GAP-001-*.",
+    "last_update": "2026-07-12T11:24:49Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_performance_ranking_ia_2026-07-11",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_performance_ranking_ia_gap_2026-07-11/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/INDEX.md",
+      "trigger": "2026-07-11 complete performance ranking page and menu information architecture audit",
+      "frontend_repo": "ajoe734/execute-plans",
+      "backend_repo": "ajoe734/pantheon"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_performance_ranking_ia_execution_slice",
+    "wave": 1,
+    "fleet_lane": "performance-center",
+    "target_repo": "execute-plans",
+    "review_notes_zh": [
+      "審查通過",
+      "已確認：1) 成功將 Portfolio Book 與 Performance Attribution 合併為 Overview、Attribution、Exposure and Holdings 三個分頁；2) 前端 PR #261 順利合併且在 dev 環境部署成功；3) 新增 E2E 測試與單元測試以確保沒有 Nan 或 undefined 等情況呈現給操作者。"
+    ],
+    "review_file": "docs/reviews/2026-07-12-mgmt-perf-ia-003-antigravity-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T11:24:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-003",
+      "git_clean_required": false,
+      "commit": "33a43ca65790f7b0c3d46576365d852bc7775b72",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-PERF-IA-003",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "38dbff685c3a6f36e7dde833c387530fdf5209c2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-003",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "execute-plans PR #261 merged to dev (merge commit cdeac3aa, squash by human operator). Hosted dev evidence confirmed: deployment.json at pantheon-lupin-dev-fe reports commit cdeac3aa (matches dev HEAD / PR #261 merge commit) deployed 2026-07-12T10:24:47Z; served bundle assets/index-BmeY73c5.js greps positive for PortfolioExposure/unknownExposureCount (the new Exposure & Holdings code). Confirmed PerformanceCenterPage.tsx on dev mounts all three tabs (overview->PortfolioBookPage, attribution->PerformanceAttributionPage, exposure->PortfolioExposurePage). Live curl checks all 200: /management/performance (default+overview/attribution/exposure tabs) and the legacy /management/capital redirect. PR body already recorded local verification (tsc/eslint/vitest 478 tests/vite build/playwright 14 desktop+mobile e2e incl. new e2e/27 spec). Requesting formal review approval before closeout since no review_notes_zh/review artifact is on record for this task yet.",
+      "status": "done",
+      "created_at": "2026-07-12T10:40:18Z",
+      "resolved_at": "2026-07-12T10:41:39Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-003",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-12T10:41:39Z",
+      "resolved_at": "2026-07-12T11:24:50Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "MGMT-PERF-IA-003",
+      "owner": "Claude",
+      "waiting_for": "Human/Ops",
+      "message": "execute-plans PR #261 passed integration-gate and is mergeable; code work for all three Performance Center tabs is complete, but merging execute-plans PRs requires human action per project governance (AI cannot self-merge). Waiting for a human to merge https://github.com/ajoe734/execute-plans/pull/261, then hosted dev evidence can be recorded.",
+      "status": "resolved",
+      "created_at": "2026-07-11T18:40:13Z",
+      "resolved_at": "2026-07-12T10:19:40Z"
+    }
+  ]
+}

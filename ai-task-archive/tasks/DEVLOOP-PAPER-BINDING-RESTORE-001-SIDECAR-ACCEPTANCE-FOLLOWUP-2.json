@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+  "archived_at": "2026-07-04T00:08:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+    "title": "Prepare DEVLOOP-PAPER-BINDING-RESTORE-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 DEVLOOP-PAPER-BINDING-RESTORE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "devloop paper runtime / binding restore",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/DEVLOOP-PAPER-BINDING-RESTORE-001/DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support packet merged in PR #2847 at 51a9befbebf5f28ed37f1734689155c0dd6b3ce6; focused pytest menu passed 5/5; scope remains support-only with no canonical truth changes.",
+    "last_update": "2026-07-04T00:08:13Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "DEVLOOP-PAPER-BINDING-RESTORE-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "驗證通過：檔案路徑、error string、test class/method 名稱與 D1-D8/A1-A9 引用的證據文件全部存在於現行 repo",
+      "Focused pytest menu 5/5 通過，未觸碰 canonical truth 或 L1 policy",
+      "核准作為 parent DEVLOOP-PAPER-BINDING-RESTORE-001 acceptance 的支援材料，非 parent repair 本身的核准"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T00:08:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/devloop-paper-binding-restore-001-sidecar-acceptance-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "51a9befbebf5f28ed37f1734689155c0dd6b3ce6",
+      "commit_subject": "Merge pull request #2847 from ajoe734/task/DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2": "add"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1f258f7d4a2c6194a34d937cee27062ccf662756",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support follow-up packet merged in PR #2847 (commit e95cb7ce, merge 51a9bef); please review support/sidecars/DEVLOOP-PAPER-BINDING-RESTORE-001/DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md for parent acceptance use.",
+      "status": "done",
+      "created_at": "2026-07-04T00:03:53Z",
+      "resolved_at": "2026-07-04T00:06:01Z"
+    },
+    {
+      "task_id": "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Verified all fact anchors (file paths, error strings, test names) and evidence doc references exist; focused pytest menu (5 tests) passes; scope stays support-only. Approved and returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-07-04T00:06:01Z",
+      "resolved_at": "2026-07-04T00:08:14Z"
+    }
+  ],
+  "blockers": []
+}

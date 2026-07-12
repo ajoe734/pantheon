@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "TJ-E2E-007",
+  "archived_at": "2026-07-12T16:02:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "title": "Live SSE and attention model",
+    "summary_zh": "依 Trade Journey E2E gap 規格執行：Live SSE and attention model。",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "phase": "Trade Journey E2E / Wave 3",
+    "next": "Closeout complete: Pantheon delivery PR #3454 merged at 4a3f90a6d; execute-plans PR #279 merged at 4314c0fc3; task record PR #3456 merged at 71c0c4b37. Focused SSE attention test: 3 passed; git diff --check passed; PR #3456 required checks passed.",
+    "source_ref": {
+      "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-007-sse-attention-model.md",
+      "target_repo": "pantheon+execute-plans",
+      "merge_target": "dev"
+    },
+    "metadata": {
+      "wave": 3,
+      "fleet_lane": "sse-attention-model",
+      "target_repo": "pantheon+execute-plans"
+    },
+    "created_at": "2026-07-11T22:58:28.902157+00:00",
+    "id": "TJ-E2E-007",
+    "depends_on": [
+      "TJ-E2E-005",
+      "TJ-E2E-006"
+    ],
+    "last_update": "2026-07-12T16:02:45Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T16:02:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-007",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TJ-E2E-007",
+      "git_clean_required": false,
+      "commit": "74814c14252cb4b58dccb315ddc8091a41ca9241",
+      "commit_subject": "TJ-E2E-007: record approved delivery",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout record for the approved SSE and attention delivery.",
+        "Not changing": "merged BFF implementation or execute-plans frontend implementation.",
+        "Composes with": "Pantheon PR #3454 and execute-plans PR #279.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "TJ-E2E-007",
+        "Reviewer": "Claude",
+        "Verified": "pytest SSE attention 3 passed; git diff --check; both delivery PRs merged"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TJ-E2E-007",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "71c0c4b3746f3c1860e3a8caf1edc69b953d0e13",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TJ-E2E-007",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T15:33:41Z",
+      "resolved_at": "2026-07-12T15:34:14Z"
+    },
+    {
+      "task_id": "TJ-E2E-007",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Please review Pantheon PR #3454 and merged execute-plans PR #279. BFF revisioned SSE/gap and server attention thresholds; frontend dedup/out-of-order/stale/refetch wiring. Verification: 34 BFF tests, 7 frontend tests, production build.",
+      "status": "done",
+      "created_at": "2026-07-12T15:55:42Z",
+      "resolved_at": "2026-07-12T15:59:37Z"
+    },
+    {
+      "task_id": "TJ-E2E-007",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed Pantheon PR #3454 (merged) and execute-plans PR #279 (merged). BFF SSE/attention endpoints and frontend dedup/gap/stale wiring verified correct; 34 BFF + 7 FE tests and prod build passed per PR verification sections. No blocking issues found.",
+      "status": "done",
+      "created_at": "2026-07-12T15:59:37Z",
+      "resolved_at": "2026-07-12T16:02:47Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "TJ-E2E-007",
+      "owner": "Codex2",
+      "waiting_for": "Claude",
+      "message": "Dependency merge gate unmet: TJ-E2E-005 and TJ-E2E-006 are both durable-state todo with no merged SHAs. Resume only after canonical BFF read/revision API and frontend P0 workbench are merged, then implement scoped pantheon and execute-plans PRs.",
+      "status": "resolved",
+      "created_at": "2026-07-12T15:35:07Z",
+      "resolved_at": "2026-07-12T15:45:02Z"
+    }
+  ]
+}

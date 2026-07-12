@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+  "archived_at": "2026-07-11T10:03:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+    "title": "Prepare MGMT-PERF-IA-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 BFF contract",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3176 merged as acc2bbec4e9abae08690e6d71abdd0993c3a202c. Support-only duplicate-dispatch suppression packet and reviewer approval are durable; remote checkpoint, open contaminated parent PR #3127, and 48-path divergence were reverified. No canonical, runtime, schema, governance, or frontend changes.",
+    "last_update": "2026-07-11T10:03:38Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "重複派發抑制審查通過"
+    ],
+    "review_file": "support/reviews/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15-review-antigravity.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T10:03:38Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-002-sidecar-bff-handoff-followup-15",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "git_clean_required": false,
+      "commit": "20671b11ed89da814a302fc593304e2ad3367b87",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "acc2bbec4e9abae08690e6d71abdd0993c3a202c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Support-only no-material-delta packet committed at 2913d4f24. Please verify parent PR #3127 remains contaminated/blocked and approve duplicate-dispatch suppression only; no canonical, runtime, frontend, or live-capital change is proposed.",
+      "status": "done",
+      "created_at": "2026-07-11T09:56:49Z",
+      "resolved_at": "2026-07-11T10:00:22Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Review approved and returned to Codex2 for closeout; duplicate-dispatch suppression confirmed.",
+      "status": "done",
+      "created_at": "2026-07-11T10:00:22Z",
+      "resolved_at": "2026-07-11T10:03:39Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "task_id": "PTJ-007",
+  "archived_at": "2026-07-12T16:21:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PTJ-007",
+    "title": "Persona Trade Journal integration and hosted closeout",
+    "summary_zh": "依 Persona Trade Journal gap 文件執行 Persona Trade Journal integration and hosted closeout。",
+    "phase": "Persona Trade Journal / Wave 4",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PTJ-002",
+      "PTJ-003",
+      "PTJ-004",
+      "PTJ-005",
+      "PTJ-006"
+    ],
+    "artifacts": [
+      "services",
+      "execute-plans:src",
+      "execute-plans:e2e",
+      "docs/04/persona_trade_journal_gap_2026-07-11/archive",
+      "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
+    ],
+    "acceptance": [
+      "all child tasks are merged or explicitly superseded with evidence",
+      "hosted dev smoke proves decision to fill to attribution to reflection to lesson review with no live orders"
+    ],
+    "next": "PR #3459 merged; 50 focused backend tests and hosted PTJ Playwright evidence verified; paper-only closeout complete with no live orders.",
+    "last_update": "2026-07-12T16:21:29Z",
+    "source_ref": {
+      "doc": "docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": false,
+    "wave": 4,
+    "fleet_lane": "hosted-closeout",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_trade_journal_2026_07_11",
+    "auto_generated": true,
+    "live_order_side_effects_allowed": false,
+    "review_notes_zh": [
+      "審查通過：PTJ-001..006 六個子任務 PR 皆已 merge 且 SHA 相符；50 個 backend 測試在本地重跑結果一致；hosted deployment.json/健康檢查/未授權 401 閘門/bundle 內容獨立驗證通過",
+      "殘餘缺口（generic persona-fleet deploy probe route mismatch）已明確標註且非隱藏為綠燈，歸屬 execute-plans deploy workflow lane，不影響本任務驗收"
+    ],
+    "review_file": "docs/reviews/2026-07-12-ptj-007-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T16:21:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ptj-007",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PTJ-007",
+      "git_clean_required": false,
+      "commit": "0c71f9c6a995239f556257a228a4bce25b56c7ba",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PTJ-007",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PTJ-007",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "91088756e3727bbabaf40f514282ea481940b396",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PTJ-007",
+      "from": "Human/Ops",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PTJ-007 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T22:59:22Z",
+      "resolved_at": "2026-07-12T01:18:36Z"
+    },
+    {
+      "task_id": "PTJ-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review PTJ-007 closeout: all child PRs merged; 50 focused backend tests and hosted PTJ Playwright passed; deployed FE c6eeff2 with strict live/safe writes; generic persona-fleet deploy probe route mismatch is explicitly residual and no live orders were issued.",
+      "status": "done",
+      "created_at": "2026-07-12T16:11:10Z",
+      "resolved_at": "2026-07-12T16:16:11Z"
+    },
+    {
+      "task_id": "PTJ-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer independently re-verified PR merges, 50 backend tests, and hosted dev evidence; approved and returned to Codex for finalization",
+      "status": "done",
+      "created_at": "2026-07-12T16:16:11Z",
+      "resolved_at": "2026-07-12T16:21:31Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "PTJ-007",
+      "owner": "Codex",
+      "waiting_for": "Antigravity",
+      "message": "Merged child code verified and focused integration tests pass (44 passed), but hosted dev is stale: GET dev BFF /bff/personas/p1/trade-journal returns 404 and hosted FE bundle lacks Trade Journal markers. Antigravity: deploy Pantheon dev from merge 71089bb9c or newer and execute-plans main from merge 916abb9bfc84084a18d7b81a7ec8781c04ae0476 or newer; then return endpoints/build SHAs for no-live-order hosted decision-to-fill-to-attribution-to-reflection-to-lesson-review smoke.",
+      "status": "resolved",
+      "created_at": "2026-07-12T01:20:01Z",
+      "resolved_at": "2026-07-12T10:21:28Z"
+    },
+    {
+      "task_id": "PTJ-007",
+      "owner": "Codex",
+      "waiting_for": "Antigravity",
+      "message": "Child closeout gates are incomplete: PTJ-004 is review_approved awaiting owner finalization, PTJ-005 is in_progress, and PTJ-006 is todo. Hosted dev BFF route responds 503 DEPENDENCY_UNAVAILABLE for trade episode projection, and the current FE bundle has no Trade Journal markers. PTJ-007 cannot run final hosted acceptance or claim all child merges until those child tasks and deployments close.",
+      "status": "resolved",
+      "created_at": "2026-07-12T11:15:46Z",
+      "resolved_at": "2026-07-12T12:24:06Z"
+    },
+    {
+      "task_id": "PTJ-007",
+      "owner": "Codex",
+      "waiting_for": "Human/Ops",
+      "message": "Hosted closeout blocked: execute-plans dev deployment 1aed662371a0b694eab51af3a882bdaefc6b0b0e is descended from PTJ-006 merge 916abb9bfc84084a18d7b81a7ec8781c04ae0476 but its tree deletes e2e/22-persona-trade-journal.spec.ts, src/lib/bff-v1/tradeJournal.ts, and src/management/components/detail/PersonaTradeJournalTab.tsx (1,335 deletions). BFF health/OpenAPI routes pass and writes are disabled, but hosted FE cannot prove the Trade Journal flow. Restore PTJ-006 frontend on execute-plans dev, deploy the repaired SHA with strict-live/strict fallback/real writes false, then rerun desktop/mobile hosted smoke.",
+      "status": "resolved",
+      "created_at": "2026-07-12T12:32:27Z",
+      "resolved_at": "2026-07-12T14:00:22Z"
+    },
+    {
+      "task_id": "PTJ-007",
+      "owner": "Codex",
+      "waiting_for": "Antigravity",
+      "message": "Cannot run integration/hosted closeout yet: PTJ-004 is review_approved but not finalized/merged, PTJ-005 remains in_progress under governance review fixes, PTJ-006 is todo with no frontend delivery, and docs/04/persona_trade_journal_gap_2026-07-11/archive does not exist. Resume after child PRs are merged or explicitly superseded with evidence and a deployed FE/BFF target is available for deterministic paper-only desktop/mobile smoke.",
+      "status": "resolved",
+      "created_at": "2026-07-12T14:05:47Z",
+      "resolved_at": "2026-07-12T14:15:03Z"
+    },
+    {
+      "task_id": "PTJ-007",
+      "owner": "Codex",
+      "waiting_for": "Antigravity",
+      "message": "Fail-closed integration gate: PTJ-004 is review_approved but not finalized/merged, PTJ-005 remains in_progress, and PTJ-006 remains todo with no frontend PR/deploy evidence. Hosted decision-to-fill-to-attribution-to-reflection-to-lesson-review smoke and child-merge ledger cannot be truthfully executed until those owners close and deploy their slices.",
+      "status": "resolved",
+      "created_at": "2026-07-12T14:18:51Z",
+      "resolved_at": "2026-07-12T15:35:50Z"
+    },
+    {
+      "task_id": "PTJ-007",
+      "owner": "Codex",
+      "waiting_for": "Antigravity",
+      "message": "Canonical task state is stale/incomplete for integration closeout: PTJ-004 remains review_approved, PTJ-005 in_progress, and PTJ-006 todo despite merged PR evidence (#3322, #3319, #3326). PTJ-007 start transition is rejected while these dependencies are not archived done; hosted no-live-order acceptance cannot be truthfully closed until dependency finalization/state reconciliation completes.",
+      "status": "resolved",
+      "created_at": "2026-07-12T15:37:12Z",
+      "resolved_at": "2026-07-12T15:50:01Z"
+    },
+    {
+      "task_id": "PTJ-007",
+      "owner": "Codex",
+      "waiting_for": "Antigravity",
+      "message": "Fail-closed closeout cannot start: current dev has PTJ-004 review_approved but not finalized/merged as done, PTJ-005 in_progress, and PTJ-006 todo. Hosted decision→fill→attribution→reflection→lesson-review proof and cross-repo deployment evidence must wait until these dependencies are formally closed and deployed; no live orders will be attempted.",
+      "status": "resolved",
+      "created_at": "2026-07-12T15:51:31Z",
+      "resolved_at": "2026-07-12T16:00:01Z"
+    }
+  ]
+}

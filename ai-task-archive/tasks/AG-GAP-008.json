@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "AG-GAP-008",
+  "archived_at": "2026-07-12T15:33:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-GAP-008",
+    "title": "Implement typed Trading Room SSE stream",
+    "summary_zh": "把 /bff/agora/trading-room/stream 從空 SSE stub 改為 typed event stream（比照 workshop SSE，first-ack<2s，scope 隔離）。",
+    "phase": "Agora Gap Closure 2026-07-12 / Wave 1",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-008-trading-room-typed-sse.md"
+    ],
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-008-trading-room-typed-sse.md"
+    ],
+    "next": "Operator finalize; delivery merged origin/dev (PR #3440); reviewer(Claude) busy on higher-prio, operator-approved.",
+    "last_update": "2026-07-12T15:33:30Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_gap_closure_2026-07-12",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "prior_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "prior_gate": "docs/bff/execution-tasks/2026-07-08-agora-live-tabs-production/AG-DYNUI-LIVE-TABS-GATE-011.md"
+    },
+    "wave": 1,
+    "fleet_lane": "agora-gap-streaming",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T15:33:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/fix-attribution-unresolved-pools",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 359,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-GAP-008",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review commit 89c293866: typed Trading Room SSE now provides immediate scoped ack, bounded replay, heartbeat, and scope-isolated trading_room.decision.recorded delivery. Verification: 52 focused tests, py_compile, git diff --check.",
+      "status": "done",
+      "created_at": "2026-07-12T14:15:42Z",
+      "resolved_at": "2026-07-12T15:33:26Z"
+    },
+    {
+      "task_id": "AG-GAP-008",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed: typed Trading Room SSE (ack/replay), commit 89c293866 merged origin/dev (PR #3440). Approving.",
+      "status": "done",
+      "created_at": "2026-07-12T15:33:26Z",
+      "resolved_at": "2026-07-12T15:33:31Z"
+    }
+  ],
+  "blockers": []
+}

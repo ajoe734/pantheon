@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-07-11T08:18:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare OCLAW-PMEM-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 2 BFF UI surfaces",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-003"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-004/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3147 merged as 64ef6162aa1bbd74ca08ca8fbcf7cbc2e45b452a; support-only BFF/frontend handoff packet finalized after Antigravity approval. Verified: git diff --check; packet boundary marker assertions; required PR checks passed. Parent owner Claude2 decides absorption.",
+    "last_update": "2026-07-11T08:18:45Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "此 sidecar 詳盡記錄了 BFF 與前端的接合面，未修改 L1 canonical 實作，符合 support slice 邊界。",
+      "已核准並交還給 Codex 進行 final closeout。"
+    ],
+    "review_file": "support/sidecars/OCLAW-PMEM-004/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T08:18:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-004-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "049db9a9971d8c600bcac00e8abb81c16c5697f1",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "64ef6162aa1bbd74ca08ca8fbcf7cbc2e45b452a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only BFF/frontend handoff delta committed at 79ad8bc93. Verified current BFF route inventory, false-empty/false-ready guards, frontend fixtures, and non-canonical boundary; please review for accuracy and scope.",
+      "status": "done",
+      "created_at": "2026-07-11T08:13:49Z",
+      "resolved_at": "2026-07-11T08:15:17Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved by Antigravity; returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T08:15:17Z",
+      "resolved_at": "2026-07-11T08:18:46Z"
+    }
+  ],
+  "blockers": []
+}

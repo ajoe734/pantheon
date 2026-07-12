@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "task_id": "AG-GAP-004",
+  "archived_at": "2026-07-12T15:06:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-GAP-004",
+    "title": "Durable Postgres store for dashboard recipes",
+    "summary_zh": "dashboard recipe 的 module-level dict 抽成 store 介面 + Postgres backend；保留 ETag/版本/rollback 語意。",
+    "phase": "Agora Gap Closure 2026-07-12 / Wave 0",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-GAP-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-004-dashboard-postgres.md"
+    ],
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-004-dashboard-postgres.md"
+    ],
+    "next": "PR #3443 merged into dev at 31094a79a8238b3b15ad9c939b731b131d38e48d. Durable dashboard recipe Postgres store closeout finalized; focused validation 6 passed, 1 skipped; git diff --check and CI trailer/runtime-mirror/smoke gates passed.",
+    "last_update": "2026-07-12T15:06:06Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_gap_closure_2026-07-12",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "prior_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "prior_gate": "docs/bff/execution-tasks/2026-07-08-agora-live-tabs-production/AG-DYNUI-LIVE-TABS-GATE-011.md"
+    },
+    "wave": 0,
+    "fleet_lane": "agora-gap-persistence",
+    "review_notes_zh": [
+      "原子 idempotency 修正已接受：Postgres 以唯一鍵在 identity/version 同一 transaction 內保留 recipe_id，競爭請求回放同一 recipe；router 依 store 回傳 identity 解析 response。Reviewer focused suite 8 passed、1 skipped；py_compile、git diff --check 與 PR checks 通過。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T15:06:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-gap-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-GAP-004",
+      "git_clean_required": false,
+      "commit": "618e1ce47d49c43ff30a68b338ee6667444a1e8e",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-GAP-004",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-GAP-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "31094a79a8238b3b15ad9c939b731b131d38e48d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-GAP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T14:38:31Z",
+      "resolved_at": "2026-07-12T14:39:18Z"
+    },
+    {
+      "task_id": "AG-GAP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation ready for review: durable memory/Postgres dashboard recipe store, transactional active-version CAS, Compose Postgres selection, docs. Verified 79 focused tests, both Compose configs, py_compile, diff check.",
+      "status": "done",
+      "created_at": "2026-07-12T14:44:42Z",
+      "resolved_at": "2026-07-12T14:47:29Z"
+    },
+    {
+      "task_id": "AG-GAP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested: Postgres create idempotency is not atomic. Concurrent requests with the same Idempotency-Key can both pass has_idempotency_key(), insert distinct recipe identity/version rows, and only one idempotency mapping survives ON CONFLICT DO NOTHING. Reserve the key and create the recipe in one transaction (with replay bound to the recorded recipe), then add a concurrent same-key regression proving exactly one recipe is created and both requests resolve consistently. Focused reviewer checks: 7 passed; py_compile passed; docker-compose.yml parsed; docker-compose.control.yml uses supported !override tag and was not parseable by generic PyYAML.",
+      "status": "done",
+      "created_at": "2026-07-12T14:47:29Z",
+      "resolved_at": "2026-07-12T14:47:29Z"
+    },
+    {
+      "task_id": "AG-GAP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewer finding fixed in b1539bdff: Postgres now reserves the Idempotency-Key and creates recipe identity/version in one transaction; concurrent conflicts replay the recorded recipe. Actual Postgres concurrent regression passed (6 tests total); focused suite 8 passed, 1 skipped; py_compile and git diff --check passed.",
+      "status": "done",
+      "created_at": "2026-07-12T14:52:04Z",
+      "resolved_at": "2026-07-12T14:56:40Z"
+    },
+    {
+      "task_id": "AG-GAP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after atomic Postgres idempotency regression passed; owner Codex2 must finalize PR #3443 and close out after merge.",
+      "status": "done",
+      "created_at": "2026-07-12T14:56:40Z",
+      "resolved_at": "2026-07-12T15:06:08Z"
+    }
+  ],
+  "blockers": []
+}

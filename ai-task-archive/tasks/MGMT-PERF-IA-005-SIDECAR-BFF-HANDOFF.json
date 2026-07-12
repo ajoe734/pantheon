@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-11T18:13:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-PERF-IA-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 1 Governance Decisions",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only BFF/frontend handoff packet merged via PR #3254 (merge cf4718158c64a7396b3faa192d398841f7b16c68); verified task commit fc8a8a595 is in origin/dev, git show --check passed, packet boundary markers confirmed; no canonical/runtime/frontend implementation changes.",
+    "last_update": "2026-07-11T18:13:45Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：純支援文件，未變更 canonical truth，已合併至 dev，內容與 parent task 驗收條件一致（無內嵌排名表、fail-closed 狀態、governed apply receipt 要求）"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T18:13:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-005-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "fc8a8a5955e3f55d598d7b702f19a59cd5220780",
+      "commit_subject": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF: add governance BFF handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF query-gap, operator journey, and frontend handoff packet.",
+        "Not changing": "canonical truth, BFF/runtime implementation, frontend implementation, registries, or governance contracts.",
+        "Composes with": "parent MGMT-PERF-IA-005 Governance Decisions implementation owned by Claude.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; source inspection"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2acb121cd1a6f925ff332b298c3994c997737c5c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only BFF/frontend handoff packet committed at fc8a8a595 and opened as PR #3254. Please review query-gap conclusions, operator journey, fail-closed action boundaries, and parent composition guidance.",
+      "status": "done",
+      "created_at": "2026-07-11T17:16:33Z",
+      "resolved_at": "2026-07-11T18:12:53Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF.md (merged via PR #3254 in ajoe734/pantheon). Support-only, no canonical truth changes, matches parent acceptance criteria. Approved.",
+      "status": "done",
+      "created_at": "2026-07-11T18:12:53Z",
+      "resolved_at": "2026-07-11T18:13:47Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-07-12T01:00:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare MGMT-PERF-IA-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 1 Governance Decisions",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Approved and finalized: handoff packet successfully prepared and PR #3304 already merged into dev.",
+    "last_update": "2026-07-12T01:00:53Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：已確認無核心程式變動，純支援性材料手冊無誤"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T01:00:53Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-005-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "cd70cf2c5a22244ab350215d4384004baa7be025",
+      "commit_subject": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6: add handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF gap, operator journey, and frontend handoff packet.",
+        "Not changing": "canonical truth, runtime, registry, governance, BFF contracts, or frontend code.",
+        "Composes with": "parent MGMT-PERF-IA-005 owner decision and execute-plans implementation.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+        "Reviewer": "Claude",
+        "Verified": "route registration and packet scope checks"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b8365887a4d7a4feed8425fae96d4da04d2da77f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only handoff packet ready at support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md; commit cd70cf2c5. Please verify route claims, fail-closed capital boundary, and canonical non-mutation.",
+      "status": "done",
+      "created_at": "2026-07-11T23:39:03Z",
+      "resolved_at": "2026-07-12T00:59:55Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-12T00:59:55Z",
+      "resolved_at": "2026-07-12T01:00:10Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-07-12T01:00:10Z",
+      "resolved_at": "2026-07-12T01:00:38Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-07-12T01:00:38Z",
+      "resolved_at": "2026-07-12T01:00:55Z"
+    }
+  ],
+  "blockers": []
+}

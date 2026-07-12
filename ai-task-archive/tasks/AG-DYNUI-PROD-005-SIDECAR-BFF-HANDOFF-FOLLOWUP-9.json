@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+  "archived_at": "2026-07-04T12:56:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+    "title": "Prepare AG-DYNUI-PROD-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Dynamic Workflow",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-003",
+      "AG-DYNUI-PROD-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Packet approved and merged via PR #2960 (superseding closed stale PR #2958). Corrected a stale AG-DYNUI-PROD-002/006 dependency-cycle claim per PR #2959 (002's hosted shell evidence already satisfied by #2955; 006 is the full V11 hosted E2E gate, not the remaining shell gate for 002). Re-confirmed AG-DYNUI-PROD-005's own V11 dynamic-workflow implementation gap is unmoved: components unmounted, grid callbacks no-op, no V11 workspace clients, onAddToTradingRoom not threaded through agora-main.tsx, allowlist/blocklist and SSE stub unchanged. No canonical truth, runtime, or registry files modified.",
+    "last_update": "2026-07-04T12:56:20Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up 9 核准：本次派工實際捕捉到一個 trigger 條件變化（execute-plans PR #171/#173 由 open 轉為 merged，AG-DYNUI-PROD-003 轉為 done，AG-DYNUI-PROD-002 仍 review_approved 但已補上獨立重驗證並將 hosted screenshot 明確 defer 給 AG-DYNUI-PROD-006）；reviewer 已獨立重跑 §3 的所有 grep/status 檢查，確認這兩個 merge 屬於 002/003 範疇，未觸及 AG-DYNUI-PROD-005 本身的 V11 dynamic workflow 缺口（未掛載元件、no-op grid callbacks、缺 V11 workspace clients、onAddToTradingRoom 仍未串接、allowlist/blocklist 與 SSE stub 均未變動）。Parent AG-DYNUI-PROD-005 仍為 todo，無 parent branch/PR/commit。未修改 canonical truth 或 runtime 檔案。"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T12:56:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-005-sidecar-bff-handoff-followup-9",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "git_clean_required": false,
+      "commit": "fda61902113360f4ab23fd4b3f694e338924d7bb",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "810066404d2d7b55d52f9e1d3e8cf10d8e93fda7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "PR #2958 open with auto-merge (task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9 -> dev). Please review support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md: it confirms execute-plans PR #171/#173 merged and AG-DYNUI-PROD-003 closed to done since follow-up 8, but the AG-DYNUI-PROD-005-scoped implementation gap is unchanged (unmounted components, no-op grid callbacks, missing V11 workspace clients, un-threaded onAddToTradingRoom, unchanged widget allowlist/blocklist, SSE stream still a stub). Support-only, no canonical/runtime files touched.",
+      "status": "done",
+      "created_at": "2026-07-04T12:45:18Z",
+      "resolved_at": "2026-07-04T12:47:39Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support-only AG-DYNUI-PROD-005 follow-up 9 approved after independent re-verification; confirms PR #171/#173 merges and AG-DYNUI-PROD-003 closeout did not change the AG-DYNUI-PROD-005-scoped implementation gap.",
+      "status": "done",
+      "created_at": "2026-07-04T12:47:39Z",
+      "resolved_at": "2026-07-04T12:56:21Z"
+    }
+  ],
+  "blockers": []
+}
