@@ -2,7 +2,89 @@
 
 Reviewer: Claude
 Date: 2026-07-12
-Disposition: changes requested (round 2)
+Disposition: approved (round 3)
+
+## Round 3 Update (2026-07-12)
+
+Reviewed commit `251defd29` (anchor paper broker envelope path) against the
+four round-2 required changes. All four are addressed on the real
+signal-driven paper-order path, not just the disconnected
+`ShioajiBrokerAdapter`:
+
+1. `services/broker/main.py`'s `PaperOrderRequest` now carries optional
+   `client_order_id` and `correlation_envelope`, threaded through
+   `submit_paper_order()` into `simulate_paper_order()`.
+2. `simulate_paper_order()` / `PaperOrder`
+   (`services/broker/paper_simulation.py`) accept both fields, default
+   `client_order_id` to the generated `order_id` when absent, and call
+   `propagate_envelope(..., producer="broker.paper_sidecar",
+   event_id=f"broker-paper-order:{order_id}")` — a real causal hop with a
+   fresh `event_id`, not a passthrough copy.
+3. `paper_runtime.py:SubmitTaiwanBrokerOrder()` now sets
+   `payload["client_order_id"] = str(signal_id)` and, when present, copies
+   `self._current_signal_metadata["correlation_envelope"]` into the HTTP
+   payload posted to the broker sidecar — this is the exact
+   `_current_signal_metadata` populated by
+   `SetCurrentSignalContext`/`_signal_context_metadata()` verified as a real
+   call chain in round 2, so the envelope now survives signal → HTTP payload
+   → broker sidecar, not just signal → telemetry.
+4. The delivered-contract doc now states `ShioajiSandboxFacade.place_test_order()`
+   "remains a manual sandbox tool and does not claim coverage of the
+   signal-driven paper-order boundary" — satisfies required-change 3's
+   documentation alternative; no facade code change was needed.
+5. New test coverage proves the real sidecar path end to end:
+   - `services/broker/test_paper_correlation.py::test_paper_sidecar_submit_store_readback_preserves_correlation`
+     calls the actual `simulate_paper_order()` + `PaperSimulationStore` used
+     by `broker/main.py`'s endpoint (not the disconnected
+     `ShioajiBrokerAdapter`), submits, reads back, and asserts
+     `client_order_id`, `journey_id`, `causation_event_id`, and `producer`
+     survive — including a second `PaperSimulationStore` instance to prove
+     the JSONL persistence round-trip, not just an in-memory hit.
+   - `services/execution/lean_runtime/test_paper_runtime.py::test_taiwan_submit_posts_signal_client_id_and_correlation_envelope`
+     sets `_current_signal_metadata` via `SetCurrentSignalContext`, captures
+     the outgoing HTTP payload, and asserts both fields are present.
+   Together these close the round-2 gap: the envelope now demonstrably
+   crosses the signal → paper_runtime payload → broker sidecar → persisted
+   order record boundary, satisfying required-change 4.
+
+All prior round-1/round-2 accepted items (executor signal-context copy, risk
+evaluation, paper telemetry, reconciliation-drift, the envelope library
+itself) are unchanged in this commit and remain accepted.
+
+**Verification correction:** the anchor commit trailer and task brief claim
+"132 passed" for the full focused suite named in the delivered-contract doc.
+Re-running that exact 9-file command locally gives **124 passed**, matching
+round 2's 122 plus the 2 new tests added in this commit (1 in
+`test_paper_correlation.py`, 1 in `test_paper_runtime.py`). This is a
+verification-evidence accuracy issue, not a functional defect — all 124
+tests pass — but the "132" figure in the commit trailer and task brief is
+wrong and should not be repeated in closeout evidence.
+
+```
+python3 -m pytest -q services/control-plane/bff/test_trade_journey_correlation_envelope.py \
+  services/execution/lean_runtime/test_signal_producer.py \
+  services/execution/lean_runtime/test_executor.py \
+  services/execution/lean_runtime/test_paper_runtime.py \
+  services/broker/test_paper_correlation.py \
+  services/broker/sinopac/test_adapter.py \
+  services/capital/test_risk_policy.py \
+  services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py \
+  services/control-plane/bff/test_trade_journey_contract.py
+# 124 passed
+
+python3 -m pytest -q services/broker/test_broker.py
+# 23 passed (no regression on the existing broker sidecar test suite)
+```
+
+## Verdict: Approved
+
+Round 2's blocking finding (broker boundary wired to the disconnected
+`ShioajiBrokerAdapter` instead of the live `broker/main.py` +
+`paper_simulation.py` sidecar path) is resolved. All four required changes
+are implemented and proven with tests against the real production call
+path. No further round is required for scope. Handing back to owner
+(Codex) for closeout; owner should correct the "132 passed" figure to 124
+in any closeout evidence.
 
 ## Round 2 Update (2026-07-12)
 
