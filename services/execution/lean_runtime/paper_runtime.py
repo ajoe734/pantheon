@@ -288,11 +288,15 @@ class PaperExecutionAlgorithm:
         payload = {
             "capital_pool_id": os.getenv("PANTHEON_CAPITAL_POOL_ID", "") or self._taiwan_capital_pool_id(),
             "strategy_id": os.getenv("PANTHEON_STRATEGY_ID", "") or "strategy-tw-session-momentum",
+            "client_order_id": str(signal_id),
             "symbol": native,
             "qty": qty,
             "side": side,
             "order_type": str(order_type or "MARKET").lower(),
         }
+        correlation_envelope = self._current_signal_metadata.get("correlation_envelope")
+        if correlation_envelope is not None:
+            payload["correlation_envelope"] = correlation_envelope
         if limit_price is not None:
             payload["limit_price"] = float(limit_price)
         try:

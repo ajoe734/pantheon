@@ -36,8 +36,11 @@ strategy/signal origin to broker, ledger and reconciliation.
   `causation_event_id` to equal the preceding `event_id`. Stable field loss or
   replacement fails closed.
 - Production boundaries now carry the envelope through executor signal context,
-  Shioaji order records (`client_order_id` included), risk evaluations, paper
-  telemetry, and reconciliation-drift records.
+  the signal-driven Taiwan paper HTTP path and its persisted broker-sidecar
+  order records (`client_order_id` included), Shioaji adapter order records,
+  risk evaluations, paper telemetry, and reconciliation-drift records. The
+  `ShioajiSandboxFacade.place_test_order()` path remains a manual sandbox tool
+  and does not claim coverage of the signal-driven paper-order boundary.
 
 ## Migration and rollback
 
@@ -56,6 +59,7 @@ python3 -m pytest -q services/control-plane/bff/test_trade_journey_correlation_e
   services/execution/lean_runtime/test_signal_producer.py \
   services/execution/lean_runtime/test_executor.py \
   services/execution/lean_runtime/test_paper_runtime.py \
+  services/broker/test_paper_correlation.py \
   services/broker/sinopac/test_adapter.py \
   services/capital/test_risk_policy.py \
   services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py \

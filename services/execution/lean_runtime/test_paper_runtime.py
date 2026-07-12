@@ -891,6 +891,34 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
         self.assertEqual(ev.metadata["exchange"], "TSE")
         self.assertEqual(algo._holding("2330.TW").Quantity, -1)
 
+    def test_taiwan_submit_posts_signal_client_id_and_correlation_envelope(self):
+        from services.trade_journey.correlation_envelope import mint_trade_envelope
+
+        algo, _ = self._algo()
+        incoming = mint_trade_envelope(
+            {"tenant_id": "tenant-1", "environment": "paper"},
+            producer="strategy.signal",
+        )
+        algo.SetCurrentSignalContext({"correlation_envelope": incoming})
+        captured = {}
+
+        def capture(url, payload):
+            captured.update(payload)
+            return {"order_id": "ord-tw-envelope", "fill_price": 100.0, "fill_qty": 1}
+
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            staticmethod(capture),
+        ):
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW", signal_id="signal-envelope-1", side="buy", quantity=1,
+                quantity_type="SHARES", action="BUY",
+            )
+
+        self.assertEqual(captured["client_order_id"], "signal-envelope-1")
+        self.assertEqual(captured["correlation_envelope"], incoming)
+
     def test_taiwan_broker_error_records_rejection(self):
         algo, events = self._algo()
         def boom(url, payload):
