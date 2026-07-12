@@ -1,14 +1,14 @@
 # OCLAW-PMEM-000 BFF and Frontend Handoff Packet
 
-**Sidecar Task ID**: `OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF`  
-**Parent Task**: `OCLAW-PMEM-000`  
-**Parent Owner**: `Codex`  
-**Parent Reviewer**: `Claude`  
-**Sidecar Owner**: `Codex2`  
-**Sidecar Reviewer**: `Antigravity`  
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-07-12  
-**Mutates Canonical**: `no`
+- **Sidecar Task ID**: `OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF`
+- **Parent Task**: `OCLAW-PMEM-000`
+- **Parent Owner**: `Codex`
+- **Parent Reviewer**: `Claude`
+- **Sidecar Owner**: `Codex2`
+- **Sidecar Reviewer**: `Antigravity`
+- **Helper Kind**: `bff_handoff_packet`
+- **Generated**: 2026-07-12
+- **Mutates Canonical**: `no`
 
 This packet is support material only. It does not change canonical truth or
 implement BFF, frontend, Memory Plane, OpenClaw, provider, registry, runtime,
