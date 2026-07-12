@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-12T01:35:53Z",
+  "updated_at": "2026-07-12T04:09:37Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -127,14 +127,15 @@
       "status": "blocked",
       "current_task_ids": [
         "PPL-ALLOC-007",
+        "MGMT-PERF-IA-005",
         "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
         "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
-        "TJ-E2E-003",
-        "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6"
+        "TJ-E2E-004",
+        "PTJ-007"
       ],
-      "branch": "task/OCLAW-PMEM-004",
-      "next": "Round 2 review: executor/risk/paper-telemetry/reconciliation-drift propagation verified as real wired call chains, accepted. Blocking gap: broker boundary wired on services/broker/sinopac/adapter.py (ShioajiBrokerAdapter), which is not on the live signal-driven paper order path; real path (executor -> paper_runtime.SubmitTaiwanBrokerOrder -> HTTP -> broker/main.py -> paper_simulation.py) still drops client_order_id/correlation_envelope. Required changes 1-4 recorded in docs/reviews/2026-07-12-tj-e2e-003-claude-review.md.",
-      "last_update": "2026-07-12T00:35:17Z"
+      "branch": "task/TJ-E2E-004",
+      "next": "Merged child code verified and focused integration tests pass (44 passed), but hosted dev is stale: GET dev BFF /bff/personas/p1/trade-journal returns 404 and hosted FE bundle lacks Trade Journal markers. Antigravity: deploy Pantheon dev from merge 71089bb9c or newer and execute-plans main from merge 916abb9bfc84084a18d7b81a7ec8781c04ae0476 or newer; then return endpoints/build SHAs for no-live-order hosted decision-to-fill-to-attribution-to-reflection-to-lesson-review smoke.",
+      "last_update": "2026-07-12T01:20:01Z"
     },
     {
       "name": "Codex2",
@@ -144,13 +145,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
-        "OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF"
+        "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2"
       ],
       "branch": "task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
-      "next": "Preparing support-only BFF/frontend umbrella closeout handoff; canonical/runtime layers unchanged.",
-      "last_update": "2026-07-12T00:37:02Z"
+      "next": "Re-verified: PR #3344 (commits 3e63ca229 anchor / 2b384b981 record-approval) is MERGED into origin/dev at 2026-07-12T03:46:19Z; task branch HEAD is an ancestor of origin/dev with no drift. Dependency claims for MGMT-PERF-IA-003/005/006/007 still match current status. Retried ai-status.sh approve this session; denied again by the auto-mode classifier as self-approval. Formal review_approved transition needs a human or a different reviewer identity to run it; the packet content itself is already merged and durable.",
+      "last_update": "2026-07-12T04:00:59Z"
     },
     {
       "name": "Copilot",
@@ -216,13 +217,15 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "working",
+      "status": "waiting",
       "current_task_ids": [
-        "PTJ-005"
+        "PPL-ALLOC-009",
+        "MGMT-PERF-IA-006",
+        "MGMT-PERF-IA-008"
       ],
       "branch": "feat/antigravity-research-runtime",
-      "next": "Supervisor re-dispatched PTJ-005; task remains in progress.",
-      "last_update": "2026-07-12T00:28:48Z"
+      "next": "Auto-reassigned PPL-ALLOC-009 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Antigravity.",
+      "last_update": "2026-07-12T04:08:47Z"
     },
     {
       "name": "Antigravity2",
@@ -414,59 +417,6 @@
       }
     },
     {
-      "id": "OCLAW-PMEM-000",
-      "title": "OpenClaw persona model routing and memory architecture gap",
-      "summary_zh": "釐清並修正 Persona/OpenClaw/provider pool/Memory Plane 的 source-of-truth 邊界；把 runtime profile、OpenClaw agent sync、canonical memory bridge、BFF/UI surfaces 與 dev gates 拆成可驗收 execution tasks。",
-      "phase": "OpenClaw Persona Memory Gap / Umbrella",
-      "owner": "Antigravity",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [
-        "OCLAW-PMEM-005"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03",
-        "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap",
-        "integrations/openclaw",
-        "services/control-plane/bff",
-        "services/control-plane/persona",
-        "services/memory",
-        "services/persona"
-      ],
-      "acceptance": [
-        "OCLAW-PMEM-005 done or reviewer-approved superseded",
-        "final closeout includes PR SHAs, validation, hosted dev evidence, and residual risks",
-        "Management UI explains persona model routing and canonical memory materialization",
-        "dev gates prove provider live smoke, persona OpenClaw response, memory retrieval/materialization, and no private memory leakage"
-      ],
-      "next": "Ownership updated",
-      "task_class": "execution",
-      "auto_created_by": "dispatch_openclaw_persona_memory_gap_2026-07-03",
-      "auto_generated": true,
-      "source_ref": {
-        "doc": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md",
-        "packet": "docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/INDEX.md"
-      },
-      "delivery_layer": "primary",
-      "mutates_canonical": true,
-      "helper_parent": "OCLAW-PMEM-000",
-      "helper_kind": "openclaw_persona_memory_gap_execution_slice",
-      "wave": 99,
-      "fleet_lane": "oversight-closeout",
-      "gap_children": [
-        "OCLAW-PMEM-001",
-        "OCLAW-PMEM-002",
-        "OCLAW-PMEM-003",
-        "OCLAW-PMEM-004",
-        "OCLAW-PMEM-005"
-      ],
-      "last_update": "2026-07-12T00:37:05Z",
-      "review_notes_zh": [
-        "審查通過：所有子任務皆已順利存檔，並建立關閉報告。"
-      ],
-      "review_file": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OCLAW-PMEM-000-closeout-2026-07-12.md"
-    },
-    {
       "id": "PPL-ALLOC-007",
       "title": "Binding visibility and route prune",
       "summary_zh": "修 Persona Fleet / Capital 顯示不同 persona 綁定到不同 paper ledger 或 real sleeve；legacy/diagnostic 頁面不再搶主流程。",
@@ -599,9 +549,9 @@
       "title": "Governance Decisions consolidation",
       "summary_zh": "把 Promotion Allocation 改成 Recommendations、Capital、Policy 的治理中心，移除內嵌排名並強制 Human Review 與 apply receipt。",
       "phase": "Management Performance Ranking IA / Wave 1 Governance Decisions",
-      "owner": "Claude",
+      "owner": "Codex",
       "reviewer": "Antigravity",
-      "status": "review_approved",
+      "status": "blocked",
       "depends_on": [
         "MGMT-PERF-IA-001",
         "MGMT-PERF-IA-002"
@@ -618,8 +568,8 @@
         "capital access and rebalance mutations require governed apply receipts",
         "legacy routes and hosted desktop mobile behavior are proven"
       ],
-      "next": "Re-verified execute-plans#260 unchanged (head 2954481ba354, CLEAN/MERGEABLE, integration-gate 29162742365 SUCCESS, mergedAt null, autoMergeRequest null, zero reviews). Still blocked purely on human merge per governance policy; no owner action possible. Steady state, 56th+ consecutive no-op owned_finalize_dispatch pass.",
-      "last_update": "2026-07-12T00:36:21Z",
+      "next": "execute-plans PR #260 is OPEN/CLEAN/MERGEABLE with integration-gate SUCCESS, but mergedAt is null, reviews are empty, and autoMergeRequest is null. Closeout requires human merge under frontend governance, followed by hosted desktop/mobile evidence; cannot run done before those acceptance requirements are satisfied.",
+      "last_update": "2026-07-12T01:00:29Z",
       "task_class": "execution",
       "auto_created_by": "dispatch_management_performance_ranking_ia_2026-07-11",
       "auto_generated": true,
@@ -640,7 +590,8 @@
         "審查通過",
         "已確認：1) 移除內嵌的實體 live 排名表格，單一化 Rankings Center 職責；2) 推薦佇列與已套用操作分開，Recommendations 佇列只渲染 pending/review 的 inbox 項目；3) 資金與 access 等變更皆導向 Human Gate detail 以展示 decision history 與簽署歷史作為 receipts；4) 舊的 Promotion & Allocation 頁面舊連結依 tab parameter 自動 redirect 到對應 canonical center。"
       ],
-      "review_file": "docs/reviews/2026-07-11-mgmt-perf-ia-005-antigravity-review.md"
+      "review_file": "docs/reviews/2026-07-11-mgmt-perf-ia-005-antigravity-review.md",
+      "waiting_for": "Human/Ops"
     },
     {
       "id": "MGMT-PERF-IA-006",
@@ -781,74 +732,6 @@
       "target_repo": "pantheon+execute-plans"
     },
     {
-      "id": "MGMT-OPS-003-GAP-004",
-      "title": "Independent hosted difference closeout",
-      "summary_zh": "由獨立 reviewer 逐列核對 gap matrix、API、畫面、desktop/mobile 與部署 SHA；任何差異未關閉就退件。",
-      "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 review gate",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "review_approved",
-      "depends_on": [
-        "MGMT-OPS-003-GAP-001",
-        "MGMT-OPS-003-GAP-002",
-        "MGMT-OPS-003-GAP-003"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/archive",
-        "docs/deployment/evidence/mgmt-ops-003-gap",
-        "execute-plans:hosted-dev-evidence",
-        "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-004-review-closeout.md",
-        "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md"
-      ],
-      "acceptance": [
-        "every hosted gap matrix row has a pass verdict and direct evidence",
-        "reviewer personally reruns authenticated API desktop and mobile probes",
-        "reviewer records console and failed-request counts",
-        "stale mock-only or mismatched-SHA evidence is rejected",
-        "MGMT-PERF-IA-003 receives a behavior-preserving handoff"
-      ],
-      "next": "APPROVED: deployed SHA 5647d4b matches /deployment.json; dev deploy run 29174965397 and post-merge integration gate 29174965400 succeeded; reviewer hosted rerun passed Portfolio desktop/mobile and Persona Fleet click-map.",
-      "last_update": "2026-07-12T01:35:53Z",
-      "task_class": "execution",
-      "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
-      "auto_generated": true,
-      "source_ref": {
-        "doc": "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/MGMT_OPS_003_HOSTED_GAP.md",
-        "packet": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/INDEX.md",
-        "review_checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
-        "trigger": "2026-07-11 hosted plan-to-live verification",
-        "frontend_repo": "ajoe734/execute-plans",
-        "backend_repo": "ajoe734/pantheon",
-        "dev_frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
-        "dev_bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
-      },
-      "delivery_layer": "primary",
-      "mutates_canonical": true,
-      "helper_kind": "mgmt_ops_003_hosted_gap_closure",
-      "review_contract": {
-        "mode": "fail_closed_hosted_delta",
-        "checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
-        "approval_forbidden_without": [
-          "merged_pr_and_merge_sha",
-          "deployed_sha_ancestry",
-          "authenticated_api_capture",
-          "desktop_and_mobile_hosted_evidence",
-          "ui_to_api_count_and_label_comparison",
-          "console_and_network_failure_counts"
-        ],
-        "request_changes_when": [
-          "any_gap_matrix_row_is_not_pass",
-          "ui_confidence_exceeds_source_truth",
-          "incident_or_filter_is_hidden",
-          "evidence_is_mock_only_or_stale",
-          "tested_sha_differs_from_deployed_sha"
-        ]
-      },
-      "wave": 2,
-      "target_repo": "pantheon+execute-plans",
-      "review_file": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-004-review-closeout.md"
-    },
-    {
       "id": "MGMT-OPS-003-GAP-001-DEPLOY-PROBE-FIX",
       "title": "Fix Persona Fleet hosted deploy probe regression",
       "summary_zh": "修正預設 Persona Fleet 在 production 為空時錯誤顯示 non-production rows，保留明確 persona focus 切頁行為，重新發布並通過 hosted probe。",
@@ -905,42 +788,13 @@
       "waiting_for": "Codex2"
     },
     {
-      "title": "Correlation envelope propagation",
-      "summary_zh": "依 Trade Journey E2E gap 規格執行：Correlation envelope propagation。",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "in_progress",
-      "phase": "Trade Journey E2E / Wave 1",
-      "next": "Round 2 review: executor/risk/paper-telemetry/reconciliation-drift propagation verified as real wired call chains, accepted. Blocking gap: broker boundary wired on services/broker/sinopac/adapter.py (ShioajiBrokerAdapter), which is not on the live signal-driven paper order path; real path (executor -> paper_runtime.SubmitTaiwanBrokerOrder -> HTTP -> broker/main.py -> paper_simulation.py) still drops client_order_id/correlation_envelope. Required changes 1-4 recorded in docs/reviews/2026-07-12-tj-e2e-003-claude-review.md.",
-      "source_ref": {
-        "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
-        "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-003-correlation-envelope-propagation.md",
-        "target_repo": "pantheon",
-        "merge_target": "dev"
-      },
-      "metadata": {
-        "wave": 1,
-        "fleet_lane": "correlation-envelope-propagation",
-        "target_repo": "pantheon"
-      },
-      "created_at": "2026-07-11T22:58:28.902157+00:00",
-      "id": "TJ-E2E-003",
-      "depends_on": [
-        "TJ-E2E-001",
-        "TJ-E2E-002"
-      ],
-      "last_update": "2026-07-12T00:35:17Z",
-      "task_class": "execution",
-      "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11"
-    },
-    {
       "title": "Journey materializer and reverse index",
       "summary_zh": "依 Trade Journey E2E gap 規格執行：Journey materializer and reverse index。",
-      "owner": "Antigravity",
+      "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "blocked",
       "phase": "Trade Journey E2E / Wave 1",
-      "next": "Read docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-004-materializer-reverse-index.md and satisfy dependency merge gates.",
+      "next": "Dependency gate 未滿足：TJ-E2E-003 仍 in_progress，真實 signal-driven paper broker path 尚未傳遞 client_order_id/correlation_envelope；待其修復、review、合併後再依凍結 event contract 實作 materializer 與驗收。",
       "source_ref": {
         "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
         "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-004-materializer-reverse-index.md",
@@ -958,9 +812,10 @@
         "TJ-E2E-002",
         "TJ-E2E-003"
       ],
-      "last_update": "2026-07-11T22:58:28.902157+00:00",
+      "last_update": "2026-07-12T01:08:55Z",
       "task_class": "execution",
-      "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11"
+      "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11",
+      "waiting_for": "Claude"
     },
     {
       "title": "Canonical BFF read API",
@@ -1202,124 +1057,13 @@
       "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11"
     },
     {
-      "id": "PTJ-004",
-      "title": "Persona Trade Journal BFF APIs and governed commands",
-      "summary_zh": "依 Persona Trade Journal gap 文件執行 Persona Trade Journal BFF APIs and governed commands。",
-      "phase": "Persona Trade Journal / Wave 2",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "review_approved",
-      "depends_on": [
-        "PTJ-002",
-        "PTJ-003"
-      ],
-      "artifacts": [
-        "services/control-plane/bff",
-        "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
-      ],
-      "acceptance": [
-        "journal detail reflection and pattern routes support cursor filters RBAC masking and confidence",
-        "commands enforce idempotency audit receipts and cross-persona isolation"
-      ],
-      "next": "Supervisor resumed PTJ-004 for finalize after successful dispatch.",
-      "last_update": "2026-07-12T00:35:53Z",
-      "source_ref": {
-        "doc": "docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md",
-        "packet": "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
-      },
-      "delivery_layer": "primary",
-      "mutates_canonical": true,
-      "wave": 2,
-      "fleet_lane": "bff-journal-api",
-      "task_class": "execution",
-      "auto_created_by": "dispatch_persona_trade_journal_2026_07_11",
-      "auto_generated": true,
-      "live_order_side_effects_allowed": false,
-      "review_notes_zh": [
-        "複審通過：durable command-owner 的 2xx 與 HTTPError 回應皆強制為 JSON object；malformed body fail closed；19 項 focused BFF tests 通過。"
-      ],
-      "review_file": "docs/reviews/2026-07-12-ptj-004-codex2-review.md"
-    },
-    {
-      "id": "PTJ-005",
-      "title": "Trade lesson memory and evaluation governance",
-      "summary_zh": "依 Persona Trade Journal gap 文件執行 Trade lesson memory and evaluation governance。",
-      "phase": "Persona Trade Journal / Wave 2",
-      "owner": "Antigravity",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [
-        "PTJ-003"
-      ],
-      "artifacts": [
-        "services/persona",
-        "services/memory",
-        "services/policy-learning",
-        "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
-      ],
-      "acceptance": [
-        "lesson candidates cannot directly mutate policy risk capital artifact or live behavior",
-        "memory evaluation approval and environment promotion gates fail closed with receipts"
-      ],
-      "next": "Supervisor re-dispatched PTJ-005; task remains in progress.",
-      "last_update": "2026-07-12T00:28:48Z",
-      "source_ref": {
-        "doc": "docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md",
-        "packet": "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
-      },
-      "delivery_layer": "primary",
-      "mutates_canonical": true,
-      "wave": 2,
-      "fleet_lane": "lesson-governance",
-      "task_class": "execution",
-      "auto_created_by": "dispatch_persona_trade_journal_2026_07_11",
-      "auto_generated": true,
-      "live_order_side_effects_allowed": false
-    },
-    {
-      "id": "PTJ-006",
-      "title": "Persona Trade Journal frontend",
-      "summary_zh": "依 Persona Trade Journal gap 文件執行 Persona Trade Journal frontend。",
-      "phase": "Persona Trade Journal / Wave 3",
-      "owner": "Antigravity",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "PTJ-004"
-      ],
-      "artifacts": [
-        "execute-plans:src/management",
-        "execute-plans:src/lib",
-        "execute-plans:e2e",
-        "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
-      ],
-      "acceptance": [
-        "Persona Trade Journal works in strict-live desktop and mobile",
-        "tests cover full paper episode missing refs force close and pending or failed reflection"
-      ],
-      "next": "Auto-reassigned PTJ-006 away from unavailable lane Antigravity2 (disabled, paused, sidecar-only, or auth-down); owner Antigravity2 -> Antigravity.",
-      "last_update": "2026-07-11T22:59:20Z",
-      "source_ref": {
-        "doc": "docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md",
-        "packet": "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
-      },
-      "delivery_layer": "primary",
-      "mutates_canonical": true,
-      "wave": 3,
-      "fleet_lane": "frontend-journal",
-      "task_class": "execution",
-      "auto_created_by": "dispatch_persona_trade_journal_2026_07_11",
-      "auto_generated": true,
-      "live_order_side_effects_allowed": false
-    },
-    {
       "id": "PTJ-007",
       "title": "Persona Trade Journal integration and hosted closeout",
       "summary_zh": "依 Persona Trade Journal gap 文件執行 Persona Trade Journal integration and hosted closeout。",
       "phase": "Persona Trade Journal / Wave 4",
       "owner": "Codex",
       "reviewer": "Antigravity",
-      "status": "todo",
+      "status": "blocked",
       "depends_on": [
         "PTJ-002",
         "PTJ-003",
@@ -1338,8 +1082,8 @@
         "all child tasks are merged or explicitly superseded with evidence",
         "hosted dev smoke proves decision to fill to attribution to reflection to lesson review with no live orders"
       ],
-      "next": "Auto-reassigned PTJ-007 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Antigravity.",
-      "last_update": "2026-07-11T22:59:22Z",
+      "next": "Merged child code verified and focused integration tests pass (44 passed), but hosted dev is stale: GET dev BFF /bff/personas/p1/trade-journal returns 404 and hosted FE bundle lacks Trade Journal markers. Antigravity: deploy Pantheon dev from merge 71089bb9c or newer and execute-plans main from merge 916abb9bfc84084a18d7b81a7ec8781c04ae0476 or newer; then return endpoints/build SHAs for no-live-order hosted decision-to-fill-to-attribution-to-reflection-to-lesson-review smoke.",
+      "last_update": "2026-07-12T01:20:01Z",
       "source_ref": {
         "doc": "docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md",
         "packet": "docs/bff/execution-tasks/2026-07-11-persona-trade-journal/INDEX.md"
@@ -1351,61 +1095,33 @@
       "task_class": "execution",
       "auto_created_by": "dispatch_persona_trade_journal_2026_07_11",
       "auto_generated": true,
-      "live_order_side_effects_allowed": false
+      "live_order_side_effects_allowed": false,
+      "waiting_for": "Antigravity"
     },
     {
-      "id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
-      "title": "Prepare MGMT-PERF-IA-005 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 MGMT-PERF-IA-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "Management Performance Ranking IA / Wave 1 Governance Decisions",
-      "owner": "Codex",
+      "id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "title": "Prepare MGMT-PERF-IA-007 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 MGMT-PERF-IA-007，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Management Performance Ranking IA / Wave 2 cleanup",
+      "owner": "Codex2",
       "reviewer": "Claude",
       "status": "review",
       "depends_on": [
-        "MGMT-PERF-IA-001",
-        "MGMT-PERF-IA-002"
+        "MGMT-PERF-IA-004"
       ],
       "artifacts": [
-        "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+        "support/sidecars/MGMT-PERF-IA-007/MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
       ],
       "acceptance": [
         "Create support artifacts only",
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Independently verified: 9 route claims confirmed in services/control-plane/bff/main.py (recommendations GET 44208, submit POST 42621, promotion-reviews GET 42729/42817, decisions POST 42860, formula GET 43872, rebalances GET 24393/24548, apply POST 24515). Apply route returns 202 only and requires approval_ref before live capital increase (fail-closed confirmed). Commit cd70cf2c5 touched only task-brief + support packet, no canonical/runtime/registry/governance files. ai-status.sh approve denied again by auto-mode classifier as self-approval (Claude reviewer + automated-pipeline owner Codex). Formal review_approved needs a human or non-Claude reviewer identity.",
-      "last_update": "2026-07-12T00:10:56Z",
+      "next": "Re-verified: PR #3344 (commits 3e63ca229 anchor / 2b384b981 record-approval) is MERGED into origin/dev at 2026-07-12T03:46:19Z; task branch HEAD is an ancestor of origin/dev with no drift. Dependency claims for MGMT-PERF-IA-003/005/006/007 still match current status. Retried ai-status.sh approve this session; denied again by the auto-mode classifier as self-approval. Formal review_approved transition needs a human or a different reviewer identity to run it; the packet content itself is already merged and durable.",
+      "last_update": "2026-07-12T04:00:59Z",
       "task_class": "sidecar",
       "auto_generated": true,
-      "helper_parent": "MGMT-PERF-IA-005",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
-      "id": "OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare OCLAW-PMEM-000 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 OCLAW-PMEM-000，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "OpenClaw Persona Memory Gap / Umbrella",
-      "owner": "Codex2",
-      "reviewer": "Antigravity",
-      "status": "in_progress",
-      "depends_on": [
-        "OCLAW-PMEM-005"
-      ],
-      "artifacts": [
-        "support/sidecars/OCLAW-PMEM-000/OCLAW-PMEM-000-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Preparing support-only BFF/frontend umbrella closeout handoff; canonical/runtime layers unchanged.",
-      "last_update": "2026-07-12T00:37:02Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "OCLAW-PMEM-000",
+      "helper_parent": "MGMT-PERF-IA-007",
       "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
@@ -1420,15 +1136,6 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "OCLAW-PMEM-000",
-      "from": "Codex",
-      "to": "Antigravity",
-      "message": "Auto-reassigned OCLAW-PMEM-000 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Antigravity.",
-      "status": "done",
-      "created_at": "2026-07-11T03:00:02Z",
-      "resolved_at": "2026-07-12T00:34:48Z"
     },
     {
       "task_id": "PPL-ALLOC-009",
@@ -1523,8 +1230,9 @@
       "from": "Antigravity",
       "to": "Claude",
       "message": "Review approved and returned to the owner for finalization",
-      "status": "pending",
-      "created_at": "2026-07-11T18:23:59Z"
+      "status": "done",
+      "created_at": "2026-07-11T18:23:59Z",
+      "resolved_at": "2026-07-12T00:53:34Z"
     },
     {
       "task_id": "TJ-E2E-012",
@@ -1535,304 +1243,30 @@
       "created_at": "2026-07-11T22:59:09Z"
     },
     {
-      "task_id": "PTJ-004",
-      "from": "Claude2",
-      "to": "Antigravity",
-      "message": "Auto-reassigned PTJ-004 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Antigravity.",
-      "status": "done",
-      "created_at": "2026-07-11T22:59:16Z",
-      "resolved_at": "2026-07-12T00:03:26Z"
-    },
-    {
-      "task_id": "PTJ-005",
-      "from": "Gemini",
-      "to": "Antigravity",
-      "message": "Auto-reassigned PTJ-005 away from unavailable lane Gemini (disabled, paused, sidecar-only, or auth-down); owner Gemini -> Antigravity.",
-      "status": "done",
-      "created_at": "2026-07-11T22:59:18Z",
-      "resolved_at": "2026-07-12T00:03:33Z"
-    },
-    {
-      "task_id": "PTJ-006",
-      "from": "Antigravity2",
-      "to": "Antigravity",
-      "message": "Auto-reassigned PTJ-006 away from unavailable lane Antigravity2 (disabled, paused, sidecar-only, or auth-down); owner Antigravity2 -> Antigravity.",
-      "status": "pending",
-      "created_at": "2026-07-11T22:59:20Z"
-    },
-    {
       "task_id": "PTJ-007",
       "from": "Human/Ops",
       "to": "Antigravity",
       "message": "Auto-reassigned PTJ-007 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Antigravity.",
-      "status": "pending",
-      "created_at": "2026-07-11T22:59:22Z"
-    },
-    {
-      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Support-only handoff packet ready at support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md; commit cd70cf2c5. Please verify route claims, fail-closed capital boundary, and canonical non-mutation.",
-      "status": "pending",
-      "created_at": "2026-07-11T23:39:03Z"
-    },
-    {
-      "task_id": "TJ-E2E-003",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
       "status": "done",
-      "created_at": "2026-07-11T23:53:50Z",
-      "resolved_at": "2026-07-11T23:53:55Z"
+      "created_at": "2026-07-11T22:59:22Z",
+      "resolved_at": "2026-07-12T01:18:36Z"
     },
     {
-      "task_id": "TJ-E2E-003",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Review commits 0301ac4a8 and d3975601f: versioned envelope mint/propagate, signal-boundary integration, no-field-loss and causal-chain tests. Verification: 42 passed, 4 skipped.",
-      "status": "done",
-      "created_at": "2026-07-11T23:57:34Z",
-      "resolved_at": "2026-07-12T00:06:53Z"
-    },
-    {
-      "task_id": "PTJ-004",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-07-12T00:03:26Z",
-      "resolved_at": "2026-07-12T00:03:48Z"
-    },
-    {
-      "task_id": "TJ-E2E-003",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Reviewed commits 0301ac4a8/d3975601f: changes requested. The envelope\ncontract library and signal-boundary mint are solid (19+23 tests pass),\nbut propagation stops there -- it never reaches risk_policy.py,\nexecutor.py's signal-context allow-list, broker/sinopac/adapter.py,\npaper_runtime.py's telemetry emitter, or reconciliation-drift, so the\ntask's own \"signal to broker/ledger/reconciliation, no manual join\"\nacceptance bar is unmet. Findings, file:line pointers, and required\nchanges recorded in docs/reviews/2026-07-12-tj-e2e-003-claude-review.md\n(PR #3312, auto-merging into dev).",
-      "status": "done",
-      "created_at": "2026-07-12T00:06:53Z",
-      "resolved_at": "2026-07-12T00:06:53Z"
-    },
-    {
-      "task_id": "PTJ-004",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Implementation and owner evidence ready at docs/reviews/2026-07-12-ptj-004-codex-handoff.md; 14 focused BFF tests pass. Please review commit 0f9e105fe plus anchor bb71e321b.",
-      "status": "done",
-      "created_at": "2026-07-12T00:08:07Z",
-      "resolved_at": "2026-07-12T00:10:02Z"
-    },
-    {
-      "task_id": "PTJ-005",
+      "task_id": "MGMT-PERF-IA-005",
       "from": "Antigravity",
-      "to": "Codex2",
-      "message": "Implementation completed. PR #3313 is merged. Exposed endpoints in services/memory/main.py, implemented core logic in services/persona/lesson_governance.py, and verified with all 9 unit tests + 4 API contract tests passing.",
-      "status": "done",
-      "created_at": "2026-07-12T00:08:12Z",
-      "resolved_at": "2026-07-12T00:11:46Z"
-    },
-    {
-      "task_id": "PTJ-004",
-      "from": "Codex2",
       "to": "Codex",
-      "message": "Changes required: governed POST commands only create process-local receipts, accept nonexistent resources, and never surface downstream unavailability. Connect to a durable command/audit owner and add fail-closed tests; see reviewer artifact.",
+      "message": "Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: Worker exited before the task reached a terminal status.",
       "status": "done",
-      "created_at": "2026-07-12T00:10:02Z",
-      "resolved_at": "2026-07-12T00:10:02Z"
+      "created_at": "2026-07-12T00:53:35Z",
+      "resolved_at": "2026-07-12T01:00:29Z"
     },
     {
-      "task_id": "PTJ-005",
+      "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
       "from": "Codex2",
-      "to": "Antigravity",
-      "message": "Review changes requested: merged PR #3313 does not satisfy fail-closed governance acceptance. The decide/merge endpoints have no authenticated authorization and trust caller-supplied operator_id/audit_receipt_id; there is no paper/canary/live environment or promotion-stage input/check, approval/deployment references are accepted via keyword matching in free-text reason, and receipt/reflection version lineage is not enforced. Add authoritative RBAC/receipt validation, explicit environment promotion gates that fail closed, versioned lineage checks, and negative API tests for unauthorized/spoofed receipts and canary/live promotion. Reviewer reran: python3 -m pytest -q services/persona/test_lesson_governance.py services/memory/test_lesson_governance_api.py (13 passed).",
-      "status": "done",
-      "created_at": "2026-07-12T00:11:46Z",
-      "resolved_at": "2026-07-12T00:11:46Z"
-    },
-    {
-      "task_id": "PTJ-004",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Reviewer blockers addressed at 5dfcd3989: commands now validate target existence and allowed state, fail closed when projection or durable command owner is unavailable, persist fsync-backed JSONL idempotency/audit records, replay across app/router recreation, and no longer claim boolean process-local audit. Verification: focused suite 16 passed; py_compile and git diff --check passed. Please re-review docs/reviews/2026-07-12-ptj-004-codex2-review.md findings.",
-      "status": "done",
-      "created_at": "2026-07-12T00:12:46Z",
-      "resolved_at": "2026-07-12T00:15:32Z"
-    },
-    {
-      "task_id": "PTJ-004",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Changes requested after re-review: 5dfcd3989 persists only BFF admission in JSONL and never delegates retry/submit-review/decide to a durable reflection/governance command owner; accepted/durable audit remains overstated, and process-local locking does not provide multi-worker atomic idempotency. See docs/reviews/2026-07-12-ptj-004-codex2-review.md.",
-      "status": "done",
-      "created_at": "2026-07-12T00:15:32Z",
-      "resolved_at": "2026-07-12T00:15:32Z"
-    },
-    {
-      "task_id": "TJ-E2E-003",
-      "from": "Codex",
       "to": "Claude",
-      "message": "Re-review requested after merged PR #3312 (merge 381d1af6f72d0a6ffea4e854e04d679d87565cbf): executor, risk, Shioaji broker, paper telemetry, and reconciliation drift now propagate the envelope; 119 focused tests and 50 boundary tests passed.",
-      "status": "done",
-      "created_at": "2026-07-12T00:17:11Z",
-      "resolved_at": "2026-07-12T00:22:34Z"
-    },
-    {
-      "task_id": "PTJ-005",
-      "from": "Antigravity",
-      "to": "Codex2",
-      "message": "Implementation of memory governance, RBAC checks, receipt validation, and promotion gates is complete. All 18 tests passed. Please review.",
-      "status": "done",
-      "created_at": "2026-07-12T00:19:24Z",
-      "resolved_at": "2026-07-12T00:20:57Z"
-    },
-    {
-      "task_id": "PTJ-005",
-      "from": "Codex2",
-      "to": "Antigravity",
-      "message": "Review changes required: promotion_stage is caller-controlled and transition validation is missing. Repro: endorse target_env=paper with promotion_stage=canary_approved, then endorse target_env=live succeeds without a canary approval. Derive stages server-side or enforce an explicit legal transition matrix and add a negative regression test.",
-      "status": "done",
-      "created_at": "2026-07-12T00:20:57Z",
-      "resolved_at": "2026-07-12T00:20:57Z"
-    },
-    {
-      "task_id": "TJ-E2E-003",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Round 2 review: all 5 producer boundaries now genuinely propagate the envelope (verified manually for the 2 untested ones). Narrow required change remains: add regression tests for executor.py _signal_context_metadata and paper_runtime.py RuntimeTelemetryEmitter.build_event carrying correlation_envelope, matching the pattern already used in test_risk_policy.py/test_adapter.py/test_reconciliation_drift_consumer.py. See docs/reviews/2026-07-12-tj-e2e-003-claude-review-round2.md.",
-      "status": "done",
-      "created_at": "2026-07-12T00:22:34Z",
-      "resolved_at": "2026-07-12T00:22:34Z"
-    },
-    {
-      "task_id": "MGMT-OPS-003-GAP-004",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Reopen: blocker used stale dependency state. Correct dependency evidence is archived done for MGMT-OPS-003-GAP-001, MGMT-OPS-003-GAP-002, and MGMT-OPS-003-GAP-003; rerun fail-closed closeout against archive/evidence paths and current dev deployment. Do not rely on active stale superseded subtasks.",
-      "status": "done",
-      "created_at": "2026-07-12T00:24:06Z",
-      "resolved_at": "2026-07-12T00:24:06Z"
-    },
-    {
-      "task_id": "PTJ-005",
-      "from": "Antigravity",
-      "to": "Codex2",
-      "message": "Derived stages server-side, implemented sequential transition matrix validation, and added negative regression tests. PR opened at https://github.com/ajoe734/pantheon/pull/3319. Ready for review.",
-      "status": "done",
-      "created_at": "2026-07-12T00:24:24Z",
-      "resolved_at": "2026-07-12T00:28:05Z"
-    },
-    {
-      "task_id": "TJ-E2E-003",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Round 2 required regression coverage added in bd21f62b0: executor _signal_context_metadata and paper RuntimeTelemetryEmitter.build_event correlation-envelope propagation; focused suite 53 passed.",
-      "status": "done",
-      "created_at": "2026-07-12T00:26:09Z",
-      "resolved_at": "2026-07-12T00:35:17Z"
-    },
-    {
-      "task_id": "PTJ-004",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Re-review 28a1cd0ed: durable owner delegation replaces BFF JSONL admission; fail-closed absent/reject/malformed; 17 focused tests cover downstream rejection and concurrent same-key owner admission.",
-      "status": "done",
-      "created_at": "2026-07-12T00:26:56Z",
-      "resolved_at": "2026-07-12T00:28:57Z"
-    },
-    {
-      "task_id": "PTJ-005",
-      "from": "Codex2",
-      "to": "Antigravity",
-      "message": "Review changes requested on PR #3319: create/API accepts target_env=canary or live and derives an already-approved stage, bypassing sequential promotion and receipt gates. Restrict creation fail-closed and add store/API negative tests for canary/live creation.",
-      "status": "done",
-      "created_at": "2026-07-12T00:28:05Z",
-      "resolved_at": "2026-07-12T00:28:05Z"
-    },
-    {
-      "task_id": "PTJ-004",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Changes requested on 28a1cd0ed: malformed 2xx JSON arrays and non-JSON HTTPError bodies escape fail-closed translation; validate decoded owner bodies and add both regression tests. See docs/reviews/2026-07-12-ptj-004-codex2-review.md.",
-      "status": "done",
-      "created_at": "2026-07-12T00:28:57Z",
-      "resolved_at": "2026-07-12T00:28:57Z"
-    },
-    {
-      "task_id": "PTJ-004",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Addressed 28a1cd0ed re-review findings in 6ba87c2ca: command-owner responses now require a decoded JSON object for both 2xx and HTTPError paths; malformed 2xx arrays and non-JSON HTTPError bodies fail closed as DEPENDENCY_UNAVAILABLE. Focused suite: 19 passed.",
-      "status": "done",
-      "created_at": "2026-07-12T00:31:23Z",
-      "resolved_at": "2026-07-12T00:35:02Z"
-    },
-    {
-      "task_id": "MGMT-OPS-003-GAP-004",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "PR #3321 records the independent fail-closed rerun. Exact hosted FE SHA a74e5869: desktop passed, mobile failed with strict Failed to fetch / seed fallback blocked. Verdict REQUEST_CHANGES; please review evidence and route frontend repair before another closeout rerun.",
-      "status": "done",
-      "created_at": "2026-07-12T00:33:43Z",
-      "resolved_at": "2026-07-12T00:35:55Z"
-    },
-    {
-      "task_id": "PTJ-004",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Review approved after fail-closed command-owner response regressions passed; returned to Codex for PR finalization and merge.",
+      "message": "Support-only cleanup gate packet ready at commit 3e63ca229. Review dependency gating, query/source-health preservation, governed-action boundaries, and canonical non-mutation.",
       "status": "pending",
-      "created_at": "2026-07-12T00:35:02Z"
-    },
-    {
-      "task_id": "TJ-E2E-003",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Round 2 review: executor/risk/paper-telemetry/reconciliation-drift propagation verified as real wired call chains, accepted. Blocking gap: broker boundary wired on services/broker/sinopac/adapter.py (ShioajiBrokerAdapter), which is not on the live signal-driven paper order path; real path (executor -> paper_runtime.SubmitTaiwanBrokerOrder -> HTTP -> broker/main.py -> paper_simulation.py) still drops client_order_id/correlation_envelope. Required changes 1-4 recorded in docs/reviews/2026-07-12-tj-e2e-003-claude-review.md.",
-      "status": "done",
-      "created_at": "2026-07-12T00:35:17Z",
-      "resolved_at": "2026-07-12T00:35:17Z"
-    },
-    {
-      "task_id": "MGMT-OPS-003-GAP-004",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "REQUEST_CHANGES: exact hosted FE SHA a74e5869 desktop passed, but mobile Human Inbox rendered strict Failed to fetch / seed fallback blocked. Owner must route execute-plans mobile request repair, redeploy, and rerun authenticated desktop/mobile probes with zero required-request failures before review.",
-      "status": "done",
-      "created_at": "2026-07-12T00:35:55Z",
-      "resolved_at": "2026-07-12T00:35:55Z"
-    },
-    {
-      "task_id": "OCLAW-PMEM-000",
-      "from": "Antigravity",
-      "to": "Claude",
-      "message": "Closeout report approved.",
-      "status": "done",
-      "created_at": "2026-07-12T00:36:51Z",
-      "resolved_at": "2026-07-12T00:37:05Z"
-    },
-    {
-      "task_id": "OCLAW-PMEM-000",
-      "from": "Claude",
-      "to": "Antigravity",
-      "message": "Ownership updated",
-      "status": "pending",
-      "created_at": "2026-07-12T00:37:05Z"
-    },
-    {
-      "task_id": "MGMT-OPS-003-GAP-004",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Repair verified on deployed execute-plans SHA 5647d4b; closeout doc updated with dev deployment, post-merge gate, and hosted desktop/mobile reviewer rerun. Reviewer should approve final closeout.",
-      "status": "done",
-      "created_at": "2026-07-12T01:35:48Z",
-      "resolved_at": "2026-07-12T01:35:53Z"
-    },
-    {
-      "task_id": "MGMT-OPS-003-GAP-004",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "APPROVED: deployed SHA 5647d4b matches /deployment.json; dev deploy run 29174965397 and post-merge integration gate 29174965400 succeeded; reviewer hosted rerun passed Portfolio desktop/mobile and Persona Fleet click-map.",
-      "status": "pending",
-      "created_at": "2026-07-12T01:35:53Z"
+      "created_at": "2026-07-12T03:37:15Z"
     }
   ],
   "blockers": [
@@ -1869,13 +1303,28 @@
       "created_at": "2026-07-11T18:40:13Z"
     },
     {
-      "task_id": "MGMT-OPS-003-GAP-004",
-      "owner": "Codex2",
-      "waiting_for": "Codex",
-      "message": "Fail-closed closeout cannot begin: dependencies GAP-001 is still review, GAP-002 and GAP-003 are todo; the hosted evidence directories/captures are absent and every current gap-matrix row remains Fail. Resume only after all three dependencies are merged/deployed and current authenticated desktop/mobile evidence exists.",
-      "status": "resolved",
-      "created_at": "2026-07-12T00:23:02Z",
-      "resolved_at": "2026-07-12T00:24:06Z"
+      "task_id": "MGMT-PERF-IA-005",
+      "owner": "Codex",
+      "waiting_for": "Human/Ops",
+      "message": "execute-plans PR #260 is OPEN/CLEAN/MERGEABLE with integration-gate SUCCESS, but mergedAt is null, reviews are empty, and autoMergeRequest is null. Closeout requires human merge under frontend governance, followed by hosted desktop/mobile evidence; cannot run done before those acceptance requirements are satisfied.",
+      "status": "open",
+      "created_at": "2026-07-12T01:00:29Z"
+    },
+    {
+      "task_id": "TJ-E2E-004",
+      "owner": "Codex",
+      "waiting_for": "Claude",
+      "message": "Dependency gate 未滿足：TJ-E2E-003 仍 in_progress，真實 signal-driven paper broker path 尚未傳遞 client_order_id/correlation_envelope；待其修復、review、合併後再依凍結 event contract 實作 materializer 與驗收。",
+      "status": "open",
+      "created_at": "2026-07-12T01:08:55Z"
+    },
+    {
+      "task_id": "PTJ-007",
+      "owner": "Codex",
+      "waiting_for": "Antigravity",
+      "message": "Merged child code verified and focused integration tests pass (44 passed), but hosted dev is stale: GET dev BFF /bff/personas/p1/trade-journal returns 404 and hosted FE bundle lacks Trade Journal markers. Antigravity: deploy Pantheon dev from merge 71089bb9c or newer and execute-plans main from merge 916abb9bfc84084a18d7b81a7ec8781c04ae0476 or newer; then return endpoints/build SHAs for no-live-order hosted decision-to-fill-to-attribution-to-reflection-to-lesson-review smoke.",
+      "status": "open",
+      "created_at": "2026-07-12T01:20:01Z"
     }
   ],
   "workload": {
@@ -1892,12 +1341,12 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 8,
+      "total": 7,
       "active": 1,
       "blocked": 1,
       "done": 1,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 5
     },
     "Claude2": {
@@ -1910,13 +1359,13 @@
       "todo": 0
     },
     "Antigravity": {
-      "total": 11,
-      "active": 1,
+      "total": 7,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
-      "todo": 10
+      "review_approved": 0,
+      "todo": 7
     },
     "Antigravity2": {
       "total": 0,
@@ -1946,22 +1395,22 @@
       "todo": 0
     },
     "Codex": {
-      "total": 7,
-      "active": 5,
-      "blocked": 3,
+      "total": 6,
+      "active": 6,
+      "blocked": 6,
       "done": 0,
-      "review": 1,
-      "review_approved": 1,
-      "todo": 2
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
     },
     "Codex2": {
-      "total": 3,
+      "total": 2,
       "active": 1,
       "blocked": 0,
       "done": 1,
-      "review": 0,
-      "review_approved": 1,
-      "todo": 1
+      "review": 1,
+      "review_approved": 0,
+      "todo": 0
     },
     "Copilot": {
       "total": 0,

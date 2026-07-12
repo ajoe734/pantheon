@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-07-07T15:06:53Z",
+  "updated_at": "2026-07-12T04:09:36Z",
   "counts": {
-    "total": 1962,
-    "completed": 1919,
+    "total": 1963,
+    "completed": 1920,
     "superseded": 43
   },
   "recent_terminal_ids": [
+    "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
     "AG-DYNUI-FULL-007",
     "AG-DYNUI-FULL-006",
     "AG-DYNUI-FULL-005",
@@ -25,7 +26,6 @@
     "MGMT-LOAD-007-SIDECAR-BFF-HANDOFF",
     "MGMT-LOAD-007",
     "MGMT-LOAD-006",
-    "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
-    "MGMT-LOAD-003"
+    "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6"
   ]
 }
