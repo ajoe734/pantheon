@@ -59191,6 +59191,14 @@ app.include_router(_create_trade_journal_router(
 ))
 
 
+# TJ-E2E-005: canonical Trade Journey read API via isolated module
+from trade_journeys import create_trade_journeys_router as _create_trade_journeys_router  # noqa: E402
+app.include_router(_create_trade_journeys_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+))
+
+
 # BFFGAP-LINEAGE: lineage graph endpoint via isolated module
 from console_gap.lineage import create_lineage_router  # noqa: E402
 app.include_router(
