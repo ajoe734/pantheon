@@ -140,6 +140,15 @@ Composes with: the original handoff packet, follow-ups 2-5, the canonical
 gate; sidecar reviewer `Antigravity` decides whether this support artifact is
 suitable for composition.
 
+## Reviewer Checklist
+
+- [x] Snapshot statements match current durable task state.
+- [x] Missing active dependency rows are not treated as terminal success.
+- [x] The `PPL-ALLOC-007` blocker remains explicit and is not worked around.
+- [x] Admission, execution, readback, and frontend rendering remain distinct.
+- [x] No new route, schema, governance, deployment, or capital truth is claimed.
+- [x] Output is suitable for parent-owner composition as support material only.
+
 ## References
 
 - `support/sidecars/PPL-ALLOC-009/PPL-ALLOC-009-SIDECAR-BFF-HANDOFF.md`
