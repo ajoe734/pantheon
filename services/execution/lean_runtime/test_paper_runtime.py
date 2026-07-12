@@ -788,6 +788,27 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(event["metadata"]["engine_bridge_commit"], "abc1234")
         self.assertEqual(event["metadata"]["context_source"], "launch_manifest")
 
+    def test_runtime_telemetry_emitter_build_event_propagates_correlation_envelope(self):
+        from services.trade_journey.correlation_envelope import mint_trade_envelope
+
+        incoming = mint_trade_envelope(
+            {"tenant_id": "tenant-1", "environment": "paper"},
+            producer="control_plane.signal",
+        )
+        emitter = RuntimeTelemetryEmitter(self._identity(), _FakeBindingResolver(self._binding()))
+
+        event = emitter.build_event(
+            "heartbeat",
+            {"heartbeat": 1},
+            metadata={"correlation_envelope": incoming},
+        )
+
+        self.assertIsNotNone(event)
+        outgoing = event["correlation_envelope"]
+        self.assertEqual(outgoing["journey_id"], incoming["journey_id"])
+        self.assertEqual(outgoing["causation_event_id"], incoming["event_id"])
+        self.assertEqual(outgoing["producer"], "execution.paper_runtime")
+
     def test_runtime_telemetry_emitter_rejects_non_paper_stage(self):
         binding = self._binding()
         binding["deployment_mode"] = "live"
