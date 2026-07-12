@@ -54,6 +54,21 @@ def test_conflicts_and_governance_ceiling_fail_closed(monkeypatch):
     assert c.post(f"/bff/agora/proposals/{pid}/actions", headers={"Authorization": HEADERS["Authorization"], "If-Match": created.headers["etag"]}, json={"action": "approve", "reason": "premature"}).status_code == 422
 
 
+def test_create_rejects_timezone_naive_expiry_without_500(monkeypatch):
+    c = client(monkeypatch)
+    naive = payload()
+    naive["expires_at"] = (datetime.now() + timedelta(days=1)).isoformat()
+
+    response = c.post(
+        "/bff/agora/proposals",
+        headers={**HEADERS, "Idempotency-Key": "naive-expiry"},
+        json=naive,
+    )
+
+    assert response.status_code == 422, response.text
+    assert "timezone offset" in response.text
+
+
 def test_create_idempotency_replays_and_payload_mismatch_conflicts(monkeypatch):
     c = client(monkeypatch)
     headers = {**HEADERS, "Idempotency-Key": "replay-key"}
