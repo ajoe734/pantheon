@@ -1898,6 +1898,23 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
     _clear_provider_env(monkeypatch)
     monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
     client = _seeded_client(tmp_path, monkeypatch)
+    original_provider_list = bff_main._assistant_provider_list
+
+    def provider_list_with_openclaw(*, auth_probe=False):
+        payload = original_provider_list(auth_probe=auth_probe)
+        payload["data"].append(
+            {
+                "provider": "openclaw",
+                "provider_name": "OpenClaw",
+                "runtime": "openclaw_gateway_agent_cli",
+                "ready": True,
+                "status": "ready",
+                "auth_status": "ready",
+            }
+        )
+        return payload
+
+    monkeypatch.setattr(bff_main, "_assistant_provider_list", provider_list_with_openclaw)
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     now = bff_main.datetime.now(bff_main.timezone.utc).replace(microsecond=0)
     started_at = (now - bff_main.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
@@ -1973,6 +1990,13 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
     assert codex["live_smoke"]["status"] == "not_checked"
     assert codex["readiness"]["mount_ready_is_sufficient"] is False
     assert codex["reauth"]["status"] == "not_started"
+    assert codex["persona_dependencies"] == {
+        "status": "unavailable",
+        "count": None,
+        "personas": [],
+        "source": None,
+        "reason": "persona_dependency_inventory_unavailable",
+    }
     assert "liveAuth" not in codex
     assert codex["quota"]["source"] == "provider_snapshot"
     assert codex["quota"]["remaining"] == 12
@@ -1986,8 +2010,19 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
     assert codex["models"][0]["input_tokens"] == 10
     claude = providers["claude"]
     assert claude["live_auth"] is False
+    assert claude["provider_auth"]["authenticated"] is False
+    assert claude["live_smoke"]["status"] == "not_checked"
+    assert claude["readiness"]["mount_ready_is_sufficient"] is False
+    assert claude["reauth"]["status"] == "not_started"
+    assert claude["persona_dependencies"]["reason"] == "persona_dependency_inventory_unavailable"
     assert claude["failed_count"] == 1
     assert claude["quota"]["source"] == "not_configured"
+    openclaw = providers["openclaw"]
+    assert openclaw["provider_auth"]["status"] == "ready"
+    assert openclaw["live_smoke"]["status"] == "not_checked"
+    assert openclaw["readiness"]["mount_ready_is_sufficient"] is False
+    assert openclaw["reauth"]["status"] == "not_started"
+    assert openclaw["persona_dependencies"]["reason"] == "persona_dependency_inventory_unavailable"
     assert data["quota"]["missing_source_means"] == "quota remaining is unknown, not zero"
     assert data["usage"]["truth_policy"] == "observed_bff_events_only"
     assert "missingSourceMeans" not in data["quota"]

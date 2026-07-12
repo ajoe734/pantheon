@@ -34696,6 +34696,13 @@ def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
         "last_status": None,
         "last_error": None,
         "quota": _management_ai_quota_snapshot({}),
+        "persona_dependencies": {
+            "status": "unavailable",
+            "count": None,
+            "personas": [],
+            "source": None,
+            "reason": "persona_dependency_inventory_unavailable",
+        },
         "observed_usage": dict(observed_usage),
         "models": {},
     }
@@ -34826,6 +34833,29 @@ def _assistant_provider_usage_summary(
         live_auth = bool(item.get("ready") is True and str(auth_status or "").lower() in {"ready", "account_session", "authorized"})
         row["live_auth"] = live_auth
         row["quota"] = _management_ai_quota_snapshot(item)
+        dependencies = item.get("persona_dependencies", item.get("personaDependencies"))
+        if isinstance(dependencies, dict):
+            dependency_personas = dependencies.get("personas")
+            if not isinstance(dependency_personas, list):
+                dependency_personas = []
+            dependency_status = str(dependencies.get("status") or "available")
+            row["persona_dependencies"] = {
+                "status": dependency_status,
+                "count": dependencies.get("count", len(dependency_personas)),
+                "personas": dependency_personas,
+                "source": dependencies.get("source") or "provider_inventory",
+                "reason": dependencies.get("reason"),
+            }
+        else:
+            dependency_personas = item.get("dependent_personas", item.get("dependentPersonas"))
+            if isinstance(dependency_personas, list):
+                row["persona_dependencies"] = {
+                    "status": "available",
+                    "count": len(dependency_personas),
+                    "personas": dependency_personas,
+                    "source": "provider_inventory",
+                    "reason": None,
+                }
         smoke = item.get("live_smoke") if isinstance(item.get("live_smoke"), dict) else {}
         reauth = item.get("reauth") if isinstance(item.get("reauth"), dict) else {}
         row["provider_auth"] = {

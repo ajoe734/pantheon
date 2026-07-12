@@ -45,18 +45,21 @@ a missing read-store method instead of the Memory Plane.
   returns an invalid response.
 - `GET /bff/assistant/providers/usage-summary` separates provider auth,
   provider live-smoke proof, provider-reported quota source, BFF-observed
-  usage, and reauth state. Readiness explicitly records that mount readiness
-  is not sufficient provider proof.
+  usage, persona dependencies, and reauth state. A missing dependency inventory
+  reports `persona_dependency_inventory_unavailable`; readiness explicitly
+  records that mount readiness is not sufficient provider proof.
 - Persona runtime profiles expose runtime routing and memory materialization
   metadata independently of provider authentication state.
 
-The execute-plans rendering layer remains a cross-repository composition
-boundary. This Pantheon task delivers and verifies the BFF DTOs consumed by
-that layer; it does not materialize frontend source inside this repository.
+The Management LLM Auth panel in `ajoe734/execute-plans` consumes these truth
+objects and renders provider auth, live smoke, readiness, dependency count,
+quota source, and reauth state independently. The frontend change is delivered
+from a clean task worktree based on the remote branch containing the current
+Management UI; frontend source is not copied into Pantheon.
 
 ## Verification evidence
 
-Run on 2026-07-11 from `task/OCLAW-PMEM-004`:
+Run on 2026-07-12 from `task/OCLAW-PMEM-004`:
 
 ```text
 pytest -q services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py \
@@ -65,3 +68,14 @@ pytest -q services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py \
 
 Result: all selected tests passed. The only output was the existing FastAPI
 `on_event` deprecation warning.
+
+Frontend verification in the `execute-plans` task worktree:
+
+```text
+npm test -- --run src/management/components/openclaw/OpenClawLlmAuthPanel.test.tsx \
+  src/lib/bff-v1/__tests__/managementAi.test.ts
+npm run build
+```
+
+Result: 36 focused tests passed and the production build completed. Existing
+Rollup circular-chunk, CSS minification, and bundle-size warnings remain.
