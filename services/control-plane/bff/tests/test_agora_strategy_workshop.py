@@ -618,7 +618,70 @@ class TestWorkshopRouterEndpoints:
         assert comp_resp.status_code == 200, comp_resp.text
         assert comp_resp.json()["data"] is None
 
-    def test_post_completeness_persists_readiness_cards_and_trading_room_strategy(self, monkeypatch):
+    def test_post_winner_branch_completeness_blocks_projection(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(
+            client,
+            "idem-comp-winner-branch-create-001",
+            strategy_ref="strat-winner-branch-001",
+        )
+        etag_before = _get_current_etag(client, workshop_id)
+
+        # 12 blocks, all confirmed except sizing_leverage (missing) and monitoring_update (missing)
+        winner_state_map = {
+            "market_scope": "confirmed",
+            "insider_branch_mapping": "confirmed",
+            "winner_branch_scoring": "confirmed",
+            "migration_reverse_flow": "confirmed",
+            "event_lead": "confirmed",
+            "signal_formation": "confirmed",
+            "entry_holding": "confirmed",
+            "add_reduce_exit": "confirmed",
+            "sizing_leverage": "missing",
+            "cost_liquidity_capacity": "confirmed",
+            "validation_backtest_refutation": "confirmed",
+            "monitoring_update": "missing",
+        }
+
+        create_snapshot = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-comp-winner-branch-post-001",
+                "If-Match": etag_before,
+                "Content-Type": "application/json",
+            },
+            json={
+                "strategy_version_id": "wv-winner-branch-001",
+                "state_map_json": winner_state_map,
+                "blocking_items_json": [],
+                "next_question_json": {},
+            },
+        )
+
+        assert create_snapshot.status_code == 201, create_snapshot.text
+        payload = create_snapshot.json()["data"]
+
+        # Since sizing_leverage is weak, risk_constraints / position_sizing will be weak, which blocks validation
+        assert payload["readiness"]["highest_ready_gate"] == "preliminary_research"
+
+        # Check that completeness card generated dimension updates mapped correctly
+        cards = client.get(
+            f"/bff/agora/workshops/{workshop_id}/cards",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        assert cards.status_code == 200
+        comp_card = next(c for c in cards.json()["data"] if c["card_type"] == "completeness_update")
+        dim_updates = {u["dimension"]: u for u in comp_card["payload"]["dimension_updates"]}
+
+        # 7 generic dimensions projected from the 12 blocks:
+        # hypothesis (event_lead, signal_formation) -> complete
+        assert dim_updates["hypothesis"]["current_grade"] == "complete"
+        # risk_constraints (sizing_leverage) -> missing (missing -> missing)
+        assert dim_updates["risk_constraints"]["current_grade"] == "missing"
+        # governance (monitoring_update) -> missing
+        assert dim_updates["governance"]["current_grade"] == "missing"
+
         client = _workshop_client(monkeypatch)
         workshop_id = _create_workshop(
             client,
