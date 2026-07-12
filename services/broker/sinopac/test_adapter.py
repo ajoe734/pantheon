@@ -116,6 +116,27 @@ class TestSandboxGateFailClosed(unittest.TestCase):
         mock_api.update_status.assert_not_called()
 
 
+class TestCorrelationEnvelope(unittest.TestCase):
+    def test_submit_preserves_client_order_id_and_propagates_envelope(self):
+        from services.trade_journey.correlation_envelope import mint_trade_envelope
+        incoming = mint_trade_envelope(
+            {"tenant_id": "tenant-1", "environment": "broker_sandbox"},
+            producer="execution.signal-decision",
+        )
+        order = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=_make_mock_api(),
+            submit_spacing_seconds=0,
+        ).submit(
+            **_ORDER_KWARGS,
+            client_order_id="client-order-1",
+            correlation_envelope=incoming,
+        )
+        self.assertEqual(order.client_order_id, "client-order-1")
+        self.assertEqual(order.correlation_envelope["journey_id"], incoming["journey_id"])
+        self.assertEqual(order.correlation_envelope["causation_event_id"], incoming["event_id"])
+
+
 class TestLiveOrderAlwaysRejected(unittest.TestCase):
     """Live reject path must raise unconditionally regardless of sandbox gate."""
 
