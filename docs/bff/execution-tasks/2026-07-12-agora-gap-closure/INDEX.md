@@ -6,3 +6,6 @@
 - [AG-GAP-013 market-data activation](AG-GAP-013-market-data-activation.md):
   projects real SRCLIVE source records into Agora market/watchlist and daily
   signal surfaces without inventing rows.
+- [AG-GAP-007 capabilities mismatch](AG-GAP-007-capabilities-mismatch.md): fixes the
+  BFF /bff/agora/capabilities endpoint silent projection loading failure and documents
+  the dev journal dry-run residue cleanup procedure.
