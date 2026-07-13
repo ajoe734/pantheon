@@ -445,7 +445,7 @@ def test_bff_rebalance_create_requires_capital_pool_id() -> None:
             bff_main.read_store = original
 
 
-def test_bff_rebalance_create_returns_202_with_command_metadata() -> None:
+def test_bff_rebalance_create_rejects_legacy_payload_without_lineage() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
         try:
@@ -455,9 +455,7 @@ def test_bff_rebalance_create_returns_202_with_command_metadata() -> None:
                 json={"capital_pool_id": "pool-alpha", "reason": "quarterly rebalance"},
                 headers={**HEADERS, "Idempotency-Key": "rb-create-001"},
             )
-            assert resp.status_code == 202, resp.text
-            body = resp.json()
-            assert "rebalance_id" in body
+            assert resp.status_code == 422, resp.text
         finally:
             bff_main.read_store = original
 
