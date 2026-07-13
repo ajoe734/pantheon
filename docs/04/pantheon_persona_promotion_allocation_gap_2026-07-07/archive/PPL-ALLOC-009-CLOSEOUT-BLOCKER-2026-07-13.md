@@ -18,6 +18,20 @@ packet's required end-to-end proof.
 Sanitized probe results are recorded in
 `PPL-ALLOC-009-HOSTED-EVIDENCE-2026-07-13.json` in this directory.
 
+### Redispatch recheck
+
+The supervisor redispatched the task after all formal dependencies became
+terminal. A read-only hosted recheck at `2026-07-13T04:35:50Z` confirmed that
+this did not clear the execution blocker:
+
+- `GET /healthz` returned HTTP 200 and reported all named dependencies ready.
+- `GET /api/v1/operator/commands/7a3e7310-0596-4805-81d6-40b75fd7a412`
+  returned HTTP 200 with `status=submitted`, `result=null`, and `error=null`.
+
+No capital-affecting command was issued during this recheck. The required
+terminal execution/readback and legitimate second-operator containment proof
+remain outstanding.
+
 ## Dependency And PR Ledger
 
 All implementation dependencies have durable `done` records. The relevant
