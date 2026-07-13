@@ -903,7 +903,6 @@ services:
       PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
-      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - bff-data:/data/bff
@@ -1340,6 +1339,31 @@ services:
       EVOLUTION_SWEEP_MAX_INCIDENTS: ${EVOLUTION_SWEEP_MAX_INCIDENTS:-}
     depends_on:
       evolution:
+        condition: service_healthy
+
+  evolution-threshold-sweep-producer:
+    build:
+      context: .
+      dockerfile: services/evolution/Dockerfile
+    command: ["python", "-m", "services.evolution.threshold_sweep_worker"]
+    restart: unless-stopped
+    environment:
+      EVOCHAIN_TELEMETRY_API_URL: http://telemetry:8083
+      EVOCHAIN_INCIDENTS_API_URL: http://incidents:8090
+      EVOCHAIN_THRESHOLD_SWEEP_CONFIG_PATH: /workspace/services/evolution/config/threshold_sweep_thresholds.json
+      EVOCHAIN_THRESHOLD_SWEEP_BASELINES_PATH: /workspace/services/evolution/config/threshold_sweep_baselines.json
+      EVOCHAIN_THRESHOLD_SWEEP_STATE_PATH: /data/evolution/threshold_sweep_state.json
+      EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}
+      EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS: ${EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS:-0}
+    volumes:
+      # Bind-mounted so operators can retune threshold values without an
+      # image rebuild: edit the host file, then restart this one service.
+      - ./services/evolution/config:/workspace/services/evolution/config:ro
+      - evolution-data:/data/evolution
+    depends_on:
+      telemetry:
+        condition: service_healthy
+      incidents:
         condition: service_healthy
 
   lineage-read:
