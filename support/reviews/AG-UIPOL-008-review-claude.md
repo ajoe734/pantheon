@@ -96,7 +96,7 @@ and preservation of edit/revision/rollback behavior." The PR touches 0 test
 files despite adding a new widget-proposal modal, six new menu actions, and
 changing the `ChartSpecRenderer` empty-data contract.
 
-## Verdict
+## Verdict (round 1)
 
 **Changes requested — reopening to owner (Antigravity).** The dark-theme
 styling, control-strip layout, and servant widget-menu/proposal UI are a
@@ -105,3 +105,76 @@ reasonable start, but the fabricated-mock-data behavior in
 the seven-view content gap (WB-05..WB-11) needs either real work or a
 scope correction, and focused tests are required per the acceptance
 criteria.
+
+## Round 2 — PR #315 ("remove fake market data fabrication")
+
+Artifact under review: `ajoe734/execute-plans` PR #315, merged into
+`execute-plans@dev` at commit `c806a4f` (2026-07-13T19:46:57Z). Touches
+`src/agora/widgets/ChartSpecRenderer.tsx`,
+`src/agora/widgets/ChartSpecRenderer.test.tsx`, and one line in
+`src/agora/trading-room/WorkspaceGridEditor.tsx` (41 additions / 6
+deletions in the renderer, 77 additions of test-only content, no other
+files).
+
+### Blocking finding #1 (fabricated mock data) — resolved
+
+`ChartSpecRenderer` now only calls `generateMockData` when the caller
+explicitly passes `isSampleData={true}` (wired only at the New Widget
+Proposal preview call site, which also now paints a visible "SAMPLE DATA"
+badge via `ChartFrame`). The normal render path (`isSampleData` defaulting
+to `false`) no longer fabricates rows: `data === undefined` now falls
+straight to the honest `ChartNotice` path (`rows.length === 0` branch,
+`isUnavailable` check unchanged), with new/expanded per-`widgetType` copy
+(`position_action_queue`/`positions*`/`signal_decision_queue`/
+`shadow_scoreboard` → "NO ACTIVE POSITIONS", `evidence*` →
+"EVIDENCE VALIDATED", `confidence_decomposition` → "AWAITING METRICS").
+New tests in `ChartSpecRenderer.test.tsx` cover: honest notice + no
+"SAMPLE DATA" text when `isSampleData` is false/absent, the "SAMPLE DATA"
+badge and mock rows when `isSampleData` is true, and correct per-widgetType
+notice copy for four widget types. This closes the blocking defect —
+fabricated numbers can no longer render as if they were live evidence in
+the accepted workspace.
+
+### Blocking finding #2 (seven-view operator content, WB-05..WB-11) — still open
+
+This PR does not touch per-view content. `parity-matrix.md` rows
+WB-04..WB-12, WB-14, WB-15A, TR-11, and WB-19 are unchanged since round 1
+and still read **major drift / missing — AG-UIPOL-008** as of this
+re-check (`docs/bff/execution-tasks/2026-07-13-agora-ui-polish/parity-matrix.md`
+lines 95, 104–112, 114, 116, 120). Replacing the fabricated-data path with
+an honest per-type notice is a real improvement toward WB-19's
+"missing/delayed/anomalous data expressed in-context" requirement, but the
+views themselves (A Strategy Overview, B Candidate & Entry, C Winner Branch
+Intelligence, D Stakeholder & Capital Migration, E Event Lead, F
+Positions/Add/Reduce/Exit, G Evidence & Monitoring Rules) still render the
+same generic registry shells with no populated content structure. This
+remains blocking per the task's own Work item 2 and acceptance bar
+("Hosted evidence walks all seven accepted views and shows each view's
+required content").
+
+### Required-before-close finding #3 (test coverage) — partially addressed
+
+The new `ChartSpecRenderer.test.tsx` cases are a genuine, well-targeted
+addition covering the missing/anomalous-data notice behavior this round
+fixed. They do not cover the acceptance bar's remaining scope: seven-view
+completeness, decision-card state, or preservation of edit/revision/
+rollback behavior. No Playwright coverage was added.
+
+## Verdict (round 2)
+
+**Changes requested — reopening to owner (Antigravity).** Finding #1 is
+resolved and should not need further round-2 work. Finding #2 (seven-view
+operator content for WB-05..WB-11) is unaddressed and remains the primary
+blocker to approval; either build the per-view content or bring a scope
+correction to the task/parity-matrix instead of leaving those rows marked
+as this task's open drift. Contract/component/Playwright coverage for
+seven-view completeness, decision-card state, and edit/revision/rollback
+preservation is still required per the task's acceptance criteria before
+this can move to `review_approved`.
+
+LLM-Agent: Claude
+Task-ID: AG-UIPOL-008
+Reviewer: Claude
+Verified: read `gh pr diff 315` (ajoe734/execute-plans); re-checked
+`parity-matrix.md` rows WB-04..WB-12, WB-14, WB-15A, TR-11, WB-19 against
+current file content (unchanged since round 1)
