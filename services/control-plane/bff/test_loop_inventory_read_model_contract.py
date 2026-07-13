@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
+import loop_inventory as loop_inventory_model  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer loop-inventory-operator:operator,reviewer,admin:mfa"}
@@ -24,7 +26,15 @@ def test_loop_inventory_list_exposes_sa21_catalog_for_operator_surfaces(monkeypa
     assert response.status_code == 200, response.text
     payload = response.json()
     items = payload["items"]
-    assert len(items) == 12
+    assert len(items) == 13
+    assert payload["meta"]["catalog"]["inventory_counts"] == {
+        "canonical_loop_count": 12,
+        "composite_overlay_count": 1,
+        "inventory_entry_count": 13,
+    }
+    assert payload["meta"]["catalog"]["continuous_resident_execution_loop_ids"] == [
+        "capital_pool_execution"
+    ]
     assert payload["meta"]["surfaces"]["loop_inventory"]["source"] == "bff_local_registry"
     assert payload["meta"]["surfaces"]["loop_inventory"]["truth_level"] == "registry_metadata"
     assert payload["meta"]["catalog"]["registry_ref"] == "docs/deployment/loop-catalog.registry.json"
@@ -35,6 +45,14 @@ def test_loop_inventory_list_exposes_sa21_catalog_for_operator_surfaces(monkeypa
     assert source_ingestion["owner"]["authoritative_write_owner"]
     assert source_ingestion["evidence"]["registry_metadata"]["status"] == "present"
     assert source_ingestion["truth_source"]["level"] == "registry_metadata"
+    assert source_ingestion["classification"] == "canonical"
+
+    ooda_overlay = next(item for item in items if item["loop_id"] == "per_persona_ooda")
+    assert ooda_overlay["classification"] == "composite_overlay"
+    assert ooda_overlay["composed_of"]
+    assert "capital_pool_execution" not in ooda_overlay["composed_of"]
+    assert ooda_overlay["trigger_model"]["continuous"] is False
+    assert ooda_overlay["maturity_projection"]["archived_task_completion_accepted"] is False
 
 
 def test_loop_inventory_read_model_does_not_claim_live_without_present_live_evidence(monkeypatch) -> None:
@@ -67,7 +85,7 @@ def test_loop_inventory_detail_returns_one_catalog_entry(monkeypatch) -> None:
     assert payload["data"]["current_maturity"] == "api-only"
     assert payload["data"]["target_maturity"] == "reconciled"
     assert payload["data"]["evidence_statuses"]["registry_metadata"] == "present"
-    assert payload["meta"]["catalog"]["catalog_id"] == "global-loop-catalog-2026-06-27"
+    assert payload["meta"]["catalog"]["catalog_id"] == "global-loop-catalog-2026-07-13"
 
 
 def test_loop_inventory_detail_unknown_id_is_404(monkeypatch) -> None:
@@ -77,3 +95,41 @@ def test_loop_inventory_detail_unknown_id_is_404(monkeypatch) -> None:
     response = client.get("/bff/v5/loop-inventory/not-a-loop", headers=HEADERS)
 
     assert response.status_code == 404, response.text
+
+
+def test_loop_inventory_archive_completion_and_catalog_claim_do_not_create_liveness(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    registry = deepcopy(loop_inventory_model._load_registry())
+    source_loop = registry["loops"][0]
+    source_loop["maturity"]["current"] = "proven-live"
+    source_loop["controller_contract"].update(
+        {
+            "status": "proven_live",
+            "controller_name": "source-controller",
+            "desired_state_query": "desired sources",
+            "actual_state_query": "actual schedules",
+            "restart_behavior": "resume from durable cursor",
+            "liveness_metric": "last_reconcile_at",
+        }
+    )
+    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
+    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
+    for task_ref in source_loop["execution_tasks"]:
+        task_ref["terminal_status"] = "done"
+        task_ref["archive_ref"] = f"ai-task-archive/tasks/{task_ref['task_id']}.json"
+    monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+    response = client.get("/bff/v5/loop-inventory/source_ingestion", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["current_maturity"] == "proven-live"
+    assert data["maturity_projection"]["task_completion_policy"] == "reference_only"
+    assert data["live_status"]["catalog_claim_eligible"] is True
+    assert data["live_status"]["has_live_evidence"] is False
+    assert data["live_status"]["is_reconciled"] is False
+    assert data["live_status"]["is_live"] is False
+    assert data["live_status"]["reason"] == "catalog metadata is not live liveness proof"

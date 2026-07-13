@@ -216,8 +216,7 @@ def test_formal_confidence_when_attribution_and_telemetry_match() -> None:
 
 # ---------------------------------------------------------------------------
 # BFF contract: fallback — the 2026-07-07 focus persona has a persona-fleet
-# row (runtime, paper ledger, performance summary) but zero rows in the
-# formal performance-attribution / holdings sources.
+# row but no owned runtime, performance, formal attribution, or holdings rows.
 # ---------------------------------------------------------------------------
 
 
@@ -240,8 +239,8 @@ def test_focus_persona_represents_missing_attribution_as_fallback_not_nan() -> N
 
     assert data["identity"]["persona_id"] == FOCUS_PERSONA_ID
     assert data["identity"]["persona_label"] == "Crypto-Alt-Hunter"
-    assert data["identity"]["runtime_ids"], "runtime identity must survive even without formal attribution"
-    assert data["identity"]["paper_ledger_ids"] == [f"paper-ledger-{FOCUS_PERSONA_ID}"]
+    assert data["identity"]["runtime_ids"] == []
+    assert data["identity"]["paper_ledger_ids"] == []
 
     assert data["data_confidence"] == "fallback"
 
@@ -256,11 +255,12 @@ def test_focus_persona_represents_missing_attribution_as_fallback_not_nan() -> N
     assert "MISSING_HOLDINGS_MATCH" in diagnostic_codes
     assert "FORMAL_ATTRIBUTION_MISSING_USING_FLEET_FALLBACK" in diagnostic_codes
 
-    # Fallback performance is sourced from the persona-fleet summary and must
-    # still be finite, not a dropped/NaN value.
-    assert data["performance"]["pnl"] == 48000.0
-    assert data["performance"]["sharpe"] == 1.76
-    assert data["performance"]["drawdown_pct"] == 0.064
+    # The Fleet row keeps fallback confidence/diagnostics, but missing
+    # persona-owned evidence remains null instead of inheriting market seed
+    # performance.
+    assert data["performance"]["pnl"] is None
+    assert data["performance"]["sharpe"] is None
+    assert data["performance"]["drawdown_pct"] is None
     for value in data["performance"].values():
         if isinstance(value, float):
             assert not math.isnan(value)
