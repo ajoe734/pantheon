@@ -2744,6 +2744,13 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
         match = WORKER_AGENT_CMDLINE_MARKER.search(cmdline)
         if not match:
             continue
+        # Each worker run spawns ~3 processes carrying the same wakeword prompt
+        # (worker_runner.py wrapper, the CLI shim, and the CLI binary). Only the
+        # worker_runner.py wrapper is exactly one-per-worker, so count it alone;
+        # otherwise the live worker count is ~3x inflated and max_concurrent_workers
+        # freezes dispatch at ~1/3 of its configured value (OPS-DISPATCH-PIDCOUNT-001).
+        if "worker_runner.py" not in cmdline:
+            continue
         agent = match.group(1)
         result.setdefault(agent, []).append(pid)
     return result
