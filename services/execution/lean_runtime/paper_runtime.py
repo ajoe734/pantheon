@@ -600,6 +600,21 @@ class PaperExecutionAlgorithm:
             metadata=event_metadata,
         )
 
+    def RecordSignalProcessed(self, signal: dict[str, Any]) -> None:  # noqa: N802
+        if self._event_sink is None:
+            return
+        self._event_sink(
+            OrderEvent(
+                event_type="signal_generation",
+                symbol=signal["symbol"],
+                quantity=float(signal.get("quantity") or 0.0),
+                fill_price=0.0,
+                action=signal["action"],
+                submitted_to_broker=False,
+                metadata=signal,
+            )
+        )
+
     def positions(self) -> list[dict[str, Any]]:
         positions: list[dict[str, Any]] = []
         for symbol, holding in sorted(self.Portfolio.items()):
@@ -1169,6 +1184,31 @@ class PaperRuntimeService:
             self._shutdown.wait(self._poll_interval_seconds)
 
     def _handle_order_event(self, event: OrderEvent) -> None:
+        if event.event_type == "signal_generation":
+            binding = self._binding_resolver.resolve() or {}
+            tenant_id = binding.get("tenant_id") or "default"
+            environment = binding.get("deployment_stage") or "paper"
+            signal_id = event.metadata.get("signal_id")
+
+            journey_event = {
+                "event_id": f"sig-{signal_id}-generation",
+                "journey_id": f"tj-{signal_id}" if signal_id else f"tj-evt-{event.event_id}",
+                "tenant_id": tenant_id,
+                "environment": environment,
+                "occurred_at": event.metadata.get("timestamp") or event.created_at,
+                "recorded_at": _iso_now(),
+                "source": "runtime",
+                "stage": "signal_generation",
+                "stage_status": "succeeded",
+                "signal_id": signal_id,
+                "symbol": event.symbol,
+                "order_type": event.metadata.get("order_type", "MARKET"),
+                "quantity": event.quantity,
+                "strategy_id": event.metadata.get("strategy_id"),
+            }
+            self._publish_journey_events([journey_event])
+            return
+
         event_payload = event.to_dict()
         self._execution_event_count += 1
         if event.event_type == "paper_fill_simulated":
@@ -1226,6 +1266,44 @@ class PaperRuntimeService:
                 "submitted_to_broker": event.submitted_to_broker,
             }
         self._telemetry.emit(event.event_type, metrics, metadata=telemetry_metadata)
+
+        payload = (
+            self._telemetry.build_event(event.event_type, metrics, telemetry_metadata)
+            if hasattr(self._telemetry, "build_event")
+            else None
+        )
+        if payload:
+            try:
+                from services.trade_journey.telemetry_bridge import journey_events_from_telemetry
+                tenant_id = payload.get("correlation_envelope", {}).get("tenant_id") or "default"
+                journey_events = journey_events_from_telemetry(
+                    [(payload["event_type"], payload["created_at"], payload)],
+                    tenant_id=tenant_id
+                )
+                for j_ev in journey_events:
+                    j_ev["source"] = "runtime"
+                self._publish_journey_events(journey_events)
+            except Exception as exc:
+                log.warning("Failed to map or publish journey events from telemetry: %s", exc)
+
+    def _publish_journey_events(self, events: list[dict[str, Any]]) -> None:
+        if not events:
+            return
+        bff_url = os.getenv("PANTHEON_BFF_URL", "http://operator-bff:8080").strip().rstrip("/")
+        url = f"{bff_url}/bff/management/trade-journeys/events"
+        body = json.dumps(events).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            timeout = int(os.getenv("PANTHEON_BFF_TIMEOUT_SECONDS", "5"))
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                resp.read()
+        except Exception as exc:
+            log.warning("Failed to publish journey events to BFF: %s", exc)
 
     def _maybe_emit_heartbeat(self) -> None:
         if not self._telemetry.enabled:
