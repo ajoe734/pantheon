@@ -1153,6 +1153,45 @@ def test_propose_from_postmortem_published_duplicate_event_is_idempotent():
     assert len(evo_main.store.list_all()) == 1
 
 
+def test_propose_from_postmortem_published_replay_retains_reviewed_state():
+    pm_id = f"pm-replay-{uuid.uuid4().hex[:8]}"
+    _seed_incident_and_postmortem(
+        pm_id,
+        incident_overrides={
+            "severity": "medium",
+            "artifact_id": "artifact-replay-postmortem",
+            "incident_cluster_id": "cluster-replay-postmortem",
+        },
+        postmortem_overrides={
+            "status": "published",
+            "published_at": "2026-06-27T15:30:00Z",
+            "incident_cluster_id": "cluster-replay-postmortem",
+        },
+    )
+
+    # 1. Propose from published postmortem (201 Created)
+    first = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id},
+    )
+    assert first.status_code == 201, first.text
+    dec_id = first.json()["decision_id"]
+    assert first.json()["decision_state"] == "proposed"
+
+    # 2. Mark the proposal as reviewed
+    review_resp = advance_to_reviewed(dec_id)
+    assert review_resp["decision_state"] == "reviewed"
+
+    # 3. Replay the postmortem published event
+    replay_resp = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id},
+    )
+    assert replay_resp.status_code == 200, replay_resp.text
+    assert replay_resp.json()["decision_id"] == dec_id
+    assert replay_resp.json()["decision_state"] == "reviewed", "State was incorrectly reset to proposed!"
+
+
 def test_propose_from_postmortem_published_is_once_per_target_and_cluster():
     cluster_id = f"cluster-target-{uuid.uuid4().hex[:8]}"
     target_id = f"artifact-target-cluster-{uuid.uuid4().hex[:8]}"
