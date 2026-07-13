@@ -207,6 +207,7 @@ def test_management_persona_fleet_hydrates_live_persona_market_context() -> None
     assert crypto["performance_summary"]["source"] == "unavailable"
     assert crypto["performance_summary"]["pnl"] is None
     assert crypto["performance_summary"]["max_drawdown"] is None
+    assert crypto["performance_summary"]["total_trades"] is None
 
     tw = rows["persona-20260528-5937dea1"]
     assert tw["state"] == "deployed"
@@ -431,7 +432,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
                         "fill_rate": 0.80,
                         "avg_slippage_bps": 5.0,
                         "sharpe": 0.3,
-                        "total_trades": 5,
+                        "total_trades": 0,
                     },
                 },
             },
@@ -488,7 +489,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
     assert attribution_rows[persona_a]["metrics"]["total_pnl"] == 0.12
     assert attribution_rows[persona_b]["metrics"]["total_pnl"] == -0.08
     assert attribution_rows[persona_a]["metrics"]["total_trades"] == 17
-    assert attribution_rows[persona_b]["metrics"]["total_trades"] == 5
+    assert attribution_rows[persona_b]["metrics"]["total_trades"] == 0
     assert all(
         runtime_a not in item["source_refs"]["runtime_ids"]
         and runtime_b not in item["source_refs"]["runtime_ids"]
@@ -512,7 +513,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
     assert ranking_rows[persona_a]["metrics"]["runtime_ids"] == [runtime_a]
     assert ranking_rows[persona_b]["metrics"]["runtime_ids"] == [runtime_b]
     assert ranking_rows[persona_a]["metrics"]["total_trades"] == 17
-    assert ranking_rows[persona_b]["metrics"]["total_trades"] == 5
+    assert ranking_rows[persona_b]["metrics"]["total_trades"] == 0
     assert ranking_rows[persona_a]["score"] > ranking_rows[persona_b]["score"]
 
     assert fleet_response.status_code == 200, fleet_response.text
@@ -529,7 +530,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
     assert fleet_rows[persona_a]["performance_summary"]["pnl"] == 0.12
     assert fleet_rows[persona_b]["performance_summary"]["pnl"] == -0.08
     assert fleet_rows[persona_a]["performance_summary"]["total_trades"] == 17
-    assert fleet_rows[persona_b]["performance_summary"]["total_trades"] == 5
+    assert fleet_rows[persona_b]["performance_summary"]["total_trades"] == 0
     seed_values = {24560.0, 426000.0, 48000.0, 0.057, 0.071, 0.064}
     for persona_id in (persona_a, persona_b):
         performance = fleet_rows[persona_id]["performance_summary"]
@@ -601,6 +602,39 @@ def test_runtime_registry_identity_reconciliation_is_unique_and_fail_closed(
 
     assert runtimes["runtime-unique"]["persona_id"] == "persona-unique"
     assert runtimes["runtime-ambiguous"]["persona_id"] is None
+
+
+def test_pm12_authoritative_runtime_id_avoids_stale_alias_probe_and_reuses_summary(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def telemetry_summary(runtime_id: str):
+        calls.append(runtime_id)
+        return {
+            "runtime_id": runtime_id,
+            "pnl": 0.0,
+            "drawdown": 0.0,
+            "total_trades": 0,
+            "collected_at": "2026-07-13T00:00:00Z",
+        }
+
+    monkeypatch.setattr(bff_main.read_store, "get_telemetry_summary", telemetry_summary)
+    row = {
+        "binding_summary": {"runtime_ids": ["runtime-authoritative"]},
+        "session_summary": {
+            "runtime_ids": [],
+            "runtime_binding_ids": ["rb-stale-session-alias"],
+        },
+    }
+
+    metrics = bff_main._pm12_persona_telemetry_metrics(row)
+
+    assert calls == ["runtime-authoritative"]
+    assert metrics["runtime_ids"] == ["runtime-authoritative"]
+    assert metrics["pnl"] == 0.0
+    assert metrics["drawdown"] == 0.0
+    assert metrics["total_trades"] == 0
 
 
 def test_persona_league_filters_and_requires_governance_for_rank_actions() -> None:

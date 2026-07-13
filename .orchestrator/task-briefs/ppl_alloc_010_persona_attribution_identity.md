@@ -70,8 +70,11 @@ unavailable rather than being promoted to fallback confidence.
   IDs without moving unresolved devloop evidence out of `unassigned`.
 - PM-12 ranking rows are eligible with nonzero coverage and use real telemetry
   metrics, including nested summary payloads.
+- PM-12 reuses each resolved telemetry summary and never probes stale session
+  aliases when an authoritative execution runtime ID exists.
 - Persona Fleet reports telemetry performance and never same-market seed
-  performance for a custom persona.
+  performance for a custom persona; absent trade counts remain null while an
+  explicit telemetry zero remains zero.
 - After dev deployment, verify:
   - `GET /bff/management/performance-attribution/by-persona`
   - `GET /bff/management/persona-league/rankings`

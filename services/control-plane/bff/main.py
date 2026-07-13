@@ -41198,7 +41198,11 @@ def _pm12_clamp_score(value: float) -> float:
     return round(max(0.0, min(100.0, value)), 6)
 
 
-def _pm12_persona_runtime_ids(row: Dict[str, Any]) -> List[str]:
+def _pm12_persona_runtime_ids(
+    row: Dict[str, Any],
+    *,
+    telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+) -> List[str]:
     bindings = row.get("binding_summary") if isinstance(row.get("binding_summary"), dict) else {}
     sessions = row.get("session_summary") if isinstance(row.get("session_summary"), dict) else {}
     if not sessions:
@@ -41215,6 +41219,8 @@ def _pm12_persona_runtime_ids(row: Dict[str, Any]) -> List[str]:
         if runtime_id and runtime_id not in seen:
             values.append(runtime_id)
             seen.add(runtime_id)
+    if values:
+        return values
     # Older fixtures (and a small number of legacy sessions) used the session
     # binding reference as the telemetry key.  Keep that path only when the
     # exact reference has telemetry.  Stale rb-* session aliases therefore do
@@ -41227,7 +41233,12 @@ def _pm12_persona_runtime_ids(row: Dict[str, Any]) -> List[str]:
     for raw_id in session_binding_ids if isinstance(session_binding_ids, list) else []:
         runtime_id = str(raw_id or "").strip()
         if runtime_id and runtime_id not in seen:
-            telemetry = read_store.get_telemetry_summary(runtime_id)
+            if telemetry_cache is not None and runtime_id in telemetry_cache:
+                telemetry = telemetry_cache[runtime_id]
+            else:
+                telemetry = read_store.get_telemetry_summary(runtime_id)
+                if telemetry_cache is not None:
+                    telemetry_cache[runtime_id] = telemetry
             if isinstance(telemetry, dict):
                 values.append(runtime_id)
                 seen.add(runtime_id)
@@ -41321,11 +41332,26 @@ def _pm12_telemetry_metrics_from_records(
     }
 
 
-def _pm12_persona_telemetry_records(row: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _pm12_persona_telemetry_records(
+    row: Dict[str, Any],
+    *,
+    runtime_ids: Optional[List[str]] = None,
+    telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
     seen = set()
-    for runtime_id in _pm12_persona_runtime_ids(row):
-        summary = read_store.get_telemetry_summary(runtime_id)
+    resolved_runtime_ids = (
+        runtime_ids
+        if runtime_ids is not None
+        else _pm12_persona_runtime_ids(row, telemetry_cache=telemetry_cache)
+    )
+    for runtime_id in resolved_runtime_ids:
+        if telemetry_cache is not None and runtime_id in telemetry_cache:
+            summary = telemetry_cache[runtime_id]
+        else:
+            summary = read_store.get_telemetry_summary(runtime_id)
+            if telemetry_cache is not None:
+                telemetry_cache[runtime_id] = summary
         if not isinstance(summary, dict):
             continue
         candidates: List[Dict[str, Any]] = [dict(summary)]
@@ -41358,11 +41384,17 @@ def _pm12_persona_telemetry_records(row: Dict[str, Any]) -> List[Dict[str, Any]]
 
 
 def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
+    telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    runtime_ids = _pm12_persona_runtime_ids(row, telemetry_cache=telemetry_cache)
     return _pm12_telemetry_metrics_from_records(
-        _pm12_persona_runtime_ids(row),
+        runtime_ids,
         [
             record
-            for record in _pm12_persona_telemetry_records(row)
+            for record in _pm12_persona_telemetry_records(
+                row,
+                runtime_ids=runtime_ids,
+                telemetry_cache=telemetry_cache,
+            )
             if isinstance(record, dict)
         ],
     )
@@ -43023,8 +43055,12 @@ def _pm12_persona_league_source_surfaces(snapshot_at: str) -> Dict[str, Dict[str
     }
 
 
-def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
-    metrics = _pm12_persona_telemetry_metrics(row)
+def _pm12_persona_league_ranking_item(
+    row: Dict[str, Any],
+    *,
+    metrics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    metrics = metrics if isinstance(metrics, dict) else _pm12_persona_telemetry_metrics(row)
     scores = _pm12_persona_league_scores(row, metrics)
     tier = _pm12_tier_for_score(scores["overall_score"])
     components = dict(scores)
@@ -43408,10 +43444,15 @@ def _pm12_persona_league_heatmap_rows(
     cells: List[Dict[str, Any]] = []
     score_values: List[float] = []
     for row in rows:
-        runtime_ids = _pm12_persona_runtime_ids(row)
-        records = _pm12_persona_telemetry_records(row)
+        telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+        runtime_ids = _pm12_persona_runtime_ids(row, telemetry_cache=telemetry_cache)
+        records = _pm12_persona_telemetry_records(
+            row,
+            runtime_ids=runtime_ids,
+            telemetry_cache=telemetry_cache,
+        )
         latest_metrics = _pm12_telemetry_metrics_from_records(runtime_ids, records)
-        ranking_item = _pm12_persona_league_ranking_item(row)
+        ranking_item = _pm12_persona_league_ranking_item(row, metrics=latest_metrics)
         row_cells = [
             _pm12_persona_league_heatmap_cell(
                 row,
@@ -56284,6 +56325,7 @@ def _project_persona_fleet_list_row(
         raw_metadata=raw_metadata,
         context_metadata=context_metadata,
     )
+    performance_total_trades = _management_as_float(metrics.get("total_trades"))
 
     return {
         "id": persona_id,
@@ -56378,7 +56420,11 @@ def _project_persona_fleet_list_row(
             "sharpe": _management_as_float(metrics.get("sharpe")),
             "max_drawdown": _management_as_float(metrics.get("max_drawdown")),
             "violation_count": int(metrics.get("violation_count") or 0),
-            "total_trades": int(_management_as_float(metrics.get("total_trades")) or 0),
+            "total_trades": (
+                int(performance_total_trades)
+                if performance_total_trades is not None
+                else None
+            ),
             "source": performance_source,
             "telemetry_runtime_count": telemetry_rollup.get("runtime_count", 0),
             "latest_telemetry_at": telemetry_rollup.get("latest_collected_at"),
