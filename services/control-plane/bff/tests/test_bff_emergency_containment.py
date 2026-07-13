@@ -1,7 +1,15 @@
 import pytest
 
-from command_executor import _execute_bff_action_adapter
+from command_executor import (
+    _execute_bff_action_adapter,
+    _execute_emergency_containment_authority,
+)
 from emergency_containment_policy import ALLOWED_TRIGGERS, validate_emergency_containment
+from rebalance_authority_test_support import (
+    HEADERS,
+    CapitalBffAuthorityHarness,
+    rebalance_payload,
+)
 
 
 def _command(**overrides):
@@ -50,3 +58,82 @@ def test_containment_adapter_receipt_is_auditable_and_never_claims_live_mutation
     assert receipt["evidence_refs"] == ["risk-event:42"]
     assert receipt["rollback_ref"] == "allocation:snapshot-before-breach"
     assert receipt["live_capital_side_effects"] is False
+
+
+def test_bff_command_admission_keeps_risk_increasing_containment_at_422(tmp_path):
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        assert harness.client is not None
+        response = harness.client.post(
+            "/bff/v1/commands",
+            headers={**HEADERS, "Idempotency-Key": "containment-increase-denied"},
+            json={
+                "command": "EmergencyContainment",
+                "target": {"type": "Persona", "id": "p-live"},
+                "params": {
+                    **_command(
+                        action="reduce_capital",
+                        persona_id="p-live",
+                        current_weight=0.10,
+                        target_weight=0.11,
+                    ),
+                    "capital_pool_id": "pool-real",
+                },
+                "audit_context": {"reason": "risk increase must never pass containment admission"},
+            },
+        )
+        assert response.status_code == 422, response.text
+        assert "must lower" in response.text
+        assert harness.capital_client is not None
+        assert harness.capital_client.get("/api/containments").json() == []
+
+
+def test_authority_dispatch_projects_explicit_frozen_containment_after_restart(tmp_path):
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        harness.create_persona("p-live")
+        assert harness.client is not None
+        proposal = harness.client.post(
+            "/bff/rebalances",
+            headers={**HEADERS, "Idempotency-Key": "containment-baseline-proposal"},
+            json=rebalance_payload(),
+        )
+        assert proposal.status_code == 202, proposal.text
+
+        receipt = _execute_emergency_containment_authority(
+            "cmd-containment-freeze",
+            {
+                **_command(),
+                "persona_id": "p-live",
+                "capital_pool_id": "pool-real",
+                "current_weight": 0.10,
+                "target_weight": 0.10,
+                "entity_type": "Persona",
+                "entity_id": "p-live",
+                "actor_id": "op-2",
+                "actor_role": "operator",
+                "idempotency_key": "containment-freeze-owner",
+                "request_hash": "containment-freeze-owner-request",
+            },
+        )
+        assert receipt["status"] == "executed"
+        assert receipt["containment_state"] == "frozen"
+        assert receipt["entity_type"] == "Persona"
+        assert receipt["entity_id"] == "p-live"
+        assert receipt["receipt_ref"].startswith("capital-containment-receipt:")
+        assert receipt["audit_ref"].startswith("capital-audit:")
+        assert receipt["authoritative_containment_readback"] is True
+        assert receipt["authoritative_capital_readback"] is True
+        assert receipt["authoritative_capital_state_applied"] is True
+        assert receipt["live_capital_side_effects"] is False
+
+        harness.restart()
+        assert harness.client is not None
+        detail = harness.client.get("/bff/personas/p-live", headers=HEADERS)
+        assert detail.status_code == 200, detail.text
+        data = detail.json()["data"]
+        assert data["containment_state"] == "frozen"
+        assert data["containmentState"] == "frozen"
+        assert data["frozen"] is True
+        assert data["containment"]["state"] == "frozen"
+        assert data["containment"]["containment_state"] == "frozen"
+        assert data["containment"]["command_id"] == "cmd-containment-freeze"
+        assert data["containment"]["authoritative_containment_readback"] is True
