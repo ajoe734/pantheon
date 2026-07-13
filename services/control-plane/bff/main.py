@@ -160,6 +160,10 @@ from source_search_ops_client import (
 )
 from downstream_health_monitor import DownstreamHealthMonitor
 from loop_inventory import (
+    LoopHealthDetailEnvelope,
+    LoopHealthListEnvelope,
+    LoopInventoryDetailEnvelope,
+    LoopInventoryListEnvelope,
     get_loop_health_entry,
     get_loop_inventory_entry,
     list_loop_health_entries,
@@ -55860,7 +55864,7 @@ def _loop_health_response_meta(
     return payload
 
 
-@app.get("/bff/v5/loop-inventory")
+@app.get("/bff/v5/loop-inventory", response_model=LoopInventoryListEnvelope)
 async def bff_v5_loop_inventory(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -55877,7 +55881,7 @@ async def bff_v5_loop_inventory(
     return _loop_inventory_response_meta(payload)
 
 
-@app.get("/bff/v5/loop-health")
+@app.get("/bff/v5/loop-health", response_model=LoopHealthListEnvelope)
 async def bff_v5_loop_health(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -55908,7 +55912,7 @@ async def bff_v5_loop_health(
     )
 
 
-@app.get("/bff/v5/loop-health/{loop_id}")
+@app.get("/bff/v5/loop-health/{loop_id}", response_model=LoopHealthDetailEnvelope)
 async def bff_v5_loop_health_detail(
     loop_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -55942,7 +55946,10 @@ async def bff_v5_loop_health_detail(
     )
 
 
-@app.get("/bff/v5/loop-inventory/{loop_id}")
+@app.get(
+    "/bff/v5/loop-inventory/{loop_id}",
+    response_model=LoopInventoryDetailEnvelope,
+)
 async def bff_v5_loop_inventory_detail(
     loop_id: str,
     authorization: Optional[str] = Header(default=None),
