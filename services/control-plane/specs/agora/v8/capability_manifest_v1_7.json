@@ -1,0 +1,79 @@
+{
+  "manifest_version": "1.7",
+  "extends": "v1.6",
+  "description": "Agora BFF capability manifest v1.7. Reconciles the frozen PINT contracts with the merged interaction, governed proposal, and OODA readback route families.",
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_7.json",
+  "openapi_ref": "services/control-plane/openapi/agora_v1_7.openapi.yaml",
+  "capabilities": [
+    {
+      "id": "persona_interaction_live",
+      "name": "agora.persona.interaction.v1",
+      "version": "1.0",
+      "description": "Resolve immutable Workshop context, enumerate fail-closed Persona eligibility, and submit typed Persona interactions with no execution authority.",
+      "schemas": ["ContextRef", "ResolveContextRequest", "EligibilityRequest", "SubmitInteractionRequest", "PersonaOpinionConsultationEvent"],
+      "routes": [
+        "POST /bff/agora/interactions/context:resolve",
+        "POST /bff/agora/interactions/participants:eligible",
+        "POST /bff/agora/interactions"
+      ],
+      "implementation_status": "live"
+    },
+    {
+      "id": "governed_proposals_live",
+      "name": "agora.governance.v1",
+      "version": "1.0",
+      "description": "Create, read, revise, validate, and decide governed proposals through immutable revisions, ETags, and existing authority gates.",
+      "schemas": ["ProposalCreateRequest", "ProposalActionRequest", "GovernedActionAuthorityRequest"],
+      "routes": [
+        "POST /bff/agora/proposals",
+        "GET /bff/agora/proposals/{proposal_id}",
+        "GET /bff/agora/proposals/{proposal_id}/revisions",
+        "POST /bff/agora/proposals/{proposal_id}/actions"
+      ],
+      "implementation_status": "live"
+    },
+    {
+      "id": "ooda_readback_live",
+      "name": "pantheon.ooda.readback.v1",
+      "version": "1.0",
+      "description": "Read replayable OODA packets globally or through strategy, runtime, and evolution-program projections.",
+      "schemas": ["OodaPacket"],
+      "routes": [
+        "GET /bff/ooda/packets",
+        "GET /bff/ooda/packets/{packet_id}",
+        "GET /bff/strategies/{strategy_id}/ooda",
+        "GET /bff/runtimes/{runtime_id}/ooda",
+        "GET /bff/evolution-programs/{program_id}/ooda"
+      ],
+      "implementation_status": "live_read_only"
+    }
+  ],
+  "required_definition_checksums": [
+    "ContextRef",
+    "ResolveContextRequest",
+    "EligibilityRequest",
+    "SubmitInteractionRequest",
+    "ProposalCreateRequest",
+    "ProposalActionRequest",
+    "OodaPacket"
+  ],
+  "compatibility": {
+    "frozen_parent_bundle": "services/control-plane/specs/agora/bundle_index.v1_6.json",
+    "pint_contract_source": "docs/bff/execution-tasks/2026-07-12-persona-interaction/INDEX.md",
+    "route_owners": {
+      "persona_interaction_live": "services/control-plane/bff/agora/interaction/router.py",
+      "governed_proposals_live": "services/control-plane/bff/agora/governance/router.py",
+      "ooda_readback_live": "services/control-plane/bff/main.py"
+    }
+  },
+  "safety_boundary": {
+    "direct_order_route": false,
+    "capital_binding": false,
+    "runtime_binding_write": false,
+    "memory_mutation": false,
+    "persona_self_approval": false,
+    "interaction_execution_authority": "none",
+    "ooda_routes_read_only": true
+  },
+  "note": "This additive bundle documents already-merged routes. It grants no new broker, order, capital, binding, memory, deployment, rollback, or Persona self-approval authority."
+}
