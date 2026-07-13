@@ -2567,6 +2567,10 @@ class CanonicalSnapshotAdapter:
     def source(self, dataset: str) -> str:
         return self._cache_source.get(dataset, "canonical")
 
+    def cached_source(self, dataset: str) -> Optional[str]:
+        """Return provenance from an earlier read without touching the backend."""
+        return self._cache_source.get(dataset)
+
     def list_records(
         self,
         dataset: str,
@@ -3329,6 +3333,10 @@ class ServiceBackedReadAdapter:
 
     def source(self, dataset: str) -> str:
         return self._cache_source.get(dataset, "service_store")
+
+    def cached_source(self, dataset: str) -> Optional[str]:
+        """Return provenance from an earlier read without touching the backend."""
+        return self._cache_source.get(dataset)
 
     def list_records(
         self,
@@ -9328,6 +9336,53 @@ class ReadSurfaceStore:
             )
             if available:
                 return self._service.source(dataset)
+        if include_local_fallback and dataset == "personas" and self._local_bff_persona_records():
+            return "bff_local_dev_store"
+        local_payload = self._local_fallback(dataset) if include_local_fallback else None
+        if include_local_fallback and local_payload in (None, "", [], {}):
+            local_payload = self._local_overlay_records(dataset)
+        if local_payload not in (None, "", [], {}):
+            return "local_snapshot"
+        return "missing"
+
+    def dataset_source_cached(
+        self,
+        dataset: str,
+        *,
+        include_local_fallback: bool = True,
+    ) -> str:
+        """Resolve provenance after a read without issuing another backend read.
+
+        Human Inbox contributors already loaded their records. Calling
+        ``dataset_source`` immediately afterward repeats adapter list calls and
+        can double HTTP latency, so hot aggregation paths use this cache-only
+        variant for the provenance envelope.
+        """
+        if dataset == "approval_queue_items":
+            approval_source = self.dataset_source_cached(
+                "approval_decisions",
+                include_local_fallback=include_local_fallback,
+            )
+            if approval_source != "missing":
+                return approval_source
+        if dataset == "governance_review_queue_items":
+            for upstream_dataset in (
+                "deployment_plans",
+                "approval_decisions",
+                "evolution_decisions",
+            ):
+                upstream_source = self.dataset_source_cached(
+                    upstream_dataset,
+                    include_local_fallback=include_local_fallback,
+                )
+                if upstream_source != "missing":
+                    return upstream_source
+        canonical_source = self._canonical.cached_source(dataset)
+        if canonical_source:
+            return canonical_source
+        service_source = self._service.cached_source(dataset)
+        if service_source:
+            return service_source
         if include_local_fallback and dataset == "personas" and self._local_bff_persona_records():
             return "bff_local_dev_store"
         local_payload = self._local_fallback(dataset) if include_local_fallback else None
