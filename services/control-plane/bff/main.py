@@ -35173,6 +35173,17 @@ def _evolution_entry_text(item: Dict[str, Any]) -> str:
     if isinstance(evidence_refs, list):
         evidence_str = " ".join([json.dumps(ref) for ref in evidence_refs])
         
+    record_parts = []
+    if isinstance(record, dict):
+        for field in (
+            "artifact_id", "persona_id", "target_id", "runtime_id",
+            "runtime_binding_id", "persona_capital_binding_id", "incident_id", "incident_ref"
+        ):
+            val = record.get(field)
+            if val:
+                record_parts.append(str(val))
+    record_str = " ".join(record_parts)
+        
     parts = [
         item.get("id"),
         item.get("title"),
@@ -35183,6 +35194,7 @@ def _evolution_entry_text(item: Dict[str, Any]) -> str:
         item.get("action_type"),
         target_str,
         evidence_str,
+        record_str,
     ]
     return " ".join([str(p) for p in parts if p]).lower()
 
@@ -35918,17 +35930,32 @@ async def bff_management_evolution_journal(
         risk_level=risk_level,
     )
     if persona:
-        p_clean = persona.strip()
+        p_clean = persona.strip().lower()
         if p_clean:
-            filtered = [item for item in filtered if p_clean.lower() in _evolution_entry_text(item)]
+            filtered = [
+                item for item in filtered
+                if p_clean in _evolution_entry_text(item) or
+                any(
+                    str((item.get("record") or {}).get(field) or "").lower() == p_clean
+                    for field in ("artifact_id", "persona_id", "target_id", "runtime_id", "runtime_binding_id", "persona_capital_binding_id")
+                )
+            ]
     if mutation_review:
-        mr_clean = mutation_review.strip()
+        mr_clean = mutation_review.strip().lower()
         if mr_clean:
-            filtered = [item for item in filtered if mr_clean.lower() in _evolution_entry_text(item)]
+            filtered = [
+                item for item in filtered
+                if str(item.get("source_id") or "").lower() == mr_clean
+                and item.get("entry_type") in ("evolution_decision", "mutation_review")
+            ]
     if decision:
-        dec_clean = decision.strip()
+        dec_clean = decision.strip().lower()
         if dec_clean:
-            filtered = [item for item in filtered if dec_clean.lower() in _evolution_entry_text(item)]
+            filtered = [
+                item for item in filtered
+                if str(item.get("source_id") or "").lower() == dec_clean
+                and item.get("entry_type") in ("evolution_decision", "mutation_review")
+            ]
 
     total = len(filtered)
     page_items, next_page_token = _page_slice(filtered, page_token, page_size)
