@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Agora market-data activation readback (SRCLIVE line)
-- Status: todo
+- Status: review_approved
 - Owner: Antigravity
 - Reviewer: Codex2
-- Next: Chair reassigned owner from Codex to Antigravity: Codex is blocked by interactive gcloud reauthentication for the remaining dev-VM ingest/projector proof; AG-GAP-013 is an execution task, not a human gate, and Antigravity is a listed fallback with no dispatch pause. Task returned to todo for a blocked-owner rescue dispatch.
+- Next: Review approved：PR #3486 已合併且 checks 全綠；live 2330 markets readback 與 daily watchlist/signals provenance 證據齊全。請 owner 依 closeout spec 建立必要 task-scoped finalization commit/PR（如有），確認 merge 後再執行 done。
 
 ## Summary
 SRCLIVE-001 live activation 驗收後，把真實 ingest 資料投影進 /bff/agora/markets 與 daily watchlist/signals；空的先掛 blocker 不得空手 done。
