@@ -9978,6 +9978,11 @@ def dispatch_ready_tasks(
     if max_concurrent is not None and max_concurrent > 0:
         live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
         if live_total >= max_concurrent:
+            console_log(
+                f"ready dispatch skipped: live worker count {live_total} >= "
+                f"max_concurrent_workers {max_concurrent}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
             return changed
     considered_agents = 0
     for agent_id in agent_ids:
@@ -10292,7 +10297,13 @@ def dispatch_chair_review(
     if max_concurrent is not None:
         live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
         reserved_total = len(set(active_agents) | set(pending_agents))
-        if max(live_total, reserved_total) >= max_concurrent:
+        capped_total = max(live_total, reserved_total)
+        if capped_total >= max_concurrent:
+            console_log(
+                f"chair review dispatch skipped: worker count {capped_total} >= "
+                f"max_concurrent_workers {max_concurrent} (live={live_total}, reserved={reserved_total})",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
             return False
     seen = state.setdefault("seen_event_keys", {})
     status = load_status(config)

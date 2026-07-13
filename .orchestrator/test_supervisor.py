@@ -5794,11 +5794,15 @@ class ChairReviewDispatchTests(unittest.TestCase):
             ),
             mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "console_log") as console_log,
         ):
             changed = supervisor.dispatch_chair_review(self.config, state, planning_state=None)
 
         self.assertFalse(changed)
         self.assertEqual(supervisor.load_event_queue(self.config), [])
+        self.assertTrue(
+            any("max_concurrent_workers 2" in call.args[0] for call in console_log.call_args_list)
+        )
 
     def test_dispatch_chair_review_falls_through_busy_candidate(self) -> None:
         state = {
@@ -8413,9 +8417,9 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
     def test_scan_groups_pids_by_agent_marker(self) -> None:
         proc = self._make_fake_proc(
             {
-                111: "codex exec -C /tmp/wt 你的 auto worker 身分是：Codex 。 Task ID: T1",
-                222: "codex exec -C /tmp/wt2 你的 auto worker 身分是：Codex2 。 Task ID: T2",
-                333: "codex exec -C /tmp/wt3 你的 auto worker 身分是：Codex 。 Task ID: T3",
+                111: "python3 .orchestrator/worker_runner.py --run-id run-1 --heartbeat-path h1 --status-path s1 -- codex exec -C /tmp/wt 你的 auto worker 身分是：Codex 。 Task ID: T1",
+                222: "python3 .orchestrator/worker_runner.py --run-id run-2 --heartbeat-path h2 --status-path s2 -- codex exec -C /tmp/wt2 你的 auto worker 身分是：Codex2 。 Task ID: T2",
+                333: "python3 .orchestrator/worker_runner.py --run-id run-3 --heartbeat-path h3 --status-path s3 -- codex exec -C /tmp/wt3 你的 auto worker 身分是：Codex 。 Task ID: T3",
                 444: "vim",
                 555: None,
             }
@@ -8427,9 +8431,27 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
 
     def test_scan_skips_self_pid(self) -> None:
         proc = self._make_fake_proc(
-            {os.getpid(): "auto worker 身分是：Codex"}
+            {os.getpid(): "--run-id run-1 -- auto worker 身分是：Codex"}
         )
         self.assertEqual(supervisor.scan_live_worker_pids_by_agent(proc_root=proc), {})
+
+    def test_scan_dedupes_one_run_worth_of_wrapper_and_child_pids(self) -> None:
+        # A single worker run spawns ~3 processes sharing the same wakeup
+        # prompt in their cmdline: the worker_runner.py wrapper, a node CLI
+        # shim, and the real CLI binary underneath it. Only the wrapper's
+        # cmdline names worker_runner.py, so only it should be counted --
+        # otherwise live_total is ~3x actual worker runs
+        # (OPS-DISPATCH-PIDCOUNT-001).
+        proc = self._make_fake_proc(
+            {
+                111: "python3 .orchestrator/worker_runner.py --run-id run-abc --heartbeat-path h --status-path s -- claude --print 你的 auto worker 身分是：Claude 。 Task ID: T1",
+                222: "claude --print 你的 auto worker 身分是：Claude 。 Task ID: T1",
+                333: "node /opt/claude/cli.js --print 你的 auto worker 身分是：Claude 。 Task ID: T1",
+            }
+        )
+        result = supervisor.scan_live_worker_pids_by_agent(proc_root=proc)
+        self.assertEqual(result["Claude"], [111])
+        self.assertEqual(sum(len(pids) for pids in result.values()), 1)
 
     def test_block_reason_flags_live_duplicate(self) -> None:
         config = {
@@ -9126,11 +9148,15 @@ class MaxConcurrentWorkersCapTests(unittest.TestCase):
             mock.patch.object(supervisor, "helper_claim_settings", return_value={}),
             mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
             mock.patch.object(supervisor, "start_worker_for_request") as start,
+            mock.patch.object(supervisor, "console_log") as console_log,
         ):
             changed = supervisor.dispatch_ready_tasks(config, state)
         scan.assert_called()
         start.assert_not_called()
         self.assertFalse(changed)
+        self.assertTrue(
+            any("live worker count 3 >= max_concurrent_workers 2" in call.args[0] for call in console_log.call_args_list)
+        )
 
     def test_dispatch_ready_tasks_proceeds_when_under_cap(self) -> None:
         config = self._base_config()
