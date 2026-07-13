@@ -4,6 +4,7 @@ from copy import deepcopy
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -17,6 +18,42 @@ from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer loop-inventory-operator:operator,reviewer,admin:mfa"}
+
+
+def _response_schema_ref(schema: dict[str, Any], path: str) -> str:
+    response_schema = schema["paths"][path]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]
+    if "$ref" in response_schema:
+        return response_schema["$ref"].rsplit("/", 1)[-1]
+    if response_schema.get("allOf"):
+        return response_schema["allOf"][0]["$ref"].rsplit("/", 1)[-1]
+    raise AssertionError(f"{path} does not publish a component response schema: {response_schema}")
+
+
+def test_loop_read_models_publish_typed_openapi_envelopes() -> None:
+    bff_main.app.openapi_schema = None
+    schema = TestClient(bff_main.app).get("/openapi.json").json()
+    expected = {
+        "/bff/v5/loop-inventory": "LoopInventoryListEnvelope",
+        "/bff/v5/loop-inventory/{loop_id}": "LoopInventoryDetailEnvelope",
+        "/bff/v5/loop-health": "LoopHealthListEnvelope",
+        "/bff/v5/loop-health/{loop_id}": "LoopHealthDetailEnvelope",
+    }
+
+    for path, component in expected.items():
+        assert _response_schema_ref(schema, path) == component
+
+    components = schema["components"]["schemas"]
+    for component in (
+        "LoopInventoryEntry",
+        "LoopInventoryListEnvelope",
+        "LoopInventoryDetailEnvelope",
+        "LoopHealthEntry",
+        "LoopHealthListEnvelope",
+        "LoopHealthDetailEnvelope",
+    ):
+        assert component in components
 
 
 def test_loop_read_models_enforce_strict_jwt_auth_and_read_roles(monkeypatch) -> None:
