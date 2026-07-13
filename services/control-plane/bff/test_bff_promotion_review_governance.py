@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -9,6 +10,7 @@ import uuid
 from contextlib import contextmanager
 from typing import Iterator
 
+import httpx
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -291,6 +293,138 @@ def test_quarterly_recommendation_submit_ignores_caller_source_snapshot() -> Non
         assert "FORGED PRIVATE EVIDENCE" not in serialized
 
 
+def test_generic_command_does_not_block_trusted_semantic_submission() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        generic = client.post(
+            "/bff/v1/commands",
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
+            json={
+                "command": "QuarterlyRankingRecommendationSubmit",
+                "target": {"type": "Ranking", "id": review["recommendation_id"]},
+                "params": {
+                    "quarter": review["quarter"],
+                    "recommendation_id": review["recommendation_id"],
+                    "recommendation_action_id": review["action_id"],
+                    "persona_id": review["persona_id"],
+                    "stage_from": review["promotion_path"]["from_stage"],
+                    "stage_to": review["promotion_path"]["target_stage"],
+                    "review_kind": review["review_kind"],
+                    "requires_human_gate_decision": True,
+                    "live_capital_mutation": False,
+                    "direct_live_capital_mutation": False,
+                    "runtime_mutation": False,
+                },
+                "audit_context": {
+                    "reason": "Regression: generic command cannot impersonate semantic submit"
+                },
+            },
+        )
+        assert generic.status_code == 202, generic.text
+
+        before_detail = client.get(
+            f"/bff/management/promotion-reviews/{review['review_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert before_detail.status_code == 200, before_detail.text
+        assert before_detail.json()["data"]["submitted"] is False
+        before_inbox = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+        assert before_inbox.status_code == 200, before_inbox.text
+        assert before_inbox.json()["data"]["items"] == []
+
+        semantic = _submit_review(client, review["review_id"], idem=_idem())
+        assert semantic.status_code == 202, semantic.text
+        records = bff_main.command_store._get_all_commands()
+        assert len(records) == 2
+        assert not bff_main._human_inbox_trusted_promotion_submission(records[0])
+        assert bff_main._human_inbox_trusted_promotion_submission(records[1])
+
+        after_detail = client.get(
+            f"/bff/management/promotion-reviews/{review['review_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert after_detail.status_code == 200, after_detail.text
+        assert after_detail.json()["data"]["submitted"] is True
+        after_inbox = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+        assert after_inbox.status_code == 200, after_inbox.text
+        items = after_inbox.json()["data"]["items"]
+        assert [item["promotion_review_id"] for item in items] == [review["review_id"]]
+
+
+def test_human_inbox_ignores_decision_with_mismatched_target_aliases() -> None:
+    with _isolated_client() as client:
+        response = client.get(
+            "/bff/management/promotion-reviews",
+            headers=OPERATOR_HEADERS,
+            params={
+                "quarter": "2026-Q1",
+                "page_size": 10,
+                "action_id": "promote_to_canary_candidate",
+            },
+        )
+        assert response.status_code == 200, response.text
+        reviews = response.json()["data"]["items"]
+        assert len(reviews) >= 2
+        target_review, aliased_review = reviews[:2]
+        for review in (target_review, aliased_review):
+            submit = _submit_review(client, review["review_id"], idem=_idem())
+            assert submit.status_code == 202, submit.text
+
+        target_id = f"promotion_review:{target_review['review_id']}"
+        mismatch = client.post(
+            "/bff/v1/commands",
+            headers={**APPROVER_HEADERS, "Idempotency-Key": _idem()},
+            json={
+                "command": "HumanGateApprove",
+                "target": {"type": "HumanGateItem", "id": target_id},
+                "params": {
+                    "human_gate_item_id": target_id,
+                    "decision": "approve",
+                    "review_id": aliased_review["review_id"],
+                    "promotion_review_id": aliased_review["review_id"],
+                    "recommendation_id": aliased_review["recommendation_id"],
+                    "rationale": "Mismatched aliases must not move either review.",
+                },
+                "audit_context": {
+                    "reason": "Regression: Human Gate target and aliases must agree"
+                },
+            },
+        )
+        assert mismatch.status_code == 202, mismatch.text
+        record = bff_main.command_store._get_all_commands()[-1]
+        assert bff_main._human_inbox_decision_recommendation_id(record) == ""
+        assert bff_main._human_inbox_decision_projection_from_record(record) is None
+
+        for review in (target_review, aliased_review):
+            detail = client.get(
+                f"/bff/management/promotion-reviews/{review['review_id']}",
+                headers=OPERATOR_HEADERS,
+            )
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["data"]["decision_status"] == "pending"
+
+        inbox = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+        assert inbox.status_code == 200, inbox.text
+        projected = {
+            item["promotion_review_id"]: item["status"]
+            for item in inbox.json()["data"]["items"]
+        }
+        assert projected[target_review["review_id"]] == "pending"
+        assert projected[aliased_review["review_id"]] == "pending"
+
+
 def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch) -> None:
     with _isolated_client() as client:
         review = _first_review(client)
@@ -300,17 +434,28 @@ def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch)
         monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.05")
 
         def slow_persona_readiness(*_args, **_kwargs):
-            time.sleep(0.25)
+            time.sleep(1.0)
             return []
 
         monkeypatch.setattr(bff_main, "_build_persona_health_items", slow_persona_readiness)
-        inbox = client.get(
-            "/bff/management/human-inbox",
-            headers=OPERATOR_HEADERS,
-            params={"page_size": 20},
-        )
+        async def bounded_request() -> tuple[httpx.Response, float]:
+            transport = httpx.ASGITransport(app=bff_main.app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+            ) as async_client:
+                started_at = time.monotonic()
+                response = await async_client.get(
+                    "/bff/management/human-inbox",
+                    headers=OPERATOR_HEADERS,
+                    params={"page_size": 20},
+                )
+                return response, time.monotonic() - started_at
+
+        inbox, elapsed = asyncio.run(bounded_request())
 
         assert inbox.status_code == 200, inbox.text
+        assert elapsed < 0.5
         body = inbox.json()
         assert any(
             item["promotion_review_id"] == review["review_id"]

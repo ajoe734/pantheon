@@ -33074,26 +33074,55 @@ def _human_inbox_submission_projection_from_record(
 
 
 def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
+    command_type = str(command.get("type") or "")
+    if command_type not in {
+        CommandType.HUMAN_GATE_APPROVE.value,
+        CommandType.HUMAN_GATE_REJECT.value,
+    }:
+        return ""
     target = command.get("target") if isinstance(command.get("target"), dict) else {}
     if target.get("type") != ObjectType.HUMAN_GATE_ITEM.value:
         return ""
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    candidate = str(
-        params.get("review_id")
-        or params.get("promotion_review_id")
-        or params.get("recommendation_id")
-        or target.get("id")
-        or ""
-    ).strip()
-    return _promotion_review_clean_id(candidate)
+    raw_target_id = str(target.get("id") or "").strip()
+    recommendation_id = _promotion_review_clean_id(raw_target_id)
+    if (
+        not recommendation_id
+        or raw_target_id != _promotion_review_target_id(recommendation_id)
+    ):
+        return ""
+    for key in (
+        "human_gate_item_id",
+        "humanGateItemId",
+        "review_id",
+        "reviewId",
+        "promotion_review_id",
+        "promotionReviewId",
+        "recommendation_id",
+        "recommendationId",
+    ):
+        alias = params.get(key)
+        if alias not in (None, "") and _promotion_review_clean_id(alias) != recommendation_id:
+            return ""
+    return recommendation_id
 
 
 def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
         return None
+    if not _human_inbox_decision_recommendation_id(command):
+        return None
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
     decision = str(params.get("decision") or "").strip().lower()
     if decision not in _PROMOTION_REVIEW_DECISIONS:
+        return None
+    command_type = str(command.get("type") or "")
+    if command_type == CommandType.HUMAN_GATE_REJECT.value and decision != "reject":
+        return None
+    if command_type == CommandType.HUMAN_GATE_APPROVE.value and decision not in {
+        "approve",
+        "approve_with_conditions",
+    }:
         return None
     audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
     projection: Dict[str, Any] = {
@@ -44089,7 +44118,7 @@ def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, An
 def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, Any]]:
     clean_id = _promotion_review_clean_id(review_id)
     for record in reversed(command_store._get_all_commands()):
-        if record.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        if not _human_inbox_trusted_promotion_submission(record):
             continue
         target = record.get("target") if isinstance(record.get("target"), dict) else {}
         params = record.get("params") if isinstance(record.get("params"), dict) else {}
@@ -44126,17 +44155,11 @@ def _promotion_review_submission_projection(review_id: Any) -> Optional[Dict[str
 
 def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
     clean_id = _promotion_review_clean_id(review_id)
-    target_id = _promotion_review_target_id(clean_id)
     for record in reversed(command_store._get_all_commands()):
-        target = record.get("target") if isinstance(record.get("target"), dict) else {}
-        params = record.get("params") if isinstance(record.get("params"), dict) else {}
-        if target.get("type") != ObjectType.HUMAN_GATE_ITEM.value:
-            continue
-        if target.get("id") == target_id:
-            return record
-        if str(params.get("review_id") or params.get("promotion_review_id") or "").strip() == clean_id:
-            return record
-        if str(params.get("recommendation_id") or "").strip() == clean_id:
+        if (
+            _human_inbox_decision_recommendation_id(record) == clean_id
+            and _human_inbox_decision_projection_from_record(record) is not None
+        ):
             return record
     return None
 
@@ -44145,32 +44168,7 @@ def _promotion_review_decision_projection(review_id: Any) -> Optional[Dict[str, 
     record = _latest_promotion_review_command(review_id)
     if record is None:
         return None
-    params = record.get("params") if isinstance(record.get("params"), dict) else {}
-    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    rationale = (
-        params.get("rationale")
-        or params.get("reason")
-        or params.get("rejection_reason")
-        or params.get("memo")
-    )
-    projection: Dict[str, Any] = {
-        "decision": params.get("decision"),
-        "decision_status": "accepted",
-        "command_id": record.get("command_id"),
-        "commandId": record.get("command_id"),
-        "receipt_id": record.get("command_id"),
-        "submitted_at": record.get("submitted_at"),
-        "decided_at": record.get("submitted_at"),
-        "decided_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
-        "command_status": record.get("status"),
-        "live_capital_mutation": False,
-        "requires_human_gate_decision": True,
-    }
-    if rationale not in (None, ""):
-        projection["rationale"] = rationale
-    if "conditions" in params:
-        projection["conditions"] = json.loads(json.dumps(params.get("conditions")))
-    return projection
+    return _human_inbox_decision_projection_from_record(record)
 
 
 def _promotion_review_item_from_recommendation(
