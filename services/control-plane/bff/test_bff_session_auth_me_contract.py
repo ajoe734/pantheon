@@ -17,6 +17,7 @@ from services.runtime_auth_inbound import encode_jwt_hs256
 
 OPERATOR_TOKEN = "Bearer op-2:operator,reviewer:mfa"
 DEV_GATE_TOKEN = "Bearer pantheon-dev-operator:operator,reviewer,approver:mfa"
+PUBLIC_VIEWER_TOKEN = "Bearer pantheon-dev-browser:viewer"
 JWT_SECRET = "test-bff-me-secret"
 JWT_ISSUER = "pantheon-bff-me-test"
 JWT_AUDIENCE = "bff-operators"
@@ -37,6 +38,8 @@ def _jwt_token(*, roles: list[str], extra: dict | None = None) -> str:
 
 
 def _strict_auth_env(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", JWT_SECRET)
@@ -119,20 +122,24 @@ def test_bff_me_permissive_structured_token_includes_dev_kernel_capabilities(mon
 
 
 def test_bff_me_public_browser_subject_is_viewer_only(monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    _strict_auth_env(monkeypatch)
     monkeypatch.setenv(
         "PANTHEON_BFF_STUB_CAPABILITIES",
         "assistant.kernel.debug,assistant.kernel.repair",
+    )
+    privileged_token = _jwt_token(
+        roles=["admin", "operator"],
+        extra={"sub": "pantheon-dev-browser", "amr": ["mfa"]},
     )
     client = TestClient(bff_main.app)
 
     viewer = client.get(
         "/bff/me",
-        headers={"Authorization": "Bearer pantheon-dev-browser:viewer"},
+        headers={"Authorization": PUBLIC_VIEWER_TOKEN},
     )
     privileged = client.get(
         "/bff/me",
-        headers={"Authorization": "Bearer pantheon-dev-browser:admin,operator:mfa"},
+        headers={"Authorization": f"Bearer {privileged_token}"},
     )
 
     assert viewer.status_code == 200, viewer.text
@@ -172,7 +179,7 @@ def test_bff_me_exact_public_browser_viewer_is_available_in_strict_mode(monkeypa
 
     response = TestClient(bff_main.app).get(
         "/bff/me",
-        headers={"Authorization": "Bearer pantheon-dev-browser:viewer"},
+        headers={"Authorization": PUBLIC_VIEWER_TOKEN},
     )
 
     assert response.status_code == 200, response.text
@@ -215,10 +222,165 @@ def test_bff_me_public_viewer_exception_is_forbidden_outside_dev(
 
     response = TestClient(bff_main.app).get(
         "/bff/me",
-        headers={"Authorization": "Bearer pantheon-dev-browser:viewer"},
+        headers={"Authorization": PUBLIC_VIEWER_TOKEN},
     )
 
     assert response.status_code in {401, 403}, response.text
+
+
+@pytest.mark.parametrize(
+    ("environment", "deployment_stage"),
+    [
+        ("dev", ""),
+        ("", "dev"),
+        ("local", ""),
+        ("", "local"),
+        ("dev", "local"),
+        (" DEV ", " LOCAL "),
+    ],
+)
+@pytest.mark.parametrize("auth_mode", ["strict", " STRICT "])
+def test_bff_me_public_viewer_allows_only_normalized_strict_dev_local(
+    monkeypatch,
+    environment,
+    deployment_stage,
+    auth_mode,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", environment)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", deployment_stage)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", auth_mode)
+
+    response = TestClient(bff_main.app).get(
+        "/bff/me",
+        headers={"Authorization": PUBLIC_VIEWER_TOKEN},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["session"]["auth_mode"] == "public"
+
+
+@pytest.mark.parametrize(
+    ("environment", "deployment_stage"),
+    [
+        ("", ""),
+        ("staging", ""),
+        ("staging-live", ""),
+        ("production", ""),
+        ("prod", ""),
+        ("live", ""),
+        ("canary", ""),
+        ("paper", ""),
+        ("sandbox", ""),
+        ("development", ""),
+        ("dev-preview", ""),
+        ("local-dev", ""),
+        ("dev", "staging"),
+        ("local", "production"),
+        ("production", "dev"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("auth_mode", "auth_stub"),
+    [
+        ("strict", ""),
+        ("permissive", ""),
+        ("permissive", "true"),
+        ("strict-preview", "true"),
+    ],
+)
+def test_bff_me_public_viewer_rejects_forbidden_envs_without_parser_fallback(
+    monkeypatch,
+    environment,
+    deployment_stage,
+    auth_mode,
+    auth_stub,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", environment)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", deployment_stage)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", auth_mode)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", auth_stub)
+
+    response = TestClient(bff_main.app).get(
+        "/bff/me",
+        headers={"Authorization": PUBLIC_VIEWER_TOKEN},
+    )
+
+    assert response.status_code == 403, response.text
+    assert (
+        response.json()["error"]["details"]["reason"]
+        == "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"
+    )
+
+
+@pytest.mark.parametrize(
+    ("auth_mode", "auth_stub"),
+    [
+        ("permissive", ""),
+        ("permissive", "true"),
+        ("strict-preview", "true"),
+    ],
+)
+@pytest.mark.parametrize("environment", ["dev", "local"])
+def test_bff_me_public_viewer_rejects_non_strict_auth_in_allowed_env(
+    monkeypatch,
+    auth_mode,
+    auth_stub,
+    environment,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", environment)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", auth_mode)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", auth_stub)
+
+    response = TestClient(bff_main.app).get(
+        "/bff/me",
+        headers={"Authorization": PUBLIC_VIEWER_TOKEN},
+    )
+
+    assert response.status_code == 403, response.text
+    assert (
+        response.json()["error"]["details"]["reason"]
+        == "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"
+    )
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        " Bearer pantheon-dev-browser:viewer",
+        "Bearer pantheon-dev-browser:viewer ",
+        " Bearer pantheon-dev-browser:viewer ",
+        "Bearer  pantheon-dev-browser:viewer",
+        "Bearer\tpantheon-dev-browser:viewer",
+        "Bearer \tpantheon-dev-browser:viewer",
+        "bearer pantheon-dev-browser:viewer",
+        "Bearer Pantheon-dev-browser:viewer",
+        "Bearer pantheon-dev-browser:Viewer",
+        "Bearer pantheon-dev-browser :viewer",
+        "Bearer pantheon-dev-browser\t:viewer",
+        "Bearer pantheon-dev-browser:\tviewer",
+        "Bearer pantheon-dev-browser:viewer:",
+    ],
+)
+def test_bff_me_public_viewer_rejects_header_near_matches(
+    monkeypatch,
+    authorization,
+) -> None:
+    _strict_auth_env(monkeypatch)
+
+    response = TestClient(bff_main.app).get(
+        "/bff/me",
+        headers={"Authorization": authorization},
+    )
+
+    assert response.status_code == 401, response.text
+    assert (
+        response.json()["error"]["details"]["reason"]
+        == "AUTH_PUBLIC_BROWSER_TOKEN_NEAR_MATCH"
+    )
 
 
 @pytest.mark.parametrize(
@@ -251,6 +413,220 @@ def test_bff_me_public_browser_strict_jwt_rejects_capability_aliases(
         response.json()["error"]["details"]["reason"]
         == "AUTH_PUBLIC_BROWSER_IDENTITY_PRIVILEGED"
     )
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload", "extra_headers"),
+    [
+        ("POST", "/bff/logout", {}, {}),
+        (
+            "POST",
+            "/bff/tools",
+            {"name": "must-not-be-created"},
+            {"Idempotency-Key": "public-viewer-tool-write"},
+        ),
+        (
+            "POST",
+            "/api/v1/internal/sse/publish?event_type=kill_switch.public_injection&channel=system",
+            {"forged": True},
+            {},
+        ),
+        ("PATCH", "/bff/me/locale", {"locale": "zh-TW"}, {}),
+        ("PUT", "/bff/me", {}, {}),
+        (
+            "DELETE",
+            "/bff/confirm-tokens/public-viewer-token",
+            {},
+            {"Idempotency-Key": "public-viewer-delete"},
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    (
+        "auth_mode",
+        "auth_stub",
+        "environment",
+        "deployment_stage",
+        "expected_reason",
+    ),
+    [
+        ("strict", "", "dev", "", "AUTH_PUBLIC_BROWSER_READ_ONLY"),
+        ("strict", "", "", "local", "AUTH_PUBLIC_BROWSER_READ_ONLY"),
+        ("strict", "", "staging", "", "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"),
+        ("strict", "", "production", "", "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"),
+        ("permissive", "", "dev", "", "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"),
+        ("permissive", "true", "local", "", "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"),
+        ("strict-preview", "true", "dev", "", "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"),
+        ("permissive", "true", "staging", "", "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"),
+    ],
+)
+def test_public_viewer_token_rejects_every_mutating_http_method(
+    monkeypatch,
+    method,
+    path,
+    payload,
+    extra_headers,
+    auth_mode,
+    auth_stub,
+    environment,
+    deployment_stage,
+    expected_reason,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", auth_mode)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", auth_stub)
+    monkeypatch.setenv("PANTHEON_ENV", environment)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", deployment_stage)
+    headers = {"Authorization": PUBLIC_VIEWER_TOKEN, **extra_headers}
+
+    response = TestClient(bff_main.app).request(
+        method,
+        path,
+        headers=headers,
+        json=payload,
+    )
+
+    assert response.status_code == 403, response.text
+    details = response.json()["error"]["details"]
+    assert details["reason"] == expected_reason
+    if expected_reason == "AUTH_PUBLIC_BROWSER_READ_ONLY":
+        assert details["method"] == method
+        assert details["allowed_methods"] == ["GET", "HEAD"]
+
+
+def test_public_viewer_method_gate_allows_get_and_head(
+    monkeypatch,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    client = TestClient(bff_main.app)
+    headers = {"Authorization": PUBLIC_VIEWER_TOKEN}
+
+    get_response = client.get("/bff/me", headers=headers)
+    head_response = client.head("/bff/me", headers=headers)
+
+    assert get_response.status_code == 200, get_response.text
+    # FastAPI does not register HEAD automatically for this GET route, but the
+    # public credential's method gate must not turn the router's 405 into 403.
+    assert head_response.status_code == 405, head_response.text
+
+
+@pytest.mark.parametrize(
+    "credential_source",
+    ["body", "header", "refresh_cookie", "session_cookie"],
+)
+def test_public_viewer_refresh_credentials_cannot_bypass_method_gate(
+    monkeypatch,
+    credential_source,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    client = TestClient(bff_main.app)
+    headers = {}
+    payload = {}
+    if credential_source == "body":
+        payload["refresh_token"] = "pantheon-dev-browser:viewer"
+    elif credential_source == "header":
+        headers["X-Refresh-Token"] = "pantheon-dev-browser:viewer"
+    elif credential_source == "refresh_cookie":
+        client.cookies.set("pantheon_refresh", "pantheon-dev-browser:viewer")
+    else:
+        client.cookies.set("pantheon_session", "pantheon-dev-browser:viewer")
+
+    response = client.post(
+        "/bff/auth/refresh",
+        headers=headers,
+        json=payload,
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["details"]["reason"] == "AUTH_PUBLIC_BROWSER_READ_ONLY"
+
+
+@pytest.mark.parametrize(
+    ("auth_mode", "auth_stub"),
+    [("strict", ""), ("permissive", ""), ("permissive", "true")],
+)
+def test_public_viewer_raw_session_cookie_is_never_authenticated(
+    monkeypatch,
+    auth_mode,
+    auth_stub,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", auth_mode)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", auth_stub)
+    client = TestClient(bff_main.app)
+    client.cookies.set("pantheon_session", "pantheon-dev-browser:viewer")
+
+    response = client.get("/bff/me")
+
+    assert response.status_code == 403, response.text
+    assert (
+        response.json()["error"]["details"]["reason"]
+        == "AUTH_PUBLIC_BROWSER_COOKIE_FORBIDDEN"
+    )
+
+
+def test_public_viewer_blocked_logout_cannot_poison_shared_session(
+    monkeypatch,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    client = TestClient(bff_main.app)
+    headers = {"Authorization": PUBLIC_VIEWER_TOKEN}
+
+    before = client.get("/bff/me", headers=headers)
+    logout = client.post("/bff/logout", headers=headers, json={})
+    after = client.get("/bff/me", headers=headers)
+    identity = bff_main._extract_identity(PUBLIC_VIEWER_TOKEN)
+
+    assert before.status_code == 200, before.text
+    assert logout.status_code == 403, logout.text
+    assert after.status_code == 200, after.text
+    assert bff_main._sem_session_state(identity) == {}
+
+
+def test_public_viewer_blocked_routes_leave_tool_and_sse_state_unchanged(
+    monkeypatch,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    client = TestClient(bff_main.app)
+    headers = {"Authorization": PUBLIC_VIEWER_TOKEN}
+    tool_ids_before = set(bff_main._TOOL_REGISTRY)
+    system_events_before = list(bff_main._sse_buffers["system"])
+
+    tool_response = client.post(
+        "/bff/tools",
+        headers={**headers, "Idempotency-Key": "public-viewer-tool-state"},
+        json={"name": "must-not-be-created"},
+    )
+    sse_response = client.post(
+        "/api/v1/internal/sse/publish?event_type=kill_switch.public_injection&channel=system",
+        headers=headers,
+        json={"forged": True},
+    )
+
+    assert tool_response.status_code == 403, tool_response.text
+    assert sse_response.status_code == 403, sse_response.text
+    assert set(bff_main._TOOL_REGISTRY) == tool_ids_before
+    assert list(bff_main._sse_buffers["system"]) == system_events_before
+
+
+@pytest.mark.parametrize("credential_kind", ["bearer", "cookie"])
+def test_signed_jwt_and_cookie_logout_behavior_is_preserved(
+    monkeypatch,
+    credential_kind,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    token = _jwt_token(roles=["operator"])
+    client = TestClient(bff_main.app)
+    headers = {}
+    if credential_kind == "bearer":
+        headers["Authorization"] = f"Bearer {token}"
+    else:
+        client.cookies.set("pantheon_session", token)
+
+    response = client.post("/bff/logout", headers=headers, json={})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["session"]["state"] == "logged_out"
 
 
 def test_bff_me_permissive_rejects_plain_no_role_bearer(monkeypatch) -> None:
