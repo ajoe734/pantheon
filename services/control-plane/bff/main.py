@@ -32814,21 +32814,71 @@ def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str
     )
 
 
-def _submitted_promotion_review_record_from_command(
-    command: Dict[str, Any],
-) -> Optional[Dict[str, Any]]:
-    """Project the durable submission receipt without rebuilding PM12 reads.
+_HUMAN_INBOX_PROMOTION_PRODUCER = "management_quarterly_ranking_recommendation_submit"
+_HUMAN_INBOX_INACTIVE_COMMAND_STATUSES = {
+    "canceled",
+    "cancelled",
+    "expired",
+    "failed",
+    "timed_out",
+    "timeout",
+}
+_HUMAN_INBOX_PROMOTION_SNAPSHOT_SCALARS = {
+    "action_id",
+    "action_label",
+    "archetype",
+    "binding_state",
+    "capital_mode",
+    "capital_pool_id",
+    "capital_scope",
+    "capital_scope_id",
+    "capital_sleeve_id",
+    "current_weight",
+    "current_weight_source",
+    "deployment_stage",
+    "eligible",
+    "exclusion_reason",
+    "formula_version",
+    "id",
+    "name",
+    "owner",
+    "paper_ledger_id",
+    "priority",
+    "quarter",
+    "rank",
+    "ranking_snapshot_id",
+    "rationale",
+    "recommendation_id",
+    "risk",
+    "risk_level",
+    "score",
+    "source_confidence",
+    "stage",
+    "state",
+    "target_weight",
+    "tier",
+    "tier_id",
+    "tier_label",
+    "persona_id",
+}
+_HUMAN_INBOX_PROMOTION_SNAPSHOT_STRING_LISTS = {
+    "artifact_ids",
+    "binding_ids",
+    "broker_ids",
+    "capital_pool_ids",
+    "exclusion_codes",
+    "exclusion_reasons",
+    "rationale_codes",
+    "runtime_ids",
+    "sleeve_ids",
+    "strategy_ids",
+}
 
-    The submission command is the source of truth for Human Inbox membership.
-    Re-running ``_promotion_review_find`` here used to rebuild every Persona
-    League contributor once per submitted command, turning two inbox rows into
-    dozens of sequential service reads.  Newer commands carry the complete
-    source recommendation snapshot; legacy commands still contain enough
-    stable identity and stage metadata for an honest review projection.
-    """
+
+def _human_inbox_promotion_recommendation_id(command: Dict[str, Any]) -> str:
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
     target = command.get("target") if isinstance(command.get("target"), dict) else {}
-    recommendation_id = str(
+    return str(
         params.get("recommendation_id")
         or params.get("recommendationId")
         or params.get("review_id")
@@ -32836,62 +32886,311 @@ def _submitted_promotion_review_record_from_command(
         or target.get("id")
         or ""
     ).strip()
-    if not recommendation_id:
-        return None
 
-    raw_snapshot = params.get("source_recommendation")
-    recommendation = (
-        _management_json_clone(raw_snapshot)
-        if isinstance(raw_snapshot, dict)
-        else {}
-    )
-    recommendation.setdefault("id", recommendation_id)
-    recommendation.setdefault("recommendation_id", recommendation_id)
 
-    quarter = str(params.get("quarter") or "").strip() or _promotion_review_quarter_from_id(
-        recommendation_id
-    )
-    if quarter:
-        recommendation.setdefault("quarter", quarter)
-
-    persona_id = str(params.get("persona_id") or recommendation.get("persona_id") or "").strip()
-    if persona_id:
-        recommendation.setdefault("persona_id", persona_id)
-        recommendation.setdefault("name", params.get("persona_name") or persona_id)
-
+def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
+    if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        return False
+    if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
+        return False
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    target = command.get("target") if isinstance(command.get("target"), dict) else {}
+    recommendation_id = _human_inbox_promotion_recommendation_id(command)
+    if (
+        not recommendation_id
+        or target.get("type") != ObjectType.RANKING.value
+        or str(target.get("id") or "").strip() != recommendation_id
+    ):
+        return False
+    expected_quarter = _promotion_review_quarter_from_id(recommendation_id)
+    quarter = str(params.get("quarter") or "").strip().upper()
+    persona_id = str(params.get("persona_id") or "").strip()
     action_id = str(
         params.get("recommendation_action_id")
         or params.get("recommendationActionId")
-        or recommendation.get("action_id")
         or ""
     ).strip()
-    if action_id:
-        recommendation.setdefault("action_id", action_id)
+    if not expected_quarter or quarter != expected_quarter or not persona_id:
+        return False
+    if action_id not in _PROMOTION_REVIEW_ACTION_IDS:
+        return False
+    for flag in (
+        "direct_live_capital_mutation",
+        "liveCapitalMutation",
+        "live_capital_mutation",
+        "runtime_mutation",
+    ):
+        if params.get(flag) not in (None, False):
+            return False
 
-    stage_from = str(params.get("stage_from") or recommendation.get("state") or "").strip()
-    if stage_from:
-        recommendation.setdefault("state", stage_from)
-    recommendation.setdefault("priority", params.get("priority") or "high")
-    recommendation.setdefault("risk_level", params.get("risk_level") or "high")
-    recommendation.setdefault(
-        "rationale",
-        params.get("rationale")
-        or "Submitted ranking recommendation requires Human Gate review.",
+    foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
+    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    audit_foundation = audit.get("foundation") if isinstance(audit.get("foundation"), dict) else {}
+    trusted_producer = (
+        foundation.get("trusted_evidence_producer")
+        or audit.get("trusted_evidence_producer")
+        or audit_foundation.get("trusted_evidence_producer")
+    )
+    if trusted_producer == _HUMAN_INBOX_PROMOTION_PRODUCER:
+        return True
+    # Legacy submissions from the dedicated semantic route predate the
+    # producer marker. Generic /bff/v1 command admission always persists an
+    # admission_route and must not manufacture viewer-visible inbox rows.
+    if foundation.get("admission_route"):
+        return False
+    if not foundation:
+        # Pre-foundation command-store rows were written by the dedicated
+        # semantic submit route. API-admitted generic commands always carry an
+        # admission_route, so this compatibility path cannot be reached by a
+        # current generic command request.
+        return True
+    return (
+        params.get("source_type") == "quarterly_ranking_recommendation"
+        and params.get("source_record_id") == recommendation_id
+        and params.get("audit_event") == "quarterly_ranking.recommendation_submitted"
+        and params.get("policy") == "promotion_governance_human_gate_no_direct_live_capital"
     )
 
-    review = _promotion_review_item_from_recommendation(recommendation)
-    promotion_path = dict(review.get("promotion_path") or {})
+
+def _human_inbox_sanitize_promotion_snapshot(
+    command: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    if not _human_inbox_trusted_promotion_submission(command):
+        return None
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    recommendation_id = _human_inbox_promotion_recommendation_id(command)
+    expected_quarter = str(_promotion_review_quarter_from_id(recommendation_id) or "").upper()
+    persona_id = str(params.get("persona_id") or "").strip()
+    action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or ""
+    ).strip()
+    raw_snapshot = params.get("source_recommendation")
+    if raw_snapshot is not None and not isinstance(raw_snapshot, dict):
+        return None
+    raw = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+
+    for snapshot_id in (raw.get("id"), raw.get("recommendation_id")):
+        if snapshot_id not in (None, "") and str(snapshot_id).strip() != recommendation_id:
+            return None
+    snapshot_quarter = str(raw.get("quarter") or expected_quarter).strip().upper()
+    snapshot_persona = str(raw.get("persona_id") or persona_id).strip()
+    snapshot_action = str(raw.get("action_id") or action_id).strip()
+    if (
+        snapshot_quarter != expected_quarter
+        or snapshot_persona != persona_id
+        or snapshot_action != action_id
+    ):
+        return None
+    params_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    raw_snapshot_id = str(raw.get("ranking_snapshot_id") or "").strip()
+    if params_snapshot_id and raw_snapshot_id != params_snapshot_id:
+        return None
+
+    sanitized: Dict[str, Any] = {}
+    for key in _HUMAN_INBOX_PROMOTION_SNAPSHOT_SCALARS:
+        value = raw.get(key)
+        if value is None or isinstance(value, (dict, list)):
+            continue
+        sanitized[key] = value
+    for key in _HUMAN_INBOX_PROMOTION_SNAPSHOT_STRING_LISTS:
+        value = raw.get(key)
+        if isinstance(value, list):
+            sanitized[key] = [str(item) for item in value if isinstance(item, (str, int, float))]
+    for key in ("components", "metrics"):
+        value = raw.get(key)
+        if isinstance(value, dict):
+            sanitized[key] = {
+                str(metric): number
+                for metric, number in value.items()
+                if isinstance(number, (int, float)) and not isinstance(number, bool)
+            }
+
+    sanitized.update(
+        {
+            "id": recommendation_id,
+            "recommendation_id": recommendation_id,
+            "quarter": expected_quarter,
+            "persona_id": persona_id,
+            "action_id": action_id,
+            "name": sanitized.get("name") or params.get("persona_name") or persona_id,
+            "priority": sanitized.get("priority") or params.get("priority") or "high",
+            "risk_level": sanitized.get("risk_level") or params.get("risk_level") or "high",
+            "rationale": sanitized.get("rationale")
+            or params.get("rationale")
+            or "Submitted ranking recommendation requires Human Gate review.",
+            # Evidence bodies are request-scoped and may contain privileged
+            # material. Never replay arbitrary command params onto a read row.
+            "evidence_refs": [],
+            "evidence_ref_ids": [],
+        }
+    )
+    if params_snapshot_id:
+        sanitized["ranking_snapshot_id"] = params_snapshot_id
+    stage_from = str(params.get("stage_from") or sanitized.get("stage") or sanitized.get("state") or "").strip()
+    if stage_from:
+        sanitized.setdefault("stage", stage_from)
+        sanitized.setdefault("state", stage_from)
+    expected_path = _promotion_review_stage_path(sanitized)
     for param_key, path_key in (
         ("stage_from", "from_stage"),
         ("stage_to", "target_stage"),
         ("review_kind", "review_kind"),
     ):
         value = str(params.get(param_key) or "").strip()
-        if value:
-            promotion_path[path_key] = value
-    review["promotion_path"] = promotion_path
-    review["review_kind"] = promotion_path.get("review_kind")
-    return review
+        if value and value != str(expected_path.get(path_key) or ""):
+            return None
+    return sanitized
+
+
+def _human_inbox_submission_projection_from_record(
+    command: Dict[str, Any],
+    recommendation_id: str,
+) -> Dict[str, Any]:
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    return {
+        "submitted": True,
+        "submit_status": command.get("status"),
+        "command_id": command.get("command_id"),
+        "commandId": command.get("command_id"),
+        "receipt_id": command.get("command_id"),
+        "submitted_at": command.get("submitted_at"),
+        "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
+        "recommendation_id": recommendation_id,
+        "recommendation_action_id": params.get("recommendation_action_id")
+        or params.get("recommendationActionId"),
+        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
+        "quarter": params.get("quarter"),
+        "persona_id": params.get("persona_id"),
+        "stage_from": params.get("stage_from"),
+        "stage_to": params.get("stage_to"),
+        "review_kind": params.get("review_kind"),
+        "human_inbox_id": _promotion_review_target_id(recommendation_id),
+        "live_capital_mutation": False,
+        "requires_human_gate_decision": True,
+    }
+
+
+def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
+    target = command.get("target") if isinstance(command.get("target"), dict) else {}
+    if target.get("type") != ObjectType.HUMAN_GATE_ITEM.value:
+        return ""
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    candidate = str(
+        params.get("review_id")
+        or params.get("promotion_review_id")
+        or params.get("recommendation_id")
+        or target.get("id")
+        or ""
+    ).strip()
+    return _promotion_review_clean_id(candidate)
+
+
+def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
+        return None
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    decision = str(params.get("decision") or "").strip().lower()
+    if decision not in _PROMOTION_REVIEW_DECISIONS:
+        return None
+    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    projection: Dict[str, Any] = {
+        "decision": decision,
+        "decision_status": "accepted",
+        "command_id": command.get("command_id"),
+        "commandId": command.get("command_id"),
+        "receipt_id": command.get("command_id"),
+        "submitted_at": command.get("submitted_at"),
+        "decided_at": command.get("submitted_at"),
+        "decided_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
+        "command_status": command.get("status"),
+        "live_capital_mutation": False,
+        "requires_human_gate_decision": True,
+    }
+    rationale = params.get("rationale") or params.get("reason") or params.get("rejection_reason") or params.get("memo")
+    if rationale not in (None, ""):
+        projection["rationale"] = rationale
+    if "conditions" in params:
+        projection["conditions"] = _management_json_clone(params.get("conditions"))
+    return projection
+
+
+def _human_inbox_promotion_review_from_projection(
+    recommendation: Dict[str, Any],
+    *,
+    submission: Dict[str, Any],
+    decision: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    review_id = str(recommendation.get("recommendation_id") or recommendation.get("id") or "")
+    stage_path = _promotion_review_stage_path(recommendation)
+    decision_status = "accepted" if decision else "pending"
+    item: Dict[str, Any] = {
+        **{
+            key: _management_json_clone(value)
+            for key, value in recommendation.items()
+            if key not in {"id", "status"}
+        },
+        "id": review_id,
+        "review_id": review_id,
+        "promotion_review_id": review_id,
+        "recommendation_id": review_id,
+        "status": "decision_accepted" if decision else "pending_human_gate",
+        "decision_status": decision_status,
+        "submitted": True,
+        "submit_status": submission.get("submit_status"),
+        "human_inbox_id": _promotion_review_target_id(review_id),
+        "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
+        "allowedActions": {
+            "canSubmit": False,
+            "canApprove": not bool(decision),
+            "canApproveWithConditions": not bool(decision),
+            "canReject": not bool(decision),
+        },
+        "promotion_path": stage_path,
+        "review_kind": stage_path.get("review_kind"),
+        "source_recommendation": _management_json_clone(recommendation),
+        "submission": submission,
+        "governance": {
+            "requires_human_gate_decision": True,
+            "decision_status": decision_status,
+            "live_capital_mutation": False,
+            "direct_live_capital_mutation": False,
+            "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        },
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "direct_live_capital_mutation": False,
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        "links": {
+            "persona": f"/bff/personas/{recommendation.get('persona_id')}",
+            "recommendation": "/bff/management/quarterly-ranking/recommendations",
+            "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
+            "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
+            "human_inbox": f"/bff/management/human-inbox/{quote(_promotion_review_target_id(review_id), safe='')}",
+        },
+    }
+    if decision:
+        item["decision"] = decision
+    return item
+
+
+def _submitted_promotion_review_record_from_command(
+    command: Dict[str, Any],
+    *,
+    decision: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Project one trusted durable submission without rebuilding PM12 reads."""
+    recommendation = _human_inbox_sanitize_promotion_snapshot(command)
+    if recommendation is None:
+        return None
+    recommendation_id = str(recommendation["recommendation_id"])
+    return _human_inbox_promotion_review_from_projection(
+        recommendation,
+        submission=_human_inbox_submission_projection_from_record(command, recommendation_id),
+        decision=decision,
+    )
 
 
 def _submitted_promotion_review_records(
@@ -32899,25 +33198,29 @@ def _submitted_promotion_review_records(
     *,
     snapshot_at: str,
 ) -> List[Dict[str, Any]]:
-    records: List[Dict[str, Any]] = []
-    seen: Set[str] = set()
+    del identity, snapshot_at  # Projection is identity-stable; evidence is always stripped.
+    submissions: Dict[str, Dict[str, Any]] = {}
+    decisions: Dict[str, Dict[str, Any]] = {}
+    # One command-log read per aggregate, regardless of submitted row count.
     for command in command_store._get_all_commands():
-        if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        if command.get("type") == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+            recommendation = _human_inbox_sanitize_promotion_snapshot(command)
+            if recommendation is not None:
+                submissions[str(recommendation["recommendation_id"])] = command
             continue
-        params = command.get("params") if isinstance(command.get("params"), dict) else {}
-        recommendation_id = str(
-            params.get("recommendation_id")
-            or params.get("recommendationId")
-            or (command.get("target") or {}).get("id")
-            or ""
-        ).strip()
-        if not recommendation_id or recommendation_id in seen:
-            continue
-        review = _submitted_promotion_review_record_from_command(command)
-        if review is None or not bool(review.get("submitted")):
-            continue
-        seen.add(recommendation_id)
-        records.append(review)
+        recommendation_id = _human_inbox_decision_recommendation_id(command)
+        decision = _human_inbox_decision_projection_from_record(command)
+        if recommendation_id and decision is not None:
+            decisions[recommendation_id] = decision
+
+    records: List[Dict[str, Any]] = []
+    for recommendation_id, command in submissions.items():
+        review = _submitted_promotion_review_record_from_command(
+            command,
+            decision=decisions.get(recommendation_id),
+        )
+        if review is not None:
+            records.append(review)
     return records
 
 
@@ -33031,6 +33334,97 @@ def _human_inbox_project_items(
     return items
 
 
+def _human_inbox_governance_contributor(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    records = list(read_store.list_governance_review_queue_items() or [])
+    return records, _dataset_surface_status(
+        "governance_review_queue_items",
+        snapshot_at=snapshot_at,
+        has_data=bool(records),
+        missing_message="Governance review queue has no readable source records.",
+    )
+
+
+def _human_inbox_approval_contributor(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    records = list(read_store.list_approval_queue_items() or [])
+    return records, _dataset_surface_status(
+        "approval_queue_items",
+        snapshot_at=snapshot_at,
+        has_data=bool(records),
+        missing_message="Approval queue has no readable source records.",
+    )
+
+
+def _human_inbox_intervention_contributor(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    records = list(_v5_intervention_records())
+    surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+        has_data=bool(records),
+        missing_message="V5 interventions have no readable source records.",
+    )
+    local_ids = {
+        str(record.get("intervention_id") or record.get("id") or "")
+        for record in _V5_INTERVENTIONS_STORE
+        if isinstance(record, dict)
+    }
+    has_local_record = any(
+        str(record.get("intervention_id") or record.get("id") or "") in local_ids
+        for record in records
+    )
+    if has_local_record and surface.get("source") == "missing":
+        surface = {**_surface_status(), "source": "bff_local_registry"}
+    return records, surface
+
+
+def _human_inbox_sentinel_contributor(
+    snapshot_at: str,
+) -> tuple[tuple[bool, List[Dict[str, Any]]], Dict[str, Any]]:
+    available, raw_records = read_store.list_sentinel_findings()
+    records = list(raw_records or [])
+    incidents_source = read_store.dataset_source("incidents")
+    if incidents_source != "missing":
+        surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    else:
+        surface = _dataset_surface_status(
+            "sentinel_findings",
+            snapshot_at=snapshot_at,
+            source=None if available else "missing",
+        )
+    return (bool(available), records), surface
+
+
+def _human_inbox_persona_contributor(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    rows = list(
+        _build_persona_health_items(
+            snapshot_at,
+            include_market_persona_defaults=True,
+        )
+        or []
+    )
+    return rows, _composed_dataset_surface_status(
+        "persona_fleet",
+        rows,
+        snapshot_at=snapshot_at,
+        source="bff_composed",
+    )
+
+
+def _human_inbox_promotion_contributor(
+    identity: OperatorIdentity,
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    records = _submitted_promotion_review_records(identity, snapshot_at=snapshot_at)
+    return records, {**_surface_status(), "source": "command_store"}
+
+
 def _human_inbox_all_items(
     snapshot_at: Optional[str] = None,
     *,
@@ -33039,38 +33433,30 @@ def _human_inbox_all_items(
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     snapshot_at = snapshot_at or utc_now()
     include_all = not source_types
-    review_records = (
-        read_store.list_governance_review_queue_items() or []
-        if include_all or "governance_review" in source_types
-        else []
-    )
-    approval_records = (
-        read_store.list_approval_queue_items() or []
-        if include_all or "approval" in source_types
-        else []
-    )
-    intervention_records = (
-        _v5_intervention_records()
-        if include_all or "intervention" in source_types
-        else []
-    )
+    review_records: List[Dict[str, Any]] = []
+    approval_records: List[Dict[str, Any]] = []
+    intervention_records: List[Dict[str, Any]] = []
+    sentinel_available = False
+    sentinel_records: List[Dict[str, Any]] = []
+    persona_rows: List[Dict[str, Any]] = []
+    promotion_review_records: List[Dict[str, Any]] = []
+    surfaces: Dict[str, Dict[str, Any]] = {}
+    if include_all or "governance_review" in source_types:
+        review_records, surfaces["governance_review_queue"] = _human_inbox_governance_contributor(snapshot_at)
+    if include_all or "approval" in source_types:
+        approval_records, surfaces["approval_queue"] = _human_inbox_approval_contributor(snapshot_at)
+    if include_all or "intervention" in source_types:
+        intervention_records, surfaces["v5_interventions"] = _human_inbox_intervention_contributor(snapshot_at)
     if include_all or "sentinel_finding" in source_types:
-        sentinel_available, sentinel_records = read_store.list_sentinel_findings()
-    else:
-        sentinel_available, sentinel_records = False, []
-    persona_rows = (
-        _build_persona_health_items(
+        sentinel_result, surfaces["sentinel_findings"] = _human_inbox_sentinel_contributor(snapshot_at)
+        sentinel_available, sentinel_records = sentinel_result
+    if include_all or "readiness_blocker" in source_types:
+        persona_rows, surfaces["persona_readiness"] = _human_inbox_persona_contributor(snapshot_at)
+    if identity is not None and (include_all or "promotion_review" in source_types):
+        promotion_review_records, surfaces["promotion_reviews"] = _human_inbox_promotion_contributor(
+            identity,
             snapshot_at,
-            include_market_persona_defaults=True,
         )
-        if include_all or "readiness_blocker" in source_types
-        else []
-    )
-    promotion_review_records = (
-        _submitted_promotion_review_records(identity, snapshot_at=snapshot_at)
-        if identity is not None and (include_all or "promotion_review" in source_types)
-        else []
-    )
     items = _human_inbox_project_items(
         snapshot_at=snapshot_at,
         review_records=review_records,
@@ -33088,6 +33474,7 @@ def _human_inbox_all_items(
         "sentinel_records": sentinel_records,
         "persona_rows": persona_rows,
         "promotion_review_records": promotion_review_records,
+        "surfaces": surfaces,
     }
 
 
@@ -33114,6 +33501,28 @@ def _human_inbox_read_error_surface(
     }
 
 
+def _human_inbox_read_slot_count() -> int:
+    try:
+        return max(1, int(os.getenv("PANTHEON_BFF_HUMAN_INBOX_READ_CONCURRENCY", "12")))
+    except (TypeError, ValueError):
+        return 12
+
+
+_HUMAN_INBOX_READ_SLOTS = threading.BoundedSemaphore(_human_inbox_read_slot_count())
+
+
+def _human_inbox_guarded_contributor(
+    contributor: Callable[..., Any],
+    *args: Any,
+) -> Any:
+    if not _HUMAN_INBOX_READ_SLOTS.acquire(blocking=False):
+        raise RuntimeError("Human Inbox contributor concurrency is saturated")
+    try:
+        return contributor(*args)
+    finally:
+        _HUMAN_INBOX_READ_SLOTS.release()
+
+
 async def _human_inbox_all_items_bounded(
     snapshot_at: str,
     *,
@@ -33126,29 +33535,45 @@ async def _human_inbox_all_items_bounded(
     jobs: Dict[str, Any] = {}
     if include_all or "governance_review" in source_types:
         jobs["governance_review_records"] = _run_management_read(
-            read_store.list_governance_review_queue_items,
+            _human_inbox_guarded_contributor,
+            _human_inbox_governance_contributor,
+            snapshot_at,
             timeout_seconds=timeout_seconds,
         )
     if include_all or "approval" in source_types:
         jobs["approval_records"] = _run_management_read(
-            read_store.list_approval_queue_items,
+            _human_inbox_guarded_contributor,
+            _human_inbox_approval_contributor,
+            snapshot_at,
             timeout_seconds=timeout_seconds,
         )
     if include_all or "intervention" in source_types:
         jobs["intervention_records"] = _run_management_read(
-            _v5_intervention_records,
+            _human_inbox_guarded_contributor,
+            _human_inbox_intervention_contributor,
+            snapshot_at,
             timeout_seconds=timeout_seconds,
         )
     if include_all or "sentinel_finding" in source_types:
         jobs["sentinel_result"] = _run_management_read(
-            read_store.list_sentinel_findings,
+            _human_inbox_guarded_contributor,
+            _human_inbox_sentinel_contributor,
+            snapshot_at,
             timeout_seconds=timeout_seconds,
         )
     if include_all or "readiness_blocker" in source_types:
         jobs["persona_rows"] = _run_management_read(
-            _build_persona_health_items,
+            _human_inbox_guarded_contributor,
+            _human_inbox_persona_contributor,
             snapshot_at,
-            include_market_persona_defaults=True,
+            timeout_seconds=timeout_seconds,
+        )
+    if include_all or "promotion_review" in source_types:
+        jobs["promotion_review_records"] = _run_management_read(
+            _human_inbox_guarded_contributor,
+            _human_inbox_promotion_contributor,
+            identity,
+            snapshot_at,
             timeout_seconds=timeout_seconds,
         )
 
@@ -33161,6 +33586,7 @@ async def _human_inbox_all_items_bounded(
         "sentinel_records": [],
         "persona_rows": [],
         "promotion_review_records": [],
+        "surfaces": {},
     }
     surface_specs = {
         "governance_review_records": ("governance_review_queue", "governance_review_queue_items"),
@@ -33168,6 +33594,7 @@ async def _human_inbox_all_items_bounded(
         "intervention_records": ("v5_interventions", "v5_interventions"),
         "sentinel_result": ("sentinel_findings", "sentinel_findings"),
         "persona_rows": ("persona_readiness", "persona_fleet"),
+        "promotion_review_records": ("promotion_reviews", "promotion_reviews"),
     }
     failures: Dict[str, Dict[str, Any]] = {}
     for key, result in zip(jobs, results):
@@ -33189,23 +33616,12 @@ async def _human_inbox_all_items_bounded(
                 snapshot_at=snapshot_at,
             )
             continue
+        value, surface = result
+        loaded["surfaces"][surface_key] = surface
         if key == "sentinel_result":
-            loaded["sentinel_available"], loaded["sentinel_records"] = result
+            loaded["sentinel_available"], loaded["sentinel_records"] = value
         else:
-            loaded[key] = list(result or [])
-
-    if include_all or "promotion_review" in source_types:
-        try:
-            loaded["promotion_review_records"] = _submitted_promotion_review_records(
-                identity,
-                snapshot_at=snapshot_at,
-            )
-        except Exception as exc:
-            log.warning("bff.human_inbox contributor=promotion_reviews failed: %r", exc)
-            failures["promotion_reviews"] = _human_inbox_read_error_surface(
-                "promotion_reviews",
-                snapshot_at=snapshot_at,
-            )
+            loaded[key] = list(value or [])
 
     items = _human_inbox_project_items(
         snapshot_at=snapshot_at,
@@ -33311,15 +33727,17 @@ def _human_inbox_surfaces(
     promotion_review_records: List[Dict[str, Any]],
     source_types: Optional[set[str]] = None,
     surface_failures: Optional[Dict[str, Dict[str, Any]]] = None,
+    loaded_surfaces: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     include_all = not source_types
     failures = surface_failures or {}
+    provenance = loaded_surfaces or {}
     contributor_surfaces: Dict[str, Dict[str, Any]] = {}
 
     if include_all or "governance_review" in source_types:
         contributor_surfaces["governance_review_queue"] = failures.get(
             "governance_review_queue"
-        ) or _human_inbox_loaded_surface(
+        ) or provenance.get("governance_review_queue") or _human_inbox_loaded_surface(
             snapshot_at=snapshot_at,
             source="read_store",
             has_data=bool(governance_review_records),
@@ -33329,7 +33747,7 @@ def _human_inbox_surfaces(
     if include_all or "approval" in source_types:
         contributor_surfaces["approval_queue"] = failures.get(
             "approval_queue"
-        ) or _human_inbox_loaded_surface(
+        ) or provenance.get("approval_queue") or _human_inbox_loaded_surface(
             snapshot_at=snapshot_at,
             source="read_store",
             has_data=bool(approval_records),
@@ -33348,7 +33766,7 @@ def _human_inbox_surfaces(
         )
         contributor_surfaces["v5_interventions"] = failures.get(
             "v5_interventions"
-        ) or _human_inbox_loaded_surface(
+        ) or provenance.get("v5_interventions") or _human_inbox_loaded_surface(
             snapshot_at=snapshot_at,
             source="bff_local_registry" if has_local_intervention else "read_store",
             has_data=bool(intervention_records),
@@ -33358,7 +33776,7 @@ def _human_inbox_surfaces(
     if include_all or "sentinel_finding" in source_types:
         contributor_surfaces["sentinel_findings"] = failures.get(
             "sentinel_findings"
-        ) or _human_inbox_loaded_surface(
+        ) or provenance.get("sentinel_findings") or _human_inbox_loaded_surface(
             snapshot_at=snapshot_at,
             source="read_store" if sentinel_available else "missing",
             available=sentinel_available,
@@ -33368,7 +33786,7 @@ def _human_inbox_surfaces(
     if include_all or "readiness_blocker" in source_types:
         contributor_surfaces["persona_readiness"] = failures.get(
             "persona_readiness"
-        ) or _human_inbox_loaded_surface(
+        ) or provenance.get("persona_readiness") or _human_inbox_loaded_surface(
             snapshot_at=snapshot_at,
             source="bff_composed",
             has_data=bool(persona_rows),
@@ -33376,7 +33794,7 @@ def _human_inbox_surfaces(
     if include_all or "promotion_review" in source_types:
         contributor_surfaces["promotion_reviews"] = failures.get(
             "promotion_reviews"
-        ) or _human_inbox_loaded_surface(
+        ) or provenance.get("promotion_reviews") or _human_inbox_loaded_surface(
             snapshot_at=snapshot_at,
             source="command_store",
             has_data=bool(promotion_review_records),
@@ -33434,6 +33852,7 @@ def _human_inbox_payload_from_loaded(
         promotion_review_records=sources["promotion_review_records"],
         source_types=source_types,
         surface_failures=surface_failures,
+        loaded_surfaces=sources.get("surfaces"),
     )
     if surface_failures:
         meta["partial"] = True
@@ -33859,6 +34278,8 @@ def _management_hiq_backlog_response(
         sentinel_available=bool(inbox_sources["sentinel_available"]),
         sentinel_records=inbox_sources["sentinel_records"],
         persona_rows=inbox_sources["persona_rows"],
+        promotion_review_records=inbox_sources.get("promotion_review_records", []),
+        loaded_surfaces=inbox_sources.get("surfaces"),
     )
     hiq_surface = _aggregate_group_surface(
         "hiq_backlog",
@@ -35311,6 +35732,7 @@ async def bff_management_human_inbox_detail(
                 promotion_review_records=sources["promotion_review_records"],
                 source_types=source_types,
                 surface_failures=failures,
+                loaded_surfaces=sources.get("surfaces"),
             )
             if failures:
                 meta["partial"] = True
@@ -44193,6 +44615,7 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         identity=identity,
         idempotency_key=idempotency_key,
         x_idempotency_key=x_idempotency_key,
+        trusted_evidence_producer=_HUMAN_INBOX_PROMOTION_PRODUCER,
     )
     return _promotion_review_submit_response(command_response, review=review)
 
