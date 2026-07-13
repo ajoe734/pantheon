@@ -6,7 +6,7 @@ Priority: 2 — the core execution desk exists but is informationally sparse.
 
 ## Matrix coverage
 
-`parity-matrix.md` rows TR-11, WB-04–WB-12, WB-14, and WB-19.
+`parity-matrix.md` rows TR-11, WB-04–WB-12, WB-14, WB-15A, and WB-19.
 
 ## Design authority
 
@@ -44,9 +44,15 @@ work is in scope where the required live evidence is not exposed.
    evidence, probability/EV, invalidation, risk, trader disposition, and honest
    pending/applied/rejected state. Decision support must remain distinct from
    broker execution.
-5. Add “why this widget is shown” to the widget menu and make personalization
-   status/change history readable (who/why/change summary), while retaining
-   current remove/restore, revision, and rollback behavior.
+5. Complete the widget menu with Servant modify, data range, benchmark,
+   duplicate, useful/not-useful, why-shown, and data/evidence actions while
+   retaining current remove/restore and revision behavior.
+6. Add the governed New Widget Proposal flow: interpret the trader's request,
+   reuse a WidgetSpec or produce controlled ChartSpec, show problem/data/chart/
+   mapping/sensitivity/interaction preview, allow adjust/reject/plugin-request,
+   and add/version only after acceptance.
+7. Make personalization status/change history readable (who/why/change
+   summary) while retaining current rollback behavior.
 
 ## Non-goals
 
@@ -63,8 +69,10 @@ work is in scope where the required live evidence is not exposed.
   renderer errors; source/validation metadata is subordinate to decisions.
 - A live Trade Decision Card demonstrates evidence → trader disposition →
   honest state transition without calling an execution route.
-- “Why shown,” personalization status, readable change history, and rollback
-  are reachable from the workspace.
+- “Why shown,” the complete operator widget menu, personalization status,
+  readable change history, and rollback are reachable from the workspace.
+- A live natural-language New Widget request reaches a controlled preview and
+  does not alter the workspace until the trader accepts it.
 - Contract/component/Playwright tests cover seven-view completeness, missing
   and anomalous data, decision-card state, and preservation of edit/revision/
   rollback behavior.

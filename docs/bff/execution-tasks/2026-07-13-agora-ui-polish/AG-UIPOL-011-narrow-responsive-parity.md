@@ -6,7 +6,7 @@ Priority: 6 — cross-surface behavioral gate after desktop IA ownership is clea
 
 ## Matrix coverage
 
-`parity-matrix.md` rows G-06, PF-08, and SRV-03. It also verifies the narrow
+`parity-matrix.md` rows G-06, PF-07, and SRV-03. It also verifies the narrow
 form of every surface changed by AG-UIPOL-006–010.
 
 ## Design authority
@@ -45,7 +45,8 @@ Primary repo: `ajoe734/execute-plans@dev`.
 5. Drawers: full viewport width, trapped focus while open, inert/contained
    background, visible close/apply actions, and restored trigger focus.
 6. Add screenshot-height and horizontal-overflow budgets so regressions like
-   the audited 9,000–16,951-pixel workflow pages fail before deploy.
+   the audited workflow pages reaching 16,951 physical pixels fail before
+   deploy.
 
 ## Non-goals
 
