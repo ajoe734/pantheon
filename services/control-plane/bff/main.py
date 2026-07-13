@@ -58533,24 +58533,52 @@ async def bff_v5_loop_inventory(
 
 
 async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]:
+    fs_available, fs_records, fs_source = _loop_health_store_records()
+    for r in fs_records:
+        if isinstance(r, dict):
+            r["_health_source"] = fs_source
+
     dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        return _loop_health_store_records()
-    try:
-        import importlib
-        loop_control = importlib.import_module("services.loop-control")
-        LoopControllerStore = loop_control.LoopControllerStore
-        project_controller_record_to_bff = loop_control.project_controller_record_to_bff
-        store = LoopControllerStore(dsn)
-        tenant_id = os.environ.get("PANTHEON_TENANT_ID", "default")
-        environment = os.environ.get("PANTHEON_ENV", "dev")
-        records = await store.list_records(tenant_id, environment)
-        if records:
-            projected = [project_controller_record_to_bff(r) for r in records]
-            return True, projected, "controller_store"
-    except Exception as e:
-        log.warning(f"Failed to load loop health from database: {e}. Falling back to file store.")
-    return _loop_health_store_records()
+    db_records = []
+    db_available = False
+    if dsn:
+        try:
+            import importlib
+            loop_control = importlib.import_module("services.loop-control")
+            LoopControllerStore = loop_control.LoopControllerStore
+            project_controller_record_to_bff = loop_control.project_controller_record_to_bff
+            store = LoopControllerStore(dsn)
+            tenant_id = os.environ.get("PANTHEON_TENANT_ID", "default")
+            environment = os.environ.get("PANTHEON_ENV", "dev")
+            records = await store.list_records(tenant_id, environment)
+            if records:
+                db_records = [project_controller_record_to_bff(r) for r in records]
+                for r in db_records:
+                    r["_health_source"] = "controller_store"
+                db_available = True
+        except Exception as e:
+            log.warning(f"Failed to load loop health from database: {e}. Falling back to file store.")
+
+    merged_records = []
+    seen_loops = set()
+
+    for r in db_records:
+        loop_id = r.get("loop_id") or r.get("id")
+        if loop_id:
+            merged_records.append(r)
+            seen_loops.add(str(loop_id).strip())
+
+    for r in fs_records:
+        loop_id = r.get("loop_id") or r.get("id")
+        if loop_id:
+            clean_id = str(loop_id).strip()
+            if clean_id not in seen_loops:
+                merged_records.append(r)
+
+    health_available = db_available or fs_available
+    health_source = "controller_store" if db_available else fs_source
+    return health_available, merged_records, health_source
+
 
 
 @app.get("/bff/v5/loop-health", response_model=LoopHealthListEnvelope)
