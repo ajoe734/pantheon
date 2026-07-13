@@ -4183,6 +4183,12 @@ def _stored_command_params(
     elif cmd.command == CommandType.EMERGENCY_CONTAINMENT:
         params.pop("personaId", None)
         params["persona_id"] = cmd.target.id
+    canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(
+        cmd.command,
+        cmd.command.value,
+    )
+    if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
+        canonical_action_id = "submit_recommendation"
     # The target/action/actor fields come from the validated command envelope,
     # never from caller params.  Apart from fixing null adapter receipts, this
     # prevents a caller from redirecting an admitted command after validation.
@@ -4190,7 +4196,8 @@ def _stored_command_params(
         {
             "entity_type": cmd.target.type.value,
             "entity_id": cmd.target.id,
-            "action_id": cmd.command.value,
+            "action_id": canonical_action_id,
+            "actionId": canonical_action_id,
             "actor_id": identity.operator_id,
             "actor_role": next(
                 (
