@@ -67,3 +67,23 @@ No FE-side re-verification was needed: the wire values change, the FE
 labels do not.
 
 Re-verified: `python3 -m pytest integrations/openclaw/skills/agora/trading_room_workspace/test_skill.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_locale_contract.py -q` -> 59 passed; `grep -n '"partial"' integrations/openclaw/skills/agora/trading_room_workspace/skill.py services/control-plane/bff/agora/trading_room/router.py` shows only conditional derivation branches and the enum validator, no unconditional default.
+
+## Status: dev redeploy pending for the enum-vocabulary fix (2026-07-13)
+
+The enum rename above merged to `dev` as PR #3514
+(`e414912740e2878a7b1944f4c07d63977afae76e`, merged 2026-07-13T14:25:05Z).
+The hosted dev BFF has not picked it up yet: the last successful
+`nonprod-deploy.yml` run against `dev` (`29250080562`, 2026-07-13T12:29:57Z,
+headSha `ffd5e5430e8...`) predates that merge, and a merge to `dev` does not
+auto-trigger a redeploy (only a `publish/v*` cut or a manual
+`workflow_dispatch` do). Dispatching that workflow is a shared-infra action
+gated behind human/chair authorization, not something this lane can trigger
+unilaterally.
+
+Everything owner-side is otherwise complete and re-verified in-repo: unit
+tests (59 passed), the unconditional-`"partial"`-default grep gate, and the
+previously captured hosted screenshot (whose UI-level behavior — one
+availability summary per view, no repeated captions — does not depend on the
+enum's literal wire names). The only outstanding acceptance item is a fresh
+hosted curl/screenshot proving the BFF now emits `full`/`missing` literally
+once dev is redeployed with this commit.
