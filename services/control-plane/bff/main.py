@@ -41231,6 +41231,35 @@ def _pm12_telemetry_metrics_from_records(
     ]
     latest_timestamp = _pm12_telemetry_record_timestamp(telemetry[0]) if telemetry else None
     latest_timestamp_iso = _pm12_iso_z(latest_timestamp) if latest_timestamp else None
+    telemetry_evidence_refs: List[Dict[str, Any]] = []
+    for runtime_id in runtime_ids:
+        runtime_records = [
+            record
+            for record in telemetry
+            if str(record.get("runtime_id") or "").strip() == runtime_id
+        ]
+        if not runtime_records:
+            continue
+        observed_at = _pm12_latest_timestamp(
+            runtime_records,
+            (
+                "collected_at",
+                "collectedAt",
+                "bucket_start",
+                "bucketStart",
+                "timestamp",
+                "updated_at",
+                "updatedAt",
+                "created_at",
+                "createdAt",
+            ),
+        )
+        telemetry_evidence_refs.append({
+            "ref_id": f"telemetry-summary:{runtime_id}",
+            "source_type": "telemetry_summary",
+            "runtime_id": runtime_id,
+            "observed_at": observed_at,
+        })
     return {
         "runtime_ids": runtime_ids,
         "runtime_count": len(runtime_ids),
@@ -41241,6 +41270,7 @@ def _pm12_telemetry_metrics_from_records(
         "avg_slippage_bps": _management_avg(slippage_values),
         "total_trades": int(sum(trade_values)) if trade_values else 0,
         "latest_telemetry_at": latest_timestamp_iso,
+        "telemetry_evidence_refs": telemetry_evidence_refs,
     }
 
 
@@ -41812,6 +41842,294 @@ def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
     ]
 
 
+def _pm12_binding_runtime_context(
+    *,
+    persona_id: str,
+    item: Dict[str, Any],
+    bindings: List[Dict[str, Any]],
+    runtimes: List[Dict[str, Any]],
+) -> tuple[Dict[str, Any], Dict[str, Any], str]:
+    declared_binding_ids = {
+        str(value or "").strip()
+        for value in (
+            item.get("binding_id"),
+            item.get("persona_capital_binding_id"),
+            item.get("runtime_binding_id"),
+            (item.get("capital_binding") or {}).get("id")
+            if isinstance(item.get("capital_binding"), dict)
+            else None,
+        )
+        if str(value or "").strip()
+    }
+    declared_sleeve_id = str(
+        item.get("capital_sleeve_id") or item.get("sleeve_id") or ""
+    ).strip()
+    declared_stage = str(
+        item.get("deployment_stage") or item.get("capital_mode") or item.get("stage") or ""
+    ).strip().lower()
+    declared_stage = {
+        "paper_running": "paper",
+        "canary_running": "canary",
+        "live_running": "live",
+    }.get(declared_stage, declared_stage)
+    active_bindings = [
+        record
+        for record in bindings
+        if str(record.get("status") or record.get("validity") or "").strip().lower()
+        in {"active", "ready", "bound"}
+    ]
+    binding_candidates = active_bindings or bindings
+    explicit_matches = [
+        record
+        for record in binding_candidates
+        if {
+            str(record.get("id") or "").strip(),
+            str(record.get("binding_id") or "").strip(),
+            str(record.get("persona_capital_binding_id") or "").strip(),
+        }.intersection(declared_binding_ids)
+    ]
+    if not explicit_matches and declared_sleeve_id:
+        explicit_matches = [
+            record
+            for record in binding_candidates
+            if str(
+                _persona_fleet_record_value(
+                    record,
+                    "capital_sleeve_id",
+                    "capitalSleeveId",
+                    "sleeve_id",
+                    "sleeveId",
+                )
+                or ""
+            ).strip()
+            == declared_sleeve_id
+        ]
+    if not explicit_matches and declared_stage in {"paper", "canary", "live"}:
+        explicit_matches = [
+            record
+            for record in binding_candidates
+            if str(
+                _persona_fleet_record_value(
+                    record,
+                    "capital_mode",
+                    "capitalMode",
+                    "allowed_deployment_scope",
+                    "deployment_stage",
+                )
+                or ""
+            ).strip().lower()
+            == declared_stage
+        ]
+    if len(explicit_matches) == 1:
+        binding = explicit_matches[0]
+        binding_resolution = "explicit"
+    elif len(binding_candidates) == 1:
+        binding = binding_candidates[0]
+        binding_resolution = "single"
+    elif binding_candidates:
+        binding = {}
+        binding_resolution = "ambiguous"
+    else:
+        binding = {}
+        binding_resolution = "missing"
+    binding_ids = {
+        str(value or "").strip()
+        for record in bindings
+        for value in (
+            record.get("id"),
+            record.get("binding_id"),
+            record.get("persona_capital_binding_id"),
+        )
+        if str(value or "").strip()
+    }
+    metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
+    declared_runtime_ids = {
+        str(value or "").strip()
+        for value in [
+            *(item.get("runtime_ids") or []),
+            *(metrics.get("runtime_ids") or []),
+            item.get("runtime_id"),
+        ]
+        if str(value or "").strip()
+    }
+
+    candidates = [
+        runtime
+        for runtime in runtimes
+        if str(runtime.get("persona_id") or "").strip() == persona_id
+        or str(runtime.get("runtime_id") or runtime.get("id") or "").strip() in declared_runtime_ids
+        or str(
+            runtime.get("persona_capital_binding_id")
+            or runtime.get("binding_id")
+            or runtime.get("runtime_binding_id")
+            or ""
+        ).strip() in binding_ids
+    ]
+    active_runtime_candidates = [
+        record
+        for record in candidates
+        if str(record.get("status") or record.get("state") or "").strip().lower()
+        in {"active", "ready", "bound", "running", "idle"}
+    ]
+    runtime_candidates = active_runtime_candidates or candidates
+    if len(runtime_candidates) == 1:
+        runtime = runtime_candidates[0]
+    elif runtime_candidates:
+        runtime = {}
+        binding_resolution = (
+            "runtime_ambiguous"
+            if binding_resolution in {"single", "explicit"}
+            else f"{binding_resolution}_runtime_ambiguous"
+        )
+    else:
+        runtime = {}
+    return binding, runtime, binding_resolution
+
+
+def _pm12_evidence_ref_key(ref: Any) -> str:
+    if isinstance(ref, dict):
+        for key in ("ref_id", "refId", "id", "source_ref", "route_href"):
+            value = str(ref.get(key) or "").strip()
+            if value:
+                return value
+        return json.dumps(ref, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return str(ref or "").strip()
+
+
+def _pm12_merge_evidence_refs(*groups: Any) -> List[Any]:
+    merged: List[Any] = []
+    seen: Set[str] = set()
+    for group in groups:
+        if not isinstance(group, list):
+            continue
+        for ref in group:
+            key = _pm12_evidence_ref_key(ref)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(json.loads(json.dumps(ref)))
+    return merged
+
+
+_PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
+    "persona_id",
+    "rank",
+    "score",
+    "overall_score",
+    "tier",
+    "tier_id",
+    "components",
+    "metrics",
+    "stage",
+    "capital_scope",
+    "capital_scope_id",
+    "capital_pool_id",
+    "capital_sleeve_id",
+    "paper_ledger_id",
+    "current_weight",
+    "eligible",
+    "exclusion_reasons",
+    "evidence_coverage",
+    "evidence_refs",
+    "source_confidence",
+)
+
+
+def _pm12_ranking_snapshot_id(
+    items: List[Dict[str, Any]],
+    *,
+    surface: str,
+    period: str,
+) -> str:
+    payload_items: List[Dict[str, Any]] = []
+    for item in items:
+        payload_item: Dict[str, Any] = {}
+        for field in _PM12_RANKING_SNAPSHOT_ITEM_FIELDS:
+            if field not in item:
+                continue
+            if field == "evidence_refs":
+                payload_item[field] = sorted(
+                    key
+                    for key in (
+                        _pm12_evidence_ref_key(ref)
+                        for ref in item.get(field) or []
+                    )
+                    if key
+                )
+            else:
+                payload_item[field] = item.get(field)
+        payload_items.append(payload_item)
+    digest = _stable_json_hash({
+        "surface": surface,
+        "period": period,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "items": payload_items,
+    })
+    clean_period = re.sub(r"[^a-z0-9]+", "-", str(period or "current").strip().lower()).strip("-")
+    return f"ranking-{surface}-{clean_period or 'current'}-{digest[:24]}"
+
+
+def _pm12_attach_ranking_snapshot(
+    items: List[Dict[str, Any]],
+    *,
+    surface: str,
+    period: str,
+) -> tuple[List[Dict[str, Any]], str]:
+    snapshot_id = _pm12_ranking_snapshot_id(items, surface=surface, period=period)
+    return (
+        [
+            {
+                **item,
+                "ranking_snapshot_id": snapshot_id,
+            }
+            for item in items
+        ],
+        snapshot_id,
+    )
+
+
+def _pm12_attach_ranking_evidence(
+    items: List[Dict[str, Any]],
+    evidence_refs: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    enriched: List[Dict[str, Any]] = []
+    for item in items:
+        linked_entities = {
+            ("persona", str(item.get("persona_id") or "").strip()),
+            *(('runtime', str(value).strip()) for value in item.get("runtime_ids") or []),
+            *(('runtime_binding', str(value).strip()) for value in item.get("runtime_ids") or []),
+            *(('strategy', str(value).strip()) for value in item.get("strategy_ids") or []),
+            *(('strategy_spec', str(value).strip()) for value in item.get("strategy_ids") or []),
+            *(('artifact', str(value).strip()) for value in item.get("artifact_ids") or []),
+            *(('capital_pool', str(value).strip()) for value in item.get("capital_pool_ids") or []),
+            *(('capital_sleeve', str(value).strip()) for value in item.get("sleeve_ids") or []),
+        }
+        linked_entities = {
+            (entity_type, entity_ref)
+            for entity_type, entity_ref in linked_entities
+            if entity_ref
+        }
+        scoped_refs: List[Dict[str, Any]] = []
+        for ref in evidence_refs:
+            linked = (
+                ref.get("linked_object_summary")
+                if isinstance(ref.get("linked_object_summary"), dict)
+                else {}
+            )
+            entity_type = str(linked.get("entity_type") or "").strip().lower()
+            entity_ref = str(linked.get("entity_ref") or "").strip()
+            if (entity_type, entity_ref) in linked_entities:
+                scoped_refs.append(ref)
+        enriched.append({
+            **item,
+            "evidence_refs": _pm12_merge_evidence_refs(
+                item.get("evidence_refs"),
+                scoped_refs,
+            ),
+        })
+    return enriched
+
+
 def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     if not persona_id:
@@ -41825,9 +42143,57 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         runtimes = read_store.list_runtime_bindings() or []
-        runtimes = [r for r in runtimes if str(r.get("persona_id")) == persona_id]
     except Exception:
         runtimes = []
+
+    try:
+        persona = read_store.get_persona(persona_id) or {}
+    except Exception:
+        persona = {}
+    try:
+        league_entry = read_store.get_persona_league_entry(persona_id) or {}
+    except Exception:
+        league_entry = {}
+
+    raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    binding_context_item = {
+        **item,
+        "binding_id": (
+            league_entry.get("binding_id")
+            or league_entry.get("persona_capital_binding_id")
+            or raw_metadata.get("binding_id")
+            or raw_metadata.get("persona_capital_binding_id")
+            or item.get("binding_id")
+        ),
+        "runtime_binding_id": (
+            league_entry.get("runtime_binding_id")
+            or raw_metadata.get("runtime_binding_id")
+            or item.get("runtime_binding_id")
+        ),
+        "capital_sleeve_id": (
+            league_entry.get("capital_sleeve_id")
+            or raw_metadata.get("capital_sleeve_id")
+            or item.get("capital_sleeve_id")
+        ),
+        "deployment_stage": (
+            league_entry.get("deployment_stage")
+            or raw_metadata.get("deployment_stage")
+            or raw_metadata.get("capital_mode")
+            or item.get("deployment_stage")
+        ),
+    }
+    binding, runtime, binding_resolution = _pm12_binding_runtime_context(
+        persona_id=persona_id,
+        item=binding_context_item,
+        bindings=bindings,
+        runtimes=runtimes,
+    )
+    matching_runtimes = [
+        candidate
+        for candidate in runtimes
+        if str(candidate.get("persona_id") or "").strip() == persona_id
+        or candidate is runtime
+    ]
 
     strategy_ids = []
     pool_ids = []
@@ -41846,7 +42212,7 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
         if b.get("broker_id"):
             broker_ids.append(str(b["broker_id"]))
 
-    for r in runtimes:
+    for r in matching_runtimes:
         if r.get("runtime_id"):
             runtime_ids.append(str(r["runtime_id"]))
         if r.get("strategy_id"):
@@ -41860,26 +42226,173 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
         if r.get("broker_id"):
             broker_ids.append(str(r["broker_id"]))
 
-    enriched["strategy_ids"] = list(set(strategy_ids))
-    enriched["capital_pool_ids"] = list(set(pool_ids))
-    enriched["runtime_ids"] = list(set(runtime_ids))
-    enriched["sleeve_ids"] = list(set(sleeve_ids))
-    enriched["artifact_ids"] = list(set(artifact_ids))
-    enriched["broker_ids"] = list(set(broker_ids))
+    deployment_stage = (
+        runtime.get("deployment_stage")
+        or runtime.get("deployment_mode")
+        or binding.get("allowed_deployment_scope")
+        or _persona_fleet_record_value(binding, "deployment_stage", "capital_mode", "capitalMode")
+        or raw_metadata.get("deployment_stage")
+        or raw_metadata.get("capital_mode")
+        or league_entry.get("deployment_stage")
+        or item.get("deployment_stage")
+        or item.get("stage")
+        or "none"
+    )
+    capital_mode = "none"
+    for value in (
+        _persona_fleet_record_value(runtime, "capital_mode", "capitalMode", "runtime_kind", "deployment_stage", "deployment_mode"),
+        _persona_fleet_record_value(binding, "capital_mode", "capitalMode", "allowed_deployment_scope", "deployment_stage"),
+        raw_metadata.get("capital_mode"),
+        raw_metadata.get("deployment_stage"),
+        league_entry.get("capital_mode"),
+        league_entry.get("deployment_stage"),
+        deployment_stage,
+    ):
+        normalized_mode = str(value or "").strip().lower()
+        normalized_mode = {
+            "paper_running": "paper",
+            "canary_running": "canary",
+            "live_running": "live",
+        }.get(normalized_mode, normalized_mode)
+        if normalized_mode in _PERSONA_FLEET_RUNNING_STAGE_STATES:
+            capital_mode = normalized_mode
+            break
+    source_pool_id = (
+        _persona_fleet_record_value(binding, "capital_pool_id", "pool_id")
+        or _persona_fleet_record_value(runtime, "capital_pool_id", "pool_id")
+    )
+    if capital_mode == "paper" and not source_pool_id:
+        source_pool_id = raw_metadata.get("legacy_paper_capital_pool_id")
+    live_pool_id = _persona_fleet_live_capital_pool_id(
+        capital_mode=capital_mode,
+        pool_id=source_pool_id,
+        league_entry={},
+        raw_metadata={},
+        context_metadata={},
+        binding=binding,
+    )
+    paper_ledger_id = _persona_fleet_paper_ledger_id(
+        persona_id=persona_id,
+        capital_mode=capital_mode,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata={},
+        binding=binding,
+        runtime=runtime,
+    )
+    capital_projection = _persona_fleet_capital_binding_projection(
+        persona_id=persona_id,
+        capital_mode=capital_mode,
+        deployment_stage=deployment_stage,
+        paper_ledger_id=paper_ledger_id,
+        live_pool_id=live_pool_id,
+        binding=binding,
+        runtime=runtime,
+        league_entry={},
+        raw_metadata={},
+        context_metadata={},
+    )
+    lifecycle_state = (
+        persona.get("lifecycle_state")
+        or persona.get("status")
+        or item.get("state")
+        or item.get("stage")
+        or "unknown"
+    )
+    stage = _persona_fleet_lifecycle_state(
+        persona_status=raw_metadata.get("persona_status") or persona.get("status") or lifecycle_state,
+        lifecycle_state=lifecycle_state,
+        capital_mode=capital_mode,
+        deployment_stage=deployment_stage,
+        runtime=runtime,
+        has_runtime_or_binding=bool(runtime or binding or source_pool_id),
+    )
+    capital_projection["stage"] = stage
+    capital_projection["capital_binding"]["stage"] = stage
+    authoritative_current_weight = None
+    authoritative_target_weight = None
+    current_weight_source = "unavailable"
+    for source_name, record in (("persona_binding", binding), ("runtime_binding", runtime)):
+        value = _persona_fleet_record_value(
+            record,
+            "current_weight",
+            "currentWeight",
+            "allocation_weight",
+            "weight",
+        )
+        if value not in (None, "") and not isinstance(value, bool):
+            try:
+                authoritative_current_weight = float(value)
+                current_weight_source = source_name
+                break
+            except (TypeError, ValueError):
+                pass
+    for record in (binding, runtime):
+        value = _persona_fleet_record_value(
+            record,
+            "target_weight",
+            "targetWeight",
+            "proposed_weight",
+        )
+        if value not in (None, "") and not isinstance(value, bool):
+            try:
+                authoritative_target_weight = float(value)
+                break
+            except (TypeError, ValueError):
+                pass
+    capital_projection["current_weight"] = authoritative_current_weight
+    capital_projection["target_weight"] = authoritative_target_weight
+    capital_projection["capital_binding"]["current_weight"] = authoritative_current_weight
+    capital_projection["capital_binding"]["target_weight"] = authoritative_target_weight
+    if capital_mode == "paper":
+        capital_projection["current_weight"] = None
+        capital_projection["target_weight"] = None
+        capital_projection["capital_binding"]["current_weight"] = None
+        capital_projection["capital_binding"]["target_weight"] = None
+        current_weight_source = "not_applicable_paper_ledger"
+
+    projected_sleeve_id = capital_projection.get("capital_sleeve_id")
+    if projected_sleeve_id:
+        sleeve_ids.append(str(projected_sleeve_id))
+    if live_pool_id:
+        pool_ids.append(str(live_pool_id))
+    elif capital_mode == "paper":
+        pool_ids = []
+
+    enriched["strategy_ids"] = sorted(set(strategy_ids))
+    enriched["capital_pool_ids"] = sorted(set(pool_ids))
+    enriched["runtime_ids"] = sorted(set(runtime_ids))
+    enriched["sleeve_ids"] = sorted(set(sleeve_ids))
+    enriched["artifact_ids"] = sorted(set(artifact_ids))
+    enriched["broker_ids"] = sorted(set(broker_ids))
 
     if strategy_ids:
         enriched["strategy_id"] = strategy_ids[0]
-    if pool_ids:
-        enriched["capital_pool_id"] = pool_ids[0]
-        enriched["pool_id"] = pool_ids[0]
+    enriched["capital_pool_id"] = live_pool_id
+    enriched["pool_id"] = live_pool_id
     if runtime_ids:
         enriched["runtime_id"] = runtime_ids[0]
-    if sleeve_ids:
-        enriched["sleeve_id"] = sleeve_ids[0]
+    enriched["sleeve_id"] = projected_sleeve_id
     if artifact_ids:
         enriched["artifact_id"] = artifact_ids[0]
     if broker_ids:
         enriched["broker_id"] = broker_ids[0]
+
+    enriched.update({
+        "stage": stage,
+        "deployment_stage": str(deployment_stage or "none").strip().lower() or "none",
+        "capital_mode": capital_mode,
+        "capital_scope": capital_projection.get("capital_scope"),
+        "capital_scope_id": capital_projection.get("capital_scope_id"),
+        "capital_sleeve_id": projected_sleeve_id,
+        "paper_ledger_id": paper_ledger_id,
+        "current_weight": capital_projection.get("current_weight"),
+        "target_weight": capital_projection.get("target_weight"),
+        "binding_state": capital_projection.get("binding_state"),
+        "binding_resolution": binding_resolution,
+        "capital_binding": capital_projection.get("capital_binding"),
+        "current_weight_source": current_weight_source,
+    })
 
     return enriched
 
@@ -42903,7 +43416,10 @@ def _pm12_persona_league_rows(
     archetype: Optional[str],
     q: str,
 ) -> List[Dict[str, Any]]:
-    rows = [_project_persona_league_row(raw) for raw in _list_persona_records()]
+    rows = [
+        _enrich_persona_item_with_bindings(_project_persona_league_row(raw))
+        for raw in _list_persona_records()
+    ]
     if state:
         normalized_state = _normalize_lifecycle_state(state)
         rows = [row for row in rows if row.get("state") == normalized_state]
@@ -42942,15 +43458,28 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
     components = dict(scores)
 
     state = row.get("state")
+    stage = str(row.get("stage") or state or "unknown").strip().lower() or "unknown"
     telemetry_count = metrics.get("telemetry_coverage_count", 0)
-    active_states = {"active", "paper_running", "canary", "live"}
-    eligible = state in active_states and telemetry_count > 0
+    active_stages = {"paper_running", "canary_running", "live_running"}
 
-    exclusion_reasons = []
-    if state not in active_states:
-        exclusion_reasons.append(f"Inactive lifecycle state: {state}")
+    exclusion_codes: List[str] = []
+    exclusion_reasons: List[str] = []
+    if stage not in active_stages:
+        exclusion_codes.append("stage_not_running")
+        exclusion_reasons.append(f"Inactive governed stage: {stage}")
     if telemetry_count == 0:
+        exclusion_codes.append("missing_telemetry")
         exclusion_reasons.append("No telemetry coverage")
+    if stage in {"canary_running", "live_running"} and row.get("current_weight") is None:
+        exclusion_codes.append("missing_current_weight")
+        exclusion_reasons.append("Missing authoritative current weight")
+    if stage in {"canary_running", "live_running"} and row.get("capital_scope") == "unbound":
+        exclusion_codes.append("missing_capital_binding")
+        exclusion_reasons.append("Missing authoritative real-capital binding")
+    if "ambiguous" in str(row.get("binding_resolution") or ""):
+        exclusion_codes.append("binding_mismatch")
+        exclusion_reasons.append("Multiple active bindings prevent an authoritative allocation join")
+    eligible = not exclusion_reasons
     exclusion_reason = "; ".join(exclusion_reasons) if exclusion_reasons else None
 
     evidence_coverage = min(1.0, telemetry_count / 10.0) if telemetry_count > 0 else 0.0
@@ -42968,6 +43497,25 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
         "name": row.get("name"),
         "owner": row.get("owner"),
         "state": state,
+        "stage": stage,
+        "deployment_stage": row.get("deployment_stage"),
+        "capital_mode": row.get("capital_mode"),
+        "capital_scope": row.get("capital_scope"),
+        "capital_scope_id": row.get("capital_scope_id"),
+        "capital_pool_id": row.get("capital_pool_id"),
+        "capital_sleeve_id": row.get("capital_sleeve_id"),
+        "paper_ledger_id": row.get("paper_ledger_id"),
+        "current_weight": row.get("current_weight"),
+        "target_weight": row.get("target_weight"),
+        "binding_state": row.get("binding_state"),
+        "binding_resolution": row.get("binding_resolution"),
+        "current_weight_source": row.get("current_weight_source"),
+        "strategy_ids": list(row.get("strategy_ids") or []),
+        "runtime_ids": list(row.get("runtime_ids") or metrics.get("runtime_ids") or []),
+        "capital_pool_ids": list(row.get("capital_pool_ids") or []),
+        "sleeve_ids": list(row.get("sleeve_ids") or []),
+        "artifact_ids": list(row.get("artifact_ids") or []),
+        "broker_ids": list(row.get("broker_ids") or []),
         "risk": row.get("risk"),
         "archetype": row.get("archetype"),
         "tier": tier["id"],
@@ -42979,7 +43527,10 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
         "links": row.get("links") or {},
         "eligible": eligible,
         "exclusion_reason": exclusion_reason,
+        "exclusion_reasons": exclusion_reasons,
+        "exclusion_codes": exclusion_codes,
         "evidence_coverage": evidence_coverage,
+        "evidence_refs": list(metrics.get("telemetry_evidence_refs") or []),
         "source_confidence": source_confidence,
     }
 def _pm12_persona_league_rankings(
@@ -43388,11 +43939,41 @@ async def bff_management_persona_league(
     _require_read_role(identity)
     snapshot_at = utc_now()
     rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        [_pm12_persona_league_ranking_item(row) for row in rows],
+        surface="rolling",
+        period="short_cycle",
+    )
+    ranking_by_persona = {
+        str(item.get("persona_id") or ""): item
+        for item in ranking_basis
+        if str(item.get("persona_id") or "")
+    }
+    rows = [
+        {
+            **row,
+            **{
+                field: ranking_by_persona.get(str(row.get("persona_id") or ""), {}).get(field)
+                for field in (
+                    "eligible",
+                    "exclusion_reason",
+                    "exclusion_reasons",
+                    "exclusion_codes",
+                    "evidence_coverage",
+                    "evidence_refs",
+                    "source_confidence",
+                    "ranking_snapshot_id",
+                )
+            },
+        }
+        for row in rows
+    ]
     total = len(rows)
     page_items, next_page_token = _page_slice(rows, page_token, page_size)
     summary = {
         "persona_count": total,
         "returned_count": len(page_items),
+        "ranking_snapshot_id": ranking_snapshot_id,
     }
     persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
     surfaces = {
@@ -43409,12 +43990,14 @@ async def bff_management_persona_league(
     return {
         "data": {
             "id": "management-persona-league",
+            "ranking_snapshot_id": ranking_snapshot_id,
             "items": page_items,
             "summary": summary,
         },
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": {
             "snapshot_at": snapshot_at,
+            "ranking_snapshot_id": ranking_snapshot_id,
             "total": total,
             "surfaces": surfaces,
             "composition_sources": [
@@ -43464,8 +44047,12 @@ async def bff_management_persona_league_rankings(
     rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
 
     # Pre-enrich and filter the base league rows represented as ranking items
-    base_items = [_pm12_persona_league_ranking_item(row) for row in rows]
-    enriched_items = [_enrich_persona_item_with_bindings(item) for item in base_items]
+    base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        [_pm12_persona_league_ranking_item(row) for row in rows],
+        surface="rolling",
+        period="short_cycle",
+    )
+    enriched_items = base_items
     filtered_items = _filter_by_common_identifiers(
         enriched_items,
         persona_id=persona_id, persona=persona,
@@ -43484,6 +44071,8 @@ async def bff_management_persona_league_rankings(
         limit=limit,
         base_items=filtered_items,
     )
+    for block in blocks:
+        block["ranking_snapshot_id"] = ranking_snapshot_id
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
     rankings_surface = _aggregate_group_surface(
         "persona_league_rankings",
@@ -43497,16 +44086,19 @@ async def bff_management_persona_league_rankings(
         "persona_count": len(rows),
         "criteria": [block["criteria"] for block in blocks],
         "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
+        "ranking_snapshot_id": ranking_snapshot_id,
     }
     return {
         "data": {
             "id": "management-persona-league-rankings",
+            "ranking_snapshot_id": ranking_snapshot_id,
             "items": blocks,
             "summary": summary,
         },
         "page_info": {"next_page_token": None, "total": len(blocks), "page_size": len(blocks)},
         "meta": {
             "snapshot_at": snapshot_at,
+            "ranking_snapshot_id": ranking_snapshot_id,
             "surfaces": {
                 name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
                 for name, surface in {
@@ -43837,9 +44429,19 @@ async def bff_management_quarterly_ranking(
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
     rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    ranked_items = _pm12_attach_ranking_evidence(ranked_items, public_evidence_refs)
+    ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        ranked_items,
+        surface="quarterly",
+        period=quarter_window["quarter"],
+    )
 
-    # Enrich and apply common filters
-    enriched_items = [_enrich_persona_item_with_bindings(item) for item in ranked_items]
+    # Apply common filters after the immutable full-universe snapshot is built.
+    enriched_items = ranked_items
     filtered_items = _filter_by_common_identifiers(
         enriched_items,
         persona_id=persona_id, persona=persona,
@@ -43853,11 +44455,6 @@ async def bff_management_quarterly_ranking(
     )
     total = len(filtered_items)
     page_items, next_page_token = _page_slice(filtered_items, page_token, page_size)
-
-    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
-        identity,
-        quarter_window,
-    )
 
     formula = _pm12_quarter_formula_payload()
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
@@ -43896,9 +44493,11 @@ async def bff_management_quarterly_ranking(
         "evidence_ref_count": len(public_evidence_refs),
         "redacted_evidence_count": redacted_count,
         "basis": formula["basis"],
+        "ranking_snapshot_id": ranking_snapshot_id,
     }
     data = {
         "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
+        "ranking_snapshot_id": ranking_snapshot_id,
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "formula": formula,
@@ -43915,6 +44514,7 @@ async def bff_management_quarterly_ranking(
         },
         "meta": {
             **_snapshot_meta(snapshot_at),
+            "ranking_snapshot_id": ranking_snapshot_id,
             "surfaces": quarterly_surfaces,
             "composition_sources": [
                 "GET /bff/management/persona-league",
