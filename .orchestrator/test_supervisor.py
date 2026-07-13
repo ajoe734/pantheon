@@ -4876,6 +4876,69 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
             )
         )
 
+    def test_startup_recovery_does_not_preempt_still_live_worker(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["codex"]["worker_slots"] = ["codex1_1"]
+        config["agents"]["codex1_1"] = {
+            "id": "codex1_1",
+            "display_name": "Codex",
+            "dispatch_slot_for": "codex",
+            "provider": "codex1-1",
+        }
+        worker = {
+            "run_id": "recovered-run",
+            "task_id": "LOOP-PROD-000",
+            "agent_id": "codex1_1",
+            "logical_agent_id": "codex",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_ready_dispatch"},
+        }
+        state = {
+            "supervisor": {
+                "started_at": "2026-07-13T16:03:43Z",
+                "last_successful_loop_at": None,
+            },
+            "queue": {"events": {}},
+            "workers": {"recovered-run": worker},
+        }
+        task_map = {
+            "LOOP-PROD-000": {
+                "id": "LOOP-PROD-000",
+                "status": "in_progress",
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "depends_on": [],
+            },
+            "URGENT-REVIEW": {
+                "id": "URGENT-REVIEW",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+        state["supervisor"]["last_successful_loop_at"] = "2026-07-13T16:04:30Z"
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
     def test_slotted_worker_is_not_preempted_for_non_urgent_owned_backlog(self) -> None:
         config = json.loads(json.dumps(self.config))
         config["agents"]["codex"]["worker_slots"] = ["codex1_1", "codex1_2", "codex1_3", "codex1_4"]
