@@ -78,6 +78,7 @@ jobs:
         with:
           ref: ${{ env.TARGET_REF }}
           path: .target
+          fetch-depth: 0
           submodules: recursive
           persist-credentials: false
 
@@ -88,6 +89,12 @@ jobs:
         run: |
           sha="$(git rev-parse HEAD)"
           [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
+          trusted_ref="$(git rev-parse refs/remotes/origin/dev)"
+          [[ "${trusted_ref}" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "${sha}" "${trusted_ref}" || {
+            echo "Dev payload ${sha} is not contained in protected origin/dev" >&2
+            exit 1
+          }
           case "${TARGET_COMPONENT}" in
             auto|root|bff) ;;
             *) echo "Invalid dev deployment component: ${TARGET_COMPONENT}" >&2; exit 1 ;;
@@ -706,6 +713,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ env.TARGET_REF }}
+          fetch-depth: 0
           submodules: recursive
           persist-credentials: false
 
@@ -715,6 +723,12 @@ jobs:
         run: |
           sha="$(git rev-parse HEAD)"
           [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
+          trusted_ref="$(git rev-parse refs/remotes/origin/master)"
+          [[ "${trusted_ref}" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "${sha}" "${trusted_ref}" || {
+            echo "Staging payload ${sha} is not contained in protected origin/master" >&2
+            exit 1
+          }
           case "${TARGET_COMPONENT}" in
             auto|control|exec|all) ;;
             *) echo "Invalid staging deployment component: ${TARGET_COMPONENT}" >&2; exit 1 ;;

@@ -69,6 +69,21 @@ def test_dev_and_staging_are_independent_jobs_and_staging_has_no_lease_secret() 
     assert '[[ "${actual}" == "${TARGET_SHA}" ]]' in staging
 
 
+def test_payloads_must_come_from_their_protected_delivery_branches() -> None:
+    workflow = _workflow()
+    dev = _job(workflow, "deploy-dev", "deploy-staging-live")
+    staging = _job(workflow, "deploy-staging-live")
+
+    assert "fetch-depth: 0" in dev
+    assert "refs/remotes/origin/dev" in dev
+    assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in dev
+    assert "not contained in protected origin/dev" in dev
+    assert "fetch-depth: 0" in staging
+    assert "refs/remotes/origin/master" in staging
+    assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in staging
+    assert "not contained in protected origin/master" in staging
+
+
 def test_lease_coordinates_the_fixed_cross_repository_resource() -> None:
     dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
 
