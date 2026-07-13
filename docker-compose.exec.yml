@@ -152,6 +152,8 @@ services:
       PANTHEON_EXCHANGE_ADAPTER_URL: http://exchange-adapter:8098
       PANTHEON_LEAN_CONFIG_PATH: /workspace/lean/Launcher/config.json
       PANTHEON_PAPER_RUNTIME_ID: ${PANTHEON_PAPER_RUNTIME_ID:-paper-runtime-001}
+      PANTHEON_BFF_URL: http://operator-bff:8001
+      PANTHEON_BFF_TOKEN: ${BFF_TOKEN:-op-paper:operator:mfa}
     depends_on:
       signal-store:
         condition: service_healthy
@@ -161,6 +163,8 @@ services:
         condition: service_healthy
       exchange-adapter:
         condition: service_healthy
+    volumes:
+      - runtime-data:/data/runtime
     ports:
       - "${LEAN_PAPER_PORT:-28110}:8010"
     healthcheck:

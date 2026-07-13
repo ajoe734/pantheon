@@ -127,7 +127,7 @@ def test_generator_preserves_evidence_freshness_and_filters_unsafe_personalizati
     assert "Unsafe personalization hints ignored" in proposal["warnings"][-1]
     source = proposal["dataAvailability"]["sources"][0]
     assert source["reasonCode"] == "strategy_projection_freshness"
-    assert source["status"] == "complete"
+    assert source["status"] == "full"
     assert "ev-001" in source["reason"]
     assert "2026-06-28T23:00:00Z" in source["reason"]
     assert result.meta()["evidenceRefs"] == ["ev-001"]
@@ -166,9 +166,9 @@ def test_generator_derives_widget_and_view_availability_from_source_evidence():
     assert result.proposal is not None
     view = result.proposal["views"][0]
     assert [widget["dataAvailability"] for widget in view["widgets"]] == [
-        "complete",
+        "full",
         "partial",
-        "unavailable",
+        "missing",
     ]
     assert view["dataAvailability"] == "partial"
     assert result.proposal["dataAvailability"]["status"] == "partial"
@@ -185,9 +185,9 @@ def test_generator_does_not_claim_unreported_source_is_partial():
 
     assert result.status == "completed"
     assert result.proposal is not None
-    assert result.proposal["views"][0]["widgets"][0]["dataAvailability"] == "unavailable"
-    assert result.proposal["views"][0]["dataAvailability"] == "unavailable"
-    assert result.proposal["dataAvailability"]["status"] == "unavailable"
+    assert result.proposal["views"][0]["widgets"][0]["dataAvailability"] == "missing"
+    assert result.proposal["views"][0]["dataAvailability"] == "missing"
+    assert result.proposal["dataAvailability"]["status"] == "missing"
 
 
 def test_generator_uses_supported_fallback_for_unsupported_renderer():

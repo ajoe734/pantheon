@@ -13,7 +13,8 @@
     "catalog_decisions",
     "maturity_levels",
     "truth_levels",
-    "loops"
+    "loops",
+    "composite_overlays"
   ],
   "properties": {
     "$schema": {
@@ -21,7 +22,7 @@
     },
     "schema_version": {
       "type": "string",
-      "const": "loop_catalog.v1"
+      "const": "loop_catalog.v2"
     },
     "catalog_id": {
       "type": "string",
@@ -59,9 +60,40 @@
     },
     "loops": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 12,
+      "maxItems": 12,
       "items": {
-        "$ref": "#/definitions/LoopCatalogEntry"
+        "allOf": [
+          {
+            "$ref": "#/definitions/LoopCatalogEntry"
+          },
+          {
+            "properties": {
+              "classification": {
+                "const": "canonical"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "composite_overlays": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/definitions/LoopCatalogEntry"
+          },
+          {
+            "properties": {
+              "classification": {
+                "const": "composite_overlay"
+              }
+            }
+          }
+        ]
       }
     }
   },
@@ -84,6 +116,13 @@
         "scheduled_tick",
         "reconciled_live_proof",
         "proven_live_evidence"
+      ]
+    },
+    "LoopClassification": {
+      "type": "string",
+      "enum": [
+        "canonical",
+        "composite_overlay"
       ]
     },
     "EvidenceStatus": {
@@ -183,6 +222,7 @@
       "additionalProperties": false,
       "required": [
         "loop_id",
+        "classification",
         "name",
         "policy_ref",
         "owner",
@@ -198,6 +238,18 @@
         "loop_id": {
           "type": "string",
           "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$"
+        },
+        "classification": {
+          "$ref": "#/definitions/LoopClassification"
+        },
+        "composed_of": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$"
+          }
         },
         "name": {
           "type": "string",
@@ -242,6 +294,54 @@
         }
       },
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "classification": {
+                "const": "composite_overlay"
+              }
+            },
+            "required": [
+              "classification"
+            ]
+          },
+          "then": {
+            "properties": {
+              "policy_ref": {
+                "properties": {
+                  "document": {
+                    "const": "Pantheon_總索引版系統分析文件.md"
+                  },
+                  "section": {
+                    "const": "6.4"
+                  }
+                }
+              }
+            },
+            "required": [
+              "composed_of"
+            ]
+          },
+          "else": {
+            "properties": {
+              "policy_ref": {
+                "properties": {
+                  "document": {
+                    "const": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+                  },
+                  "section": {
+                    "pattern": "^3\\.[0-9]+$"
+                  }
+                }
+              }
+            },
+            "not": {
+              "required": [
+                "composed_of"
+              ]
+            }
+          }
+        },
         {
           "if": {
             "properties": {
@@ -402,11 +502,14 @@
       "properties": {
         "document": {
           "type": "string",
-          "const": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+          "enum": [
+            "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+            "Pantheon_總索引版系統分析文件.md"
+          ]
         },
         "section": {
           "type": "string",
-          "pattern": "^3\\.[0-9]+$"
+          "pattern": "^(3\\.[0-9]+|6\\.4)$"
         },
         "section_title": {
           "type": "string",
@@ -681,7 +784,7 @@
       "properties": {
         "task_id": {
           "type": "string",
-          "pattern": "^LOOP-AUTO(?:-[A-Z0-9]+)*-[0-9]{3}$"
+          "pattern": "^(LOOP-AUTO|LOOP-PROD)(?:-[A-Z0-9]+)*-[0-9]{3}$"
         },
         "role": {
           "type": "string",
