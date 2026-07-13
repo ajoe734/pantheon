@@ -14,6 +14,7 @@ COPY . /workspace
 # drift is precisely detectable (see scripts/audit_deploy_drift.sh --precise).
 ARG GIT_SHA=unknown
 LABEL org.opencontainers.image.revision=$GIT_SHA
+ENV GIT_SHA=$GIT_SHA
 
 EXPOSE 8001
 

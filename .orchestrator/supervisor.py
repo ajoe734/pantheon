@@ -2744,6 +2744,13 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
         match = WORKER_AGENT_CMDLINE_MARKER.search(cmdline)
         if not match:
             continue
+        # Each worker run spawns ~3 processes carrying the same wakeword prompt
+        # (worker_runner.py wrapper, the CLI shim, and the CLI binary). Only the
+        # worker_runner.py wrapper is exactly one-per-worker, so count it alone;
+        # otherwise the live worker count is ~3x inflated and max_concurrent_workers
+        # freezes dispatch at ~1/3 of its configured value (OPS-DISPATCH-PIDCOUNT-001).
+        if "worker_runner.py" not in cmdline:
+            continue
         agent = match.group(1)
         result.setdefault(agent, []).append(pid)
     return result
@@ -9629,6 +9636,14 @@ def higher_priority_ready_task_exists(
 ) -> bool:
     if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
         return False
+    # A replacement supervisor must first reconcile the workers it inherited.
+    # During that first cycle last_successful_loop_at is deliberately reset to
+    # None.  Preempting a fresh, still-live wrapper in this window destroys the
+    # very task the restart is meant to recover and can fan out an entire new
+    # dispatch frontier before the recovered state has settled.
+    supervisor_state = (state or {}).get("supervisor", {})
+    if supervisor_state.get("started_at") and not supervisor_state.get("last_successful_loop_at"):
+        return False
     current_priority = dispatch_reason_priority(worker.get("request_snapshot", {}).get("reason"))
     if current_priority is None:
         return False
@@ -9971,7 +9986,27 @@ def dispatch_ready_tasks(
     if max_concurrent is not None and max_concurrent > 0:
         live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
         if live_total >= max_concurrent:
+            console_log(
+                f"ready dispatch skipped: live worker count {live_total} >= "
+                f"max_concurrent_workers {max_concurrent}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
             return changed
+        # Reserve room for already-queued task deliveries, then clamp this
+        # wave to the remaining global slots.  Checking the cap only once at
+        # wave entry lets (for example) 4 live workers queue 10 more against a
+        # cap of 10, and process_queue launches the whole wave to 14.
+        pending_only_total = len(pending_task_ids - active_task_ids)
+        reserved_total = live_total + pending_only_total
+        if reserved_total >= max_concurrent:
+            console_log(
+                f"ready dispatch skipped: reserved worker count {reserved_total} >= "
+                f"max_concurrent_workers {max_concurrent} "
+                f"(live={live_total}, pending={pending_only_total})",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+            return changed
+        max_dispatches_per_tick = min(max_dispatches_per_tick, max_concurrent - reserved_total)
     considered_agents = 0
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:
@@ -10285,7 +10320,13 @@ def dispatch_chair_review(
     if max_concurrent is not None:
         live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
         reserved_total = len(set(active_agents) | set(pending_agents))
-        if max(live_total, reserved_total) >= max_concurrent:
+        capped_total = max(live_total, reserved_total)
+        if capped_total >= max_concurrent:
+            console_log(
+                f"chair review dispatch skipped: worker count {capped_total} >= "
+                f"max_concurrent_workers {max_concurrent} (live={live_total}, reserved={reserved_total})",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
             return False
     seen = state.setdefault("seen_event_keys", {})
     status = load_status(config)

@@ -1322,7 +1322,6 @@ services:
       start_period: 5s
 
   evolution-daily-sweep-scheduler:
-    profiles: ["evolution-daily-sweep-scheduler"]
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -1563,6 +1562,8 @@ services:
       PANTHEON_SIGNAL_QUEUE_KEY: ${PANTHEON_PAPER_SIGNAL_QUEUE_KEY:-pantheon:signals:pending}
       PANTHEON_STRATEGY_ID: ${PANTHEON_PAPER_STRATEGY_ID:-strategy-devloop-l0-001}
       PANTHEON_PAPER_SYNTHETIC_MARKET_DATA: ${PANTHEON_PAPER_SYNTHETIC_MARKET_DATA:-true}
+      PANTHEON_BFF_URL: http://operator-bff:8001
+      PANTHEON_BFF_TOKEN: ${BFF_TOKEN:-op-paper:operator:mfa}
     depends_on:
       signal-store:
         condition: service_healthy
@@ -1570,6 +1571,10 @@ services:
         condition: service_healthy
       telemetry:
         condition: service_healthy
+      operator-bff:
+        condition: service_healthy
+    volumes:
+      - runtime-data:/data/runtime
     ports:
       - "${PAPER_RUNTIME_PORT:-18010}:8010"
     healthcheck:

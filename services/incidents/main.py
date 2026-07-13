@@ -383,6 +383,19 @@ def get_incident(incident_id: str) -> IncidentResponse:
 # Routes — status transitions
 # ---------------------------------------------------------------------------
 
+def _publish_to_postmortems_if_resolved(incident_id: str) -> None:
+    import httpx
+    postmortems_url = os.getenv("POSTMORTEMS_URL", "http://localhost:8091").strip()
+    url = f"{postmortems_url}/api/postmortems/consume-resolved-incident"
+    try:
+        log.info("Sending resolved incident %s to postmortems service at %s", incident_id, url)
+        resp = httpx.post(url, json={"incident_id": incident_id}, timeout=10.0)
+        resp.raise_for_status()
+        log.info("Successfully sent resolved incident %s to postmortems", incident_id)
+    except httpx.HTTPError as exc:
+        log.error("Failed to send resolved incident %s to postmortems: %s", incident_id, exc)
+
+
 @app.post(
     "/api/incidents/{incident_id}/status",
     response_model=IncidentResponse,
@@ -409,6 +422,10 @@ def update_status(
         raise HTTPException(status_code=400, detail=str(exc))
 
     log.info("IncidentCase %s → status=%s", incident_id, body.status)
+
+    if body.status in {"resolved", "closed"}:
+        _publish_to_postmortems_if_resolved(incident_id)
+
     return _to_response(updated)
 
 

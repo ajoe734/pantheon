@@ -1,6 +1,6 @@
 # Execute-Plans Dev Frontend Hosting
 
-Date: 2026-06-11
+Last updated: 2026-07-13
 
 This is the canonical frontend hosting rule for Pantheon dev.
 
@@ -21,7 +21,9 @@ but they are not the dev frontend hosting source of truth.
 - Local checkout: `/home/lupin/code/execute-plans`
 - Preferred work location for risky edits: a clean task worktree outside the
   dirty checkout, for example `/tmp/execute-plans-<task>`
-- Delivery base as of 2026-06-11: `dev`
+- Delivery base as of 2026-07-13: `dev` (also the GitHub default branch)
+- `main` remains a divergent historical branch and is not implicit dev
+  delivery evidence.
 
 Do not use `front-ai-trading-system` for new work. That repository name is
 legacy-only. Do not recreate it, mirror new handoffs to it, or assign frontend
@@ -49,7 +51,7 @@ recorded `execute-plans` commit. The intended host is:
 If the FE hostname or VM IP changes, update this document and `AGENTS.md`
 before routing work to the new target.
 
-## Current Verified Dev Deployment
+## Historical Verified Dev Deployment
 
 Verified on 2026-06-11:
 
@@ -78,6 +80,24 @@ If an agent sees a different Lovable bundle, that is not the Pantheon dev FE.
 Validate the Pantheon-owned host and the GitHub commits above before changing
 code.
 
+## Current Observed Deployment Warning
+
+At 2026-07-13 13:35 UTC the Pantheon-owned frontend host served
+`sourceBranch=dev` at commit
+`12b78ef210e535cd4a3d80358f78b44c9396e588`, matching the then-current remote
+`dev` head. Its manifest still reported `VITE_BFF_REAL_WRITES=true` and
+`VITE_BFF_ALLOW_DEV_STUB_WRITES=true`, while BFF `/health` reported only
+`version=0.2.0` and no git SHA or image identity. The release-workflow audit
+also found that the live symlink could change before probes and a failed probe
+had no automatic restoration of the prior release. The observed deployment is
+therefore current but not an accepted safe product baseline.
+
+Before the next product closeout, the release workflow must gate the exact
+candidate SHA before deployment, probe the candidate before switching, reject
+out-of-order deployments, switch atomically, and automatically restore and
+re-probe the prior SHA after a post-switch failure. The hosted manifest must
+show safe write defaults and exact FE and BFF build identities.
+
 ## Required Frontend Build Env
 
 Build the dev frontend with live BFF wiring:
@@ -92,10 +112,17 @@ Keep write behavior safe by default:
 
 ```sh
 VITE_BFF_REAL_WRITES=false
+VITE_BFF_ALLOW_DEV_STUB_WRITES=false
 ```
 
-Only set `VITE_BFF_REAL_WRITES=true` when the operator explicitly asks for real
-write-path testing and the corresponding BFF governance gates are ready.
+Only set either write flag to true when the operator explicitly asks for the
+specific write-path test and the corresponding BFF governance gates are ready.
+The release evidence must record that override and its expiry.
+
+Do not compile a bearer token, client secret, or all-role development identity
+into the browser bundle. Dev authentication must use the governed
+`/bff/auth/dev-login` flow with `AUTH_STUB=false`, short-lived tenant- and
+role-scoped identities, and distinct actors for two-person acceptance.
 
 ## Required BFF CORS Env
 

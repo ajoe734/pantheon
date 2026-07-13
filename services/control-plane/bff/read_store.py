@@ -2313,6 +2313,30 @@ class CanonicalSnapshotAdapter:
             "keys": ["binding_id", "id"],
             "snapshot_key": "bindings",
         },
+        "rebalances": {
+            "env": "PANTHEON_BFF_REBALANCE_STORE",
+            "dirs": ("CAPITAL_DATA_DIR",),
+            "filenames": ("capital_allocation_authority.json",),
+            "keys": ["rebalance_id", "id"],
+            "snapshot_key": "rebalances",
+            "envelope_key": "rebalances",
+        },
+        "capital_allocations": {
+            "env": "PANTHEON_BFF_CAPITAL_ALLOCATION_STORE",
+            "dirs": ("CAPITAL_DATA_DIR",),
+            "filenames": ("capital_allocation_authority.json",),
+            "keys": ["allocation_id", "id"],
+            "snapshot_key": "capital_allocations",
+            "envelope_key": "allocations",
+        },
+        "containments": {
+            "env": "PANTHEON_BFF_CONTAINMENT_STORE",
+            "dirs": ("CAPITAL_DATA_DIR",),
+            "filenames": ("capital_allocation_authority.json",),
+            "keys": ["containment_id", "id"],
+            "snapshot_key": "containments",
+            "envelope_key": "containments",
+        },
         "runtime_bindings": {
             "env": "PANTHEON_BFF_RUNTIME_BINDING_STORE",
             "dirs": ("PANTHEON_RUNTIME_DATA_DIR",),
@@ -2365,6 +2389,19 @@ class CanonicalSnapshotAdapter:
         "persona_bindings": {
             "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
             "list_path": "/api/bindings",
+        },
+        "rebalances": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/rebalances",
+        },
+        "capital_allocations": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/allocations",
+            "list_key": "items",
+        },
+        "containments": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/containments",
         },
         "runtime_bindings": {
             "base_env": ("PANTHEON_RUNTIME_MANAGER_URL", "PANTHEON_INTERNAL_API_URL"),
@@ -2710,6 +2747,20 @@ class ServiceBackedReadAdapter:
             "filenames": ("decisions.json",),
             "keys": ["decision_id", "id"],
             "snapshot_key": "evolution_decisions",
+        },
+        "freeze_orders": {
+            "env": "PANTHEON_BFF_FREEZE_ORDER_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR", "GOVERNANCE_DATA_DIR"),
+            "filenames": ("freeze_orders.json",),
+            "keys": ["freeze_order_id", "id"],
+            "snapshot_key": "freeze_orders",
+        },
+        "all_rollbacks": {
+            "env": "PANTHEON_BFF_ROLLBACK_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR", "GOVERNANCE_DATA_DIR"),
+            "filenames": ("rollbacks.json",),
+            "keys": ["rollback_id", "id"],
+            "snapshot_key": "all_rollbacks",
         },
         "evolution_programs": {
             "env": "PANTHEON_BFF_EVOLUTION_PROGRAM_STORE",
@@ -3108,6 +3159,22 @@ class ServiceBackedReadAdapter:
             "base_env": ("PANTHEON_EVOLUTION_API_URL", "PANTHEON_GOVERNANCE_API_URL"),
             "list_path": "/api/evolution/proposals",
         },
+        "freeze_orders": {
+            "base_env": (
+                "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+                "PANTHEON_GOVERNANCE_SERVICE_URL",
+            ),
+            "list_path": "/api/governance/freeze-orders",
+            "require_list_payload": True,
+        },
+        "all_rollbacks": {
+            "base_env": (
+                "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+                "PANTHEON_GOVERNANCE_SERVICE_URL",
+            ),
+            "list_path": "/api/governance/rollbacks",
+            "require_list_payload": True,
+        },
         "telemetry_summaries": {
             "base_env": ("PANTHEON_TELEMETRY_API_URL", "PANTHEON_TELEMETRY_URL"),
             "list_path": "/api/telemetry/runtime-summaries",
@@ -3180,6 +3247,8 @@ class ServiceBackedReadAdapter:
             payload,
             list_key=spec.get("list_key"),
         )
+        if spec.get("require_list_payload") and not isinstance(records_payload, list):
+            return False, {}
         if dataset == "lineage_edges" and isinstance(records_payload, list):
             records_payload = [
                 {
@@ -7267,6 +7336,8 @@ class ReadSurfaceStore:
         "synthesis_conflict_logs": "synthesis_conflict_logs",
         "ranking_formulas": "ranking_formulas",
         "rebalances": "rebalances",
+        "capital_allocations": "capital_allocations",
+        "containments": "containments",
         "rankings": "rankings",
         "persona_league": "persona_league",
     }
@@ -10412,6 +10483,10 @@ class ReadSurfaceStore:
         projected.setdefault("owner_type", raw.get("owner_type"))
         projected.setdefault("single_runtime_enforced", raw.get("single_runtime_enforced", True))
         projected.setdefault("risk_policy_ref", raw.get("risk_policy_ref"))
+        projected["canonicalWriteAuthority"] = "capital_service"
+        projected["canonical_write_authority"] = "capital_service"
+        projected["persistenceMode"] = "owner_store"
+        projected["persistence_mode"] = "owner_store"
         projected["tenant_id"] = tenant_id
         projected["tenantId"] = tenant_id
         return projected
@@ -10424,11 +10499,16 @@ class ReadSurfaceStore:
         projected["binding_id"] = binding_id
         projected.setdefault("persona_id", raw.get("persona_id"))
         projected.setdefault("capital_pool_id", raw.get("capital_pool_id"))
+        projected.setdefault("capital_sleeve_id", raw.get("capital_sleeve_id"))
         projected.setdefault("role", raw.get("role"))
         projected.setdefault("validity", raw.get("validity"))
         projected.setdefault("status", raw.get("status"))
         projected.setdefault("approval_decision_id", raw.get("approval_decision_id"))
         projected.setdefault("allowed_deployment_scope", raw.get("allowed_deployment_scope"))
+        projected["canonicalWriteAuthority"] = "capital_service"
+        projected["canonical_write_authority"] = "capital_service"
+        projected["persistenceMode"] = "owner_store"
+        projected["persistence_mode"] = "owner_store"
         return projected
 
     @staticmethod
@@ -10504,6 +10584,8 @@ class ReadSurfaceStore:
             "trace_id": raw.get("trace_id"),
             "request_id": raw.get("request_id"),
             "runtime_binding_id": raw.get("runtime_binding_id"),
+            "runtime_id": raw.get("runtime_id"),
+            "persona_capital_binding_id": raw.get("persona_capital_binding_id"),
             "deployment_stage": raw.get("deployment_stage"),
             "capital_pool_id": raw.get("capital_pool_id"),
             "context_bundle_ref": raw.get("context_bundle_ref"),
@@ -10641,7 +10723,11 @@ class ReadSurfaceStore:
             for persona in personas
             if str(persona.get("id") or persona.get("persona_id") or "") != "persona-alpha"
         ]
-        return anchor + sorted(rest, key=lambda x: x.get("created_at", ""), reverse=True)
+        return anchor + sorted(
+            rest,
+            key=lambda x: str(x.get("created_at") or ""),
+            reverse=True,
+        )
 
     @staticmethod
     def _is_bff_local_persona(persona: Dict[str, Any]) -> bool:
@@ -11139,30 +11225,106 @@ class ReadSurfaceStore:
                 bindings_by_id,
                 ["runtime_id", "runtime_binding_id", "binding_id", "id"],
             )
-        persona_by_capital_binding_id = {
-            str(binding.get("binding_id") or binding.get("id") or "").strip(): str(
-                binding.get("persona_id") or ""
-            ).strip()
-            for binding in self.list_bindings(
-                include_market_persona_defaults=include_market_persona_defaults,
-            )
+        persona_capital_bindings = self.list_bindings(
+            include_market_persona_defaults=include_market_persona_defaults,
+        )
+        capital_binding_by_id = {
+            str(binding.get("binding_id") or binding.get("id") or "").strip(): binding
+            for binding in persona_capital_bindings
             if str(binding.get("binding_id") or binding.get("id") or "").strip()
-            and str(binding.get("persona_id") or "").strip()
         }
+        # Legacy paper runtimes predate the explicit persona_id column.  Reconcile
+        # only through typed, exact identity references.  A canonical
+        # persona-capital binding owner is authoritative even when the runtime
+        # still carries a stale seed persona_id.  Registry declarations are a
+        # fail-closed fallback: a reference must identify exactly one persona.
+        declaration_indexes: Dict[str, Dict[str, set[str]]] = {
+            "runtime_id": {},
+            "runtime_binding_id": {},
+            "persona_capital_binding_id": {},
+        }
+        persona_declarations: Dict[str, Dict[str, Any]] = {}
+        for persona in self.list_personas(
+            include_market_persona_defaults=include_market_persona_defaults,
+        ):
+            persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+            if not persona_id:
+                continue
+            metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+            declaration = {**persona, **metadata}
+            persona_declarations[persona_id] = declaration
+            declaration_values = {
+                "runtime_id": declaration.get("runtime_id") or declaration.get("runtimeId"),
+                "runtime_binding_id": (
+                    declaration.get("runtime_binding_id")
+                    or declaration.get("runtimeBindingId")
+                ),
+                "persona_capital_binding_id": (
+                    declaration.get("persona_capital_binding_id")
+                    or declaration.get("personaCapitalBindingId")
+                ),
+            }
+            for field, index in declaration_indexes.items():
+                value = str(declaration_values.get(field) or "").strip()
+                if value:
+                    index.setdefault(value, set()).add(persona_id)
+
         bindings = []
         for key, binding in bindings_by_id.items():
             if not key:
                 continue
             projected = json.loads(json.dumps(binding))
-            if not str(projected.get("persona_id") or "").strip():
-                persona_binding_id = str(
-                    projected.get("persona_capital_binding_id")
-                    or projected.get("binding_id")
-                    or ""
-                ).strip()
-                persona_id = persona_by_capital_binding_id.get(persona_binding_id)
-                if persona_id:
-                    projected["persona_id"] = persona_id
+            persona_binding_id = str(projected.get("persona_capital_binding_id") or "").strip()
+
+            capital_binding = capital_binding_by_id.get(persona_binding_id, {})
+            canonical_persona_id = str(capital_binding.get("persona_id") or "").strip()
+            if canonical_persona_id:
+                projected["persona_id"] = canonical_persona_id
+                if not str(projected.get("capital_pool_id") or "").strip():
+                    capital_pool_id = str(capital_binding.get("capital_pool_id") or "").strip()
+                    if capital_pool_id:
+                        projected["capital_pool_id"] = capital_pool_id
+            else:
+                candidates: set[str] = set()
+                typed_references = {
+                    "runtime_id": str(projected.get("runtime_id") or "").strip(),
+                    "runtime_binding_id": str(
+                        projected.get("runtime_binding_id")
+                        or projected.get("binding_id")
+                        or projected.get("id")
+                        or ""
+                    ).strip(),
+                    "persona_capital_binding_id": persona_binding_id,
+                }
+                for field, reference in typed_references.items():
+                    if reference:
+                        candidates.update(declaration_indexes[field].get(reference, set()))
+                if len(candidates) == 1:
+                    resolved_persona_id = next(iter(candidates))
+                    projected["persona_id"] = resolved_persona_id
+                    declaration = persona_declarations.get(resolved_persona_id, {})
+                    if not persona_binding_id:
+                        declared_binding_id = str(
+                            declaration.get("persona_capital_binding_id")
+                            or declaration.get("personaCapitalBindingId")
+                            or ""
+                        ).strip()
+                        if declared_binding_id:
+                            projected["persona_capital_binding_id"] = declared_binding_id
+                    if not str(projected.get("capital_pool_id") or "").strip():
+                        declared_pool_id = str(
+                            declaration.get("capital_pool_id")
+                            or declaration.get("capitalPoolId")
+                            or declaration.get("legacy_paper_capital_pool_id")
+                            or declaration.get("legacyPaperCapitalPoolId")
+                            or ""
+                        ).strip()
+                        if declared_pool_id:
+                            projected["capital_pool_id"] = declared_pool_id
+                else:
+                    # No declaration or conflicting declarations: do not let
+                    # a stale raw persona_id assign ownership.
+                    projected["persona_id"] = None
             bindings.append(projected)
         if deployment_mode:
             bindings = [
@@ -11594,11 +11756,25 @@ class ReadSurfaceStore:
         pool_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         records = dict(self._local_overlay_records("rebalances"))
-        local_fallback = self._local_fallback("rebalances")
-        if isinstance(local_fallback, dict):
-            merged = dict(local_fallback)
-            merged.update(records)
+        available, authoritative = self._canonical.list_records("rebalances")
+        if available:
+            merged = {
+                str(item.get("rebalance_id") or item.get("id") or ""): item
+                for item in authoritative
+                if isinstance(item, dict)
+                and str(item.get("rebalance_id") or item.get("id") or "").strip()
+            }
+            # Compatibility-only local records may coexist; they cannot replace
+            # an owner record with the same stable identity.
+            for key, item in records.items():
+                merged.setdefault(str(key), item)
             records = merged
+        else:
+            local_fallback = self._local_fallback("rebalances")
+            if isinstance(local_fallback, dict):
+                merged = dict(local_fallback)
+                merged.update(records)
+                records = merged
         items = list(records.values())
         if status:
             items = [i for i in items if i.get("status") == status]
@@ -11609,6 +11785,11 @@ class ReadSurfaceStore:
     def get_rebalance(self, rebalance_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not rebalance_id:
             return None
+        available, authoritative = self._canonical.list_records("rebalances")
+        if available:
+            for item in authoritative:
+                if str(item.get("rebalance_id") or item.get("id") or "") == str(rebalance_id):
+                    return json.loads(json.dumps(item))
         overlay = self._local_overlay_records("rebalances").get(rebalance_id)
         if overlay is not None:
             return overlay
@@ -11616,6 +11797,70 @@ class ReadSurfaceStore:
         if isinstance(local_fallback, dict):
             return local_fallback.get(rebalance_id)
         return None
+
+    def list_capital_allocations(
+        self,
+        *,
+        capital_pool_id: Optional[str] = None,
+        persona_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, records = self._canonical.list_records("capital_allocations")
+        if not available:
+            return []
+        items = [json.loads(json.dumps(item)) for item in records if isinstance(item, dict)]
+        if capital_pool_id:
+            items = [
+                item
+                for item in items
+                if str(item.get("capital_pool_id") or "") == str(capital_pool_id)
+            ]
+        if persona_id:
+            items = [
+                item
+                for item in items
+                if str(item.get("persona_id") or "") == str(persona_id)
+            ]
+        return sorted(
+            items,
+            key=lambda item: (
+                str(item.get("capital_pool_id") or ""),
+                str(item.get("persona_id") or ""),
+                str(item.get("capital_sleeve_id") or item.get("sleeve_id") or ""),
+            ),
+        )
+
+    def list_containments(
+        self,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, records = self._canonical.list_records("containments")
+        if not available:
+            return []
+        items = [json.loads(json.dumps(item)) for item in records if isinstance(item, dict)]
+        if persona_id:
+            items = [
+                item
+                for item in items
+                if str(item.get("persona_id") or "") == str(persona_id)
+            ]
+        return sorted(
+            items,
+            key=lambda item: str(
+                item.get("executed_at")
+                or item.get("updated_at")
+                or item.get("applied_at")
+                or item.get("created_at")
+                or ""
+            ),
+            reverse=True,
+        )
+
+    def get_persona_containment(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        items = self.list_containments(persona_id=str(persona_id))
+        return items[0] if items else None
 
     def create_rebalance(
         self,
@@ -15978,12 +16223,21 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
         scope: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        orders = list((self._local_fallback("freeze_orders") or {}).values())
+        available, service_orders = self._service.list_records("freeze_orders")
+        if available:
+            orders = list(service_orders)
+        else:
+            local_orders = self._local_fallback("freeze_orders") or {}
+            orders = list(local_orders.values()) if isinstance(local_orders, dict) else list(local_orders)
         if status:
             orders = [o for o in orders if o.get("status") == status]
         if scope:
             orders = [o for o in orders if o.get("scope") == scope]
-        return sorted(orders, key=lambda x: x.get("created_at", ""), reverse=True)
+        return sorted(
+            orders,
+            key=lambda x: str(x.get("created_at") or x.get("issued_at") or x.get("updated_at") or ""),
+            reverse=True,
+        )
 
     def list_all_rollbacks(
         self,
@@ -15991,13 +16245,24 @@ class ReadSurfaceStore:
         action_type: Optional[str] = None,
         time_range: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        rollbacks = list(self._local_fallback("all_rollbacks") or [])
+        available, service_rollbacks = self._service.list_records("all_rollbacks")
+        if available:
+            rollbacks = list(service_rollbacks)
+        else:
+            local_rollbacks = self._local_fallback("all_rollbacks") or []
+            rollbacks = list(local_rollbacks.values()) if isinstance(local_rollbacks, dict) else list(local_rollbacks)
         if runtime_id:
             rollbacks = [r for r in rollbacks if r.get("runtime_id") == runtime_id]
         if action_type:
             rollbacks = [r for r in rollbacks if r.get("action_type") == action_type]
         # time_range filtering deferred in v1
-        return sorted(rollbacks, key=lambda x: x.get("initiated_at", ""), reverse=True)
+        return sorted(
+            rollbacks,
+            key=lambda x: str(
+                x.get("initiated_at") or x.get("requested_at") or x.get("created_at") or x.get("updated_at") or ""
+            ),
+            reverse=True,
+        )
 
     def get_rollback_review(self, rollback_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not rollback_id:
