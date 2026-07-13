@@ -35162,6 +35162,31 @@ def _evolution_journal_summary(items: List[Dict[str, Any]], returned_count: int)
     }
 
 
+def _evolution_entry_text(item: Dict[str, Any]) -> str:
+    target = item.get("target") or {}
+    target_parts = [target.get("type"), target.get("id"), target.get("version")]
+    target_str = " ".join([str(p) for p in target_parts if p])
+    
+    record = item.get("record") or {}
+    evidence_refs = record.get("evidence_refs") or []
+    evidence_str = ""
+    if isinstance(evidence_refs, list):
+        evidence_str = " ".join([json.dumps(ref) for ref in evidence_refs])
+        
+    parts = [
+        item.get("id"),
+        item.get("title"),
+        item.get("summary"),
+        item.get("status"),
+        item.get("entry_type") or item.get("entryType"),
+        item.get("source_id"),
+        item.get("action_type"),
+        target_str,
+        evidence_str,
+    ]
+    return " ".join([str(p) for p in parts if p]).lower()
+
+
 def _evolution_journal_items(
     *,
     identity: OperatorIdentity,
@@ -35202,6 +35227,30 @@ def _evolution_journal_items(
         item = _evolution_journal_rollback_item(rollback)
         if item is not None:
             items.append(item)
+
+    for item in items:
+        is_seed = False
+        source_id = str(item.get("source_id") or "").lower()
+        journal_id = str(item.get("id") or "").lower()
+        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
+            if marker in source_id or marker in journal_id:
+                is_seed = True
+                break
+        if not is_seed:
+            for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
+                inner = item.get(key)
+                if isinstance(inner, dict):
+                    for field in ("id", "decision_id", "source_id", "incident_id", "incident_ref", "linked_incident_id", "report_id"):
+                        val = str(inner.get(field) or "").lower()
+                        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
+                            if marker in val:
+                                is_seed = True
+                                break
+                        if is_seed:
+                            break
+                if is_seed:
+                    break
+        item["origin"] = "seed" if is_seed else "live"
 
     items.sort(
         key=lambda item: (
@@ -35845,6 +35894,9 @@ async def bff_management_evolution_journal(
     status: Optional[str] = None,
     action_type: Optional[str] = None,
     risk_level: Optional[str] = None,
+    persona: Optional[str] = None,
+    mutation_review: Optional[str] = None,
+    decision: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
@@ -35865,6 +35917,19 @@ async def bff_management_evolution_journal(
         action_type=action_type,
         risk_level=risk_level,
     )
+    if persona:
+        p_clean = persona.strip()
+        if p_clean:
+            filtered = [item for item in filtered if p_clean.lower() in _evolution_entry_text(item)]
+    if mutation_review:
+        mr_clean = mutation_review.strip()
+        if mr_clean:
+            filtered = [item for item in filtered if mr_clean.lower() in _evolution_entry_text(item)]
+    if decision:
+        dec_clean = decision.strip()
+        if dec_clean:
+            filtered = [item for item in filtered if dec_clean.lower() in _evolution_entry_text(item)]
+
     total = len(filtered)
     page_items, next_page_token = _page_slice(filtered, page_token, page_size)
     meta = _snapshot_meta(snapshot_at)
