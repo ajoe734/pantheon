@@ -39,6 +39,7 @@ def clean_store(monkeypatch):
             return None
 
     monkeypatch.setattr("services.postmortems.main.reference_validator", _AcceptAllValidator())
+    monkeypatch.setattr("services.postmortems.main._publish_postmortem_to_evolution_if_needed", lambda postmortem_id: None)
     store._incidents.clear()
     store._postmortems.clear()
     yield

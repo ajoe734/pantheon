@@ -192,6 +192,158 @@ def test_final_command_validates_bound_preconditions_and_redacts_bearer() -> Non
         assert "op-primary:operator,approver:mfa" not in json.dumps(audit)
 
 
+def test_specialized_remediation_consumes_token_and_preserves_same_key_replay() -> None:
+    with _isolated_security_client() as client:
+        _seed_approval_decision("approval-specialized-001")
+        _create_bound_confirm_token(client, "ct-specialized-001")
+        _create_bound_two_man_signature(client, "tms-specialized-001")
+        payload = {
+            "reason": "specialized remediation admission regression",
+            "remediation_action": "resolve",
+            "approvalDecisionId": "approval-specialized-001",
+            "twoManSignatureId": "tms-specialized-001",
+        }
+        request_headers = {
+            **PRIMARY_HEADERS,
+            "Idempotency-Key": "idem-specialized-001",
+            "X-Confirm-Token": "ct-specialized-001",
+        }
+
+        accepted = client.post(
+            "/bff/v5/interventions/int-sec-001/remediate",
+            headers=request_headers,
+            json=payload,
+        )
+        assert accepted.status_code == 202, accepted.text
+        command_id = accepted.json()["data"]["command_id"]
+        token_state = client.get(
+            "/bff/confirm-tokens/ct-specialized-001",
+            headers=PRIMARY_HEADERS,
+        )
+        assert token_state.status_code == 200, token_state.text
+        assert token_state.json()["data"]["status"] == "redeemed"
+
+        replay = client.post(
+            "/bff/v5/interventions/int-sec-001/remediate",
+            headers=request_headers,
+            json=payload,
+        )
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["data"]["command_id"] == command_id
+
+        reused = client.post(
+            "/bff/v5/interventions/int-sec-001/remediate",
+            headers={
+                **PRIMARY_HEADERS,
+                "Idempotency-Key": "idem-specialized-reused-token",
+                "X-Confirm-Token": "ct-specialized-001",
+            },
+            json=payload,
+        )
+        assert reused.status_code == 428, reused.text
+        assert _error_reason(reused) == "CONFIRM_TOKEN_INVALID"
+        guarded_records = [
+            record
+            for record in bff_main.command_store._get_all_commands()
+            if record["type"] == "RemediateSentinelIntervention"
+        ]
+        redemption_records = [
+            record
+            for record in bff_main.command_store._get_all_commands()
+            if record["type"] == bff_main.CommandType.CONFIRM_TOKEN_REDEEM.value
+            and record.get("target", {}).get("id") == "ct-specialized-001"
+        ]
+        assert len(guarded_records) == 1
+        assert len(redemption_records) == 1
+
+
+def test_specialized_remediation_replays_preupgrade_foundation_record() -> None:
+    with _isolated_security_client() as client:
+        _seed_approval_decision("approval-specialized-upgrade")
+        _create_bound_confirm_token(client, "ct-specialized-upgrade")
+        _create_bound_two_man_signature(client, "tms-specialized-upgrade")
+        target_id = "int-sec-001"
+        idempotency_key = "idem-specialized-preupgrade"
+        payload = {
+            "reason": "replay pre-upgrade specialized admission",
+            "remediation_action": "resolve",
+            "approvalDecisionId": "approval-specialized-upgrade",
+            "twoManSignatureId": "tms-specialized-upgrade",
+        }
+        merged_params = {**payload, "intervention_id": target_id}
+        identity = bff_main._extract_identity(PRIMARY_HEADERS["Authorization"])
+        cmd = bff_main.OperatorCommand(
+            command=bff_main.CommandType.REMEDIATE_SENTINEL_INTERVENTION,
+            target=bff_main.TargetObject(
+                type=bff_main.ObjectType.SENTINEL_INTERVENTION,
+                id=target_id,
+            ),
+            action="remediate_sentinel_intervention",
+            params=merged_params,
+            audit_context=bff_main.AuditContext(reason=payload["reason"]),
+        )
+        foundation = bff_main._build_foundation_command_context(
+            cmd=cmd,
+            identity=identity,
+            raw_payload={**payload, "intervention_id": target_id},
+            trace_id=PRIMARY_HEADERS["X-Trace-Id"],
+            correlation_id=PRIMARY_HEADERS["X-Correlation-Id"],
+            request_id=PRIMARY_HEADERS["X-Request-Id"],
+            idempotency_key=idempotency_key,
+        )
+        command_id = "cmd-specialized-preupgrade"
+        foundation["idempotency_record"] = foundation["idempotency_record"].with_status(
+            "succeeded",
+            result_ref=f"command:{command_id}",
+        )
+        submitted_at = bff_main.utc_now()
+        stored_params = bff_main._stored_command_params(cmd, identity)
+        serialized_foundation = bff_main._serialize_foundation_context(foundation)
+        bff_main.command_store.submit_command(
+            command_id=command_id,
+            command_type=cmd.command,
+            target=cmd.target,
+            submitted_at=submitted_at,
+            params=stored_params,
+            audit_context={
+                "operator_id": identity.operator_id,
+                "reason": payload["reason"],
+                "precondition_evidence": {
+                    "confirm_token_id": "ct-specialized-upgrade",
+                    "approval_decision_id": "approval-specialized-upgrade",
+                    "two_man_signature_id": "tms-specialized-upgrade",
+                },
+                "foundation": serialized_foundation,
+            },
+            foundation_context=serialized_foundation,
+        )
+        bff_main.command_store.update_status(command_id, CommandStatus.EXECUTED)
+
+        replay = client.post(
+            f"/bff/v5/interventions/{target_id}/remediate",
+            headers={
+                **PRIMARY_HEADERS,
+                "Idempotency-Key": idempotency_key,
+                "X-Confirm-Token": "ct-specialized-upgrade",
+            },
+            json=payload,
+        )
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["data"]["command_id"] == command_id
+        token_state = client.get(
+            "/bff/confirm-tokens/ct-specialized-upgrade",
+            headers=PRIMARY_HEADERS,
+        )
+        assert token_state.status_code == 200, token_state.text
+        assert token_state.json()["data"]["status"] == "redeemed"
+        guarded_records = [
+            record
+            for record in bff_main.command_store._get_all_commands()
+            if record["type"] == "RemediateSentinelIntervention"
+        ]
+        assert len(guarded_records) == 1
+
+
 def test_confirm_token_must_be_issued_unredeemed_and_bound_to_caller() -> None:
     with _isolated_security_client() as client:
         _seed_approval_decision("approval-sec-001")
