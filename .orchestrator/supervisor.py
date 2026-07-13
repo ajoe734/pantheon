@@ -2716,21 +2716,9 @@ def worker_process_activity_advanced(previous: dict[str, Any] | None, current: d
 # scan /proc to recover the truth when state["workers"] bookkeeping drifts.
 WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
 
-# spawn_background_process() (common.py) always wraps a worker run in
-# worker_runner.py, passing --run-id on the wrapper's own argv. The wrapper
-# then execs/forks the real CLI process(es) underneath it, and every one of
-# those descendants inherits the same wakeup-prompt cmdline (so it also
-# matches WORKER_AGENT_CMDLINE_MARKER). Only the wrapper carries --run-id, so
-# it is used to count exactly one PID per worker run instead of ~3.
-WORKER_RUN_ID_CMDLINE_MARKER = re.compile(r"--run-id\s+(\S+)")
-
 
 def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, list[int]]:
-    """Return live worker PIDs grouped by agent display name parsed from /proc/*/cmdline.
-
-    Counts one PID per worker run (the worker_runner.py wrapper), not every
-    process sharing the wakeup-prompt cmdline; see WORKER_RUN_ID_CMDLINE_MARKER.
-    """
+    """Return live worker PIDs grouped by agent display name parsed from /proc/*/cmdline."""
     root = proc_root if proc_root is not None else Path("/proc")
     result: dict[str, list[int]] = {}
     try:
@@ -2756,8 +2744,12 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
         match = WORKER_AGENT_CMDLINE_MARKER.search(cmdline)
         if not match:
             continue
-        if not WORKER_RUN_ID_CMDLINE_MARKER.search(cmdline):
-            # descendant of a worker_runner.py wrapper already counted below
+        # Each worker run spawns ~3 processes carrying the same wakeword prompt
+        # (worker_runner.py wrapper, the CLI shim, and the CLI binary). Only the
+        # worker_runner.py wrapper is exactly one-per-worker, so count it alone;
+        # otherwise the live worker count is ~3x inflated and max_concurrent_workers
+        # freezes dispatch at ~1/3 of its configured value (OPS-DISPATCH-PIDCOUNT-001).
+        if "worker_runner.py" not in cmdline:
             continue
         agent = match.group(1)
         result.setdefault(agent, []).append(pid)

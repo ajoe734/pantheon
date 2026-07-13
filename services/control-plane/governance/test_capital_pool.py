@@ -123,6 +123,29 @@ class TestCapitalPoolStore:
         with pytest.raises(CapitalPoolError, match="already exists"):
             store.create(pool)
 
+    def test_failed_create_save_rolls_back_in_memory_state(self, monkeypatch):
+        store = CapitalPoolStore()
+
+        def fail_save():
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr(store, "_save", fail_save)
+        with pytest.raises(OSError, match="disk unavailable"):
+            store.create(make_pool())
+        assert store.get("pool-001") is None
+
+    def test_failed_status_save_rolls_back_in_memory_state(self, monkeypatch):
+        store = CapitalPoolStore()
+        store.create(make_pool())
+
+        def fail_save():
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr(store, "_save", fail_save)
+        with pytest.raises(OSError, match="disk unavailable"):
+            store.update_status("pool-001", "suspended")
+        assert store.require("pool-001").status == "active"
+
     def test_require_missing_raises(self):
         store = CapitalPoolStore()
         with pytest.raises(CapitalPoolError, match="not found"):

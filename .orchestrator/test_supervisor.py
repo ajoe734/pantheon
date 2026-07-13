@@ -8437,10 +8437,11 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
 
     def test_scan_dedupes_one_run_worth_of_wrapper_and_child_pids(self) -> None:
         # A single worker run spawns ~3 processes sharing the same wakeup
-        # prompt in their cmdline: the worker_runner.py wrapper (carries
-        # --run-id), a node CLI shim, and the real CLI binary underneath it.
-        # Only the wrapper should be counted so live_total reflects actual
-        # worker runs, not raw PID count.
+        # prompt in their cmdline: the worker_runner.py wrapper, a node CLI
+        # shim, and the real CLI binary underneath it. Only the wrapper's
+        # cmdline names worker_runner.py, so only it should be counted --
+        # otherwise live_total is ~3x actual worker runs
+        # (OPS-DISPATCH-PIDCOUNT-001).
         proc = self._make_fake_proc(
             {
                 111: "python3 .orchestrator/worker_runner.py --run-id run-abc --heartbeat-path h --status-path s -- claude --print 你的 auto worker 身分是：Claude 。 Task ID: T1",

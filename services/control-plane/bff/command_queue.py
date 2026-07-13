@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 from threading import RLock
 from typing import Any, Dict, List, Optional
@@ -16,22 +17,27 @@ class CommandStore:
     def __init__(self, file_path: str = "commands.jsonl"):
         self.file_path = file_path
         self._lock = RLock()
+        parent = os.path.dirname(os.path.abspath(self.file_path))
+        os.makedirs(parent, exist_ok=True)
         # Initialize the file if it doesn't exist
         if not os.path.exists(self.file_path):
-            with open(self.file_path, "w") as f:
-                pass
+            with open(self.file_path, "w", encoding="utf-8") as f:
+                f.flush()
+                os.fsync(f.fileno())
 
     def _save_command(self, command: Dict[str, Any]):
         with self._lock:
-            with open(self.file_path, "a") as f:
+            with open(self.file_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(command) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
 
     def _get_all_commands(self) -> List[Dict[str, Any]]:
         with self._lock:
             commands = []
             if not os.path.exists(self.file_path):
                 return commands
-            with open(self.file_path, "r") as f:
+            with open(self.file_path, "r", encoding="utf-8") as f:
                 for line in f:
                     if line.strip():
                         commands.append(json.loads(line))
@@ -39,9 +45,13 @@ class CommandStore:
 
     def _update_commands(self, commands: List[Dict[str, Any]]):
         with self._lock:
-            with open(self.file_path, "w") as f:
+            temp_path = f"{self.file_path}.{uuid.uuid4().hex}.tmp"
+            with open(temp_path, "w", encoding="utf-8") as f:
                 for cmd in commands:
                     f.write(json.dumps(cmd) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, self.file_path)
 
     def submit_command(
         self,
@@ -67,6 +77,59 @@ class CommandStore:
         }
         self._save_command(record)
         return record
+
+    def submit_terminal_command(
+        self,
+        command_id: str,
+        command_type: CommandType,
+        target: TargetObject,
+        submitted_at: str,
+        params: Dict[str, Any],
+        audit_context: Dict[str, Any],
+        foundation_context: Optional[Dict[str, Any]] = None,
+        result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Append one already-complete command record without a crash window."""
+        record = {
+            "command_id": command_id,
+            "type": command_type.value,
+            "target": target.model_dump(),
+            "submitted_at": submitted_at,
+            "status": CommandStatus.EXECUTED.value,
+            "params": params,
+            "audit": audit_context,
+            "foundation": foundation_context,
+            "result": result,
+            "error": None,
+        }
+        self._save_command(record)
+        return record
+
+    def submit_terminal_command_if_no_active_target(
+        self,
+        command_id: str,
+        command_type: CommandType,
+        target: TargetObject,
+        submitted_at: str,
+        params: Dict[str, Any],
+        audit_context: Dict[str, Any],
+        foundation_context: Optional[Dict[str, Any]] = None,
+        result: Optional[Dict[str, Any]] = None,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        with self._lock:
+            active = self.get_active_commands_for_target(target.type.value, target.id)
+            if active:
+                return None, active[0]
+            return self.submit_terminal_command(
+                command_id,
+                command_type,
+                target,
+                submitted_at,
+                params,
+                audit_context,
+                foundation_context,
+                result,
+            ), None
 
     def submit_command_if_no_active_target(
         self,
@@ -137,25 +200,34 @@ class CommandStore:
         error: Optional[Dict[str, Any]] = None,
         audit: Optional[Dict[str, Any]] = None,
     ):
-        commands = self._get_all_commands()
-        updated = False
-        for i, cmd in enumerate(commands):
-            if cmd["command_id"] == command_id:
-                commands[i]["status"] = status.value
-                if result:
-                    commands[i]["result"] = result
-                if error:
-                    commands[i]["error"] = error
-                if audit:
-                    # Merge audit updates into existing audit record
-                    existing = commands[i].get("audit") or {}
-                    existing.update(audit)
-                    commands[i]["audit"] = existing
-                updated = True
-                break
-        if updated:
-            self._update_commands(commands)
-        return updated
+        with self._lock:
+            commands = self._get_all_commands()
+            updated = False
+            for i, cmd in enumerate(commands):
+                if cmd["command_id"] == command_id:
+                    commands[i]["status"] = status.value
+                    if result is not None:
+                        commands[i]["result"] = result
+                    if error is not None:
+                        commands[i]["error"] = error
+                    elif status in {
+                        CommandStatus.SUBMITTED,
+                        CommandStatus.PROCESSING,
+                        CommandStatus.EXECUTED,
+                    }:
+                        # A retry must not retain the terminal error from its
+                        # previous attempt after it is re-queued or succeeds.
+                        commands[i]["error"] = None
+                    if audit:
+                        # Merge audit updates into existing audit record
+                        existing = commands[i].get("audit") or {}
+                        existing.update(audit)
+                        commands[i]["audit"] = existing
+                    updated = True
+                    break
+            if updated:
+                self._update_commands(commands)
+            return updated
 
     def get_active_commands_for_target(self, target_type: str, target_id: str) -> List[Dict[str, Any]]:
         """Return commands that are currently submitted or processing for a given target."""
