@@ -6,6 +6,7 @@ import sys
 import tempfile
 from copy import deepcopy
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 from unittest.mock import patch
@@ -283,6 +284,7 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
     )
     bff_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
+    current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
         "bff_health_monitoring": {
             "loop_id": "bff_health_monitoring",
@@ -293,7 +295,7 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
             "controller_health": {
                 "status": "healthy",
                 "controller_name": "bff-health-reconciler",
-                "last_heartbeat_at": "2026-07-13T12:49:00Z",
+                "last_heartbeat_at": current_heartbeat,
             },
             "evidence_packet": {
                 "packet_id": "packet-bff-health-live-001",
@@ -325,6 +327,23 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
     assert payload["meta"]["coverage"]["controller_health_record_count"] == 1
     assert _truth_source(packet, "registry_metadata")["source_type"] == "registry"
     assert _truth_source(packet, "reconciled_live_proof")["source_type"] == "live_truth"
+
+    stale_store = deepcopy(loop_health_store)
+    stale_store["bff_health_monitoring"]["controller_health"]["last_heartbeat_at"] = (
+        "2000-01-01T00:00:00Z"
+    )
+    with _loop_health_client(loop_health_store=stale_store) as client:
+        stale_response = client.get(
+            "/bff/v5/loop-health/bff_health_monitoring",
+            headers=HEADERS,
+        )
+
+    assert stale_response.status_code == 200, stale_response.text
+    stale_data = stale_response.json()["data"]
+    assert stale_data["controller_health"]["freshness"]["current"] is False
+    assert stale_data["controller_health"]["current_record_accepted"] is False
+    assert stale_data["evidence_packet"]["accepted_live_liveness"] is False
+    assert stale_data["live_status"]["is_reconciled"] is False
 
 
 def test_loop_health_detail_unknown_id_is_404(monkeypatch) -> None:

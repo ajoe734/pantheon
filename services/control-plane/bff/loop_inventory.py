@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,8 @@ _ACCEPTED_CONTROLLER_HEALTH_STATUSES = {
     "observed",
     "running",
 }
+_CONTROLLER_RECORD_MAX_AGE_SECONDS = 900
+_CONTROLLER_RECORD_MAX_FUTURE_SKEW_SECONDS = 60
 _SNAPSHOT_TRUTH_LEVEL = "snapshot_fallback"
 _TRUTH_LEVEL_ORDER = (
     "seed_fixture",
@@ -153,6 +156,24 @@ def _health_record_evidence_basis(record: Dict[str, Any]) -> str:
     return "missing"
 
 
+def _controller_heartbeat_is_current(value: Any) -> bool:
+    clean = str(value or "").strip()
+    if not clean:
+        return False
+    try:
+        parsed = datetime.fromisoformat(clean.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    age_seconds = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+    return (
+        -_CONTROLLER_RECORD_MAX_FUTURE_SKEW_SECONDS
+        <= age_seconds
+        <= _CONTROLLER_RECORD_MAX_AGE_SECONDS
+    )
+
+
 def _runtime_controller_record_qualified(
     record: Dict[str, Any],
     health_source: str,
@@ -183,7 +204,7 @@ def _runtime_controller_record_qualified(
     return bool(
         reported_status in _ACCEPTED_CONTROLLER_HEALTH_STATUSES
         and controller_name
-        and heartbeat
+        and _controller_heartbeat_is_current(heartbeat)
         and _health_record_refs(record)
     )
 
@@ -449,6 +470,7 @@ def loop_inventory_meta() -> Dict[str, Any]:
             "accepted_live_evidence_bases": sorted(_ACCEPTED_RUNTIME_EVIDENCE_BASES),
             "archived_task_completion": "reference_only",
             "archived_task_completion_accepted_as_liveness": False,
+            "controller_record_max_age_seconds": _CONTROLLER_RECORD_MAX_AGE_SECONDS,
         },
         "registry_ref": _REGISTRY_REF,
     }
@@ -572,6 +594,7 @@ def _project_controller_health(
         health_source,
     )
     contract_accepts_runtime_record = contract_status in {"implemented", "proven_live"}
+    heartbeat = raw_health.get("last_heartbeat_at") or health_record.get("last_heartbeat_at")
     current_record_accepted = bool(
         runtime_record_qualified
         and contract_accepts_runtime_record
@@ -589,6 +612,11 @@ def _project_controller_health(
         "reported_source": health_source if health_record else "missing",
         "evidence_basis": _health_record_evidence_basis(health_record),
         "runtime_record_qualified": runtime_record_qualified,
+        "freshness": {
+            "last_heartbeat_at": heartbeat,
+            "current": _controller_heartbeat_is_current(heartbeat),
+            "max_age_seconds": _CONTROLLER_RECORD_MAX_AGE_SECONDS,
+        },
         "current_record_accepted": current_record_accepted,
         "rejection_reason": (
             None
