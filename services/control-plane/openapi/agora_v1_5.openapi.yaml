@@ -176,7 +176,7 @@ components:
           items: { type: string }
         dataAvailability:
           type: string
-          enum: [complete, partial, unavailable]
+          enum: [full, partial, missing]
       additionalProperties: false
     AcceptWidgetRevisionProposalRequest:
       type: object
