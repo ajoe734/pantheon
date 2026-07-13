@@ -58,6 +58,24 @@ def _governance_url(path: str) -> str:
     return f"{base}{path}"
 
 
+def _governance_approval_url(path: str) -> str:
+    base = _configured_base_url(
+        "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+        "PANTHEON_GOVERNANCE_SERVICE_URL",
+    )
+    return f"{base}{path}"
+
+
+def _write_to_governance(
+    path: str,
+    payload: Dict[str, Any],
+    auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    url = _governance_approval_url(path)
+    return _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+
+
 def _capital_url(path: str) -> str:
     """Resolve the Capital service owner API.
 
@@ -520,14 +538,41 @@ def _execute_rollback(
         payload["target_artifact_id"] = params.get("target_artifact_id")
     url = _internal_url("/api/internal/v1/rollbacks/execute")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    
+    rollback_id = body.get("rollback_id") or f"rollback-{uuid.uuid4().hex[:12]}"
+    try:
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    except Exception:
+        actor_id, actor_role = "operator-command", "operator"
+    timestamp = _utc_now()
+    gov_payload = {
+        "rollback_id": rollback_id,
+        "id": rollback_id,
+        "runtime_id": params.get("runtime_id"),
+        "runtime_binding_id": params.get("runtime_binding_id") or params.get("target_id") or params.get("binding_id"),
+        "action_type": params.get("rollback_action_type") or "replace",
+        "status": body.get("status") or "completed",
+        "target_artifact_id": params.get("target_artifact_id") or params.get("rollback_to_version"),
+        "actor": actor_role,
+        "identity": actor_id,
+        "initiated_at": timestamp,
+        "created_at": timestamp,
+        "requested_at": timestamp,
+        "source_command_id": command_id,
+    }
+    try:
+        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception as e:
+        log.warning("Failed to persist rollback %s to governance store: %s", rollback_id, e)
+
     return {
-        "rollback_id": body.get("rollback_id"),
+        "rollback_id": rollback_id,
         "command_id": command_id,
         "runtime_id": params.get("runtime_id"),
         "runtime_binding_id": params.get("runtime_binding_id") or params.get("target_id"),
         "target_artifact_id": params.get("target_artifact_id"),
         "rollback_action_type": params.get("rollback_action_type"),
-        "status": body.get("status"),
+        "status": body.get("status") or "completed",
         "tracking_url": body.get("tracking_url"),
     }
 
@@ -545,11 +590,33 @@ def _execute_approve_rollback(
     }
     url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/approve")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    
+    try:
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    except Exception:
+        actor_id, actor_role = "operator-command", "operator"
+    timestamp = _utc_now()
+    gov_payload = {
+        "rollback_id": rollback_id,
+        "id": rollback_id,
+        "status": body.get("status") or "approved",
+        "actor": actor_role,
+        "identity": actor_id,
+        "updated_at": timestamp,
+        "approved_at": body.get("approved_at") or timestamp,
+        "source_command_id": command_id,
+        "approval_notes": params.get("approval_notes"),
+    }
+    try:
+        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception as e:
+        log.warning("Failed to persist rollback %s approval to governance store: %s", rollback_id, e)
+
     return {
         "command_id": command_id,
         "rollback_id": body.get("rollback_id", rollback_id),
         "decision": body.get("decision", "approved"),
-        "status": body.get("status"),
+        "status": body.get("status") or "approved",
         "audit_id": body.get("audit_id"),
         "approved_at": body.get("approved_at"),
     }
@@ -568,11 +635,33 @@ def _execute_reject_rollback(
     }
     url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/reject")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    
+    try:
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    except Exception:
+        actor_id, actor_role = "operator-command", "operator"
+    timestamp = _utc_now()
+    gov_payload = {
+        "rollback_id": rollback_id,
+        "id": rollback_id,
+        "status": body.get("status") or "rejected",
+        "actor": actor_role,
+        "identity": actor_id,
+        "updated_at": timestamp,
+        "rejected_at": body.get("rejected_at") or timestamp,
+        "source_command_id": command_id,
+        "rejection_reason": params.get("rejection_reason"),
+    }
+    try:
+        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception as e:
+        log.warning("Failed to persist rollback %s rejection to governance store: %s", rollback_id, e)
+
     return {
         "command_id": command_id,
         "rollback_id": body.get("rollback_id", rollback_id),
         "decision": body.get("decision", "rejected"),
-        "status": body.get("status"),
+        "status": body.get("status") or "rejected",
         "audit_id": body.get("audit_id"),
         "rejected_at": body.get("rejected_at"),
     }
@@ -594,8 +683,34 @@ def _execute_activate_kill_switch(
         payload["action_override"] = params.get("action_override")
     url = _internal_url("/api/internal/v1/kill-switch")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    
+    kill_switch_order_id = body.get("kill_switch_order_id") or f"ks-{uuid.uuid4().hex[:12]}"
+    try:
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    except Exception:
+        actor_id, actor_role = "operator-command", "operator"
+    timestamp = _utc_now()
+    freeze_order_id = f"freeze-{kill_switch_order_id}"
+    freeze_payload = {
+        "freeze_order_id": freeze_order_id,
+        "id": freeze_order_id,
+        "status": "active",
+        "scope": params.get("scope") or "all",
+        "target_id": params.get("scope_id") or "all",
+        "actor": actor_role,
+        "identity": actor_id,
+        "created_at": timestamp,
+        "issued_at": timestamp,
+        "source_command_id": command_id,
+        "reason": params.get("trigger_reason") or params.get("reason") or "Kill switch activation freeze.",
+    }
+    try:
+        _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception as e:
+        log.warning("Failed to persist freeze order %s to governance store: %s", freeze_order_id, e)
+
     return {
-        "kill_switch_order_id": body.get("kill_switch_order_id"),
+        "kill_switch_order_id": kill_switch_order_id,
         "command_id": command_id,
         "runtime_id": params.get("runtime_id"),
         "runtime_binding_id": params.get("runtime_binding_id"),
@@ -888,6 +1003,30 @@ def _execute_execute_mutation(
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     execution_result = body.get("execution_result") or {}
     committed_at = body.get("updated_at") or execution_result.get("executed_at") or _utc_now()
+
+    freeze_mode = params.get("freeze_mode")
+    force_stage_freeze = params.get("force_stage_freeze")
+    if freeze_mode or force_stage_freeze:
+        timestamp = _utc_now()
+        freeze_order_id = f"freeze-{decision_id}"
+        freeze_payload = {
+            "freeze_order_id": freeze_order_id,
+            "id": freeze_order_id,
+            "status": "active",
+            "scope": str(freeze_mode or "persona"),
+            "target_id": body.get("target_id") or params.get("persona_id") or params.get("target_id") or "unknown",
+            "actor": actor_role,
+            "identity": actor_id,
+            "created_at": timestamp,
+            "issued_at": timestamp,
+            "source_command_id": command_id,
+            "reason": params.get("note") or params.get("rationale") or "Evolution sweep freeze.",
+        }
+        try:
+            _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
+        except Exception as e:
+            log.warning("Failed to persist freeze order %s to governance store: %s", freeze_order_id, e)
+
     return {
         "command_id": command_id,
         "command_accepted": True,

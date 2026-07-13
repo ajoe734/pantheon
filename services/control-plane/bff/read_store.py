@@ -12811,9 +12811,17 @@ class ReadSurfaceStore:
             return []
         return list((self._local_fallback("rollbacks") or {}).get(runtime_id, []))
 
-    def get_allowed_actions(self, plan_id: str) -> Dict[str, Any]:
-        plan = self.get_deployment_plan(plan_id)
-        decision = self.get_approval_decision(plan.get("approval_decision_id")) if plan else None
+    def get_allowed_actions(
+        self,
+        plan_id: str,
+        *,
+        plan: Optional[Dict[str, Any]] = None,
+        decision: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if plan is None:
+            plan = self.get_deployment_plan(plan_id)
+        if decision is None and plan:
+            decision = self.get_approval_decision(plan.get("approval_decision_id"))
         fallback_actions = dict((self._local_fallback("allowed_actions") or {}).get(plan_id, {}))
         if plan and (plan.get("status") is not None or plan.get("target_stage") is not None):
             can_review = self._derive_can_review_deployment_plan(plan, decision)
@@ -12844,10 +12852,18 @@ class ReadSurfaceStore:
             return (self._local_fallback("latest_runs") or {}).get(plan_id, {"progress": 0.0})
         return None
 
-    def get_review_summary(self, plan_id: str) -> Dict[str, Any]:
+    def get_review_summary(
+        self,
+        plan_id: str,
+        *,
+        plan: Optional[Dict[str, Any]] = None,
+        decision: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         summary = dict((self._local_fallback("review_summaries") or {}).get(plan_id, {}))
-        plan = self.get_deployment_plan(plan_id)
-        decision = self.get_approval_decision(plan.get("approval_decision_id")) if plan else None
+        if plan is None:
+            plan = self.get_deployment_plan(plan_id)
+        if decision is None and plan:
+            decision = self.get_approval_decision(plan.get("approval_decision_id"))
         if decision:
             summary.setdefault("governanceOutcome", decision.get("outcome"))
             summary.setdefault("decisionState", decision.get("state"))
@@ -12874,6 +12890,13 @@ class ReadSurfaceStore:
         if not items:
             reviewable_statuses = {"draft", "pending_review", "proposed", "under_review", "reviewed"}
             linked_approval_decision_ids: set[str] = set()
+            decisions = self.list_approval_decisions()
+            decisions_by_id = {}
+            for d in decisions:
+                d_id = str(d.get("decision_id") or d.get("id") or "").strip()
+                if d_id:
+                    decisions_by_id[d_id] = d
+
             for plan in self.list_deployment_plans():
                 status = str(plan.get("status") or "").strip().lower()
                 if status and status not in reviewable_statuses:
@@ -12881,7 +12904,8 @@ class ReadSurfaceStore:
                 plan_id = str(plan.get("plan_id") or plan.get("id") or "").strip()
                 if not plan_id:
                     continue
-                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+                dec_id = str(plan.get("approval_decision_id") or "").strip()
+                decision = decisions_by_id.get(dec_id)
                 decision_id = str((decision or {}).get("decision_id") or (decision or {}).get("id") or "").strip()
                 if decision_id:
                     linked_approval_decision_ids.add(decision_id)
@@ -12893,8 +12917,8 @@ class ReadSurfaceStore:
                         "submitted_at": plan.get("submitted_at") or plan.get("created_at"),
                         "submitted_by": plan.get("created_by") or "deployment-service",
                         "governance_outcome": (decision or {}).get("outcome"),
-                        "allowedActions": self.get_allowed_actions(plan_id),
-                        "review_summary": self.get_review_summary(plan_id) or {},
+                        "allowedActions": self.get_allowed_actions(plan_id, plan=plan, decision=decision),
+                        "review_summary": self.get_review_summary(plan_id, plan=plan, decision=decision) or {},
                     }
                 )
             for decision in self.list_evolution_decisions():

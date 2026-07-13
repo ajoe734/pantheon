@@ -104,6 +104,23 @@ Postgres posture uses `governance.freeze_orders` by default.
 ### `GET /api/governance/freeze-orders/{freeze_order_id}`
 Retrieve one FreezeOrder record.  Returns `404` when it does not exist.
 
+### `POST /api/governance/freeze-orders`
+Record or update a canonical FreezeOrder record with audit fields.
+
+**Request body**:
+```json
+{
+  "freeze_order_id": "freeze-123",
+  "status": "active",
+  "scope": "persona",
+  "target_id": "persona-alpha",
+  "actor": "admin",
+  "identity": "op-user",
+  "source_command_id": "cmd-123",
+  "reason": "Evolution sweep freeze."
+}
+```
+
 ### `GET /api/governance/rollbacks`
 List canonical rollback request/outcome records.  Supports exact-match
 `runtime_id`, `action_type`, and `status` filters and returns most-recent
@@ -118,6 +135,22 @@ posture uses `governance.rollbacks` by default.
 
 ### `GET /api/governance/rollbacks/{rollback_id}`
 Retrieve one rollback record.  Returns `404` when it does not exist.
+
+### `POST /api/governance/rollbacks`
+Record or update a canonical Rollback record with audit fields.
+
+**Request body**:
+```json
+{
+  "rollback_id": "rollback-123",
+  "runtime_id": "runtime-alpha",
+  "action_type": "replace",
+  "status": "completed",
+  "actor": "reviewer",
+  "identity": "op-user",
+  "source_command_id": "cmd-123"
+}
+```
 
 ---
 

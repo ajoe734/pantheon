@@ -58321,6 +58321,27 @@ async def bff_v5_loop_inventory(
     return _loop_inventory_response_meta(payload)
 
 
+async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]:
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        return _loop_health_store_records()
+    try:
+        import importlib
+        loop_control = importlib.import_module("services.loop-control")
+        LoopControllerStore = loop_control.LoopControllerStore
+        project_controller_record_to_bff = loop_control.project_controller_record_to_bff
+        store = LoopControllerStore(dsn)
+        tenant_id = os.environ.get("PANTHEON_TENANT_ID", "default")
+        environment = os.environ.get("PANTHEON_ENV", "dev")
+        records = await store.list_records(tenant_id, environment)
+        if records:
+            projected = [project_controller_record_to_bff(r) for r in records]
+            return True, projected, "controller_store"
+    except Exception as e:
+        log.warning(f"Failed to load loop health from database: {e}. Falling back to file store.")
+    return _loop_health_store_records()
+
+
 @app.get("/bff/v5/loop-health", response_model=LoopHealthListEnvelope)
 async def bff_v5_loop_health(
     authorization: Optional[str] = Header(default=None),
@@ -58328,7 +58349,7 @@ async def bff_v5_loop_health(
     """List operator loop health truth without promoting registry metadata to liveness."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    health_available, health_records, health_source = _loop_health_store_records()
+    health_available, health_records, health_source = await _async_loop_health_records()
     records = list_loop_health_entries(
         health_records,
         health_source=health_source,
@@ -58360,7 +58381,7 @@ async def bff_v5_loop_health_detail(
     """Get one operator loop health truth record."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    health_available, health_records, health_source = _loop_health_store_records()
+    health_available, health_records, health_source = await _async_loop_health_records()
     payload = _sem_final_registry_detail(
         get_loop_health_entry(
             loop_id,
