@@ -117,6 +117,13 @@ LINEAGE_READ_CORPUS_PATH
     the lineage read HTTP surface. Defaults to
     services/registry/lineage/lin001a_benchmark_corpus.json.
 
+    LIN-003: this same in-memory lineage graph is also the live write target
+    for accepted telemetry — every event ingest() accepts is admitted into it
+    immediately (along with its resolved RuntimeBinding, if not already a
+    graph node), so the lineage read routes below resolve newly-ingested
+    events without waiting for a corpus reload. See
+    docs/decisions/LIN-003-live-lineage-write-path.md.
+
 PANTHEON_RUNTIME_MANAGER_URL
     Base URL of the authoritative runtime-manager service
     (e.g. http://runtime-manager:8081).  When set, the ingest service wires
@@ -393,8 +400,14 @@ def _canonical_telemetry_table_dependency() -> dict[str, Any]:
     return _run_async(_probe_canonical_telemetry_table(dsn), timeout=3.0)
 
 
-def _build_service() -> TelemetryIngestService:
-    """Instantiate TelemetryIngestService with production Postgres and RuntimeBinding wiring."""
+def _build_service(lineage_write_store: LineageReadService | None = None) -> TelemetryIngestService:
+    """Instantiate TelemetryIngestService with production Postgres and RuntimeBinding wiring.
+
+    ``lineage_write_store`` wires the LIN-003 live lineage write path: when
+    provided, every accepted event is admitted into that lineage graph
+    immediately, so the deployed lineage read surface resolves it without a
+    corpus reload.
+    """
     db_dsn = os.getenv("TELEMETRY_DB_DSN", "")
     if db_dsn:
         write_fn = build_postgres_write_fn(dsn=db_dsn)
@@ -482,6 +495,7 @@ def _build_service() -> TelemetryIngestService:
         binding_store=binding_store,
         runtime_summary_store=runtime_summary_store,
         trade_episode_projection_store=trade_episode_projection_store,
+        lineage_write_store=lineage_write_store,
         replay_dlq_on_start=replay_dlq_on_start,
         dlq_replay_tag_filter=dlq_replay_tag_filter,
     )
@@ -683,8 +697,11 @@ def startup():
     """Start the background event loop and the ingest service."""
     global _loop, _loop_thread, _svc, _lineage_svc
     _loop, _loop_thread = _start_background_loop()
-    _svc = _build_service()
+    # LIN-003: build the lineage service first so _build_service() can wire
+    # it as the ingest live-write target — accepted events become resolvable
+    # through the lineage read routes without a corpus reload.
     _lineage_svc = _build_lineage_service()
+    _svc = _build_service(lineage_write_store=_lineage_svc)
     _run_async(_svc.start())
     log.info("TelemetryIngestService started")
 
