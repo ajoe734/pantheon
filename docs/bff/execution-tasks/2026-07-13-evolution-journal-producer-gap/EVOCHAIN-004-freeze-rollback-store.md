@@ -108,10 +108,14 @@ Owner closeout correction result before latest-`dev` composition:
 `51 passed, 12 warnings in 28.43s`. Warnings are the existing FastAPI
 `on_event` deprecation notices from BFF startup/shutdown registration.
 
+Final owner revalidation after merging `origin/dev` at `4e410f2cf`:
+`51 passed, 12 warnings in 26.43s`.
+
 Additional checks:
 
 - `git diff --check` — passed
-- branch reconciliation — `origin/dev` merged cleanly before final validation
+- branch reconciliation — `origin/dev` at `4e410f2cf` merged cleanly in
+  `6594dae60` before final validation
 
 ## Residual Risks / Follow-up
 
