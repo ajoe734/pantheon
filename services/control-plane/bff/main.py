@@ -26256,12 +26256,22 @@ def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any
     latest_collected_at: Optional[str] = None
 
     for record in records:
-        summary = record.get("summary") if isinstance(record.get("summary"), dict) else {}
-        pnl = _management_as_float(record.get("pnl") or summary.get("total_pnl"))
-        drawdown = _management_as_float(record.get("drawdown") or summary.get("max_drawdown"))
-        fill_rate = _management_as_float(record.get("fill_rate") or summary.get("fill_rate"))
-        trades = _management_as_float(record.get("total_trades") or summary.get("total_trades"))
-        collected_at = str(record.get("collected_at") or "").strip()
+        pnl = _management_first_float(record, "pnl", "summary.total_pnl", "summary.pnl")
+        drawdown = _management_first_float(
+            record,
+            "drawdown",
+            "max_drawdown",
+            "summary.max_drawdown",
+        )
+        fill_rate = _management_first_float(record, "fill_rate", "summary.fill_rate")
+        trades = _management_first_float(record, "total_trades", "summary.total_trades")
+        collected_at = str(
+            record.get("collected_at")
+            or record.get("collectedAt")
+            or record.get("updated_at")
+            or record.get("updatedAt")
+            or ""
+        ).strip()
         if pnl is not None:
             pnl_values.append(pnl)
         if drawdown is not None:
@@ -40923,8 +40933,27 @@ def _pm12_persona_capability_summary(persona_id: str) -> Dict[str, Any]:
     }
 
 
-def _pm12_persona_binding_summary(persona_id: str) -> Dict[str, Any]:
+def _pm12_persona_binding_summary(
+    persona_id: str,
+    *,
+    runtime_bindings: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     bindings = read_store.get_bindings_for_persona(persona_id) or []
+    binding_ids = _pm12_compact_ids(
+        bindings,
+        ("persona_capital_binding_id", "binding_id", "id"),
+    )
+    binding_id_set = set(binding_ids)
+    runtime_bindings = [
+        runtime
+        for runtime in (
+            runtime_bindings
+            if runtime_bindings is not None
+            else (read_store.list_runtime_bindings() or [])
+        )
+        if str(runtime.get("persona_id") or "").strip() == persona_id
+        or str(runtime.get("persona_capital_binding_id") or "").strip() in binding_id_set
+    ]
     pool_ids = _pm12_compact_ids(bindings, ("capital_pool_id", "pool_id"))
     pool_refs: List[Dict[str, Any]] = []
     for pool_id in pool_ids:
@@ -40946,6 +40975,12 @@ def _pm12_persona_binding_summary(persona_id: str) -> Dict[str, Any]:
     return {
         "total": len(bindings),
         "active": active_count,
+        "binding_ids": binding_ids,
+        "runtime_ids": _pm12_compact_ids(runtime_bindings, ("runtime_id",)),
+        "runtime_binding_ids": _pm12_compact_ids(
+            runtime_bindings,
+            ("runtime_binding_id", "binding_id", "id"),
+        ),
         "capital_pool_ids": pool_ids,
         "capital_pools": pool_refs,
         "deployment_scopes": deployment_scopes,
@@ -40963,7 +40998,8 @@ def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
             sessions,
             ("last_heartbeat_at", "updated_at", "started_at"),
         ),
-        "runtime_binding_ids": _pm12_compact_ids(sessions, ("runtime_binding_id", "runtime_id")),
+        "runtime_ids": _pm12_compact_ids(sessions, ("runtime_id",)),
+        "runtime_binding_ids": _pm12_compact_ids(sessions, ("runtime_binding_id",)),
         "pool_scopes": _pm12_compact_ids(sessions, ("pool_scope", "capital_pool_id")),
         "status_counts": _pm12_status_counts(sessions),
     }
@@ -41163,17 +41199,38 @@ def _pm12_clamp_score(value: float) -> float:
 
 
 def _pm12_persona_runtime_ids(row: Dict[str, Any]) -> List[str]:
+    bindings = row.get("binding_summary") if isinstance(row.get("binding_summary"), dict) else {}
     sessions = row.get("session_summary") if isinstance(row.get("session_summary"), dict) else {}
     if not sessions:
         sessions = row.get("sessions") if isinstance(row.get("sessions"), dict) else {}
-    raw_ids = sessions.get("runtime_binding_ids") or sessions.get("runtimeBindingIds") or []
+    raw_ids: List[Any] = []
+    for source in (bindings, sessions):
+        candidate_ids = source.get("runtime_ids") or source.get("runtimeIds") or []
+        if isinstance(candidate_ids, list):
+            raw_ids.extend(candidate_ids)
     values: List[str] = []
     seen = set()
-    for raw_id in (raw_ids if isinstance(raw_ids, list) else []):
+    for raw_id in raw_ids:
         runtime_id = str(raw_id or "").strip()
         if runtime_id and runtime_id not in seen:
             values.append(runtime_id)
             seen.add(runtime_id)
+    # Older fixtures (and a small number of legacy sessions) used the session
+    # binding reference as the telemetry key.  Keep that path only when the
+    # exact reference has telemetry.  Stale rb-* session aliases therefore do
+    # not compete with an authoritative owned execution runtime_id.
+    session_binding_ids = (
+        sessions.get("runtime_binding_ids")
+        or sessions.get("runtimeBindingIds")
+        or []
+    )
+    for raw_id in session_binding_ids if isinstance(session_binding_ids, list) else []:
+        runtime_id = str(raw_id or "").strip()
+        if runtime_id and runtime_id not in seen:
+            telemetry = read_store.get_telemetry_summary(runtime_id)
+            if isinstance(telemetry, dict):
+                values.append(runtime_id)
+                seen.add(runtime_id)
     return values
 
 
@@ -41206,27 +41263,47 @@ def _pm12_telemetry_metrics_from_records(
     )
     pnl_values = [
         value
-        for value in (_management_number(item.get("pnl")) for item in telemetry)
+        for value in (
+            _management_first_float(item, "pnl", "summary.total_pnl", "summary.pnl")
+            for item in telemetry
+        )
         if value is not None
     ]
     drawdown_values = [
         value
-        for value in (_management_number(item.get("drawdown")) for item in telemetry)
+        for value in (
+            _management_first_float(item, "drawdown", "max_drawdown", "summary.max_drawdown")
+            for item in telemetry
+        )
         if value is not None
     ]
     fill_rate_values = [
         value
-        for value in (_management_number(item.get("fill_rate")) for item in telemetry)
+        for value in (
+            _management_first_float(item, "fill_rate", "summary.fill_rate")
+            for item in telemetry
+        )
         if value is not None
     ]
     slippage_values = [
         value
-        for value in (_management_number(item.get("avg_slippage_bps")) for item in telemetry)
+        for value in (
+            _management_first_float(
+                item,
+                "avg_slippage_bps",
+                "summary.avg_slippage_bps",
+                "summary.slippage_bps",
+            )
+            for item in telemetry
+        )
         if value is not None
     ]
     trade_values = [
         value
-        for value in (_management_number(item.get("total_trades")) for item in telemetry)
+        for value in (
+            _management_first_float(item, "total_trades", "summary.total_trades")
+            for item in telemetry
+        )
         if value is not None
     ]
     latest_timestamp = _pm12_telemetry_record_timestamp(telemetry[0]) if telemetry else None
@@ -42838,13 +42915,20 @@ async def bff_management_promotion_review_decision(
     )
 
 
-def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
+def _project_persona_league_row(
+    raw: Dict[str, Any],
+    *,
+    runtime_bindings: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
     metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     routed = _routed_strategies_for_persona(persona_id)
     route_policy = _pm12_persona_route_summary(persona_id)
     capabilities = _pm12_persona_capability_summary(persona_id)
-    bindings = _pm12_persona_binding_summary(persona_id)
+    bindings = _pm12_persona_binding_summary(
+        persona_id,
+        runtime_bindings=runtime_bindings,
+    )
     sessions = _pm12_persona_session_summary(persona_id)
     evaluations = _pm12_persona_evaluation_summary(persona_id)
     memory = _pm12_persona_memory_summary(persona_id)
@@ -42903,7 +42987,11 @@ def _pm12_persona_league_rows(
     archetype: Optional[str],
     q: str,
 ) -> List[Dict[str, Any]]:
-    rows = [_project_persona_league_row(raw) for raw in _list_persona_records()]
+    runtime_bindings = read_store.list_runtime_bindings() or []
+    rows = [
+        _project_persona_league_row(raw, runtime_bindings=runtime_bindings)
+        for raw in _list_persona_records()
+    ]
     if state:
         normalized_state = _normalize_lifecycle_state(state)
         rows = [row for row in rows if row.get("state") == normalized_state]
@@ -42943,11 +43031,11 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
 
     state = row.get("state")
     telemetry_count = metrics.get("telemetry_coverage_count", 0)
-    active_states = {"active", "paper_running", "canary", "live"}
-    eligible = state in active_states and telemetry_count > 0
+    lifecycle_operational = _is_persona_lifecycle_operational(state)
+    eligible = lifecycle_operational and telemetry_count > 0
 
     exclusion_reasons = []
-    if state not in active_states:
+    if not lifecycle_operational:
         exclusion_reasons.append(f"Inactive lifecycle state: {state}")
     if telemetry_count == 0:
         exclusion_reasons.append("No telemetry coverage")
@@ -54798,30 +54886,6 @@ def _overlay_live_finmind_health(data_source_status, data_sources):
 _PERSONA_FLEET_CONTEXT_METADATA_KEYS = (
     "market_scope",
     "asset_classes",
-    "current_work",
-    "ooda_stage",
-    "deployment_stage",
-    "capital_mode",
-    "capital_pool_id",
-    "target_capital_pool_id",
-    "live_capital_pool_id",
-    "paper_ledger_id",
-    "paper_ledger",
-    "paper_budget",
-    "paper_benchmark_budget",
-    "runtime_id",
-    "runtime_binding_id",
-    "league_rank",
-    "league_score",
-    "recommended_governance_action",
-    "governance_required",
-    "review_id",
-    "review_type",
-    "review_status",
-    "promotion_review_id",
-    "inbox_id",
-    "risk_flags",
-    "performance",
     "data_source_status",
     "data_sources",
     "data_source_refs",
@@ -55950,7 +56014,58 @@ def _project_persona_fleet_list_row(
         if isinstance(context_metadata.get("performance"), dict)
         else {}
     )
+    telemetry_rollup = _management_telemetry_rollup(telemetry_summaries)
+    telemetry_sharpe_values = [
+        value
+        for value in (
+            _management_first_float(
+                summary,
+                "sharpe",
+                "sharpe_ratio",
+                "summary.sharpe",
+                "summary.sharpe_ratio",
+            )
+            for summary in telemetry_summaries
+        )
+        if value is not None
+    ]
+    telemetry_trade_values = [
+        value
+        for value in (
+            _management_first_float(summary, "total_trades", "summary.total_trades")
+            for summary in telemetry_summaries
+        )
+        if value is not None
+    ]
+    telemetry_metrics = {
+        "pnl": telemetry_rollup.get("total_pnl"),
+        "max_drawdown": telemetry_rollup.get("max_drawdown"),
+        "fill_rate": telemetry_rollup.get("average_fill_rate"),
+        "total_trades": int(sum(telemetry_trade_values)) if telemetry_trade_values else None,
+        "sharpe": _management_avg(telemetry_sharpe_values),
+    }
+    telemetry_has_performance = any(value is not None for value in telemetry_metrics.values())
     metrics = {**performance, **league_metrics}
+    if telemetry_has_performance:
+        for key in (
+            "pnl",
+            "drawdown",
+            "max_drawdown",
+            "fill_rate",
+            "total_trades",
+            "sharpe",
+            "sharpe_ratio",
+        ):
+            metrics.pop(key, None)
+        metrics.update({key: value for key, value in telemetry_metrics.items() if value is not None})
+    if telemetry_has_performance:
+        performance_source = "telemetry_summaries"
+    elif league_metrics:
+        performance_source = "persona_league"
+    elif performance:
+        performance_source = "persona_registry"
+    else:
+        performance_source = "unavailable"
     pool_id = (
         raw_metadata.get("capital_pool_id")
         or raw_metadata.get("legacy_paper_capital_pool_id")
@@ -56261,10 +56376,14 @@ def _project_persona_fleet_list_row(
         "data_sources": _persona_fleet_list_data_sources(data_sources),
         "research_summary": _persona_fleet_list_research_summary(row_context_metadata),
         "performance_summary": {
-            "pnl": _as_float(metrics.get("pnl")),
-            "sharpe": _as_float(metrics.get("sharpe")),
-            "max_drawdown": _as_float(metrics.get("max_drawdown")),
+            "pnl": _management_as_float(metrics.get("pnl")),
+            "sharpe": _management_as_float(metrics.get("sharpe")),
+            "max_drawdown": _management_as_float(metrics.get("max_drawdown")),
             "violation_count": int(metrics.get("violation_count") or 0),
+            "total_trades": int(_management_as_float(metrics.get("total_trades")) or 0),
+            "source": performance_source,
+            "telemetry_runtime_count": telemetry_rollup.get("runtime_count", 0),
+            "latest_telemetry_at": telemetry_rollup.get("latest_collected_at"),
         },
         "risk_flag_count": len(risk_flags),
         "active_incident_count": len(active_incidents),

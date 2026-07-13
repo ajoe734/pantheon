@@ -10504,6 +10504,8 @@ class ReadSurfaceStore:
             "trace_id": raw.get("trace_id"),
             "request_id": raw.get("request_id"),
             "runtime_binding_id": raw.get("runtime_binding_id"),
+            "runtime_id": raw.get("runtime_id"),
+            "persona_capital_binding_id": raw.get("persona_capital_binding_id"),
             "deployment_stage": raw.get("deployment_stage"),
             "capital_pool_id": raw.get("capital_pool_id"),
             "context_bundle_ref": raw.get("context_bundle_ref"),
@@ -10641,7 +10643,11 @@ class ReadSurfaceStore:
             for persona in personas
             if str(persona.get("id") or persona.get("persona_id") or "") != "persona-alpha"
         ]
-        return anchor + sorted(rest, key=lambda x: x.get("created_at", ""), reverse=True)
+        return anchor + sorted(
+            rest,
+            key=lambda x: str(x.get("created_at") or ""),
+            reverse=True,
+        )
 
     @staticmethod
     def _is_bff_local_persona(persona: Dict[str, Any]) -> bool:
@@ -11139,30 +11145,116 @@ class ReadSurfaceStore:
                 bindings_by_id,
                 ["runtime_id", "runtime_binding_id", "binding_id", "id"],
             )
-        persona_by_capital_binding_id = {
-            str(binding.get("binding_id") or binding.get("id") or "").strip(): str(
-                binding.get("persona_id") or ""
-            ).strip()
-            for binding in self.list_bindings(
-                include_market_persona_defaults=include_market_persona_defaults,
-            )
+        persona_capital_bindings = self.list_bindings(
+            include_market_persona_defaults=include_market_persona_defaults,
+        )
+        capital_binding_by_id = {
+            str(binding.get("binding_id") or binding.get("id") or "").strip(): binding
+            for binding in persona_capital_bindings
             if str(binding.get("binding_id") or binding.get("id") or "").strip()
-            and str(binding.get("persona_id") or "").strip()
         }
+
+        # Legacy paper runtimes predate the explicit persona_id column.  Reconcile
+        # only through typed, exact identity references.  A canonical
+        # persona-capital binding owner is authoritative even when the runtime
+        # still carries a stale seed persona_id.  Registry declarations are a
+        # fail-closed fallback: a reference must identify exactly one persona.
+        declaration_indexes: Dict[str, Dict[str, set[str]]] = {
+            "runtime_id": {},
+            "runtime_binding_id": {},
+            "persona_capital_binding_id": {},
+        }
+        persona_declarations: Dict[str, Dict[str, Any]] = {}
+        for persona in self.list_personas(
+            include_market_persona_defaults=include_market_persona_defaults,
+        ):
+            persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+            if not persona_id:
+                continue
+            metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+            declaration = {**persona, **metadata}
+            persona_declarations[persona_id] = declaration
+            declaration_values = {
+                "runtime_id": declaration.get("runtime_id") or declaration.get("runtimeId"),
+                "runtime_binding_id": (
+                    declaration.get("runtime_binding_id")
+                    or declaration.get("runtimeBindingId")
+                ),
+                "persona_capital_binding_id": (
+                    declaration.get("persona_capital_binding_id")
+                    or declaration.get("personaCapitalBindingId")
+                    or declaration.get("runtime_binding_id")
+                    or declaration.get("runtimeBindingId")
+                ),
+            }
+            for field, index in declaration_indexes.items():
+                value = str(declaration_values.get(field) or "").strip()
+                if value:
+                    index.setdefault(value, set()).add(persona_id)
+
         bindings = []
         for key, binding in bindings_by_id.items():
             if not key:
                 continue
             projected = json.loads(json.dumps(binding))
-            if not str(projected.get("persona_id") or "").strip():
-                persona_binding_id = str(
-                    projected.get("persona_capital_binding_id")
-                    or projected.get("binding_id")
-                    or ""
-                ).strip()
-                persona_id = persona_by_capital_binding_id.get(persona_binding_id)
-                if persona_id:
-                    projected["persona_id"] = persona_id
+            persona_binding_id = str(projected.get("persona_capital_binding_id") or "").strip()
+            if not persona_binding_id:
+                runtime_binding_id = str(projected.get("binding_id") or "").strip()
+                if runtime_binding_id in capital_binding_by_id:
+                    persona_binding_id = runtime_binding_id
+                    projected["persona_capital_binding_id"] = runtime_binding_id
+
+            capital_binding = capital_binding_by_id.get(persona_binding_id, {})
+            canonical_persona_id = str(capital_binding.get("persona_id") or "").strip()
+            if canonical_persona_id:
+                projected["persona_id"] = canonical_persona_id
+                if not str(projected.get("capital_pool_id") or "").strip():
+                    capital_pool_id = str(capital_binding.get("capital_pool_id") or "").strip()
+                    if capital_pool_id:
+                        projected["capital_pool_id"] = capital_pool_id
+            else:
+                candidates: set[str] = set()
+                typed_references = {
+                    "runtime_id": str(projected.get("runtime_id") or "").strip(),
+                    "runtime_binding_id": str(
+                        projected.get("runtime_binding_id")
+                        or projected.get("binding_id")
+                        or projected.get("id")
+                        or ""
+                    ).strip(),
+                    "persona_capital_binding_id": persona_binding_id,
+                }
+                for field, reference in typed_references.items():
+                    if reference:
+                        candidates.update(declaration_indexes[field].get(reference, set()))
+                if len(candidates) == 1:
+                    resolved_persona_id = next(iter(candidates))
+                    projected["persona_id"] = resolved_persona_id
+                    declaration = persona_declarations.get(resolved_persona_id, {})
+                    if not persona_binding_id:
+                        declared_binding_id = str(
+                            declaration.get("persona_capital_binding_id")
+                            or declaration.get("personaCapitalBindingId")
+                            or declaration.get("runtime_binding_id")
+                            or declaration.get("runtimeBindingId")
+                            or ""
+                        ).strip()
+                        if declared_binding_id:
+                            projected["persona_capital_binding_id"] = declared_binding_id
+                    if not str(projected.get("capital_pool_id") or "").strip():
+                        declared_pool_id = str(
+                            declaration.get("capital_pool_id")
+                            or declaration.get("capitalPoolId")
+                            or declaration.get("legacy_paper_capital_pool_id")
+                            or declaration.get("legacyPaperCapitalPoolId")
+                            or ""
+                        ).strip()
+                        if declared_pool_id:
+                            projected["capital_pool_id"] = declared_pool_id
+                elif len(candidates) > 1:
+                    # Conflicting exact declarations are not evidence of
+                    # ownership.  Do not let an arbitrary legacy owner win.
+                    projected["persona_id"] = None
             bindings.append(projected)
         if deployment_mode:
             bindings = [
