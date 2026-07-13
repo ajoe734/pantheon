@@ -1,6 +1,6 @@
 # DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY
 
-Last updated: 2026-05-04
+Last updated: 2026-07-13
 Status: canonical database ownership and cluster policy for Pantheon
 Tier: L1 Platform Architecture & Policy
 Scope: shared PostgreSQL cluster policy, schema ownership, write boundaries, and cross-service read/write rules
@@ -111,6 +111,8 @@ JSONL by backend env; staging/prod env examples select Postgres owner stores.
 |---|---|---|---|---|
 | governance-svc | `approval_decisions.json` | `governance.approval_decisions` | governance-svc | owner API or read role only |
 | governance-svc audit | `audit.jsonl` | `governance.audit_events` | governance-svc | owner API or read role only |
+| governance-svc freeze orders | `freeze_orders.json` | `governance.freeze_orders` | governance-svc | owner API or read role only |
+| governance-svc rollback read models | `rollbacks.json` | `governance.rollbacks` | governance-svc | owner API or read role only |
 | capital-pool-svc | `capital_pools.json` | `capital.capital_pools` | capital-pool-svc | owner API or read role only |
 | capital-pool-svc bindings | `persona_capital_bindings.json` | `capital.persona_capital_bindings` | capital-pool-svc | owner API or read role only |
 | capital-pool-svc audit | `capital_audit.jsonl` | `capital.audit_events` | capital-pool-svc | owner API or read role only |
@@ -127,6 +129,11 @@ The `PostgresJsonOwnerStore` foundation primitive enforces explicit owner-store
 construction and supports read-only mode for non-owner consumers. Compose keeps
 the local data volumes so operators can roll staging/prod back to JSON/JSONL by
 changing only the backend env values.
+
+Storage ownership of `governance.rollbacks` does not change the operational
+authority defined by `ROLLBACK_AND_POSITION_SEMANTICS.md`: the Rollback
+Controller authors immutable rollback requests, and Runtime Manager remains
+the only writer of RuntimeBinding, position ownership, and telemetry cutover.
 
 ## 4.3 Production ownership wave 4 — hard enforcement
 
