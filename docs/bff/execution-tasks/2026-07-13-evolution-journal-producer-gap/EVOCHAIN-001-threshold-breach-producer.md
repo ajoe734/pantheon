@@ -344,10 +344,12 @@ coexistence" already anticipated as a separate initiative.
 Materialized this as `docs/decisions/LIN-003-live-lineage-write-path.md`
 with the exact exit evidence the review asked for (`telemetry ingest 202 ->
 incident 201 -> same replay 200` against the *default* unmocked validator
-and a live-deployed binding, no fake lookups). LIN-003 has now landed, and the
-pinning test in `test_threshold_sweep_worker.py` has been updated to
+and a live-deployed binding, no fake lookups). LIN-003 has now landed, and its
+own full-stack test (`TestLiveLineageWritePathFullStackHTTPRoute`) verifies the
+live end-to-end wiring. The EVOCHAIN-001 unit test
 `test_consume_threshold_route_succeeds_against_default_reference_validator`
-to verify the default validator successfully returns 201 when the event is present.
+verifies validator structure/schema compatibility under mock-patched lookup
+helpers, rather than replicating the full-stack lineage integration test.
 
 ### 2. The producer laundered stale source metrics into fresh ones
 
@@ -513,7 +515,7 @@ ls /tmp/pantheon/evolution/threshold_sweep_state.json
 | Acceptance criterion | Where |
 |---|---|
 | producer evaluates live paper telemetry aggregates against governance-schema thresholds from live config | `threshold_sweep_worker.load_thresholds` + `evaluate_breaches`, config in `services/evolution/config/threshold_sweep_thresholds.json` + `threshold_sweep_baselines.json` |
-| breach POSTs canonical payload accepted by `ThresholdTelemetryIncidentConsumer` and creates an `IncidentCase` | proven end-to-end against the real consumer/store and the real route, and reference-shape-consistent with the real `CanonicalReferenceValidator`'s matching rules given canonical lineage/binding data. Since LIN-003 has landed, this is now fully verified against the default deployed `CanonicalReferenceValidator()`, which returns 201 for a live-ingested breach event. |
+| breach POSTs canonical payload accepted by `ThresholdTelemetryIncidentConsumer` and creates an `IncidentCase` | proven end-to-end against the real consumer/store and the real route, and verified to be schema- and structure-compatible with the default `CanonicalReferenceValidator`'s matching rules under lookup mock-patching. (The actual end-to-end integration and live wiring under LIN-003 is verified by `services/telemetry/test_lineage_write_path.py::TestLiveLineageWritePathFullStackHTTPRoute`). |
 | re-runs do not duplicate open incidents for the same binding/metric/window (dedupe key recorded) | deterministic `event_id`/`incident_id`; `dedupe_key` in `threshold_snapshot.note`, preserved into the created `IncidentCase.evidence_summary` (round-2 fix §4) |
 | missing or ambiguous telemetry emits diagnostics and produces no incident | fail-closed paths above, including stage/staleness/baseline gates |
 | compose service ships with `EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS` default 86400 and its own logs | `docker-compose.yml` `evolution-threshold-sweep-producer`; `main()` prints one JSON line per tick to stdout |
@@ -529,11 +531,15 @@ ls /tmp/pantheon/evolution/threshold_sweep_state.json
   documents the drawdown multiplier). Owner: Human/Ops. To activate: set
   `enabled: true` and an approved `threshold_value` in the bind-mounted
   config, no code change needed.
-- **Platform gap resolved:**
+- **Platform gap resolved (tested separately):**
   The lineage platform gap has been closed. LIN-003 has landed, wiring the live
   telemetry ingest write path to the lineage query engine, so the default unmocked
   `CanonicalReferenceValidator` now successfully validates freshly ingested events in production.
-  Verified by `test_consume_threshold_route_succeeds_against_default_reference_validator`.
+  The live end-to-end integration is verified by telemetry's full-stack integration test
+  (`services/telemetry/test_lineage_write_path.py::TestLiveLineageWritePathFullStackHTTPRoute`).
+  The EVOCHAIN-001 unit test `test_consume_threshold_route_succeeds_against_default_reference_validator`
+  verifies validator structure compatibility under mock-patched lookups, but does not itself
+  exercise the live end-to-end wiring.
 - This task does not enable the daily sweep scheduler
   (`evolution-daily-sweep-scheduler` is still profile-gated) or deploy to
   dev; that is EVOCHAIN-002 and EVOCHAIN-011 respectively.

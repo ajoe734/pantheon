@@ -19,11 +19,10 @@ Covers:
 - the built payload is accepted end-to-end by the real
   ThresholdTelemetryIncidentConsumer + IncidentStore, and a rerun does not
   duplicate the open incident
-- the built payload passes the real (unmocked) CanonicalReferenceValidator
-  over the real /api/incidents/consume-threshold route, given lineage/binding
-  lookups that reflect what the canonical stores would return once wired to
-  this binding/event (see EVOCHAIN-001-threshold-breach-producer.md "Known
-  platform gap" for why fakes are required today)
+- the built payload is structure-compatible with the default CanonicalReferenceValidator
+  over the real /api/incidents/consume-threshold route, verified by mock-patching
+  its lookup helpers to return the expected lineage/binding records (the actual
+  live end-to-end lineage wiring is verified separately by telemetry full-stack tests)
 - run_tick fails closed when telemetry cannot be fetched, no thresholds are
   configured, or telemetry ingest rejects the derived event, and never calls
   post_incident in those cases
@@ -703,12 +702,19 @@ def test_consume_threshold_route_passes_real_canonical_reference_validator(monke
 
 
 def test_consume_threshold_route_succeeds_against_default_reference_validator(monkeypatch):
-    """Real route, real DEFAULT (unmocked) reference_validator.
+    """Real route, default CanonicalReferenceValidator structure verification.
 
-    Now that LIN-003 has landed, live-ingested telemetry events successfully resolve
-    through the lineage read write path. We verify that the default
-    CanonicalReferenceValidator returns 201 when the binding and telemetry
-    data are present.
+    This test verifies that the unmocked CanonicalReferenceValidator's validation logic
+    accepts a valid telemetry payload and returns 201 when mock-patched lookup helpers
+    return the expected records.
+
+    NOTE: This test does NOT prove LIN-003's live end-to-end telemetry/lineage wiring,
+    as that requires a fully integrated stack with a running telemetry lineage server
+    and runtime-manager service (which is tested by
+    services/telemetry/test_lineage_write_path.py::TestLiveLineageWritePathFullStackHTTPRoute).
+    Instead, it isolates the incident service's router and validator logic, ensuring
+    it is schema- and structure-compatible with the default lookup class structures
+    by mocking their return values.
     """
     monkeypatch.setattr("services.incidents.main.store", IncidentStore(path=None))
 
