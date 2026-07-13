@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
 import gzip
 import json
 import os
@@ -9,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -591,6 +593,20 @@ def load_state() -> dict[str, Any]:
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
+
+
+@contextmanager
+def canonical_task_state_lock():
+    """Serialize canonical task mutations across ai_status and supervisor."""
+
+    lock_path = STATUS_ROOT / ".orchestrator" / "task-state.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def load_logs() -> list[dict[str, Any]]:
@@ -4146,7 +4162,6 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
 
 
 def main(argv: list[str]) -> int:
-    state = load_state()
     command = argv[1] if len(argv) > 1 else "sync"
     args = argv[2:]
 
@@ -4173,19 +4188,22 @@ def main(argv: list[str]) -> int:
     }
 
     if command in read_only_commands:
+        state = load_state()
         read_only_commands[command](state, args)
         return 0
 
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
-    state_before = deepcopy(state)
-    commands[command](state, args)
-    try:
-        sync_all(state)
-    except Exception:
-        save_state(state_before)
-        raise
+    with canonical_task_state_lock():
+        state = load_state()
+        state_before = deepcopy(state)
+        commands[command](state, args)
+        try:
+            sync_all(state)
+        except Exception:
+            save_state(state_before)
+            raise
     return 0
 
 

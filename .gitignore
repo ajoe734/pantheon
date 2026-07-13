@@ -18,6 +18,7 @@ __pycache__/
 .orchestrator/planning-state.lock
 .orchestrator/approval-queue.json
 .orchestrator/approval-queue.lock
+.orchestrator/task-state.lock
 .orchestrator/event-queue.jsonl
 .orchestrator/evidence/
 .orchestrator/github-bus-state.json

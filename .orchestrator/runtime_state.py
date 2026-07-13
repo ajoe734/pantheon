@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 from common import (
@@ -141,7 +142,30 @@ def _failure_record_time(record: dict[str, Any], *, latest: bool) -> str:
         if latest
         else ("first_failure_at", "first_at", "last_failure_at", "last_at", "updated_at")
     )
-    return next((str(record.get(key) or "") for key in keys if record.get(key)), "")
+    for key in keys:
+        parsed = _parse_failure_record_time(record.get(key))
+        if parsed is not None:
+            return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return ""
+
+
+def _parse_failure_record_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _safe_nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError, OverflowError):
+        return 0
 
 
 def _merge_legacy_failure_streaks(
@@ -189,7 +213,7 @@ def _merge_legacy_failure_streaks(
                     "provider": logical,
                     "signature": signature,
                     "signature_scope": scope,
-                    "count": max(0, int(record.get("count", 0) or 0)),
+                    "count": _safe_nonnegative_int(record.get("count")),
                     "first_failure_at": first_at or None,
                     "last_failure_at": last_at or None,
                     "evidence_refs": list(dict.fromkeys(evidence))[-20:],
@@ -198,12 +222,18 @@ def _merge_legacy_failure_streaks(
             )
             migrated[key] = merged
         else:
-            previous["count"] = int(previous.get("count", 0) or 0) + max(0, int(record.get("count", 0) or 0))
+            previous["count"] = _safe_nonnegative_int(previous.get("count")) + _safe_nonnegative_int(
+                record.get("count")
+            )
             previous_first = str(previous.get("first_failure_at") or "")
-            if first_at and (not previous_first or first_at < previous_first):
+            previous_first_dt = _parse_failure_record_time(previous_first)
+            first_at_dt = _parse_failure_record_time(first_at)
+            if first_at_dt is not None and (previous_first_dt is None or first_at_dt < previous_first_dt):
                 previous["first_failure_at"] = first_at
             previous_last = str(previous.get("last_failure_at") or "")
-            if last_at and (not previous_last or last_at >= previous_last):
+            previous_last_dt = _parse_failure_record_time(previous_last)
+            last_at_dt = _parse_failure_record_time(last_at)
+            if last_at_dt is not None and (previous_last_dt is None or last_at_dt >= previous_last_dt):
                 for field, value in record.items():
                     if field.startswith("last_") or field in {"worker_run_id", "provider", "logical_agent_id"}:
                         previous[field] = deepcopy(value)

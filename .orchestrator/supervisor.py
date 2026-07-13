@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -1140,7 +1141,7 @@ def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settin
     if raw_default_capacity not in (None, ""):
         try:
             default_capacity = max(1, int(raw_default_capacity))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             default_capacity = None
     display_name = display_name_for(config, normalized)
     overrides = settings.get("max_tasks_per_agent_by_agent", {}) or {}
@@ -2561,6 +2562,14 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                         event,
                         worker_run_id=str(active_worker.get("run_id") or ""),
                     )
+                elif event.get("_status_sync_outcome") == "stale":
+                    supersede_worker_after_stale_dispatch_cas(
+                        config,
+                        state,
+                        active_worker,
+                        event,
+                        record=record,
+                    )
                 changed = True
             continue
         skip_message = stale_dispatch_skip_message(config, event, task_map)
@@ -2630,7 +2639,11 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             if auto_dispatch_block_is_temporary_capacity(auto_block_reason):
                 record["status"] = "pending"
                 record["last_wait_reason"] = f"Auto dispatch waiting for {request_agent_id}: {auto_block_reason}"
-                record["capacity_wait_count"] = int(record.get("capacity_wait_count", 0) or 0) + 1
+                record["capacity_wait_count"] = _safe_int(
+                    record.get("capacity_wait_count"),
+                    0,
+                    minimum=0,
+                ) + 1
                 record["last_capacity_wait_at"] = utc_now()
                 reason_changed = record.get("last_capacity_wait_reason") != auto_block_reason
                 record["last_capacity_wait_reason"] = auto_block_reason
@@ -2703,7 +2716,26 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             record["dirty_tree_guard_at"] = utc_now()
             changed = True
             continue
-        record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
+        dispatch_admitted, admission_mismatch = fresh_queued_dispatch_event_admission(config, event)
+        if not dispatch_admitted:
+            record["status"] = "completed"
+            record["processed_at"] = utc_now()
+            record["skip_reason"] = "stale_dispatch_event"
+            record["error"] = f"Queued dispatch failed final canonical admission: {admission_mismatch}."
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "queue_event_id": event_id,
+                    "expected_event_key": event.get("event_key") or event.get("key"),
+                    "message": record["error"],
+                },
+            )
+            changed = True
+            continue
+        record["attempt_count"] = _safe_int(record.get("attempt_count"), 0, minimum=0) + 1
         record["last_attempt_at"] = utc_now()
         ok, outcome, delivery = start_worker_for_request(
             config,
@@ -2722,7 +2754,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 "task_id": request.task_id,
                 "queue_event_id": event_id,
                 "run_id": record.get("run_id"),
-                "retry_count": max(0, int(record.get("attempt_count", 0)) - 1),
+                "retry_count": max(0, _safe_int(record.get("attempt_count"), 0) - 1),
                 "request_snapshot": request_snapshot(request),
             }
             failure_reason = str(outcome or "")
@@ -2735,18 +2767,50 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 failure_kind=str(failure.get("kind") or ""),
             )
             failure_worker["last_error_raw_ref"] = raw_ref
-            failure_count = record_task_failure_streak(
+            failure_kind = str(failure.get("kind") or "")
+            admission = fresh_execution_dispatch_admission(
+                config,
                 state,
                 failure_worker,
-                failure_reason,
-                failure_kind=str(failure.get("kind") or ""),
+                queue_events_by_id={str(event_id): event},
+                audit_failure_kind=failure_kind or "terminal",
             )
-            failure_kind = str(failure.get("kind") or "")
+            if admission.get("applicable") and not admission.get("admitted"):
+                record["status"] = "completed"
+                record["processed_at"] = utc_now()
+                record["skip_reason"] = "stale_dispatch_terminal_outcome"
+                record["error"] = f"Ignored stale dispatch outcome: {admission.get('mismatch')}."
+                if raw_ref:
+                    record["raw_ref"] = raw_ref
+                changed = True
+                continue
+            reduced = reduce_execution_dispatch_terminal_failure(
+                config,
+                state,
+                failure_worker,
+                task_map,
+                reason=failure_summary.get("summary") or failure_reason,
+                failure_kind=failure_kind or "terminal",
+                queue_events_by_id={str(event_id): event},
+                allow_reassignment=False,
+            )
+            if reduced.get("admission_failed") or reduced.get("resolved_by_canonical_progress"):
+                record["status"] = "completed"
+                record["processed_at"] = utc_now()
+                record["skip_reason"] = "stale_dispatch_terminal_outcome"
+                record["error"] = "Terminal outcome lost final canonical admission; no task/lane mutation applied."
+                changed = True
+                continue
             rotation_outcome = maybe_rotate_provider_model(
                 config, state, request.provider, failure_kind, failure_reason
             )
             if rotation_outcome == "rotated":
-                clear_task_failure_streaks_for_task(state, str(request.task_id or ""))
+                clear_task_failure_streaks_for_dispatch_signature(
+                    state,
+                    task_id=str(request.task_id or ""),
+                    logical_agent_id=worker_logical_dispatch_agent_id(config, failure_worker),
+                    dispatch_task_signature=(failure_worker.get("execution_admission") or {}).get("task_signature"),
+                )
                 schedule_queue_event_retry(
                     config,
                     record,
@@ -2785,8 +2849,8 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 )
             if is_retryable_capacity_failure_kind(failure_kind):
                 retry = worker_retry_settings(config, request.provider)
-                retry_count = int(record.get("retry_count", 0))
-                max_attempts = int(retry.get("max_attempts", 5))
+                retry_count = _safe_int(record.get("retry_count"), 0, minimum=0)
+                max_attempts = _safe_int(retry.get("max_attempts", 5), 5, minimum=0)
                 if retry_count < max_attempts:
                     schedule_queue_event_retry(
                         config,
@@ -2812,15 +2876,23 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                     )
                     changed = True
                     continue
-            reassigned_to = maybe_reassign_task_after_worker_failure(
-                config,
-                state,
-                failure_worker,
-                failure_summary.get("summary") or failure_reason,
-                terminal=True,
-                force=is_terminal_quota_failure_kind(failure_kind),
-                failure_count=failure_count,
+            failure_count = _safe_int(reduced.get("failure_count"), 0, minimum=0)
+            reassign_threshold = _safe_int(
+                provider_guardrail_settings(config).get("generic_exit_reassign_after", 2),
+                2,
+                minimum=1,
             )
+            reassigned_to = None
+            if is_terminal_quota_failure_kind(failure_kind) or failure_count >= reassign_threshold:
+                reassigned_to = maybe_reassign_task_after_worker_failure(
+                    config,
+                    state,
+                    failure_worker,
+                    failure_summary.get("summary") or failure_reason,
+                    terminal=True,
+                    force=is_terminal_quota_failure_kind(failure_kind),
+                    failure_count=failure_count,
+                )
             if reassigned_to:
                 record["status"] = "completed"
                 record["processed_at"] = utc_now()
@@ -2829,14 +2901,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                     record["raw_ref"] = raw_ref
                 changed = True
                 continue
-            dispatch_guard = record_execution_dispatch_failure_guard(
-                config,
-                state,
-                failure_worker,
-                task_map,
-                failure_kind=failure_kind or "terminal",
-                queue_events_by_id={str(event_id): event},
-            )
+            dispatch_guard = reduced.get("guard")
             record["status"] = "failed"
             record["error"] = failure_summary.get("summary") or outcome
             if dispatch_guard:
@@ -2865,6 +2930,14 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 state,
                 event,
                 worker_run_id=str(worker_run_id or ""),
+            )
+        elif event.get("_status_sync_outcome") == "stale":
+            supersede_worker_after_stale_dispatch_cas(
+                config,
+                state,
+                state.get("workers", {}).get(str(worker_run_id or "")),
+                event,
+                record=record,
             )
         changed = True
     return changed
@@ -2909,7 +2982,7 @@ def _proc_activity_record(pid: int, proc_root: Path) -> dict[str, Any] | None:
     try:
         cpu_ticks = int(fields[11]) + int(fields[12])
         start_ticks = int(fields[19])
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
     io_bytes = 0
@@ -3835,7 +3908,8 @@ def apply_chair_review_reassignment_actions(
         reason = str(action.get("reason") or "Chair review reassignment.").strip()
 
         status = load_status(config)
-        task = task_index_from_status(config, status).get(task_id)
+        status_task_map = task_index_from_status(config, status)
+        task = status_task_map.get(task_id)
         if not task:
             log_chair_reassignment_skip(
                 config,
@@ -3870,6 +3944,7 @@ def apply_chair_review_reassignment_actions(
             continue
 
         task_status = str(task.get("status") or "").lower()
+        expected_task_signature = canonical_task_mutation_signature(config, task, status_task_map)
         owner = str(task.get("owner") or "").strip()
         reviewer = str(task.get("reviewer") or "").strip()
         applied = False
@@ -3909,6 +3984,7 @@ def apply_chair_review_reassignment_actions(
                 message=message,
                 handoff_to=to_agent,
                 handoff_from=reviewer,
+                expected_task_signature=expected_task_signature,
             )
         elif role == "owner":
             blocked_owner_rescue = chair_blocked_owner_rescue_allowed(task)
@@ -3957,6 +4033,7 @@ def apply_chair_review_reassignment_actions(
                 handoff_to=to_agent,
                 handoff_from=owner,
                 resolve_open_blockers=blocked_owner_rescue,
+                expected_task_signature=expected_task_signature,
             )
 
         if not applied:
@@ -4206,27 +4283,25 @@ def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, A
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
         return []
-    threshold = max(1, int(settings.get("failure_loop_reassignment_threshold", 2)))
+    threshold = _safe_int(settings.get("failure_loop_reassignment_threshold", 2), 2, minimum=1)
     try:
         status = load_status(config)
     except KeyError:
         return []
     task_map = task_index_from_status(config, status)
+    prune_task_failure_streak_records(config, state, task_map)
     dispatch_settings = ready_dispatch_settings(config)
     review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
     eligible_statuses = {str(value).lower() for value in worker_reassignment_settings(config).get("eligible_statuses", [])}
-    max_items = max(1, int(settings.get("max_failure_loops_in_prompt", 6)))
+    max_items = _safe_int(settings.get("max_failure_loops_in_prompt", 6), 6, minimum=1)
     loops: list[dict[str, Any]] = []
 
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
-        try:
-            count = int(record.get("count", 0))
-        except (TypeError, ValueError):
-            continue
+        count = _safe_int(record.get("count"), 0, minimum=0)
         if count < threshold:
             continue
         task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
@@ -4274,7 +4349,7 @@ def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, A
             }
         )
 
-    loops.sort(key=lambda item: (-int(item.get("count") or 0), str(item.get("task_id") or "")))
+    loops.sort(key=lambda item: (-_safe_int(item.get("count"), 0), str(item.get("task_id") or "")))
     return loops[:max_items]
 
 
@@ -4362,7 +4437,7 @@ def chair_reassignment_triage_needed_for_task(
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
         return False
-    threshold = max(1, int(settings.get("failure_loop_reassignment_threshold", 2)))
+    threshold = _safe_int(settings.get("failure_loop_reassignment_threshold", 2), 2, minimum=1)
     provider_id = normalize_agent_id(agent_name)
     if not task_id or not provider_id:
         return False
@@ -4371,11 +4446,8 @@ def chair_reassignment_triage_needed_for_task(
         task_id=task_id,
         logical_agent_id=provider_id,
     ):
-        try:
-            if int(record.get("count", 0)) >= threshold:
-                return True
-        except (TypeError, ValueError):
-            continue
+        if _safe_int(record.get("count"), 0, minimum=0) >= threshold:
+            return True
     return False
 
 
@@ -4387,7 +4459,8 @@ def failure_loop_task_agents_for_task_map(
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
         return set()
-    threshold = max(1, int(settings.get("failure_loop_reassignment_threshold", 2)))
+    prune_task_failure_streak_records(config, state, task_map)
+    threshold = _safe_int(settings.get("failure_loop_reassignment_threshold", 2), 2, minimum=1)
     dispatch_settings = ready_dispatch_settings(config)
     review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
@@ -4396,10 +4469,7 @@ def failure_loop_task_agents_for_task_map(
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
-        try:
-            count = int(record.get("count", 0))
-        except (TypeError, ValueError):
-            continue
+        count = _safe_int(record.get("count"), 0, minimum=0)
         if count < threshold:
             continue
         task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
@@ -4858,13 +4928,24 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
     return {"kind": "terminal", "transient": False, "label": "terminal"}
 
 
-def _parse_iso_utc(ts: str | None) -> datetime | None:
-    if not ts:
+def _parse_iso_utc(ts: Any) -> datetime | None:
+    if not isinstance(ts, str) or not ts.strip():
         return None
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
+        parsed = datetime.fromisoformat(ts.strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _safe_int(value: Any, default: int = 0, *, minimum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        parsed = default
+    return max(minimum, parsed) if minimum is not None else parsed
 
 
 def _isoformat_utc(dt: datetime) -> str:
@@ -5032,7 +5113,7 @@ def worker_runner_succeeded(worker: dict[str, Any]) -> bool:
         return False
     try:
         exit_code = int(worker.get("exit_code", 0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
     return exit_code == 0 and not worker.get("runner_signal")
 
@@ -5674,7 +5755,7 @@ def record_task_failure_streak(
     signature, signature_scope = _failure_streak_signature(worker, reason, failure_kind)
     key = _failure_streak_key(task_id, provider_id, signature)
     record = dict(bucket.get(key) or {})
-    count = int(record.get("count", 0)) + 1
+    count = _safe_int(record.get("count"), 0, minimum=0) + 1
     now = utc_now()
     raw_ref = str(worker.get("last_error_raw_ref") or worker.get("raw_ref") or "").strip()
     evidence_refs = [str(value) for value in (record.get("evidence_refs") or []) if str(value)]
@@ -5700,6 +5781,8 @@ def record_task_failure_streak(
             "worker_run_id": worker.get("run_id"),
             "dispatch_task_signature": material_signature or None,
             "dispatch_event_key": (metadata or {}).get("dispatch_event_key"),
+            "dispatch_reason": snapshot.get("reason") if isinstance(snapshot, dict) else None,
+            "dispatch_target_display_name": (metadata or {}).get("dispatch_target_display_name"),
             "evidence_refs": list(dict.fromkeys(evidence_refs))[-20:],
             "aliases": list(dict.fromkeys([*(record.get("aliases") or []), legacy_alias])),
         }
@@ -5815,7 +5898,11 @@ def prune_task_failure_streak_records(
     if not bucket:
         return False
     now_dt = now or datetime.now(timezone.utc)
-    retention_seconds = max(60, int(execution_dispatch_guard_settings(config).get("retention_seconds", 86400)))
+    retention_seconds = _safe_int(
+        execution_dispatch_guard_settings(config).get("retention_seconds", 86400),
+        86400,
+        minimum=60,
+    )
     remove: set[str] = set()
     dispositions: dict[str, str] = {}
     for key, record in list(bucket.items()):
@@ -5854,6 +5941,16 @@ def prune_task_failure_streak_records(
         if known_logical_lane and current_event is None:
             remove.add(str(key))
             dispositions[str(key)] = "lane_resolved_or_reassigned"
+            continue
+        exact_signature = str(record.get("dispatch_task_signature") or "").strip()
+        if (
+            known_logical_lane
+            and exact_signature
+            and current_event is not None
+            and str(current_event.get("signature") or "") != exact_signature
+        ):
+            remove.add(str(key))
+            dispositions[str(key)] = "canonical_signature_advanced"
             continue
         last_at = _parse_iso_utc(str(record.get("last_failure_at") or record.get("last_at") or ""))
         if last_at is not None and (now_dt - last_at).total_seconds() > retention_seconds:
@@ -6481,6 +6578,67 @@ def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
     )
 
 
+@contextmanager
+def canonical_task_state_lock(config: dict[str, Any]):
+    """Serialize every canonical task mutation across supervisor/ai_status."""
+
+    status_root = config_path(config, "status_file").parent
+    lock_path = status_root / ".orchestrator" / "task-state.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def canonical_task_mutation_signature(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> str:
+    return ready_dispatch_signature(
+        task,
+        "canonical_task_mutation",
+        task_resolver_for_config(config, task_map),
+    )
+
+
+def _fresh_task_matches_expected_cas(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    task_id: str,
+    expected_task_signature: str | None,
+    expected_event_key: str | None,
+    expected_target_agent: str | None,
+) -> tuple[bool, dict[str, Any] | None, dict[str, dict[str, Any]], str]:
+    task_map = task_index_from_status(config, status)
+    task = task_map.get(task_id)
+    if task is None:
+        return False, None, task_map, "task_missing"
+    if not expected_task_signature and not expected_event_key:
+        return False, task, task_map, "expected_signature_missing"
+    if expected_task_signature:
+        actual = canonical_task_mutation_signature(config, task, task_map)
+        if actual != expected_task_signature:
+            return False, task, task_map, "task_signature_changed"
+    if expected_event_key:
+        target = str(expected_target_agent or "").strip()
+        if not target:
+            return False, task, task_map, "expected_target_missing"
+        current_event = current_execution_dispatch_event_for_target(
+            config,
+            task,
+            task_map,
+            target_agent=target,
+        )
+        if current_event is None or str(current_event.get("key") or "") != str(expected_event_key):
+            return False, task, task_map, "dispatch_signature_changed"
+    return True, task, task_map, "matched"
+
+
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
     script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
     if not script.exists():
@@ -6514,51 +6672,91 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     reason = str(event.get("reason") or "").strip()
     action = DISPATCH_STATUS_ACTIONS.get(reason)
     if action is None:
+        event["_status_sync_outcome"] = "not_applicable"
         return False
     if not config.get("paths", {}).get("status_file"):
-        return False
-
-    script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
-    if not script.exists():
-        write_activity_log(
-            config,
-            {
-                "type": "task_dispatch_sync_failed",
-                "task_id": event.get("task_id"),
-                "message": f"Dispatch status sync script not found at {script}.",
-            },
-        )
+        event["_status_sync_outcome"] = "failed"
         return False
 
     task_id = str(event.get("task_id") or "").strip()
     target_agent = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or ""))).strip()
     if not task_id or not target_agent:
+        event["_status_sync_outcome"] = "failed"
         return False
 
     command_name, eligible_statuses = action
-    task = task_index_from_status(config, load_status(config)).get(task_id)
-    if not task:
+    if command_name != "start":
+        event["_status_sync_outcome"] = "not_applicable"
         return False
-    if str(task.get("owner") or "").strip() != target_agent:
-        return False
-    if str(task.get("status") or "").lower() not in eligible_statuses:
+    expected_event_key = str(event.get("key") or event.get("event_key") or "").strip()
+    message = f"Supervisor auto-started {task_id} after successful dispatch."
+    try:
+        with canonical_task_state_lock(config):
+            status = load_status(config)
+            matched, task, _task_map, mismatch = _fresh_task_matches_expected_cas(
+                config,
+                status,
+                task_id=task_id,
+                expected_task_signature=None,
+                expected_event_key=expected_event_key,
+                expected_target_agent=target_agent,
+            )
+            if not matched or task is None:
+                event["_status_sync_outcome"] = "stale"
+                event["_status_sync_mismatch"] = mismatch
+                write_activity_log(
+                    config,
+                    {
+                        "type": "task_dispatch_sync_stale",
+                        "task_id": task_id,
+                        "target_agent": target_agent,
+                        "dispatch_reason": reason,
+                        "expected_event_key": expected_event_key,
+                        "message": (
+                            f"Skipped auto-start for stale dispatch {task_id}: {mismatch}. "
+                            "Canonical task truth was not modified."
+                        ),
+                    },
+                )
+                return False
+            if str(task.get("owner") or "").strip() != target_agent:
+                event["_status_sync_outcome"] = "stale"
+                event["_status_sync_mismatch"] = "owner_changed"
+                return False
+            if str(task.get("status") or "").lower() not in eligible_statuses:
+                event["_status_sync_outcome"] = "stale"
+                event["_status_sync_mismatch"] = "status_changed"
+                return False
+            timestamp = utc_now()
+            task["status"] = "in_progress"
+            task["last_update"] = timestamp
+            task["next"] = message
+            for handoff in status.get("handoffs", []) or []:
+                if handoff.get("task_id") == task_id and handoff.get("to") == target_agent and handoff.get("status") != "done":
+                    handoff["status"] = "done"
+                    handoff["resolved_at"] = timestamp
+            for blocker in status.get("blockers", []) or []:
+                if blocker.get("task_id") == task_id and blocker.get("status") == "open":
+                    blocker["status"] = "resolved"
+                    blocker["resolved_at"] = timestamp
+            write_json(config_path(config, "status_file"), status)
+    except (KeyError, OSError, json.JSONDecodeError) as exc:
+        event["_status_sync_outcome"] = "failed"
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_sync_failed",
+                "task_id": task_id,
+                "target_agent": target_agent,
+                "dispatch_reason": reason,
+                "message": f"Dispatch status CAS failed closed: {type(exc).__name__}: {exc}",
+            },
+        )
         return False
 
-    message = {
-        REASON_OWNED_READY: f"Supervisor auto-started {task_id} after successful dispatch.",
-        REASON_OWNED_FINALIZE: f"Supervisor resumed {task_id} for finalize after successful dispatch.",
-        REASON_OWNED_IN_PROGRESS: f"Supervisor re-dispatched {task_id}; task remains in progress.",
-    }[reason]
-    env = os.environ.copy()
-    env["AI_NAME"] = target_agent
-    result = subprocess.run(
-        [sys.executable, str(script), command_name, task_id, message],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    if result.returncode == 0:
+    event["_status_sync_outcome"] = "applied"
+    synced = sync_status_pipeline(config)
+    if synced:
         write_activity_log(
             config,
             {
@@ -6578,10 +6776,12 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
             "task_id": task_id,
             "target_agent": target_agent,
             "dispatch_reason": reason,
-            "message": result.stderr.strip() or result.stdout.strip() or "Dispatch status sync failed.",
+            "message": "Canonical start persisted, but derived status sync failed.",
         },
     )
-    return False
+    # Canonical mutation already succeeded under CAS. Callers must refresh the
+    # post-start baseline even when derived docs need a later sync retry.
+    return True
 
 
 def refresh_execution_dispatch_baseline_after_status_sync(
@@ -6696,6 +6896,40 @@ def refresh_execution_dispatch_baseline_after_status_sync(
     return True
 
 
+def supersede_worker_after_stale_dispatch_cas(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any] | None,
+    event: dict[str, Any],
+    *,
+    record: dict[str, Any],
+) -> None:
+    if isinstance(worker, dict):
+        if pid_is_alive(worker.get("pid")):
+            terminate_worker_pid(worker.get("pid"))
+        worker["status"] = "superseded"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = "Worker cancelled because queued dispatch signature lost canonical CAS."
+    record["status"] = "completed"
+    record["processed_at"] = utc_now()
+    record["skip_reason"] = "stale_dispatch_event"
+    record["error"] = "Queued dispatch became stale before canonical start CAS."
+    for key in ("lease_owner", "lease_acquired_at", "lease_expires_at"):
+        record.pop(key, None)
+    write_activity_log(
+        config,
+        {
+            "type": "worker_superseded_stale_dispatch",
+            "task_id": event.get("task_id"),
+            "target_agent": event.get("target_display_name") or event.get("target_agent"),
+            "worker_run_id": (worker or {}).get("run_id"),
+            "queue_event_id": event.get("event_id"),
+            "expected_event_key": event.get("key") or event.get("event_key"),
+            "message": "Cancelled stale worker without modifying canonical task truth; task is eligible for a fresh dispatch.",
+        },
+    )
+
+
 def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
     """Keep task truth aligned when a worker is superseded for higher-priority work."""
     if not config.get("paths", {}).get("status_file"):
@@ -6707,38 +6941,61 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
     if not task_id or not target_agent:
         return False
 
-    status = load_status(config)
-    task = task_index_from_status(config, status).get(task_id)
-    if not task:
-        return False
-    if str(task.get("owner") or "").strip() != target_agent:
-        return False
+    expected_event_key = _worker_original_dispatch_event_key(worker, None)
+    try:
+        with canonical_task_state_lock(config):
+            status = load_status(config)
+            matched, task, _task_map, mismatch = _fresh_task_matches_expected_cas(
+                config,
+                status,
+                task_id=task_id,
+                expected_task_signature=None,
+                expected_event_key=expected_event_key,
+                expected_target_agent=target_agent,
+            )
+            if not matched or task is None:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "task_preempt_sync_stale",
+                        "task_id": task_id,
+                        "target_agent": target_agent,
+                        "dispatch_reason": dispatch_reason,
+                        "expected_event_key": expected_event_key,
+                        "message": f"Preemption skipped without canonical mutation: {mismatch}.",
+                    },
+                )
+                return False
+            if str(task.get("owner") or "").strip() != target_agent:
+                return False
 
-    task_status = str(task.get("status") or "").lower()
-    timestamp = utc_now()
-    message = ""
+            task_status = str(task.get("status") or "").lower()
+            timestamp = utc_now()
+            message = ""
 
-    if dispatch_reason in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}:
-        if task_status != "in_progress":
-            return False
-        task["status"] = "todo"
-        message = (
-            f"Supervisor preempted {task_id} to free {target_agent} for higher-priority review/finalize work; "
-            "task returned to todo until a fresh run restarts it."
-        )
-    elif dispatch_reason == REASON_OWNED_FINALIZE:
-        if task_status != "review_approved":
-            return False
-        message = (
-            f"Supervisor paused finalize on {task_id} to free {target_agent} for higher-priority review work; "
-            "task remains review_approved."
-        )
-    else:
+            if dispatch_reason in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}:
+                if task_status != "in_progress":
+                    return False
+                task["status"] = "todo"
+                message = (
+                    f"Supervisor preempted {task_id} to free {target_agent} for higher-priority review/finalize work; "
+                    "task returned to todo until a fresh run restarts it."
+                )
+            elif dispatch_reason == REASON_OWNED_FINALIZE:
+                if task_status != "review_approved":
+                    return False
+                message = (
+                    f"Supervisor paused finalize on {task_id} to free {target_agent} for higher-priority review work; "
+                    "task remains review_approved."
+                )
+            else:
+                return False
+
+            task["last_update"] = timestamp
+            task["next"] = message
+            write_json(config_path(config, "status_file"), status)
+    except (KeyError, OSError, json.JSONDecodeError):
         return False
-
-    task["last_update"] = timestamp
-    task["next"] = message
-    write_json(config_path(config, "status_file"), status)
     synced = sync_status_pipeline(config)
     if synced:
         write_activity_log(
@@ -6776,56 +7033,95 @@ def persist_task_reassignment(
     handoff_to: str | None = None,
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
+    expected_task_signature: str | None = None,
+    expected_event_key: str | None = None,
+    expected_target_agent: str | None = None,
 ) -> bool:
     status_path = config_path(config, "status_file")
-    status = load_status(config)
-    tasks = status.get("tasks", []) or []
-    timestamp = utc_now()
-    task = next((item for item in tasks if item.get("id") == task_id), None)
-    if task is None:
-        return False
+    try:
+        with canonical_task_state_lock(config):
+            status = load_status(config)
+            matched, task, _task_map, mismatch = _fresh_task_matches_expected_cas(
+                config,
+                status,
+                task_id=task_id,
+                expected_task_signature=expected_task_signature,
+                expected_event_key=expected_event_key,
+                expected_target_agent=expected_target_agent,
+            )
+            if not matched or task is None:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "task_reassignment_stale",
+                        "task_id": task_id,
+                        "expected_event_key": expected_event_key,
+                        "message": f"Reassignment failed closed without canonical mutation: {mismatch}.",
+                    },
+                )
+                return False
+            timestamp = utc_now()
+            old_owner = str(task.get("owner") or "")
+            old_reviewer = str(task.get("reviewer") or "")
+            task["owner"] = new_owner
+            task["reviewer"] = new_reviewer
+            if new_status:
+                task["status"] = new_status
+                if str(new_status).lower() == "todo":
+                    task.pop("waiting_for", None)
+            task["last_update"] = timestamp
+            task["next"] = message
 
-    old_owner = str(task.get("owner") or "")
-    old_reviewer = str(task.get("reviewer") or "")
-    task["owner"] = new_owner
-    task["reviewer"] = new_reviewer
-    if new_status:
-        task["status"] = new_status
-        if str(new_status).lower() == "todo":
-            task.pop("waiting_for", None)
-    task["last_update"] = timestamp
-    task["next"] = message
+            if resolve_open_blockers:
+                for blocker in status.get("blockers", []) or []:
+                    if blocker.get("task_id") != task_id or blocker.get("status") == "resolved":
+                        continue
+                    blocker["status"] = "resolved"
+                    blocker["resolved_at"] = timestamp
+                    blocker["resolution_ref"] = f"chair_reassignment:{task_id}"
 
-    if resolve_open_blockers:
-        for blocker in status.get("blockers", []) or []:
-            if blocker.get("task_id") != task_id or blocker.get("status") == "resolved":
-                continue
-            blocker["status"] = "resolved"
-            blocker["resolved_at"] = timestamp
-            blocker["resolution_ref"] = f"chair_reassignment:{task_id}"
+            for handoff in status.get("handoffs", []) or []:
+                if handoff.get("task_id") != task_id or handoff.get("status") == "done":
+                    continue
+                target = str(handoff.get("to") or "")
+                if target in {old_owner, old_reviewer} and target not in {new_owner, new_reviewer}:
+                    handoff["status"] = "done"
+                    handoff["resolved_at"] = timestamp
 
-    for handoff in status.get("handoffs", []) or []:
-        if handoff.get("task_id") != task_id or handoff.get("status") == "done":
-            continue
-        target = str(handoff.get("to") or "")
-        if target in {old_owner, old_reviewer} and target not in {new_owner, new_reviewer}:
-            handoff["status"] = "done"
-            handoff["resolved_at"] = timestamp
+            if handoff_to:
+                status.setdefault("handoffs", []).append(
+                    {
+                        "task_id": task_id,
+                        "from": handoff_from or old_owner or old_reviewer or new_owner,
+                        "to": handoff_to,
+                        "message": message,
+                        "status": "pending",
+                        "created_at": timestamp,
+                    }
+                )
 
-    if handoff_to:
-        status.setdefault("handoffs", []).append(
+            write_json(status_path, status)
+    except (KeyError, OSError, json.JSONDecodeError) as exc:
+        write_activity_log(
+            config,
             {
+                "type": "task_reassignment_sync_failed",
                 "task_id": task_id,
-                "from": handoff_from or old_owner or old_reviewer or new_owner,
-                "to": handoff_to,
-                "message": message,
-                "status": "pending",
-                "created_at": timestamp,
-            }
+                "message": f"Reassignment CAS failed closed: {type(exc).__name__}: {exc}",
+            },
         )
-
-    write_json(status_path, status)
-    return sync_status_pipeline(config)
+        return False
+    synced = sync_status_pipeline(config)
+    if not synced:
+        write_activity_log(
+            config,
+            {
+                "type": "task_reassignment_sync_failed",
+                "task_id": task_id,
+                "message": "Canonical reassignment persisted, but derived status sync failed.",
+            },
+        )
+    return True
 
 
 def maybe_reassign_task_after_worker_failure(
@@ -6850,8 +7146,14 @@ def maybe_reassign_task_after_worker_failure(
     if not settings.get("enabled", True):
         return None
 
-    attempt_number = failure_count if failure_count is not None else int(worker.get("retry_count", 0)) + 1
-    if not force and (not terminal or respect_threshold) and attempt_number < int(settings.get("after_attempts", 2)):
+    attempt_number = (
+        _safe_int(failure_count, 0, minimum=0)
+        if failure_count is not None
+        else _safe_int(worker.get("retry_count"), 0, minimum=0) + 1
+    )
+    if not force and (not terminal or respect_threshold) and attempt_number < _safe_int(
+        settings.get("after_attempts", 2), 2, minimum=1
+    ):
         return None
     if terminal and not settings.get("reassign_on_terminal_failure", True):
         return None
@@ -6859,8 +7161,30 @@ def maybe_reassign_task_after_worker_failure(
     task_id = str(worker.get("task_id") or "")
     if not task_id:
         return None
-    status = load_status(config)
-    task = next((item for item in status.get("tasks", []) if item.get("id") == task_id), None)
+    snapshot = worker.get("request_snapshot", {}) or {}
+    execution_dispatch = is_execution_dispatch_reason(str(snapshot.get("reason") or ""))
+    expected_event_key: str | None = None
+    expected_target_agent: str | None = None
+    expected_task_signature: str | None = None
+    if execution_dispatch:
+        admission = fresh_execution_dispatch_admission(
+            config,
+            state,
+            worker,
+            audit_failure_kind="failure_reassignment",
+        )
+        if not admission.get("admitted"):
+            return None
+        task = admission.get("task")
+        task_map = admission.get("task_map") or {}
+        expected_event_key = str(admission.get("event_key") or "") or None
+        expected_target_agent = str(admission.get("target_agent") or "") or None
+    else:
+        status = load_status(config)
+        task_map = task_index_from_status(config, status)
+        task = task_map.get(task_id)
+        if task is not None:
+            expected_task_signature = canonical_task_mutation_signature(config, task, task_map)
     if task is None:
         return None
 
@@ -6896,6 +7220,9 @@ def maybe_reassign_task_after_worker_failure(
             message=message,
             handoff_to=new_reviewer,
             handoff_from=reviewer,
+            expected_task_signature=expected_task_signature,
+            expected_event_key=expected_event_key,
+            expected_target_agent=expected_target_agent,
         ):
             return None
         write_activity_log(
@@ -6942,6 +7269,9 @@ def maybe_reassign_task_after_worker_failure(
             message=message,
             new_status="todo" if requeue_for_fresh_dispatch else None,
             handoff_from=owner,
+            expected_task_signature=expected_task_signature,
+            expected_event_key=expected_event_key,
+            expected_target_agent=expected_target_agent,
         ):
             return None
         write_activity_log(
@@ -6972,8 +7302,18 @@ def maybe_reassign_tasks_from_failure_streaks(config: dict[str, Any], state: dic
     settings = worker_reassignment_settings(config)
     if not settings.get("enabled", True):
         return False
-    threshold = max(1, int(settings.get("after_attempts", 2)))
-    max_reassignments = max(1, int(settings.get("max_failure_streak_reassignments_per_cycle", 4)))
+    try:
+        fresh_task_map = task_index_from_status(config, load_status(config))
+    except KeyError:
+        fresh_task_map = {}
+    if fresh_task_map:
+        prune_task_failure_streak_records(config, state, fresh_task_map)
+    threshold = _safe_int(settings.get("after_attempts", 2), 2, minimum=1)
+    max_reassignments = _safe_int(
+        settings.get("max_failure_streak_reassignments_per_cycle", 4),
+        4,
+        minimum=1,
+    )
     changed = False
     applied = 0
     streaks = list((_task_failure_streak_bucket(state) or {}).items())
@@ -6984,7 +7324,7 @@ def maybe_reassign_tasks_from_failure_streaks(config: dict[str, Any], state: dic
             continue
         task_id = str(record.get("task_id") or "").strip()
         provider = str(record.get("provider") or "").strip()
-        count = int(record.get("count") or 0)
+        count = _safe_int(record.get("count"), 0, minimum=0)
         if not task_id or not provider or count < threshold:
             continue
         reason = str(record.get("last_reason") or GENERIC_WORKER_EXIT_REASON)
@@ -6995,6 +7335,17 @@ def maybe_reassign_tasks_from_failure_streaks(config: dict[str, Any], state: dic
             "agent_id": provider,
             "run_id": record.get("worker_run_id"),
             "retry_count": max(0, count - 1),
+            "logical_agent_id": provider,
+            "request_snapshot": {
+                "task_id": task_id,
+                "reason": record.get("dispatch_reason"),
+                "metadata": {
+                    "dispatch_event_key": record.get("dispatch_event_key"),
+                    "dispatch_task_signature": record.get("dispatch_task_signature"),
+                    "dispatch_target_display_name": record.get("dispatch_target_display_name")
+                    or display_name_for(config, provider),
+                },
+            },
         }
         reassigned_to = maybe_reassign_task_after_worker_failure(
             config,
@@ -7021,7 +7372,7 @@ def is_transient_worker_failure(config: dict[str, Any], worker: dict[str, Any], 
 
 def retry_delay_seconds(config: dict[str, Any], worker: dict[str, Any]) -> float:
     retry = worker_retry_settings(config, worker.get("provider"))
-    retry_count = int(worker.get("retry_count", 0))
+    retry_count = _safe_int(worker.get("retry_count"), 0, minimum=0)
     schedule = list(retry.get("backoff_schedule_seconds", []) or [5, 15, 30, 60, 120])
     index = min(retry_count, len(schedule) - 1)
     base_delay = float(schedule[index])
@@ -7034,12 +7385,12 @@ def schedule_queue_event_retry(config: dict[str, Any], record: dict[str, Any], *
         config,
         {
             "provider": provider,
-            "retry_count": int(record.get("retry_count", 0)),
+            "retry_count": _safe_int(record.get("retry_count"), 0, minimum=0),
         },
     )
     retry_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + delay, tz=timezone.utc)
     record["status"] = "retry_backoff"
-    record["retry_count"] = int(record.get("retry_count", 0)) + 1
+    record["retry_count"] = _safe_int(record.get("retry_count"), 0, minimum=0) + 1
     record["next_retry_at"] = retry_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     record["error"] = reason
     record["processed_at"] = utc_now()
@@ -7063,26 +7414,149 @@ def refresh_relaunch_request_context(
     request: DeliveryRequest,
     *,
     queue_event_id: str | None,
-) -> None:
+    state: dict[str, Any] | None = None,
+    worker: dict[str, Any] | None = None,
+) -> bool:
     """Refresh canonical task context before retry/fallback relaunch."""
-
-    materialize_authoritative_task_state(
-        config,
-        request,
-        queue_event_id=queue_event_id,
-    )
-    workspace_value = str(request.metadata.get("workspace_path") or "").strip()
-    if not workspace_value:
-        return
-    workspace_path = Path(workspace_value)
-    if not workspace_path.exists():
-        return
     try:
-        materialize_authoritative_task_state_in_workspace(config, request, workspace_path)
-    except OSError:
-        # The dispatcher will rematerialize context if this retired worktree
-        # has already been reaped; never revive it implicitly here.
-        return
+        with canonical_task_state_lock(config):
+            if is_execution_dispatch_reason(str(request.reason or "")):
+                probe = worker if isinstance(worker, dict) else {
+                    "task_id": request.task_id,
+                    "agent_id": request.agent_id,
+                    "provider": request.provider,
+                    "queue_event_id": queue_event_id,
+                    "request_snapshot": request_snapshot(request),
+                }
+                admission = _execution_dispatch_admission_from_status(
+                    config,
+                    state if isinstance(state, dict) else {},
+                    probe,
+                    load_status(config),
+                    queue_events_by_id=None,
+                    audit_failure_kind="retry_relaunch",
+                )
+                if not admission.get("admitted"):
+                    if isinstance(worker, dict):
+                        worker["status"] = "superseded"
+                        worker["last_event_at"] = utc_now()
+                        worker["last_error"] = (
+                            "Retry cancelled because its exact dispatch signature is no longer canonical: "
+                            f"{admission.get('mismatch')}."
+                        )
+                    if isinstance(state, dict) and queue_event_id:
+                        record = queue_status(state, str(queue_event_id))
+                        record["status"] = "completed"
+                        record["processed_at"] = utc_now()
+                        record["skip_reason"] = "stale_retry_dispatch"
+                        record["error"] = (
+                            f"Retry cancelled before launch: {admission.get('mismatch')}."
+                        )
+                    if isinstance(state, dict):
+                        save_runtime_state(config, state)
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_retry_superseded",
+                            "task_id": request.task_id,
+                            "provider": request.provider,
+                            "worker_run_id": (worker or {}).get("run_id"),
+                            "queue_event_id": queue_event_id,
+                            "message": "Cancelled stale retry/fallback before launch without modifying canonical task truth.",
+                        },
+                    )
+                    return False
+                current_event = admission["current_event"]
+                request.metadata.setdefault(
+                    "dispatch_origin_event_key",
+                    request.metadata.get("dispatch_event_key"),
+                )
+                request.metadata.setdefault(
+                    "dispatch_origin_task_signature",
+                    request.metadata.get("dispatch_task_signature"),
+                )
+                request.reason = str(current_event.get("reason") or request.reason or "")
+                request.metadata["dispatch_event_key"] = current_event.get("key")
+                request.metadata["dispatch_task_signature"] = current_event.get("signature")
+                request.metadata["dispatch_target_display_name"] = admission.get("target_agent")
+                if isinstance(worker, dict):
+                    worker["request_snapshot"] = request_snapshot(request)
+                    worker["effective_dispatch_event_key"] = current_event.get("key")
+                    worker["effective_dispatch_task_signature"] = current_event.get("signature")
+                if isinstance(state, dict) and queue_event_id:
+                    record = queue_status(state, str(queue_event_id))
+                    record["effective_dispatch_reason"] = request.reason
+                    record["effective_dispatch_event_key"] = current_event.get("key")
+                    record["effective_dispatch_task_signature"] = current_event.get("signature")
+
+            materialize_authoritative_task_state(
+                config,
+                request,
+                queue_event_id=queue_event_id,
+            )
+            workspace_value = str(request.metadata.get("workspace_path") or "").strip()
+            if workspace_value:
+                workspace_path = Path(workspace_value)
+                if workspace_path.exists():
+                    try:
+                        materialize_authoritative_task_state_in_workspace(config, request, workspace_path)
+                    except OSError:
+                        # The dispatcher rematerializes context if the retired
+                        # worktree was reaped; never revive it here.
+                        pass
+            if isinstance(state, dict):
+                save_runtime_state(config, state)
+            return True
+    except (KeyError, OSError, json.JSONDecodeError) as exc:
+        if isinstance(worker, dict):
+            worker["status"] = "superseded"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = f"Retry canonical refresh failed closed: {type(exc).__name__}."
+        return False
+
+
+def relaunched_worker_passes_final_admission(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    worker_run_id: str | None,
+    queue_event_id: str | None,
+) -> bool:
+    worker = state.get("workers", {}).get(str(worker_run_id or ""))
+    if not isinstance(worker, dict):
+        return False
+    admission = fresh_execution_dispatch_admission(
+        config,
+        state,
+        worker,
+        audit_failure_kind="retry_post_launch",
+    )
+    if not admission.get("applicable") or admission.get("admitted"):
+        return True
+    if pid_is_alive(worker.get("pid")):
+        terminate_worker_pid(worker.get("pid"))
+    worker["status"] = "superseded"
+    worker["last_event_at"] = utc_now()
+    worker["last_error"] = "Relaunched worker cancelled because final canonical signature admission failed."
+    if queue_event_id:
+        record = queue_status(state, str(queue_event_id))
+        record["status"] = "completed"
+        record["processed_at"] = utc_now()
+        record["skip_reason"] = "stale_retry_dispatch"
+        record["error"] = worker["last_error"]
+    save_runtime_state(config, state)
+    write_activity_log(
+        config,
+        {
+            "type": "worker_retry_superseded",
+            "task_id": worker.get("task_id"),
+            "provider": worker.get("provider"),
+            "worker_run_id": worker_run_id,
+            "queue_event_id": queue_event_id,
+            "message": worker["last_error"],
+        },
+    )
+    return False
 
 
 def manual_pending_inbox_can_auto_redeliver(
@@ -7154,7 +7628,7 @@ def schedule_worker_retry(config: dict[str, Any], worker: dict[str, Any], reason
     delay = retry_delay_seconds(config, worker)
     retry_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + delay, tz=timezone.utc)
     worker["status"] = "retry_backoff"
-    worker["retry_count"] = int(worker.get("retry_count", 0)) + 1
+    worker["retry_count"] = _safe_int(worker.get("retry_count"), 0, minimum=0) + 1
     worker["next_retry_at"] = retry_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     worker["last_error"] = reason
     worker["last_event_at"] = utc_now()
@@ -7188,11 +7662,23 @@ def maybe_trigger_retry_or_fallback(
 ) -> tuple[bool, bool]:
     retry = worker_retry_settings(config, worker.get("provider"))
     failure = classify_worker_failure(config, worker, reason)
-    max_attempts = int(retry.get("max_attempts", 5))
-    retry_count = int(worker.get("retry_count", 0))
+    max_attempts = _safe_int(retry.get("max_attempts", 5), 5, minimum=0)
+    retry_count = _safe_int(worker.get("retry_count"), 0, minimum=0)
     request = request_for_worker(config, worker)
     if request is None:
         return False, False
+    admission = fresh_execution_dispatch_admission(
+        config,
+        state,
+        worker,
+        audit_failure_kind=str(failure.get("kind") or "retry"),
+    )
+    if admission.get("applicable") and not admission.get("admitted"):
+        worker["status"] = "superseded"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = "Retry/fallback cancelled because the dispatched signature is stale."
+        finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+        return True, True
     reassigned_to = maybe_reassign_task_after_worker_failure(config, state, worker, reason)
     if reassigned_to:
         worker["status"] = "reassigned"
@@ -7232,18 +7718,21 @@ def maybe_trigger_retry_or_fallback(
             worker["last_event_at"] = utc_now()
             return True, True
         if not worker.get("fallback_run_id"):
-            refresh_relaunch_request_context(
+            if not refresh_relaunch_request_context(
                 config,
                 request,
                 queue_event_id=str(worker.get("queue_event_id") or "") or None,
-            )
+                state=state,
+                worker=worker,
+            ):
+                return True, True
             ok, outcome, _ = start_worker_for_request(
                 config,
                 state,
                 provider_report,
                 request,
                 queue_event_id=worker.get("queue_event_id"),
-                attempt_count=int(worker.get("attempt_count", 0)) + 1,
+                attempt_count=_safe_int(worker.get("attempt_count"), 0, minimum=0) + 1,
                 event_id_for_log=worker.get("queue_event_id"),
                 parent_run_id=worker["run_id"],
                 delivery_mode_override="file_inbox",
@@ -7251,6 +7740,15 @@ def maybe_trigger_retry_or_fallback(
                 activity_message=f"Worker fell back to file inbox after transient failures: {reason}",
             )
             if ok:
+                if not relaunched_worker_passes_final_admission(
+                    config,
+                    state,
+                    worker_run_id=str(outcome or ""),
+                    queue_event_id=str(worker.get("queue_event_id") or "") or None,
+                ):
+                    worker["status"] = "superseded"
+                    worker["last_event_at"] = utc_now()
+                    return True, True
                 worker["status"] = "fallback"
                 worker["fallback_run_id"] = outcome
                 worker["last_event_at"] = utc_now()
@@ -7291,24 +7789,38 @@ def retry_due_workers(
             )
             changed = True
             continue
-        refresh_relaunch_request_context(
+        if not refresh_relaunch_request_context(
             config,
             request,
             queue_event_id=str(worker.get("queue_event_id") or "") or None,
-        )
+            state=state,
+            worker=worker,
+        ):
+            changed = True
+            continue
         ok, outcome, _ = start_worker_for_request(
             config,
             state,
             provider_report,
             request,
             queue_event_id=worker.get("queue_event_id"),
-            attempt_count=int(worker.get("attempt_count", 0)) + 1,
+            attempt_count=_safe_int(worker.get("attempt_count"), 0, minimum=0) + 1,
             event_id_for_log=worker.get("queue_event_id"),
             parent_run_id=worker["run_id"],
             activity_type="worker_retried",
             activity_message=f"Worker retry launched after backoff from {worker['run_id']}",
         )
         if ok:
+            if not relaunched_worker_passes_final_admission(
+                config,
+                state,
+                worker_run_id=str(outcome or ""),
+                queue_event_id=str(worker.get("queue_event_id") or "") or None,
+            ):
+                worker["status"] = "superseded"
+                worker["last_event_at"] = utc_now()
+                changed = True
+                continue
             worker["status"] = "retried"
             worker["superseded_by_run_id"] = outcome
             worker["last_event_at"] = utc_now()
@@ -7470,7 +7982,7 @@ def resume_claude_worker(
     worker["heartbeat_path"] = str(runtime_paths["heartbeat_path"])
     worker["runner_status_path"] = str(runtime_paths["status_path"])
     worker["log_path"] = str(log_path)
-    worker["resume_count"] = int(worker.get("resume_count", 0)) + 1
+    worker["resume_count"] = _safe_int(worker.get("resume_count"), 0, minimum=0) + 1
     worker["last_resumed_session_id"] = str(session_id)
     worker["command"] = command
     worker.setdefault("metadata", {})["shell_command"] = shell_quote(command)
@@ -7492,9 +8004,126 @@ def resume_claude_worker(
     }
 
 
+def reconcile_dead_approval_worker(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    pending: list[dict[str, Any]],
+    resolved: list[dict[str, Any]],
+    task_map: dict[str, dict[str, Any]],
+    queued_events_by_id: dict[str, dict[str, Any]],
+    now: datetime,
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
+    """Shared boot/poll reducer for approval workers whose process is dead."""
+
+    if worker.get("status") not in {"waiting_approval", "suspended_approval"}:
+        return False
+    if pid_is_alive(worker.get("pid")):
+        return False
+    if pending and worker_supports_approval_resume(config, worker):
+        worker["status"] = "suspended_approval"
+        worker["deferred_action"] = pending[0].get("approval_id")
+        worker["last_event_at"] = pending[0].get("created_at") or worker.get("last_event_at") or utc_now()
+        if worker.get("queue_event_id"):
+            queue_status(state, str(worker["queue_event_id"]))["status"] = "manual_pending"
+        write_activity_log(
+            config,
+            {
+                "type": "worker_waiting_approval",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": f"Worker suspended for approval {pending[0].get('approval_id')}",
+                "worker_run_id": worker.get("run_id"),
+                "approval_id": pending[0].get("approval_id"),
+            },
+        )
+        return True
+
+    failure_kind = "approval_state_lost"
+    failure_reason = APPROVAL_STATE_LOST_OUTCOME_REASON
+    approval_id: str | None = None
+    if pending:
+        failure_kind = "approval_wait_exit"
+        failure_reason = APPROVAL_WAIT_EXIT_OUTCOME_REASON
+        for approval in pending:
+            pending_approval_id = str(approval.get("approval_id") or "")
+            if not pending_approval_id:
+                continue
+            approval_id = pending_approval_id
+            try:
+                resolve_approval(
+                    config,
+                    pending_approval_id,
+                    decision="deny",
+                    note="Auto-denied because the worker exited before approval could be applied.",
+                    remember=False,
+                )
+            except KeyError:
+                pass
+    elif resolved:
+        latest = resolved[-1]
+        approval_id = str(latest.get("approval_id") or "") or None
+        if latest.get("decision") == "allow" and _provider_uses_claude_cli(config, worker.get("provider")):
+            resumed = resume_claude_worker(
+                config,
+                state,
+                worker,
+                provider_report or load_provider_report(config),
+                approval=latest,
+            )
+            if resumed:
+                return True
+        if latest.get("decision") == "deny":
+            failure_kind = "approval_denied"
+            failure_reason = str(latest.get("note") or "Worker approval denied.")
+
+    worker["deferred_action"] = None
+    worker["deferred_tool_use"] = None
+    worker["status"] = "failed"
+    worker["last_event_at"] = utc_now()
+    worker["last_error"] = failure_reason
+    reduced = reduce_execution_dispatch_terminal_failure(
+        config,
+        state,
+        worker,
+        task_map,
+        reason=failure_reason,
+        failure_kind=failure_kind,
+        queue_events_by_id=queued_events_by_id,
+        now=now,
+    )
+    if reduced.get("reassigned_to"):
+        worker["status"] = "reassigned"
+        worker["reassigned_to"] = reduced["reassigned_to"]
+        finalize_queue_event_record(config, state, worker, "completed")
+    elif reduced.get("resolved_by_canonical_progress") or reduced.get("admission_failed"):
+        worker["status"] = "superseded"
+        finalize_queue_event_record(config, state, worker, "completed", failure_reason)
+    else:
+        finalize_queue_event_record(config, state, worker, "failed", failure_reason)
+    write_activity_log(
+        config,
+        {
+            "type": "worker_failed" if worker.get("status") == "failed" else "worker_superseded",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": failure_reason,
+            "worker_run_id": worker.get("run_id"),
+            "approval_id": approval_id,
+            "failure_kind": failure_kind,
+        },
+    )
+    return True
+
+
 def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
     changed = False
-    approval_state = load_approval_state(config)
+    try:
+        approval_state = load_approval_state(config)
+    except KeyError:
+        approval_state = {"pending": [], "history": []}
     task_map = task_index_from_status(config, load_status(config))
     changed = prune_execution_dispatch_guard_records(config, state, task_map=task_map) or changed
     changed = prune_task_failure_streak_records(config, state, task_map) or changed
@@ -7763,6 +8392,19 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             continue
         pending = pending_by_run.get(worker["run_id"], [])
         resolved = resolved_by_run.get(worker["run_id"], [])
+        if reconcile_dead_approval_worker(
+            config,
+            state,
+            worker,
+            pending=pending,
+            resolved=resolved,
+            task_map=task_map,
+            queued_events_by_id=queued_events_by_id,
+            now=now,
+            provider_report=provider_report,
+        ):
+            changed = True
+            continue
         if pending:
             if not alive and not worker_supports_approval_resume(config, worker):
                 worker["status"] = "failed"
@@ -8052,27 +8694,63 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 failure_kind=str(failure.get("kind") or ""),
             )
             worker["last_error_raw_ref"] = raw_ref
-            failure_count = record_task_failure_streak(
-                state,
-                worker,
-                failure_reason,
-                failure_kind=str(failure.get("kind") or ""),
-            )
             console_log(
                 f"worker failure: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} transient={'yes' if failure.get('transient') else 'no'} reason={failure_reason}",
                 quiet=SUPERVISOR_LOG_QUIET,
             )
             failure_kind = str(failure.get("kind") or "")
+            admission = fresh_execution_dispatch_admission(
+                config,
+                state,
+                worker,
+                queue_events_by_id=queued_events_by_id,
+                audit_failure_kind=failure_kind or "terminal",
+            )
+            if admission.get("applicable") and not admission.get("admitted"):
+                worker["status"] = "superseded"
+                worker["last_error"] = (
+                    f"Ignored stale terminal outcome after canonical admission failed: {admission.get('mismatch')}."
+                )
+                worker["last_event_at"] = utc_now()
+                finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+                changed = True
+                continue
+            reduced = reduce_execution_dispatch_terminal_failure(
+                config,
+                state,
+                worker,
+                task_map,
+                reason=failure_summary.get("summary") or failure_reason,
+                failure_kind=failure_kind or "terminal",
+                queue_events_by_id=queued_events_by_id,
+                now=now,
+                allow_reassignment=False,
+            )
+            if reduced.get("admission_failed") or reduced.get("resolved_by_canonical_progress"):
+                worker["status"] = "superseded"
+                worker["last_error"] = "Ignored terminal outcome because final canonical admission failed."
+                worker["last_event_at"] = utc_now()
+                finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+                changed = True
+                continue
+            failure_count = _safe_int(reduced.get("failure_count"), 0, minimum=0)
             rotation_provider = str(worker.get("provider") or worker.get("agent_id") or "")
             rotation_retry = worker_retry_settings(config, rotation_provider)
-            rotation_budget_left = int(worker.get("retry_count", 0)) < int(rotation_retry.get("max_attempts", 5))
+            rotation_budget_left = _safe_int(worker.get("retry_count"), 0, minimum=0) < _safe_int(
+                rotation_retry.get("max_attempts", 5), 5, minimum=0
+            )
             rotation_outcome = (
                 maybe_rotate_provider_model(config, state, rotation_provider, failure_kind, failure_reason)
                 if rotation_budget_left
                 else "exhausted"
             )
             if rotation_outcome == "rotated":
-                clear_task_failure_streaks_for_task(state, str(worker.get("task_id") or ""))
+                clear_task_failure_streaks_for_dispatch_signature(
+                    state,
+                    task_id=str(worker.get("task_id") or ""),
+                    logical_agent_id=worker_logical_dispatch_agent_id(config, worker),
+                    dispatch_task_signature=(worker.get("execution_admission") or {}).get("task_signature"),
+                )
                 schedule_worker_retry(config, worker, failure_summary.get("summary") or failure_reason)
                 write_activity_log(
                     config,
@@ -8123,18 +8801,6 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     finalize_queue_event_record(config, state, worker, "completed")
                     changed = True
                     continue
-                reduced = reduce_execution_dispatch_terminal_failure(
-                    config,
-                    state,
-                    worker,
-                    task_map,
-                    reason=failure_summary.get("summary") or failure_reason,
-                    failure_kind=failure_kind,
-                    queue_events_by_id=queued_events_by_id,
-                    now=now,
-                    failure_count=failure_count,
-                    allow_reassignment=False,
-                )
                 dispatch_guard = reduced.get("guard") or {}
                 worker["status"] = "failed"
                 worker["last_error"] = failure_summary.get("summary") or failure_reason
@@ -8165,14 +8831,21 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 if handled:
                     changed = changed or retry_changed
                     continue
-            reassigned_to = maybe_reassign_task_after_worker_failure(
-                config,
-                state,
-                worker,
-                failure_summary.get("summary") or failure_reason,
-                terminal=True,
-                failure_count=failure_count,
+            generic_threshold = _safe_int(
+                provider_guardrail_settings(config).get("generic_exit_reassign_after", 2),
+                2,
+                minimum=1,
             )
+            reassigned_to = None
+            if failure_count >= generic_threshold:
+                reassigned_to = maybe_reassign_task_after_worker_failure(
+                    config,
+                    state,
+                    worker,
+                    failure_summary.get("summary") or failure_reason,
+                    terminal=True,
+                    failure_count=failure_count,
+                )
             if reassigned_to:
                 worker["status"] = "reassigned"
                 worker["reassigned_to"] = reassigned_to
@@ -8182,18 +8855,6 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "completed")
                 changed = True
                 continue
-            reduced = reduce_execution_dispatch_terminal_failure(
-                config,
-                state,
-                worker,
-                task_map,
-                reason=failure_summary.get("summary") or failure_reason,
-                failure_kind=failure_kind or "terminal",
-                queue_events_by_id=queued_events_by_id,
-                now=now,
-                failure_count=failure_count,
-                allow_reassignment=False,
-            )
             dispatch_guard = reduced.get("guard") or {}
             worker["status"] = "failed"
             worker["last_error"] = failure_summary.get("summary") or failure_reason
@@ -8294,7 +8955,8 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker["status"] = "completed"
                 worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
                 worker["execution_outcome"] = "resolved"
-                clear_task_failure_streak(state, worker=worker)
+                if not successful_outcome.get("stale"):
+                    clear_task_failure_streak(state, worker=worker)
                 write_activity_log(
                     config,
                     {
@@ -8310,13 +8972,12 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "completed")
             elif successful_outcome and successful_outcome.get("outcome") != "not_applicable":
                 dispatch_guard = successful_outcome.get("guard") or {}
-                failure_count = record_task_failure_streak(
-                    state,
-                    worker,
-                    SUCCESSFUL_WORKER_INCOMPLETE_REASON,
-                    failure_kind=str(successful_outcome.get("outcome") or "incomplete"),
+                failure_count = _safe_int(successful_outcome.get("failure_count"), 0, minimum=0)
+                generic_threshold = _safe_int(
+                    provider_guardrail_settings(config).get("generic_exit_reassign_after", 2),
+                    2,
+                    minimum=1,
                 )
-                generic_threshold = max(1, int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)))
                 reassigned_to = None
                 if failure_count >= generic_threshold:
                     reassigned_to = maybe_reassign_task_after_worker_failure(
@@ -9091,10 +9752,22 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         for event in queued_events
         if event.get("event_id")
     }
+    try:
+        approval_state = load_approval_state(config)
+    except KeyError:
+        approval_state = {"pending": [], "history": []}
+    pending_by_run: dict[str, list[dict[str, Any]]] = {}
+    resolved_by_run: dict[str, list[dict[str, Any]]] = {}
+    for item in approval_state.get("pending", []) or []:
+        if item.get("worker_run_id"):
+            pending_by_run.setdefault(str(item["worker_run_id"]), []).append(item)
+    for item in approval_state.get("history", []) or []:
+        if item.get("worker_run_id"):
+            resolved_by_run.setdefault(str(item["worker_run_id"]), []).append(item)
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
-        if worker.get("status") not in active_statuses:
+        if worker.get("status") not in active_statuses | {"suspended_approval"}:
             continue
         was_stalled = worker.get("status") == "stalled"
         marker_changed = update_worker_runtime_markers(worker)
@@ -9102,6 +9775,20 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             counts["marker_updates"] += 1
             changed = True
         alive = pid_is_alive(worker.get("pid"))
+        if reconcile_dead_approval_worker(
+            config,
+            state,
+            worker,
+            pending=pending_by_run.get(str(run_id), []),
+            resolved=resolved_by_run.get(str(run_id), []),
+            task_map=task_map,
+            queued_events_by_id=queued_events_by_id,
+            now=now,
+        ):
+            if worker.get("status") in {"failed", "reassigned", "superseded"}:
+                counts["missing_process_workers_failed"] += 1
+            changed = True
+            continue
         missing_process = worker.get("status") in {"running", "stalled"} and not alive
         expired_lease = alive and worker_lease_is_expired(config, worker, now)
         if alive and not expired_lease and worker.get("last_heartbeat_at") and not worker_heartbeat_is_stale(config, worker, now):
@@ -9158,7 +9845,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 worker["status"] = "completed"
                 worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
                 worker["execution_outcome"] = "resolved"
-                clear_task_failure_streak(state, worker=worker)
+                if not successful_outcome.get("stale"):
+                    clear_task_failure_streak(state, worker=worker)
                 finalize_queue_event_record(config, state, worker, "completed")
                 write_activity_log(
                     config,
@@ -9176,15 +9864,11 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 continue
             if successful_outcome.get("outcome") != "not_applicable":
                 dispatch_guard = successful_outcome.get("guard") or {}
-                failure_count = record_task_failure_streak(
-                    state,
-                    worker,
-                    SUCCESSFUL_WORKER_INCOMPLETE_REASON,
-                    failure_kind=str(successful_outcome.get("outcome") or "incomplete"),
-                )
-                generic_threshold = max(
-                    1,
-                    int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)),
+                failure_count = _safe_int(successful_outcome.get("failure_count"), 0, minimum=0)
+                generic_threshold = _safe_int(
+                    provider_guardrail_settings(config).get("generic_exit_reassign_after", 2),
+                    2,
+                    minimum=1,
                 )
                 reassigned_to = None
                 if failure_count >= generic_threshold:
@@ -9236,6 +9920,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         detected_reason = None if runner_succeeded else detect_worker_failure(worker)
         detected_failure_kind = ""
         detected_failure_count: int | None = None
+        detected_reduced: dict[str, Any] | None = None
         guard_reason = (
             LEASE_EXPIRED_OUTCOME_REASON
             if expired_lease
@@ -9256,14 +9941,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 failure_kind=str(failure.get("kind") or ""),
             )
             worker["last_error_raw_ref"] = raw_ref
-            failure_count = record_task_failure_streak(
-                state,
-                worker,
-                detected_reason,
-                failure_kind=str(failure.get("kind") or ""),
-            )
             failure_kind = str(failure.get("kind") or "")
-            detected_failure_count = failure_count
             detected_failure_kind = failure_kind
             if should_pause_dispatch_for_failure_kind(failure_kind):
                 mark_provider_dispatch_paused(
@@ -9277,6 +9955,30 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     pause_kind=failure_kind,
                     raw_ref=raw_ref,
                 )
+            detected_reduced = reduce_execution_dispatch_terminal_failure(
+                config,
+                state,
+                worker,
+                task_map,
+                reason=failure_summary.get("summary") or detected_reason,
+                failure_kind=failure_kind or "terminal",
+                queue_events_by_id=queued_events_by_id,
+                now=now,
+                allow_reassignment=False,
+            )
+            if detected_reduced.get("admission_failed") or detected_reduced.get("resolved_by_canonical_progress"):
+                worker["status"] = "superseded"
+                worker["last_event_at"] = utc_now()
+                worker["last_error"] = "Ignored boot terminal outcome because canonical admission failed."
+                finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+                if expired_lease:
+                    counts["expired_lease_workers_failed"] += 1
+                else:
+                    counts["missing_process_workers_failed"] += 1
+                changed = True
+                continue
+            failure_count = _safe_int(detected_reduced.get("failure_count"), 0, minimum=0)
+            detected_failure_count = failure_count
             if is_terminal_quota_failure_kind(failure_kind):
                 reassigned_to = maybe_reassign_task_after_worker_failure(
                     config,
@@ -9307,25 +10009,55 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             # A dead runner with no recognized provider failure is the same
             # generic terminal outcome whether observed during boot or poll.
             guard_reason = GENERIC_WORKER_EXIT_REASON
-        reduced = reduce_execution_dispatch_terminal_failure(
-            config,
-            state,
-            worker,
-            task_map,
-            reason=guard_reason,
-            failure_kind=detected_failure_kind
-            or (
-                "lease_expired"
-                if expired_lease
-                else "stalled"
-                if was_stalled
-                else "generic_exit"
-            ),
-            queue_events_by_id=queued_events_by_id,
-            now=now,
-            failure_count=detected_failure_count,
-            allow_reassignment=not is_terminal_quota_failure_kind(detected_failure_kind),
-        )
+        if not detected_reason:
+            reason = guard_reason
+        if detected_reduced is not None:
+            reduced = detected_reduced
+            threshold = _safe_int(
+                provider_guardrail_settings(config).get("generic_exit_reassign_after", 2),
+                2,
+                minimum=1,
+            )
+            if (
+                not is_terminal_quota_failure_kind(detected_failure_kind)
+                and _safe_int(detected_failure_count, 0, minimum=0) >= threshold
+            ):
+                reduced["reassigned_to"] = maybe_reassign_task_after_worker_failure(
+                    config,
+                    state,
+                    worker,
+                    guard_reason,
+                    terminal=True,
+                    failure_count=detected_failure_count,
+                )
+        else:
+            reduced = reduce_execution_dispatch_terminal_failure(
+                config,
+                state,
+                worker,
+                task_map,
+                reason=guard_reason,
+                failure_kind=(
+                    "lease_expired"
+                    if expired_lease
+                    else "stalled"
+                    if was_stalled
+                    else "generic_exit"
+                ),
+                queue_events_by_id=queued_events_by_id,
+                now=now,
+            )
+        if reduced.get("admission_failed") or reduced.get("resolved_by_canonical_progress"):
+            worker["status"] = "superseded"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = "Ignored boot worker outcome because canonical admission failed."
+            finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+            if expired_lease:
+                counts["expired_lease_workers_failed"] += 1
+            else:
+                counts["missing_process_workers_failed"] += 1
+            changed = True
+            continue
         dispatch_guard = reduced.get("guard") or {}
         if reduced.get("reassigned_to"):
             worker["status"] = "reassigned"
@@ -9767,6 +10499,27 @@ def normalize_mainline_task_assignment(
         f"Auto-reassigned {task_id} away from unavailable lane {blocked_summary} "
         f"(disabled, paused, sidecar-only, or auth-down); {', '.join(changed_fields)}."
     )
+    try:
+        status_path = config_path(config, "status_file")
+    except KeyError:
+        status_path = None
+    if status_path is not None and status_path.exists():
+        fresh_status = load_status(config)
+        fresh_task_map = task_index_from_status(config, fresh_status)
+        fresh_task = fresh_task_map.get(task_id)
+        if (
+            fresh_task is None
+            or str(fresh_task.get("status") or "").lower() != task_status
+            or str(fresh_task.get("owner") or "").strip() != owner
+            or str(fresh_task.get("reviewer") or "").strip() != reviewer
+        ):
+            return False
+    else:
+        # No canonical path means persist_task_reassignment itself cannot write;
+        # this branch only keeps pure policy/unit callers deterministic.
+        fresh_task = task
+        fresh_task_map = {task_id: task}
+    expected_task_signature = canonical_task_mutation_signature(config, fresh_task, fresh_task_map)
     if not persist_task_reassignment(
         config,
         task_id=task_id,
@@ -9775,6 +10528,7 @@ def normalize_mainline_task_assignment(
         message=message,
         handoff_to=new_owner if new_owner != owner else new_reviewer,
         handoff_from=owner if new_owner != owner else reviewer,
+        expected_task_signature=expected_task_signature,
     ):
         return False
     write_activity_log(
@@ -10632,7 +11386,10 @@ def execution_dispatch_guard_settings(config: dict[str, Any]) -> dict[str, Any]:
         "terminal_retry_delays_seconds",
         list(DEFAULT_EXECUTION_DISPATCH_TERMINAL_RETRY_DELAYS_SECONDS),
     )
-    settings.setdefault("triage_after_attempts", int(worker_reassignment_settings(config).get("after_attempts", 2)))
+    settings.setdefault(
+        "triage_after_attempts",
+        _safe_int(worker_reassignment_settings(config).get("after_attempts", 2), 2, minimum=1),
+    )
     settings.setdefault("retention_seconds", 86400)
     return settings
 
@@ -10643,7 +11400,7 @@ def _execution_dispatch_delay_values(raw: Any, defaults: tuple[int, ...]) -> lis
     for value in values:
         try:
             delays.append(max(1, int(value)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
     return delays or list(defaults)
 
@@ -10694,7 +11451,11 @@ def prune_execution_dispatch_guard_records(
     if not records:
         return False
     now_dt = now or datetime.now(timezone.utc)
-    retention_seconds = max(60, int(execution_dispatch_guard_settings(config).get("retention_seconds", 86400)))
+    retention_seconds = _safe_int(
+        execution_dispatch_guard_settings(config).get("retention_seconds", 86400),
+        86400,
+        minimum=60,
+    )
     changed = False
     for key, record in list(records.items()):
         if not isinstance(record, dict):
@@ -10703,7 +11464,12 @@ def prune_execution_dispatch_guard_records(
             continue
         task_id = str(record.get("task_id") or "")
         if task_map is not None and task_id not in task_map:
-            clear_task_failure_streaks_for_task(state, task_id)
+            clear_task_failure_streaks_for_dispatch_signature(
+                state,
+                task_id=task_id,
+                logical_agent_id=normalize_agent_id(str(record.get("logical_agent_id") or "")),
+                dispatch_task_signature=record.get("signature"),
+            )
             _archive_execution_dispatch_guard_record(state, record, disposition="task_missing")
             records.pop(key, None)
             changed = True
@@ -10717,10 +11483,11 @@ def prune_execution_dispatch_guard_records(
                 target_agent=display_name_for(config, logical_agent_id),
             )
             if current_event is None or str(current_event.get("key") or "") != str(record.get("event_key") or ""):
-                clear_task_failure_streak(
+                clear_task_failure_streaks_for_dispatch_signature(
                     state,
                     task_id=task_id,
-                    provider=logical_agent_id,
+                    logical_agent_id=logical_agent_id,
+                    dispatch_task_signature=record.get("signature"),
                 )
                 _archive_execution_dispatch_guard_record(
                     state,
@@ -10814,7 +11581,12 @@ def record_execution_dispatch_guard(
         if normalize_agent_id(str(stale_record.get("logical_agent_id") or "")) != logical_value:
             continue
         if str(stale_record.get("event_key") or "") != event_key:
-            clear_task_failure_streak(state, task_id=task_value, provider=logical_value)
+            clear_task_failure_streaks_for_dispatch_signature(
+                state,
+                task_id=task_value,
+                logical_agent_id=logical_value,
+                dispatch_task_signature=stale_record.get("signature"),
+            )
             _archive_execution_dispatch_guard_record(
                 state,
                 stale_record,
@@ -10822,7 +11594,7 @@ def record_execution_dispatch_guard(
             )
             records.pop(stale_key, None)
     existing = dict(records.get(key) or {})
-    attempt_count = int(existing.get("attempt_count", 0)) + 1
+    attempt_count = _safe_int(existing.get("attempt_count"), 0, minimum=0) + 1
     lane_attempt_count = attempt_count
     raw_delays = (
         settings.get("terminal_retry_delays_seconds")
@@ -10837,7 +11609,7 @@ def record_execution_dispatch_guard(
     delays = _execution_dispatch_delay_values(raw_delays, default_delays)
     delay_seconds = delays[min(lane_attempt_count - 1, len(delays) - 1)]
     retry_not_before = _isoformat_utc(now_dt + timedelta(seconds=delay_seconds))
-    triage_after = max(1, int(settings.get("triage_after_attempts", 2)))
+    triage_after = _safe_int(settings.get("triage_after_attempts", 2), 2, minimum=1)
     record = {
         **existing,
         "task_id": task_value,
@@ -10971,6 +11743,173 @@ def _worker_original_dispatch_reason(
     return str(queued_event.get("reason") or "").strip()
 
 
+def _worker_original_dispatch_signature(
+    worker: dict[str, Any],
+    queue_events_by_id: dict[str, dict[str, Any]] | None,
+) -> str:
+    snapshot = worker.get("request_snapshot", {}) or {}
+    metadata = snapshot.get("metadata", {}) if isinstance(snapshot, dict) else {}
+    signature = str((metadata or {}).get("dispatch_task_signature") or "").strip()
+    if signature:
+        return signature
+    queue_event_id = str(worker.get("queue_event_id") or "")
+    queued_event = (queue_events_by_id or {}).get(queue_event_id, {})
+    queued_metadata = queued_event.get("metadata", {}) if isinstance(queued_event, dict) else {}
+    return str(
+        (queued_metadata or {}).get("dispatch_task_signature")
+        or queued_event.get("signature")
+        or ""
+    ).strip()
+
+
+def _execution_dispatch_admission_from_status(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    queue_events_by_id: dict[str, dict[str, Any]] | None = None,
+    audit_failure_kind: str = "canonical_admission",
+) -> dict[str, Any]:
+    """Compare a worker's exact dispatched event with fresh canonical truth.
+
+    The caller must hold ``canonical_task_state_lock`` while it applies any
+    task/lane-scoped runtime mutation based on an admitted result.
+    """
+
+    snapshot = worker.get("request_snapshot", {}) or {}
+    origin_reason = _worker_original_dispatch_reason(worker, queue_events_by_id)
+    if not is_execution_dispatch_reason(origin_reason):
+        return {"applicable": False, "admitted": False, "resolved": False}
+    task_id = str(worker.get("task_id") or snapshot.get("task_id") or "").strip()
+    logical_agent_id = worker_logical_dispatch_agent_id(config, worker)
+    metadata = snapshot.get("metadata", {}) if isinstance(snapshot, dict) else {}
+    target_agent = str(
+        (metadata or {}).get("dispatch_target_display_name")
+        or (metadata or {}).get("target_display_name")
+        or display_name_for(config, logical_agent_id)
+    ).strip()
+    expected_event_key = _worker_original_dispatch_event_key(worker, queue_events_by_id)
+    expected_task_signature = _worker_original_dispatch_signature(worker, queue_events_by_id)
+    task_map = task_index_from_status(config, status)
+    prune_execution_dispatch_guard_records(config, state, task_map=task_map)
+    task = task_map.get(task_id)
+    current_event = (
+        current_execution_dispatch_event_for_target(
+            config,
+            task,
+            task_map,
+            target_agent=target_agent,
+        )
+        if task is not None and target_agent
+        else None
+    )
+    current_event_key = str((current_event or {}).get("key") or "")
+    mismatch = "matched"
+    if task is None:
+        mismatch = "task_missing"
+    elif not target_agent:
+        mismatch = "target_missing"
+    elif not expected_event_key:
+        mismatch = "expected_event_key_missing"
+    elif current_event is None:
+        mismatch = "lane_resolved_or_reassigned"
+    elif current_event_key != expected_event_key:
+        mismatch = "dispatch_signature_changed"
+
+    if mismatch != "matched":
+        audit_key = f"{expected_event_key}|{audit_failure_kind}|{mismatch}"
+        if worker.get("last_execution_admission_rejection") != audit_key:
+            _archive_execution_dispatch_guard_record(
+                state,
+                {
+                    "task_id": task_id,
+                    "logical_agent_id": logical_agent_id,
+                    "reason": origin_reason,
+                    "event_key": expected_event_key or None,
+                    "signature": expected_task_signature or None,
+                    "last_outcome": "stale_terminal_outcome",
+                    "last_failure_kind": audit_failure_kind,
+                    "last_worker_run_id": worker.get("run_id"),
+                    "last_queue_event_id": worker.get("queue_event_id"),
+                    "canonical_event_key": current_event_key or None,
+                    "admission_mismatch": mismatch,
+                },
+                disposition="canonical_advanced_during_worker",
+            )
+            worker["last_execution_admission_rejection"] = audit_key
+        clear_task_failure_streaks_for_dispatch_signature(
+            state,
+            task_id=task_id,
+            logical_agent_id=logical_agent_id,
+            dispatch_task_signature=expected_task_signature,
+        )
+        worker.pop("execution_admission", None)
+        return {
+            "applicable": True,
+            "admitted": False,
+            "resolved": True,
+            "mismatch": mismatch,
+            "task_id": task_id,
+            "logical_agent_id": logical_agent_id,
+            "target_agent": target_agent,
+            "expected_event_key": expected_event_key,
+            "expected_task_signature": expected_task_signature,
+            "current_event": current_event,
+        }
+
+    admission = {
+        "applicable": True,
+        "admitted": True,
+        "resolved": False,
+        "task_id": task_id,
+        "logical_agent_id": logical_agent_id,
+        "target_agent": target_agent,
+        "event_key": current_event_key,
+        "task_signature": str(current_event.get("signature") or ""),
+        "reason": str(current_event.get("reason") or ""),
+        "current_event": current_event,
+        "task": task,
+        "task_map": task_map,
+    }
+    worker["execution_admission"] = {
+        "event_key": admission["event_key"],
+        "task_signature": admission["task_signature"],
+        "target_agent": target_agent,
+        "reason": admission["reason"],
+        "admitted_at": utc_now(),
+    }
+    return admission
+
+
+def fresh_execution_dispatch_admission(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    queue_events_by_id: dict[str, dict[str, Any]] | None = None,
+    audit_failure_kind: str = "canonical_admission",
+) -> dict[str, Any]:
+    try:
+        with canonical_task_state_lock(config):
+            return _execution_dispatch_admission_from_status(
+                config,
+                state,
+                worker,
+                load_status(config),
+                queue_events_by_id=queue_events_by_id,
+                audit_failure_kind=audit_failure_kind,
+            )
+    except (KeyError, OSError, json.JSONDecodeError) as exc:
+        worker.pop("execution_admission", None)
+        return {
+            "applicable": True,
+            "admitted": False,
+            "resolved": False,
+            "mismatch": f"canonical_read_failed:{type(exc).__name__}",
+        }
+
+
 def reconcile_successful_execution_worker_outcome(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -10983,78 +11922,65 @@ def reconcile_successful_execution_worker_outcome(
     task_id = str(worker.get("task_id") or "").strip()
     if not task_id:
         return {"outcome": "not_applicable", "resolved": False, "guard": None}
-    logical_agent_id = worker_logical_dispatch_agent_id(config, worker)
-    snapshot = worker.get("request_snapshot", {}) or {}
-    metadata = snapshot.get("metadata", {}) if isinstance(snapshot, dict) else {}
-    target_agent = str(
-        (metadata or {}).get("dispatch_target_display_name")
-        or display_name_for(config, logical_agent_id)
-    )
-    task = task_map.get(task_id)
-    current_event = (
-        current_execution_dispatch_event_for_target(
-            config,
-            task,
-            task_map,
-            target_agent=target_agent,
-        )
-        if task is not None
-        else None
-    )
-    if current_event is None:
-        clear_execution_dispatch_guard_records_for_task(state, task_id, disposition="lane_resolved")
+    try:
+        with canonical_task_state_lock(config):
+            admission = _execution_dispatch_admission_from_status(
+                config,
+                state,
+                worker,
+                load_status(config),
+                queue_events_by_id=queue_events_by_id,
+                audit_failure_kind="process_success_no_task_transition",
+            )
+            if not admission.get("applicable"):
+                return {"outcome": "not_applicable", "resolved": False, "guard": None}
+            if not admission.get("admitted"):
+                return {
+                    "outcome": "resolved",
+                    "resolved": True,
+                    "stale": True,
+                    "guard": None,
+                    **admission,
+                }
+            logical_agent_id = str(admission.get("logical_agent_id") or "")
+            current_event = admission["current_event"]
+            outcome = "incomplete_noop"
+            guard = record_execution_dispatch_guard(
+                config,
+                state,
+                task_id=task_id,
+                logical_agent_id=logical_agent_id,
+                event=current_event,
+                outcome=outcome,
+                failure_kind="process_success_no_task_transition",
+                worker_run_id=str(worker.get("run_id") or "") or None,
+                queue_event_id=str(worker.get("queue_event_id") or "") or None,
+                origin_reason=_worker_original_dispatch_reason(worker, queue_events_by_id),
+                terminal=False,
+                now=now,
+            )
+            failure_count = record_task_failure_streak(
+                state,
+                worker,
+                SUCCESSFUL_WORKER_INCOMPLETE_REASON,
+                failure_kind=outcome,
+            )
+    except (KeyError, OSError, json.JSONDecodeError):
+        worker.pop("execution_admission", None)
         return {
             "outcome": "resolved",
             "resolved": True,
+            "stale": True,
             "guard": None,
-            "logical_agent_id": logical_agent_id,
+            "mismatch": "canonical_read_failed",
         }
-    origin_reason = _worker_original_dispatch_reason(worker, queue_events_by_id)
-    current_reason = str(current_event.get("reason") or "")
-    if is_execution_dispatch_reason(origin_reason) and not execution_dispatch_reason_is_continuation(
-        origin_reason,
-        current_reason,
-    ):
-        clear_execution_dispatch_guard_records_for_task(state, task_id, disposition="lane_transitioned")
-        clear_task_failure_streak(state, worker=worker)
-        return {
-            "outcome": "resolved",
-            "resolved": True,
-            "guard": None,
-            "logical_agent_id": logical_agent_id,
-            "origin_reason": origin_reason,
-            "current_event": current_event,
-        }
-    original_event_key = _worker_original_dispatch_event_key(worker, queue_events_by_id)
-    current_event_key = str(current_event.get("key") or "")
-    outcome = "incomplete_noop" if original_event_key and original_event_key == current_event_key else "incomplete_progress"
-    if outcome == "incomplete_progress":
-        clear_successful_worker_incomplete_streak(
-            state,
-            task_id=task_id,
-            logical_agent_id=logical_agent_id,
-        )
-    origin_reason = origin_reason or current_reason
-    guard = record_execution_dispatch_guard(
-        config,
-        state,
-        task_id=task_id,
-        logical_agent_id=logical_agent_id,
-        event=current_event,
-        outcome=outcome,
-        failure_kind="process_success_no_task_transition",
-        worker_run_id=str(worker.get("run_id") or "") or None,
-        queue_event_id=str(worker.get("queue_event_id") or "") or None,
-        origin_reason=origin_reason,
-        terminal=False,
-        now=now,
-    )
     return {
         "outcome": outcome,
         "resolved": False,
         "guard": guard,
         "logical_agent_id": logical_agent_id,
         "current_event": current_event,
+        "failure_count": failure_count,
     }
 
 
@@ -11068,59 +11994,36 @@ def record_execution_dispatch_failure_guard(
     queue_events_by_id: dict[str, dict[str, Any]] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
-    task_id = str(worker.get("task_id") or "").strip()
-    task = task_map.get(task_id)
-    if not task_id or task is None:
+    try:
+        with canonical_task_state_lock(config):
+            admission = _execution_dispatch_admission_from_status(
+                config,
+                state,
+                worker,
+                load_status(config),
+                queue_events_by_id=queue_events_by_id,
+                audit_failure_kind=failure_kind,
+            )
+            if not admission.get("admitted"):
+                return None
+            current_event = admission["current_event"]
+            return record_execution_dispatch_guard(
+                config,
+                state,
+                task_id=str(admission.get("task_id") or ""),
+                logical_agent_id=str(admission.get("logical_agent_id") or ""),
+                event=current_event,
+                outcome="terminal_failure",
+                failure_kind=failure_kind,
+                worker_run_id=str(worker.get("run_id") or "") or None,
+                queue_event_id=str(worker.get("queue_event_id") or "") or None,
+                origin_reason=_worker_original_dispatch_reason(worker, queue_events_by_id),
+                terminal=True,
+                now=now,
+            )
+    except (KeyError, OSError, json.JSONDecodeError):
+        worker.pop("execution_admission", None)
         return None
-    logical_agent_id = worker_logical_dispatch_agent_id(config, worker)
-    snapshot = worker.get("request_snapshot", {}) or {}
-    metadata = snapshot.get("metadata", {}) if isinstance(snapshot, dict) else {}
-    target_agent = str(
-        (metadata or {}).get("dispatch_target_display_name")
-        or display_name_for(config, logical_agent_id)
-    )
-    current_event = current_execution_dispatch_event_for_target(
-        config,
-        task,
-        task_map,
-        target_agent=target_agent,
-    )
-    if current_event is None:
-        return None
-    original_event_key = _worker_original_dispatch_event_key(worker, queue_events_by_id)
-    current_event_key = str(current_event.get("key") or "")
-    if original_event_key and original_event_key != current_event_key:
-        _archive_execution_dispatch_guard_record(
-            state,
-            {
-                "task_id": task_id,
-                "logical_agent_id": logical_agent_id,
-                "reason": str(snapshot.get("reason") or ""),
-                "event_key": original_event_key,
-                "signature": (metadata or {}).get("dispatch_task_signature"),
-                "last_outcome": "terminal_failure",
-                "last_failure_kind": failure_kind,
-                "last_worker_run_id": worker.get("run_id"),
-                "last_queue_event_id": worker.get("queue_event_id"),
-            },
-            disposition="canonical_advanced_during_worker",
-        )
-        clear_task_failure_streak(state, task_id=task_id, provider=logical_agent_id)
-        return None
-    return record_execution_dispatch_guard(
-        config,
-        state,
-        task_id=task_id,
-        logical_agent_id=logical_agent_id,
-        event=current_event,
-        outcome="terminal_failure",
-        failure_kind=failure_kind,
-        worker_run_id=str(worker.get("run_id") or "") or None,
-        queue_event_id=str(worker.get("queue_event_id") or "") or None,
-        origin_reason=str(snapshot.get("reason") or current_event.get("reason") or ""),
-        terminal=True,
-        now=now,
-    )
 
 
 def reduce_execution_dispatch_terminal_failure(
@@ -11149,40 +12052,65 @@ def reduce_execution_dispatch_terminal_failure(
         str((worker.get("request_snapshot", {}) or {}).get("reason") or "")
     ):
         return {"applicable": False, "guard": None, "failure_count": failure_count or 0}
-    guard = record_execution_dispatch_failure_guard(
-        config,
-        state,
-        worker,
-        task_map,
-        failure_kind=failure_kind,
-        queue_events_by_id=queue_events_by_id,
-        now=now,
-    )
-    if guard is None:
-        # The exact dispatched signature is no longer canonical. Its terminal
-        # audit is retained by record_execution_dispatch_failure_guard, but it
-        # must not accumulate a streak or reorder the new signature.
-        clear_task_failure_streak(
-            state,
-            task_id=task_id,
-            provider=worker_logical_dispatch_agent_id(config, worker),
-        )
+    try:
+        with canonical_task_state_lock(config):
+            admission = _execution_dispatch_admission_from_status(
+                config,
+                state,
+                worker,
+                load_status(config),
+                queue_events_by_id=queue_events_by_id,
+                audit_failure_kind=failure_kind,
+            )
+            if not admission.get("admitted"):
+                return {
+                    "applicable": True,
+                    "resolved_by_canonical_progress": bool(admission.get("resolved", True)),
+                    "guard": None,
+                    "failure_count": 0,
+                    "reassigned_to": None,
+                    "admission": admission,
+                }
+            current_event = admission["current_event"]
+            guard = record_execution_dispatch_guard(
+                config,
+                state,
+                task_id=task_id,
+                logical_agent_id=str(admission.get("logical_agent_id") or ""),
+                event=current_event,
+                outcome="terminal_failure",
+                failure_kind=failure_kind,
+                worker_run_id=str(worker.get("run_id") or "") or None,
+                queue_event_id=str(worker.get("queue_event_id") or "") or None,
+                origin_reason=_worker_original_dispatch_reason(worker, queue_events_by_id),
+                terminal=True,
+                now=now,
+            )
+            # Never trust a count computed before this admission. Streak and
+            # guard mutation happen while canonical truth is locked.
+            failure_count = record_task_failure_streak(
+                state,
+                worker,
+                reason,
+                failure_kind=failure_kind,
+            )
+    except (KeyError, OSError, json.JSONDecodeError) as exc:
+        worker.pop("execution_admission", None)
         return {
             "applicable": True,
-            "resolved_by_canonical_progress": True,
+            "resolved_by_canonical_progress": False,
+            "admission_failed": True,
+            "admission_mismatch": f"canonical_read_failed:{type(exc).__name__}",
             "guard": None,
             "failure_count": 0,
             "reassigned_to": None,
         }
-    if failure_count is None:
-        failure_count = record_task_failure_streak(
-            state,
-            worker,
-            reason,
-            failure_kind=failure_kind,
-        )
     reassigned_to = None
-    threshold = max(1, int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)))
+    threshold = _safe_int(
+        provider_guardrail_settings(config).get("generic_exit_reassign_after", 2),
+        2,
+        minimum=1,
+    )
     if allow_reassignment and failure_count >= threshold:
         reassigned_to = maybe_reassign_task_after_worker_failure(
             config,
@@ -11193,15 +12121,17 @@ def reduce_execution_dispatch_terminal_failure(
             force=is_terminal_quota_failure_kind(failure_kind),
             failure_count=failure_count,
         )
-    worker["execution_outcome"] = guard.get("last_outcome")
-    worker["next_retry_at"] = guard.get("retry_not_before")
-    worker["triage_required"] = guard.get("triage_required", False)
+    if guard:
+        worker["execution_outcome"] = guard.get("last_outcome")
+        worker["next_retry_at"] = guard.get("retry_not_before")
+        worker["triage_required"] = guard.get("triage_required", False)
     return {
         "applicable": True,
         "resolved_by_canonical_progress": False,
         "guard": guard,
         "failure_count": failure_count,
         "reassigned_to": reassigned_to,
+        "admission": admission,
     }
 
 
@@ -11389,6 +12319,27 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
         return f"Skipped stale queued wake event for {task_id}: task state changed after the wake-up was queued."
 
     return None
+
+
+def fresh_queued_dispatch_event_admission(config: dict[str, Any], event: dict[str, Any]) -> tuple[bool, str | None]:
+    """Fail closed if a queued execution event is not exact canonical truth."""
+
+    if not is_execution_dispatch_reason(str(event.get("reason") or "")):
+        return True, None
+    expected = str(event.get("event_key") or event.get("key") or "").strip()
+    if not expected:
+        return False, "expected_event_key_missing"
+    try:
+        with canonical_task_state_lock(config):
+            task_map = task_index_from_status(config, load_status(config))
+            current = current_dispatch_event_key(config, event, task_map)
+            if current is None:
+                return False, "lane_resolved_or_reassigned"
+            if current != expected:
+                return False, "dispatch_signature_changed"
+            return True, None
+    except (KeyError, OSError, json.JSONDecodeError) as exc:
+        return False, f"canonical_read_failed:{type(exc).__name__}"
 
 
 def ready_dispatch_signature(task: dict[str, Any], reason: str, task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:
@@ -11774,6 +12725,7 @@ def dispatch_ready_tasks(
                 )
             )
             new_reviewer = str(task_owner or task_reviewer or "")
+            expected_task_signature = canonical_task_mutation_signature(config, task, task_map)
             if not persist_task_reassignment(
                 config,
                 task_id=task_id,
@@ -11782,6 +12734,7 @@ def dispatch_ready_tasks(
                 message=helper_message,
                 handoff_to=target_agent,
                 handoff_from=str(task_owner or ""),
+                expected_task_signature=expected_task_signature,
             ):
                 continue
 

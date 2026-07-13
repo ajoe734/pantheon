@@ -206,6 +206,30 @@ class LoadRuntimeStateTests(unittest.TestCase):
             guardrails["task_failure_streak_aliases"],
         )
 
+    def test_migrate_state_corrupt_failure_count_and_timestamps_fail_closed(self) -> None:
+        raw = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "TASK-CORRUPT:codex": {
+                        "task_id": "TASK-CORRUPT",
+                        "provider": "codex",
+                        "count": "not-an-integer",
+                        "last_failure_kind": "fatal",
+                        "last_reason": "fatal runner failure",
+                        "first_failure_at": "not-a-timestamp",
+                        "last_failure_at": {"unexpected": "mapping"},
+                    }
+                }
+            }
+        }
+
+        migrated = runtime_state.migrate_state(raw, {"agents": {"codex": {"provider": "codex"}}})
+        record = next(iter(migrated["provider_guardrails"]["task_failure_streaks"].values()))
+
+        self.assertEqual(record["count"], 0)
+        self.assertIsNone(record["first_failure_at"])
+        self.assertIsNone(record["last_failure_at"])
+
     def test_load_runtime_state_preserves_worker_worktree_cleanup_summary(self) -> None:
         last_run = {
             "at": "2026-06-20T06:59:40Z",

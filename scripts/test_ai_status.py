@@ -5,6 +5,7 @@ import json
 import io
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -13,6 +14,126 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
+
+
+class CanonicalTaskStateLockTests(unittest.TestCase):
+    def test_mutating_command_locks_before_load_through_sync(self) -> None:
+        events: list[str] = []
+        lock = mock.MagicMock()
+        lock.__enter__.side_effect = lambda: events.append("lock_enter")
+        lock.__exit__.side_effect = lambda *_args: events.append("lock_exit")
+
+        with (
+            mock.patch.object(ai_status, "canonical_task_state_lock", return_value=lock),
+            mock.patch.object(ai_status, "load_state", side_effect=lambda: events.append("load") or {}),
+            mock.patch.object(ai_status, "sync_all", side_effect=lambda _state: events.append("sync")),
+        ):
+            self.assertEqual(0, ai_status.main(["ai_status.py", "sync"]))
+
+        self.assertEqual(["lock_enter", "load", "sync", "lock_exit"], events)
+
+    def test_mutating_command_holds_lock_through_rollback(self) -> None:
+        events: list[str] = []
+        lock = mock.MagicMock()
+        lock.__enter__.side_effect = lambda: events.append("lock_enter")
+        lock.__exit__.side_effect = lambda *_args: events.append("lock_exit")
+
+        def fail_sync(_state: dict[str, object]) -> None:
+            events.append("sync")
+            raise RuntimeError("sync failed")
+
+        with (
+            mock.patch.object(ai_status, "canonical_task_state_lock", return_value=lock),
+            mock.patch.object(ai_status, "load_state", side_effect=lambda: events.append("load") or {"value": "before"}),
+            mock.patch.object(ai_status, "sync_all", side_effect=fail_sync),
+            mock.patch.object(ai_status, "save_state", side_effect=lambda _state: events.append("rollback")),
+            self.assertRaisesRegex(RuntimeError, "sync failed"),
+        ):
+            ai_status.main(["ai_status.py", "sync"])
+
+        self.assertEqual(
+            ["lock_enter", "load", "sync", "rollback", "lock_exit"],
+            events,
+        )
+
+    def test_prompt_and_show_remain_unlocked(self) -> None:
+        for command, args in (("prompt", []), ("show", ["TASK-1"])):
+            with self.subTest(command=command):
+                with (
+                    mock.patch.object(ai_status, "canonical_task_state_lock") as task_lock,
+                    mock.patch.object(ai_status, "load_state", return_value={}) as load_state,
+                    mock.patch.object(ai_status, f"command_{command}") as handler,
+                    mock.patch.object(ai_status, "sync_all") as sync_all,
+                ):
+                    self.assertEqual(0, ai_status.main(["ai_status.py", command, *args]))
+
+                task_lock.assert_not_called()
+                load_state.assert_called_once_with()
+                handler.assert_called_once_with({}, args)
+                sync_all.assert_not_called()
+
+    def test_concurrent_mutations_reload_after_lock_without_lost_update(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-task-lock-") as temp_dir:
+            status_root = Path(temp_dir)
+            status_file = status_root / "ai-status.json"
+            status_file.write_text('{"updates": []}\n', encoding="utf-8")
+            first_sync_started = threading.Event()
+            second_loaded = threading.Event()
+            second_saved = threading.Event()
+            errors: list[BaseException] = []
+
+            def load_test_state() -> dict[str, object]:
+                state = json.loads(status_file.read_text(encoding="utf-8"))
+                if threading.current_thread().name == "second-mutation":
+                    second_loaded.set()
+                return state
+
+            def mutate_test_state(state: dict[str, object], args: list[str]) -> None:
+                updates = state.setdefault("updates", [])
+                assert isinstance(updates, list)
+                updates.append(args[0])
+
+            def sync_test_state(state: dict[str, object]) -> None:
+                updates = state["updates"]
+                assert isinstance(updates, list)
+                if updates[-1] == "first":
+                    first_sync_started.set()
+                    loaded_concurrently = second_loaded.wait(timeout=0.2)
+                    if loaded_concurrently:
+                        self.assertTrue(second_saved.wait(timeout=1))
+                    ai_status.save_state(state)
+                    return
+                ai_status.save_state(state)
+                second_saved.set()
+
+            def run_mutation(label: str) -> None:
+                try:
+                    ai_status.main(["ai_status.py", "sync", label])
+                except BaseException as exc:  # pragma: no cover - surfaced below
+                    errors.append(exc)
+
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.object(ai_status, "STATUS_FILE", status_file),
+                mock.patch.object(ai_status, "load_state", side_effect=load_test_state),
+                mock.patch.object(ai_status, "command_sync", side_effect=mutate_test_state),
+                mock.patch.object(ai_status, "sync_all", side_effect=sync_test_state),
+            ):
+                first = threading.Thread(target=run_mutation, args=("first",), name="first-mutation")
+                second = threading.Thread(target=run_mutation, args=("second",), name="second-mutation")
+                first.start()
+                self.assertTrue(first_sync_started.wait(timeout=1))
+                second.start()
+                first.join(timeout=2)
+                second.join(timeout=2)
+
+            self.assertFalse(first.is_alive())
+            self.assertFalse(second.is_alive())
+            self.assertEqual([], errors)
+            self.assertEqual(
+                ["first", "second"],
+                json.loads(status_file.read_text(encoding="utf-8"))["updates"],
+            )
 
 
 class StatusRootRoutingTests(unittest.TestCase):
