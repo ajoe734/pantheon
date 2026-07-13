@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.trade_journey.alert_transport import DataQualityAlertTransport, SLO_ALERT_TRANSPORT
+from services.trade_journey.action_ledger import ActionLedger, MemoryActionLedger, make_action_ledger
 from services.trade_journey.api_latency_recorder import ApiLatencyRecorder
 from services.trade_journey.dashboard import load_dashboard, render_dashboard_snapshot
 from services.trade_journey.materializer import (
@@ -96,29 +97,8 @@ class TradeJourneyActionEnvelope(BaseModel):
     meta: Dict[str, Any]
 
 
-class JourneyActionLedger:
-    """Process-local admission ledger; production may inject a durable command bus.
-
-    The ledger never executes capital actions itself.  It only makes retries
-    deterministic and rejects reuse of a key for a different request.
-    """
-
-    def __init__(self) -> None:
-        self._records: Dict[str, Tuple[str, Dict[str, Any]]] = {}
-
-    def lookup(self, key: str, request_hash: str) -> Tuple[str, Optional[Dict[str, Any]]]:
-        existing = self._records.get(key)
-        if existing is None:
-            return "new", None
-        if existing[0] != request_hash:
-            return "conflict", None
-        return "replay", dict(existing[1])
-
-    def record(self, key: str, request_hash: str, receipt: Dict[str, Any]) -> None:
-        self._records[key] = (request_hash, dict(receipt))
-
-
-ACTION_LEDGER = JourneyActionLedger()
+JourneyActionLedger = MemoryActionLedger  # compatibility for focused tests
+ACTION_LEDGER = make_action_ledger()
 
 
 def _unconfigured_action_dispatcher(command: Dict[str, Any]) -> Dict[str, Any]:
@@ -735,7 +715,7 @@ def create_trade_journeys_router(
     require_operator_role: Optional[Callable[[Any], None]] = None,
     get_event_store: Callable[[], TradeJourneyEventStore] = lambda: EVENT_STORE,
     dispatch_action: Callable[[Dict[str, Any]], Dict[str, Any]] = _unconfigured_action_dispatcher,
-    action_ledger: JourneyActionLedger = ACTION_LEDGER,
+    action_ledger: ActionLedger = ACTION_LEDGER,
     utc_now: Callable[[], str] = _default_utc_now,
     get_slo_alert_transport: Callable[[], DataQualityAlertTransport] = lambda: SLO_ALERT_TRANSPORT,
     latency_recorder: ApiLatencyRecorder = API_LATENCY_RECORDER,
@@ -782,9 +762,11 @@ def create_trade_journeys_router(
 
         body = request.model_dump()
         request_hash = hashlib.sha256(json.dumps({"journey_id": journey_id, "tenant_id": tenant_id, "environment": environment, **body}, sort_keys=True).encode()).hexdigest()
-        disposition, cached = action_ledger.lookup(idempotency_key.strip(), request_hash)
+        disposition, cached = action_ledger.reserve(idempotency_key.strip(), request_hash)
         if disposition == "conflict":
             return _err(409, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for a different command")
+        if disposition == "pending":
+            return _err(409, "ACTION_IN_PROGRESS", "An action with this idempotency key is already in progress")
         if cached is not None:
             cached["idempotent_replay"] = True
             return {"data": cached, "meta": {"snapshot_at": utc_now(), "refetch_required": True}}
@@ -817,7 +799,7 @@ def create_trade_journeys_router(
             receipt["code"] = "READBACK_REQUIRED"
         if result.get("code"):
             receipt["code"] = result["code"]
-        action_ledger.record(idempotency_key.strip(), request_hash, receipt)
+        action_ledger.complete(idempotency_key.strip(), request_hash, receipt)
         response_status = 200 if receipt["status"] == "succeeded" else 502
         return JSONResponse(status_code=response_status, content={"data": receipt, "meta": {"snapshot_at": utc_now(), "refetch_required": True}})
 

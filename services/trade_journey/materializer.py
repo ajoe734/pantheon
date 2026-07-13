@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import os
 from typing import Any, Iterable, Mapping
 
 
@@ -20,6 +21,7 @@ IDENTIFIER_FIELDS = (
     "risk_decision_id", "client_order_id", "order_id", "broker_order_id",
     "broker_trade_id", "ledger_entry_id", "reconciliation_id",
 )
+CLOCK_DRIFT_THRESHOLD_SECONDS = float(os.getenv("PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS", "5"))
 
 
 class MaterializationError(ValueError):
@@ -153,6 +155,14 @@ class JourneyMaterializer:
             explicit_cancel |= event.get("event_type") in {"cancel", "order_cancelled"}
 
         diagnostics: list[dict[str, Any]] = []
+        drifted = [event for event in events if abs(float(event.get("clock_skew_seconds", 0))) > CLOCK_DRIFT_THRESHOLD_SECONDS]
+        if drifted:
+            diagnostics.append({
+                "code": "clock_drift",
+                "threshold_seconds": CLOCK_DRIFT_THRESHOLD_SECONDS,
+                "max_abs_seconds": max(abs(float(event["clock_skew_seconds"])) for event in drifted),
+                "event_ids": [event["event_id"] for event in drifted],
+            })
         missing = self._missing_stages(stages)
         if missing:
             diagnostics.append({"code": "missing_stages", "stages": missing})
@@ -224,8 +234,11 @@ class JourneyMaterializer:
         return [stage for stage in STAGES[:furthest + 1] if stage not in stages]
 
     @staticmethod
-    def _sort_key(event: Mapping[str, Any]) -> tuple[str, int, str]:
-        return event["occurred_at"], int(event.get("sequence", 0)), event["event_id"]
+    def _sort_key(event: Mapping[str, Any]) -> tuple[str, int, str, str]:
+        # ordering_at falls back to ingest/record time when producer clock skew
+        # exceeds policy. Sequence and event id preserve deterministic causal
+        # ordering across rebuilds and equal timestamps.
+        return event.get("ordering_at", event["occurred_at"]), int(event.get("sequence", 0)), event["occurred_at"], event["event_id"]
 
     @classmethod
     def _normalize(cls, event: Mapping[str, Any]) -> dict[str, Any]:
@@ -241,14 +254,27 @@ class JourneyMaterializer:
         if result.get("stage") not in (None, *STAGES):
             raise MaterializationError(f"unknown stage: {result['stage']}")
         try:
-            parsed = datetime.fromisoformat(result["occurred_at"].replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
+            occurred = datetime.fromisoformat(result["occurred_at"].replace("Z", "+00:00"))
+            if occurred.tzinfo is None:
                 raise ValueError
-            result["occurred_at"] = parsed.astimezone(timezone.utc).isoformat(
+            occurred = occurred.astimezone(timezone.utc)
+            result["occurred_at"] = occurred.isoformat(
                 timespec="microseconds"
             ).replace("+00:00", "Z")
+            raw_recorded = result.get("recorded_at")
+            if raw_recorded:
+                recorded = datetime.fromisoformat(str(raw_recorded).replace("Z", "+00:00"))
+                if recorded.tzinfo is None:
+                    raise ValueError
+                recorded = recorded.astimezone(timezone.utc)
+                result["recorded_at"] = recorded.isoformat(timespec="microseconds").replace("+00:00", "Z")
+                skew = (recorded - occurred).total_seconds()
+                result["clock_skew_seconds"] = skew
+                result["ordering_at"] = result["recorded_at"] if abs(skew) > CLOCK_DRIFT_THRESHOLD_SECONDS else result["occurred_at"]
+            else:
+                result["ordering_at"] = result["occurred_at"]
         except ValueError as exc:
-            raise MaterializationError("occurred_at must be timezone-aware ISO-8601") from exc
+            raise MaterializationError("occurred_at and recorded_at must be timezone-aware ISO-8601") from exc
         return result
 
     @classmethod

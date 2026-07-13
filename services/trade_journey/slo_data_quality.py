@@ -86,6 +86,8 @@ class DataQualityMetrics:
     partial_fill_max_age_seconds: float | None
     reconciliation_mismatch_max_age_seconds: float | None
     late_event_lag_p95_ms: float | None
+    clock_drift_event_count: int
+    clock_drift_max_abs_seconds: float | None
     sse_disconnect_count: int
     stage_latency_ms: Mapping[str, Mapping[str, Any]]
     detail_api_p95_ms: float | None
@@ -210,11 +212,15 @@ def compute_data_quality_metrics(
     partial_fill_ages: list[float] = []
     mismatch_ages: list[float] = []
     late_event_lags_ms: list[float] = []
+    clock_drift_seconds: list[float] = []
     stage_latencies_ms: dict[str, list[float]] = {stage: [] for stage in STAGES}
 
     for projection in projections:
         snapshot = projection.snapshot
         codes = {item.get("code") for item in projection.diagnostics}
+        drift = next((item for item in projection.diagnostics if item.get("code") == "clock_drift"), None)
+        if drift:
+            clock_drift_seconds.append(float(drift["max_abs_seconds"]))
         if "orphan_identifier" in codes:
             orphan += 1
         if "identifier_conflict" in codes:
@@ -284,6 +290,11 @@ def compute_data_quality_metrics(
         partial_fill_max_age_seconds=max(partial_fill_ages) if partial_fill_ages else None,
         reconciliation_mismatch_max_age_seconds=max(mismatch_ages) if mismatch_ages else None,
         late_event_lag_p95_ms=_percentile(late_event_lags_ms, 0.95),
+        clock_drift_event_count=sum(
+            len(item.get("event_ids", [])) for projection in projections
+            for item in projection.diagnostics if item.get("code") == "clock_drift"
+        ),
+        clock_drift_max_abs_seconds=max(clock_drift_seconds) if clock_drift_seconds else None,
         sse_disconnect_count=sse_disconnect_count,
         stage_latency_ms=stage_latency_ms,
         detail_api_p95_ms=_percentile(list(detail_api_latencies_ms), 0.95),
@@ -361,6 +372,18 @@ def evaluate_data_quality(
                 message=f"journey {journey_id} reports more than one terminal state",
                 metric_name="conflicting_terminal_rate", observed_value=True, target_value=False,
                 alert_path=AlertPath(event_type="trade_journey.slo.conflicting_terminal_states"),
+                journey_id=journey_id, tenant_id=projection.tenant_id,
+                environment=projection.environment, evidence_ref=evidence_ref,
+            ))
+
+        if "clock_drift" in codes:
+            drift = next(item for item in projection.diagnostics if item.get("code") == "clock_drift")
+            incidents.append(DataQualityIncident(
+                code="clock_drift", severity="warning",
+                message=f"journey {journey_id} has producer clock drift up to {drift['max_abs_seconds']:.3f}s",
+                metric_name="clock_drift_max_abs_seconds", observed_value=drift["max_abs_seconds"],
+                target_value=drift["threshold_seconds"],
+                alert_path=AlertPath(event_type="trade_journey.slo.clock_drift"),
                 journey_id=journey_id, tenant_id=projection.tenant_id,
                 environment=projection.environment, evidence_ref=evidence_ref,
             ))
@@ -443,6 +466,8 @@ def metrics_to_dict(metrics: DataQualityMetrics) -> dict[str, Any]:
         "partial_fill_max_age_seconds": metrics.partial_fill_max_age_seconds,
         "reconciliation_mismatch_max_age_seconds": metrics.reconciliation_mismatch_max_age_seconds,
         "late_event_lag_p95_ms": metrics.late_event_lag_p95_ms,
+        "clock_drift_event_count": metrics.clock_drift_event_count,
+        "clock_drift_max_abs_seconds": metrics.clock_drift_max_abs_seconds,
         "sse_disconnect_count": metrics.sse_disconnect_count,
         "stage_latency_ms": dict(metrics.stage_latency_ms),
         "detail_api_p95_ms": metrics.detail_api_p95_ms,
