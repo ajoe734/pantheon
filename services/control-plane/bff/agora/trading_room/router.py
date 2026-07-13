@@ -400,6 +400,7 @@ _WIDGET_ALLOWED_FIELDS = frozenset({
     "purpose",
     "whyIncluded",
     "dataSource",
+    "dataAvailability",
     "query",
     "chartSpec",
     "interactions",
@@ -857,8 +858,50 @@ def _normalize_view(view: Dict[str, Any]) -> Dict[str, Any]:
     widgets = normalized.get("widgets") or []
     normalized["widgetCount"] = len(widgets)
     normalized.setdefault("warnings", [])
-    normalized.setdefault("dataAvailability", "partial")
     return normalized
+
+
+def _workspace_data_freshness(
+    *,
+    store: TradingRoomStore,
+    strategy_id: str,
+    evidence_refs: List[str],
+    reported: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Combine caller source-health evidence with locally queryable surfaces."""
+    resolved = copy.deepcopy(reported)
+    events = store.list_decision_events(page_size=10_000).get("items") or []
+    strategy_events = [
+        event
+        for event in events
+        if str((event.get("subject") or {}).get("strategy_id") or event.get("strategy_id") or "")
+        == strategy_id
+    ]
+    resolved.setdefault(
+        "agora.trading.events",
+        {
+            "wired": True,
+            "rowCount": len(strategy_events),
+            "reason": "scoped TradingRoomStore decision-event query",
+        },
+    )
+    resolved.setdefault(
+        "agora.research.evidence_refs",
+        {
+            "wired": True,
+            "rowCount": len(evidence_refs),
+            "reason": "workspace generation evidence refs",
+        },
+    )
+    resolved.setdefault(
+        "agora.strategy.summary",
+        {
+            "wired": True,
+            "rowCount": 1,
+            "reason": "ready StrategySpec version used for workspace generation",
+        },
+    )
+    return resolved
 
 
 def _find_widget(workspace: Dict[str, Any], widget_id: str) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
@@ -2028,6 +2071,12 @@ def create_trading_room_router(
             _validation_failed(["tradingRoomReady must be a boolean"], status_code=400)
 
         now = utc_now()
+        resolved_data_freshness = _workspace_data_freshness(
+            store=store,
+            strategy_id=strategy_id,
+            evidence_refs=evidence_refs,
+            reported=data_freshness,
+        )
         generation = _generate_workspace_proposal(
             strategy_id=strategy_id,
             strategy_version=strategy_version,
@@ -2035,7 +2084,7 @@ def create_trading_room_router(
             now=now,
             personalization_hints=personalization_hints,
             evidence_refs=evidence_refs,
-            data_freshness=data_freshness,
+            data_freshness=resolved_data_freshness,
             trading_room_ready=trading_room_ready,
         )
         if generation.status != "completed" or generation.proposal is None:

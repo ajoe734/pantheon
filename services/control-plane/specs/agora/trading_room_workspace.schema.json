@@ -134,6 +134,7 @@
           "minLength": 1,
           "description": "Logical allowlisted data-source ID; arbitrary URLs are forbidden."
         },
+        "dataAvailability": {"enum": ["complete", "partial", "unavailable"]},
         "query": {
           "type": "object",
           "required": ["filters"],
