@@ -226,13 +226,14 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
 
 class ActiveWorkerCountDedupeTests(unittest.TestCase):
-    """active_worker_count() reads runtime_state["workers"], which supervisor.py
-    keys by worker run_id (one entry per logical run), not a live /proc PID
-    scan. It is therefore already immune to the worker_runner.py wrapper /
-    child-process triple-counting bug that affected scan_live_worker_pids_by_agent()
-    in supervisor.py; this pins that behavior so a future refactor can't
-    silently reintroduce PID-based counting here.
-    """
+    """Watchdog restart pressure must use live wrapper identities, not stale state."""
+
+    def write_fake_process(self, proc_root: Path, pid: int, parts: list[str], starttime: int) -> None:
+        proc_dir = proc_root / str(pid)
+        proc_dir.mkdir(parents=True)
+        (proc_dir / "cmdline").write_bytes(b"\x00".join(part.encode("utf-8") for part in parts) + b"\x00")
+        suffix = ["S", *(["0"] * 18), str(starttime), "0"]
+        (proc_dir / "stat").write_text(f"{pid} (worker runner) {' '.join(suffix)}\n", encoding="utf-8")
 
     def test_counts_one_per_worker_run_regardless_of_os_process_count(self) -> None:
         runtime_state = {
@@ -244,14 +245,86 @@ class ActiveWorkerCountDedupeTests(unittest.TestCase):
         }
         self.assertEqual(supervisor_watchdog.active_worker_count(runtime_state), 2)
 
-    def test_resource_pressure_reason_uses_active_worker_count_not_pid_scan(self) -> None:
-        settings = {
+    def test_live_scan_counts_only_unique_worker_runner_pid_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proc_root = Path(tmp)
+            self.write_fake_process(
+                proc_root,
+                101,
+                ["/usr/bin/python3", "/repo/.orchestrator/worker_runner.py", "--run-id", "run-1"],
+                9001,
+            )
+            self.write_fake_process(
+                proc_root,
+                102,
+                ["node", "/bin/codex", "prompt mentions /repo/.orchestrator/worker_runner.py"],
+                9002,
+            )
+            self.write_fake_process(
+                proc_root,
+                103,
+                ["/usr/bin/python3", "-u", "/repo/.orchestrator/worker_runner.py", "--run-id", "run-2"],
+                9003,
+            )
+
+            identities, error = supervisor_watchdog.scan_live_worker_runner_identities(proc_root)
+
+        self.assertIsNone(error)
+        self.assertEqual(identities, {(101, 9001), (103, 9003)})
+
+    def test_resource_snapshot_ignores_stale_runtime_rows_when_live_scan_succeeds(self) -> None:
+        runtime_state = {
+            "workers": {
+                f"stale-{index}": {"status": "running"}
+                for index in range(16)
+            }
+        }
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(
+                supervisor_watchdog,
+                "scan_live_worker_runner_identities",
+                return_value=({(101, 9001), (103, 9003)}, None),
+            ),
+        ):
+            config = {"paths": {"state_file": str(Path(tmp) / "state.json")}}
+            snapshot = supervisor_watchdog.resource_snapshot(config, runtime_state, {})
+
+        self.assertEqual(snapshot["active_worker_count"], 2)
+        self.assertEqual(snapshot["active_worker_live_count"], 2)
+        self.assertEqual(snapshot["active_worker_runtime_state_count"], 16)
+        self.assertEqual(snapshot["active_worker_count_source"], "live_worker_runner_pid_identity")
+        self.assertIsNone(snapshot["active_worker_scan_error"])
+
+    def test_failed_live_scan_fails_closed_with_recorded_count(self) -> None:
+        runtime_state = {"workers": {"stale": {"status": "running"}}}
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(
+                supervisor_watchdog,
+                "scan_live_worker_runner_identities",
+                return_value=(set(), "proc_scan_failed:PermissionError"),
+            ),
+        ):
+            config = {"paths": {"state_file": str(Path(tmp) / "state.json")}}
+            snapshot = supervisor_watchdog.resource_snapshot(config, runtime_state, {})
+
+        self.assertEqual(snapshot["active_worker_count"], 1)
+        self.assertEqual(snapshot["active_worker_count_source"], "fail_safe_max_live_and_runtime_state")
+        reasons = supervisor_watchdog.resource_pressure_reasons(snapshot, {**self._pressure_settings(), "max_active_workers": 12})
+        self.assertIn("active_worker_scan_failed", reasons)
+
+    @staticmethod
+    def _pressure_settings() -> dict:
+        return {
             "min_disk_free_gb": 2.0,
             "max_disk_used_percent": 95.0,
             "min_memory_available_mb": 512,
             "max_load_1m": 24.0,
-            "max_active_workers": 2,
         }
+
+    def test_resource_pressure_reason_uses_effective_active_worker_count(self) -> None:
+        settings = {**self._pressure_settings(), "max_active_workers": 2}
         snapshot = {
             "disk_free_gb": 10.0,
             "disk_used_percent": 50.0,
