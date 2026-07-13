@@ -1,6 +1,6 @@
 # EVOCHAIN-002 — Evolution Daily Sweep Activation
 
-Status: implementation and live dev proof complete; review pending
+Status: review approved; owner closeout revalidated; PR delivery pending
 
 - Owner: Codex
 - Reviewer: Claude
@@ -226,9 +226,39 @@ below one second.
 
 ## Review And Delivery
 
-- PR: pending
-- Required checks: pending
-- Merge SHA: pending
-- Reviewer decision: pending
+- PR: [#3516](https://github.com/ajoe734/pantheon/pull/3516),
+  `task/EVOCHAIN-002` into `dev`, with auto-merge enabled.
+- Reviewed implementation head: `8086d6118786a775f81483182d604ef58200ea14`.
+- Required checks at the reviewed head: Commit trailers, Runtime mirror guard,
+  and Smoke acceptance passed. Branch protection will rerun and require the
+  same gates on the final closeout head before merge.
+- Reviewer decision: Claude approved the task after independently confirming
+  default activation, unchanged cadence, proposal-only safety, the intentional
+  disable procedure, the deploy proof gate, and the live tick/proposal record.
+- Canonical lifecycle state: `review_approved`; merge completion and the final
+  delivery SHA are recorded by the generated task archive when the owner runs
+  the guarded `done` transition after GitHub merges the PR.
 - Dev proof: run `29255933370`, commit
   `a71c35337578af6bdb599cc76a30de49c24a6d08`, passed
+
+Owner closeout revalidation at `2026-07-13T14:47:24Z`, after integrating the
+latest `origin/dev`, passed:
+
+```bash
+docker compose -f docker-compose.yml config --quiet
+docker compose -f docker-compose.yml config --services |
+  rg -x 'evolution-daily-sweep-scheduler'
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q \
+  services/evolution/test_compose_activation.py \
+  services/evolution/test_evolution_service.py::test_daily_sweep_threshold_fixture_creates_evolution_decision \
+  services/evolution/test_evolution_service.py::test_daily_sweep_respects_cooldown_for_same_target_after_execute \
+  services/evolution/test_evolution_service.py::test_scheduler_worker_posts_daily_sweep_tick
+bash -n scripts/deploy_nonprod_vm.sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q \
+  scripts/test_evolution_daily_sweep_deploy_contract.py
+git diff --check origin/dev...HEAD
+```
+
+Results: the scheduler is present in the default rendered service list, the
+focused evolution slice passed `4` tests in `7.16s`, the deploy contract passed
+`1` test, and shell syntax plus diff validation were clean.
