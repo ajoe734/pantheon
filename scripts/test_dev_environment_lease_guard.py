@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -72,7 +73,10 @@ if command == "heartbeat-loop":
         + "\n",
         encoding="utf-8",
     )
-    signal.signal(signal.SIGTERM, lambda *_args: sys.exit(0))
+    if os.environ.get("FAKE_HEARTBEAT_IGNORE_TERM") == "1":
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    else:
+        signal.signal(signal.SIGTERM, lambda *_args: sys.exit(0))
     signal.signal(signal.SIGINT, lambda *_args: sys.exit(0))
     while True:
         time.sleep(1)
@@ -97,7 +101,8 @@ if command == "verify-heartbeat-identity":
     raise SystemExit(0)
 
 if command == "verify":
-    assert os.environ.get(TOKEN_ENV) == os.environ["FAKE_EXPECTED_TOKEN"]
+    token = os.environ.get(TOKEN_ENV, "").encode("utf-8")
+    assert hashlib.sha256(token).hexdigest() == os.environ["FAKE_EXPECTED_TOKEN_SHA256"]
     count_file = Path(os.environ["FAKE_VERIFY_COUNT_FILE"])
     count = int(count_file.read_text(encoding="utf-8") or "0") + 1
     count_file.write_text(f"{count}\n", encoding="utf-8")
@@ -186,9 +191,13 @@ def prepare_fixture(root: Path) -> dict[str, Path]:
     return paths
 
 
-def start_fake_heartbeat(paths: dict[str, Path]) -> subprocess.Popen[str]:
+def start_fake_heartbeat(
+    paths: dict[str, Path], *, ignore_term: bool = False
+) -> subprocess.Popen[str]:
     environment = dict(os.environ)
     environment.pop(TOKEN_ENV, None)
+    if ignore_term:
+        environment["FAKE_HEARTBEAT_IGNORE_TERM"] = "1"
     heartbeat = subprocess.Popen(
         [
             sys.executable,
@@ -224,7 +233,9 @@ def guard_environment(paths: dict[str, Path], *, fail_at: int = 0) -> dict[str, 
         "PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE": str(paths["failure"]),
         "PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS": "1",
         "PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS": "120",
-        "FAKE_EXPECTED_TOKEN": TEST_TOKEN,
+        "FAKE_EXPECTED_TOKEN_SHA256": hashlib.sha256(
+            TEST_TOKEN.encode("utf-8")
+        ).hexdigest(),
         "FAKE_VERIFY_COUNT_FILE": str(paths["verify_count"]),
         "FAKE_VERIFY_FAIL_AT": str(fail_at),
     }
@@ -261,6 +272,12 @@ def start_nested_guard(
 
 def read_target_pids(path: Path) -> list[int]:
     return [int(value) for value in path.read_text(encoding="utf-8").split()]
+
+
+def assert_secret_absent_from_process(pid: int, secret: str) -> None:
+    encoded = secret.encode("utf-8")
+    assert encoded not in Path(f"/proc/{pid}/cmdline").read_bytes()
+    assert encoded not in Path(f"/proc/{pid}/environ").read_bytes()
 
 
 def stop_process(process: subprocess.Popen[str]) -> None:
@@ -304,6 +321,7 @@ def test_real_cli_heartbeat_identity_binds_pid_start_cmdline_cli_and_state() -> 
             heartbeat.stdin.close()
             heartbeat.stdin = None
             wait_for_file(identity_file)
+            assert_secret_absent_from_process(heartbeat.pid, "identity-test-token")
             verified = subprocess.run(
                 [
                     sys.executable,
@@ -376,6 +394,10 @@ def test_periodic_remote_verify_outage_kills_entire_isolated_process_group() -> 
         )
         try:
             target_pids = read_target_pids(paths["target_pids"])
+            assert_secret_absent_from_process(guard.pid, TEST_TOKEN)
+            assert_secret_absent_from_process(heartbeat.pid, TEST_TOKEN)
+            for target_pid in target_pids:
+                assert_secret_absent_from_process(target_pid, TEST_TOKEN)
             parent_pid = target_pids[0]
             assert os.getpgid(parent_pid) == parent_pid
             assert os.getsid(parent_pid) == parent_pid
@@ -390,6 +412,99 @@ def test_periodic_remote_verify_outage_kills_entire_isolated_process_group() -> 
         assert "remote lease verification failed" in stderr
         assert int(paths["verify_count"].read_text(encoding="utf-8")) >= 2
         assert not malicious_log.exists()
+        assert_processes_terminated(target_pids)
+
+
+def test_nonzero_command_stops_heartbeat_and_preserves_exit_evidence() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = prepare_fixture(Path(tmp))
+        heartbeat = start_fake_heartbeat(paths)
+        completed = subprocess.run(
+            ["bash", str(paths["guard"]), "bash", "-c", "exit 42"],
+            cwd=REPO_ROOT,
+            env=guard_environment(paths),
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        try:
+            heartbeat.wait(timeout=3)
+        finally:
+            stop_process(heartbeat)
+
+        assert completed.returncode == 75, completed.stderr
+        failure = json.loads(paths["failure"].read_text(encoding="utf-8"))
+        assert failure["status"] == "guarded_command_failed"
+        assert failure["exitStatus"] == 42, (completed.stdout, completed.stderr, failure)
+        assert heartbeat.poll() is not None
+
+
+def test_initial_and_final_remote_verify_failures_stop_heartbeat() -> None:
+    for fail_at, expected_count in ((1, 1), (2, 2)):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = prepare_fixture(Path(tmp))
+            heartbeat = start_fake_heartbeat(paths)
+            completed = subprocess.run(
+                ["bash", str(paths["guard"]), "true"],
+                cwd=REPO_ROOT,
+                env=guard_environment(paths, fail_at=fail_at),
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            try:
+                heartbeat.wait(timeout=3)
+            finally:
+                stop_process(heartbeat)
+
+            assert completed.returncode == 75, completed.stderr
+            assert (
+                int(paths["verify_count"].read_text(encoding="utf-8"))
+                == expected_count
+            )
+            assert heartbeat.poll() is not None
+
+
+def test_term_resistant_heartbeat_is_killed_after_identity_safe_wait() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = prepare_fixture(Path(tmp))
+        heartbeat = start_fake_heartbeat(paths, ignore_term=True)
+        completed = subprocess.run(
+            ["bash", str(paths["guard"]), "bash", "-c", "exit 42"],
+            cwd=REPO_ROOT,
+            env=guard_environment(paths),
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        try:
+            heartbeat.wait(timeout=3)
+        finally:
+            stop_process(heartbeat)
+
+        assert completed.returncode == 75, completed.stderr
+        assert heartbeat.returncode == -signal.SIGKILL
+
+
+def test_cancellation_stops_command_group_and_heartbeat() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = prepare_fixture(Path(tmp))
+        heartbeat = start_fake_heartbeat(paths)
+        guard = start_nested_guard(paths)
+        target_pids = read_target_pids(paths["target_pids"])
+        guard.terminate()
+        try:
+            _stdout, stderr = guard.communicate(timeout=10)
+            heartbeat.wait(timeout=3)
+        finally:
+            stop_process(guard)
+            stop_process(heartbeat)
+
+        assert guard.returncode == 143, stderr
+        assert heartbeat.poll() is not None
         assert_processes_terminated(target_pids)
 
 

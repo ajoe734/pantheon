@@ -107,6 +107,17 @@ process_group_has_live_members() {
   '
 }
 
+command_process_is_running() {
+  local process_state
+  [[ -n "${COMMAND_PID}" ]] || return 1
+  kill -0 "${COMMAND_PID}" 2>/dev/null || return 1
+  process_state="$(ps -o stat= -p "${COMMAND_PID}" 2>/dev/null | tr -d '[:space:]')"
+  case "${process_state}" in
+    ""|Z*|X*|x*) return 1 ;;
+  esac
+  return 0
+}
+
 terminate_process_group() {
   local pgid="$1"
   local attempt
@@ -134,6 +145,62 @@ resume_process_group() {
   kill -CONT -- "-${COMMAND_PGID}" 2>/dev/null
 }
 
+heartbeat_identity_matches() {
+  kill -0 "${heartbeat_pid}" 2>/dev/null || return 1
+  python3 "${LEASE_CLI}" verify-heartbeat-identity \
+    --identity-file "${HEARTBEAT_IDENTITY_FILE}" \
+    --pid "${heartbeat_pid}" \
+    --expected-cli "${LEASE_CLI}" \
+    --state-file "${STATE_FILE}" \
+    >/dev/null
+}
+
+heartbeat_process_is_stopped() {
+  local process_state
+  process_state="$(ps -o stat= -p "${heartbeat_pid}" 2>/dev/null | tr -d '[:space:]')"
+  case "${process_state}" in
+    ""|Z*|X*|x*) return 0 ;;
+  esac
+  return 1
+}
+
+stop_heartbeat_for_quarantine() {
+  local attempt
+
+  heartbeat_process_is_stopped && return 0
+  if ! heartbeat_identity_matches; then
+    echo "[dev-environment-lease-guard] ERROR: refusing to signal an unverified heartbeat PID" >&2
+    return 1
+  fi
+
+  kill -TERM "${heartbeat_pid}" 2>/dev/null || {
+    heartbeat_process_is_stopped && return 0
+    return 1
+  }
+  # A stopped heartbeat cannot run its TERM handler until it is continued.
+  kill -CONT "${heartbeat_pid}" 2>/dev/null || true
+  for attempt in $(seq 1 20); do
+    heartbeat_process_is_stopped && return 0
+    sleep 0.25
+  done
+
+  # Re-check PID/start-ticks/cmdline immediately before escalation. Refuse to
+  # signal when the recorded heartbeat identity has changed.
+  if ! heartbeat_identity_matches; then
+    heartbeat_process_is_stopped && return 0
+    echo "[dev-environment-lease-guard] ERROR: heartbeat identity changed before KILL escalation" >&2
+    return 1
+  fi
+  kill -KILL "${heartbeat_pid}" 2>/dev/null || true
+  kill -CONT "${heartbeat_pid}" 2>/dev/null || true
+  for attempt in $(seq 1 20); do
+    heartbeat_process_is_stopped && return 0
+    sleep 0.25
+  done
+  echo "[dev-environment-lease-guard] ERROR: heartbeat did not stop for lease quarantine" >&2
+  return 1
+}
+
 cleanup_command() {
   local original_status=$?
   trap - EXIT INT TERM
@@ -147,11 +214,14 @@ cleanup_command() {
     if [[ ! -e "${FAILURE_FILE}" ]]; then
       record_guard_failure "${original_status}" || true
     fi
-    # A cancelled/terminated step may still reach the workflow's always()
-    # cleanup. Stop renewal so cleanup cannot mistake cancellation for a
-    # healthy lease and release it early.
-    kill -TERM "${heartbeat_pid}" 2>/dev/null || true
-    kill -CONT "${heartbeat_pid}" 2>/dev/null || true
+    # A cancelled/terminated/failed step may still reach the workflow's
+    # always() cleanup. Stop renewal synchronously so cleanup cannot mistake
+    # cancellation for a healthy lease and release it early.
+    if ! stop_heartbeat_for_quarantine; then
+      original_status=75
+    elif [[ "${original_status}" -ne 130 && "${original_status}" -ne 143 ]]; then
+      original_status=75
+    fi
   fi
   exit "${original_status}"
 }
@@ -171,12 +241,7 @@ heartbeat_is_healthy() {
   case "${process_state}" in
     ""|T*|t*|Z*|X*|x*|D*) return 1 ;;
   esac
-  python3 "${LEASE_CLI}" verify-heartbeat-identity \
-    --identity-file "${HEARTBEAT_IDENTITY_FILE}" \
-    --pid "${heartbeat_pid}" \
-    --expected-cli "${LEASE_CLI}" \
-    --state-file "${STATE_FILE}" \
-    >/dev/null
+  heartbeat_identity_matches
 }
 
 show_heartbeat_failure() {
@@ -257,27 +322,30 @@ os.execvp(sys.argv[1], sys.argv[1:])
     || fail_guarded_command "guarded command process group could not be resumed"
 }
 
+trap cleanup_command EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 verify_lease
 heartbeat_is_healthy || {
   show_heartbeat_failure
   error "lease heartbeat is not healthy before command start"
 }
 
-trap cleanup_command EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
 set +e
 launch_guarded_command "$@"
 next_remote_verify=$((SECONDS + REMOTE_VERIFY_INTERVAL_SECONDS))
-while kill -0 "${COMMAND_PID}" 2>/dev/null; do
+while command_process_is_running; do
   if ! heartbeat_is_healthy; then
     show_heartbeat_failure
     fail_guarded_command "lease heartbeat identity/health was lost; guarded process group terminated"
   fi
+  command_process_is_running || break
   if (( SECONDS >= next_remote_verify )); then
-    pause_process_group \
-      || fail_guarded_command "guarded process group could not be paused for lease verification"
+    if ! pause_process_group; then
+      command_process_is_running || break
+      fail_guarded_command "guarded process group could not be paused for lease verification"
+    fi
     if ! heartbeat_is_healthy; then
       show_heartbeat_failure
       fail_guarded_command "lease heartbeat was lost during remote verification"
@@ -304,17 +372,20 @@ set -e
 
 if [[ "${command_status}" -ne 0 ]]; then
   record_guard_failure "${command_status}"
+  # Every guarded-command failure quarantines the remote lease. Return the
+  # guard-specific status while preserving the command's status in evidence.
+  exit 75
 fi
 if ! verify_lease; then
-  command_status=75
   [[ -e "${FAILURE_FILE}" ]] || record_guard_failure 75
+  exit 75
 fi
 if ! heartbeat_is_healthy; then
   show_heartbeat_failure
-  command_status=75
   [[ -e "${FAILURE_FILE}" ]] || record_guard_failure 75
+  exit 75
 fi
 
 trap - EXIT INT TERM
 lease_token=""
-exit "${command_status}"
+exit 0
