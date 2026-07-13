@@ -615,6 +615,32 @@ def test_kernel_enable_rejects_explicit_disable_without_mutation(tmp_path: Path)
     assert not docker_log.exists()
 
 
+def test_kernel_enable_rejects_privileged_default_role_without_mutation(
+    tmp_path: Path,
+) -> None:
+    bin_dir, docker_log = _install_fake_kernel_runtime(tmp_path)
+    env = _kernel_runtime_env(tmp_path, bin_dir, docker_log)
+    captured = [
+        "PANTHEON_BFF_DEFAULT_ROLE=operator"
+        if item.startswith("PANTHEON_BFF_DEFAULT_ROLE=")
+        else item
+        for item in json.loads(env["FAKE_INSPECT_ENV_JSON"])
+    ]
+    env["FAKE_INSPECT_ENV_JSON"] = json.dumps(captured, separators=(",", ":"))
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "enable_management_ai_dev_kernel.sh")],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "requires PANTHEON_BFF_DEFAULT_ROLE=viewer" in result.stderr
+    assert not docker_log.exists()
+
+
 def test_kernel_enable_rolls_back_captured_policy_when_postcondition_fails(tmp_path: Path) -> None:
     bin_dir, docker_log = _install_fake_kernel_runtime(tmp_path)
     result = subprocess.run(

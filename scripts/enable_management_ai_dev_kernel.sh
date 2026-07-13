@@ -281,6 +281,10 @@ if [ "${PANTHEON_BFF_AUTH_STUB}" != "false" ] \
   echo "ERROR: dev kernel mode requires strict auth with no stub capabilities or legacy bare-token allowlist." >&2
   exit 2
 fi
+if [ "${PANTHEON_BFF_DEFAULT_ROLE}" != "viewer" ]; then
+  echo "ERROR: strict dev auth requires PANTHEON_BFF_DEFAULT_ROLE=viewer; deploy the corrected trust policy first." >&2
+  exit 2
+fi
 for required_name in \
   PANTHEON_ENV PANTHEON_DEPLOYMENT_STAGE \
   PANTHEON_BFF_JWT_SECRET PANTHEON_BFF_JWT_ISSUER PANTHEON_BFF_JWT_AUDIENCE \
