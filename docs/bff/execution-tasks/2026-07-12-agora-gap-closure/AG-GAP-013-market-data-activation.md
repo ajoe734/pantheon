@@ -1,6 +1,6 @@
 # AG-GAP-013: Agora market-data activation readback
 
-Status: implementation ready for review; live deployment proof pending.
+Status: complete; merged dev live readback proof passed.
 
 ## Upstream gate
 
