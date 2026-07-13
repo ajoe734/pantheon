@@ -239,3 +239,36 @@ def test_evidence_returns_normal_payload_when_fast(monkeypatch) -> None:
     # "degraded" for unrelated dataset-source reasons; what must not happen is
     # a spurious read_timeout on the fast (non-monkeypatched) path.
     assert payload["meta"]["surfaces"]["management_evidence"].get("reason") != "read_timeout"
+
+
+def test_human_inbox_timeout_returns_degraded_envelope_without_hanging(monkeypatch) -> None:
+    def slow_list_governance_review_queue_items():
+        time.sleep(0.3)
+        return [{"item_id": "review-should-not-appear", "item_type": "DeploymentPlan"}]
+
+    with _isolated_bff(monkeypatch) as (client, store):
+        monkeypatch.setattr(store, "list_governance_review_queue_items", slow_list_governance_review_queue_items)
+        monkeypatch.setattr(bff_main, "_human_inbox_surface_timeout_seconds", lambda: 0.05)
+
+        started = time.monotonic()
+        response = client.get("/bff/management/human-inbox", headers=HEADERS)
+        elapsed = time.monotonic() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.25, f"human-inbox route took {elapsed:.3f}s; it should degrade near the timeout budget"
+    payload = response.json()
+    assert not any(item.get("id") == "review-should-not-appear" for item in payload["data"]["items"])
+    surface = payload["meta"]["surfaces"]["governance_review_queue"]
+    assert surface["status"] == "degraded"
+    assert surface["reason"] == "read_timeout"
+
+
+def test_human_inbox_returns_normal_payload_when_fast(monkeypatch) -> None:
+    with _isolated_bff(monkeypatch) as (client, _store):
+        response = client.get("/bff/management/human-inbox", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "human_inbox" in payload["meta"]["surfaces"]
+    assert payload["meta"]["surfaces"]["human_inbox"].get("reason") != "read_timeout"
+

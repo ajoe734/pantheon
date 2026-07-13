@@ -130,7 +130,7 @@ def test_emergency_containment_limit() -> None:
             headers={"Authorization": OPERATOR_TOKEN, "Idempotency-Key": "test-containment-1"},
             json={
                 "command": "EmergencyContainment",
-                "target": {"type": "Runtime", "id": "runtime-test"},
+                "target": {"type": "Persona", "id": "persona-test-containment"},
                 "params": {
                     "persona_id": "persona-test-containment",
                     "allocation_increase": True

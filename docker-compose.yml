@@ -828,6 +828,7 @@ services:
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-false}
       PANTHEON_ASSISTANT_ENABLED: ${PANTHEON_ASSISTANT_ENABLED:-true}
       PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED: ${PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED:-true}
@@ -1306,6 +1307,9 @@ services:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
       INCIDENT_DATA_DIR: /data/incidents
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
+      POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-json}
     volumes:
       - evolution-data:/data/evolution
       - incident-data:/data/incidents

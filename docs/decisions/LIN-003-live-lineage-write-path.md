@@ -1,127 +1,157 @@
 # LIN-003 Live Lineage Write Path
 
-Status: proposed, blocking dependency for EVOCHAIN-001 and every future
-telemetry-derived incident producer
+Status: draft-canonical
 Last updated: 2026-07-13
 Source of truth inputs:
 - `docs/decisions/LIN-002-lineage-ownership.md`
-- `docs/bff/execution-tasks/2026-07-13-evolution-journal-producer-gap/EVOCHAIN-001-threshold-breach-producer.md`
-  (round-1/round-2/round-3 review threads, PR #3509)
-Tier: L1 Platform Architecture & Policy (dependency of L2 execution tasks)
-Scope: making a real, live-deployed telemetry event and its upstream
-deployment lineage resolvable through `CanonicalReferenceValidator`'s
-default (unmocked) lookup path
+- EVOCHAIN-001 round-2/round-3 reviews (PR #3509)
+Tier: L1 Platform Architecture & Policy
+Scope: telemetry-side live lineage write path for the deployed
+`CanonicalReferenceValidator` incident-resolution gap
+Conflict rule: this decision governs the live lineage write path until
+superseded by a newer explicit lineage decision; it operates inside the
+read-ownership boundary already set by `LIN-002-lineage-ownership.md`
 
-## Problem
+## Decision
 
-`services/incidents/main.py`'s module-level `reference_validator =
-CanonicalReferenceValidator()` resolves telemetry/lineage references through
-`_TelemetryLineageLookup` (`services/incident/reference_validation.py`),
-which — in the deployed default (compose sets `PANTHEON_TELEMETRY_URL`) —
-calls telemetry's `/api/telemetry/lineage/*` routes. Those routes are served
-by a `LineageReadService` built once at telemetry process `startup()`
-(`services/telemetry/main.py::_build_lineage_service()`) from the static
-LIN-001A benchmark corpus (`services/registry/lineage/
-lin001a_benchmark_corpus.json`) — a fixed set of 4 demo `runtime_bindings`,
-2 `capital_pools`, 3 `persona_capital_bindings`, and 8 `telemetry_events`.
+`services/telemetry`'s lineage read service (`LineageReadService`, LIN-002)
+now also accepts live writes: every telemetry event that
+`TelemetryIngestService.ingest()` accepts is admitted into the same
+in-memory lineage graph the deployed lineage-read HTTP routes serve,
+along with a thin `runtime_binding` node built from the already-resolved
+authoritative `RuntimeBinding` record when that binding is not yet a graph
+node.
 
-Two independent gaps compound into a permanent 422 for any producer that
-posts an incident referencing a genuinely running (not static-benchmark)
-paper/canary/live binding:
+## Root cause (EVOCHAIN-001 round-3, blocker #1)
 
-1. **No live write path for telemetry events.** Nothing in
-   `TelemetryIngestService.ingest()` (`services/telemetry/ingest_svc.py`)
-   adds a node/edge to the lineage graph for a freshly-ingested event. A
-   real, just-admitted event can never resolve via
-   `telemetry_event_trace`, no matter how long a caller polls.
-2. **No live write path for the deployment lineage chain.** The static
-   corpus's 4 `runtime_bindings` are fixed demo IDs
-   (`rb-alpha-canary-001`, `rb-alpha-live-001`, `rb-beta-live-001`,
-   `rb-beta-canary-rollback-001`) — none `paper` stage, none matching any
-   real dev-deployed persona (e.g. the `evo-vslice-1` seed). Even if gap 1
-   were closed, a telemetry event's edges would point at a
-   `runtime_binding`/`deployment_plan`/`capital_pool`/`persona_binding`
-   node that was never registered, because nothing in the real deploy flow
-   (`services/runtime-manager`, `services/control-plane/governance`)
-   writes those nodes into telemetry's lineage graph either.
+`services/telemetry/main.py` built exactly one `LineageReadService` at
+process startup, bootstrapped once from the static LIN-001A benchmark
+corpus (`_build_lineage_service()`). Telemetry ingest
+(`TelemetryIngestService.ingest()`) validated and buffered accepted events
+but never wrote them into that graph. Compose wires
+`services/incident`'s `CanonicalReferenceValidator` at the default
+`PANTHEON_TELEMETRY_URL`, so every incident evidence check resolves
+telemetry/runtime-binding references through telemetry's lineage HTTP
+routes (`/api/telemetry/lineage/...`). Because the graph never grew past
+its startup snapshot, a freshly-accepted telemetry event or a freshly-live
+`RuntimeBinding` outside the static corpus always 404'd
+(`node_not_found`), which `CanonicalReferenceValidator` turns into a 422 —
+even though the event was legitimately admitted moments earlier. This
+blocked every deployed producer that POSTs an incident referencing live
+telemetry, including EVOCHAIN-001's threshold-breach producer.
 
-This is confirmed structural (not a timing/race condition): no amount of
-polling after `POST /api/telemetry/ingest` or after a real
-`RuntimeManagerService.deploy()` call would ever make either resolve, given
-today's code. It was independently reproduced across three review rounds
-of EVOCHAIN-001 (PR #3509) and is shared by every current and future
-telemetry-derived incident producer (drift reports, other threshold
-producers), not specific to that task.
+## What LIN-003 delivers
 
-## Why this is not a single-task fix
+1. `LineageReadService.admit_telemetry_event(event, binding)`
+   (`services/telemetry/lineage_read/service.py`) — incrementally adds the
+   accepted event as a `telemetry_event` node plus its standard edges
+   (`runtime_binding`, `deployment_plan`, `capital_pool`,
+   `persona_capital_binding` — mirroring what `CorpusLoader` already does
+   for the static corpus), and, only when missing, a thin `runtime_binding`
+   node from the resolved binding record. Idempotent by node key; guarded by
+   an `RLock` shared with `query()` since the write path runs on the ingest
+   asyncio thread while reads run on Flask request threads against the same
+   graph.
+2. `TelemetryIngestService` gains a `lineage_write_store` constructor
+   parameter (`services/telemetry/ingest_svc.py`); on every accepted event it
+   calls `admit_telemetry_event(event, resolved_binding)`, reusing the
+   `RuntimeBinding` record already resolved during evidence-contract
+   validation (E-1 cross-check) rather than issuing a second
+   runtime-manager lookup. Admission failures are logged and never fail the
+   ingest call — lineage write is best-effort, not on the ingest
+   critical path.
+3. `services/telemetry/main.py` builds the `LineageReadService` before the
+   ingest service at `startup()` and passes it in as `lineage_write_store`,
+   so the process serving `/api/telemetry/lineage/*` and the process
+   accepting `/api/telemetry/ingest` share one live graph instance.
 
-Closing this for real requires:
+### Why this closes the validator gap without a separate corpus reload
 
-- `services/telemetry/lineage_read/service.py`: an incremental
-  `register_*` mutation API on `LineageReadService`/`LineageGraph` (the
-  graph's `add_node`/`add_edge` primitives already support this cheaply;
-  the corpus loader's per-node-type blocks are the template), with a lock
-  around mutation since ingest runs on a background loop while lineage-read
-  HTTP routes run on request threads.
-- `services/telemetry/ingest_svc.py` + `main.py`: wiring `ingest()` to call
-  that registration API (mirroring the existing optional
-  `runtime_summary_store`/`trade_episode_projection_store` post-accept
-  projection pattern) — for both telemetry events and, notably, the
-  runtime-binding/deployment-plan/capital-pool/persona-binding identity a
-  telemetry event carries, the first time that binding is observed.
-- Very likely `services/runtime-manager/service.py` (`deploy()`) and/or
-  `services/control-plane/governance`: a live source for the upstream
-  deployment-lineage chain (deployment_plan -> approval_decision ->
-  candidate_artifact -> experiment_run -> ...), since a telemetry-observed
-  binding_id alone does not carry its full upstream research/governance
-  chain — only the deploy flow that created the binding does.
-- A decision on `services/incident/reference_validation.py`'s local-corpus
-  mode (`_TelemetryLineageLookup._query_local`): it builds its own
-  independent `LineageReadService` straight from the static file on first
-  use, structurally disconnected from telemetry's live in-process graph
-  even if telemetry's own HTTP-mode path is fixed. Whether that mode is
-  deprecated, or also wired to a shared live index, is an explicit call this
-  decision needs before implementation.
+`CanonicalReferenceValidator.validate_incident()` only needs two lineage
+queries to resolve a live event: `telemetry_event_trace(event_id)` and,
+when `lineage_ref` is set, `runtime_binding_projection(binding_id)`. Both
+build their `refs` bucket (`runtime_binding_ids`, `deployment_plan_ids`,
+`capital_pool_ids`, `persona_capital_binding_ids`, `artifact_refs`) by
+reading the *target node's own data fields* first
+(`_merge_refs_from_node` in `lineage_read/service.py`), not by requiring
+every referenced ancestor node to independently exist in the graph.
+Telemetry events and RuntimeBinding records already carry every FK field
+the validator checks. So admitting just the `telemetry_event` node (and,
+for `lineage_ref` checks, the `runtime_binding` node) is sufficient —
+`deployment_plan` / `capital_pool` / `persona_capital_binding` nodes do not
+need to exist as first-class graph nodes for these two query families to
+resolve correctly.
 
-Each of the above is a shared, independently-reviewable subsystem change
-touching multiple services (`telemetry`, `runtime-manager`,
-`control-plane/governance`, `incident`) — per `docs/decisions/
-LIN-002-lineage-ownership.md`'s "Phase 0: transitional coexistence" framing,
-this is exactly the kind of cross-cutting lineage migration work that
-decision anticipated as a separate initiative, not something a single
-producer task (`services/evolution`, `services/incidents`,
-`docker-compose.yml`) should special-case or absorb.
+## Explicitly out of scope (follow-on work)
 
-## Exit evidence required
+This task intentionally does not close the full lineage write surface —
+matching the task brief's note that the gap "needs live writes from
+telemetry ..., runtime-manager, and control-plane/governance — not
+something a single producer task can close":
 
-A real default-wiring test with no fake/injected lookups:
+1. **runtime-manager**: still only a *read* dependency for telemetry
+   (`PANTHEON_RUNTIME_MANAGER_URL` HTTP lookup at ingest time, and the
+   `RuntimeManagerClient` used by `services/incident/reference_validation.py`
+   for the direct binding-identity check). runtime-manager does not itself
+   push RuntimeBinding creation/retirement into any lineage graph; telemetry
+   pulls what it needs opportunistically per event. A durable, replicated
+   RuntimeBinding lineage write (so the binding is resolvable even before
+   the first telemetry event referencing it lands) is follow-on work.
+2. **control-plane/governance**: `deployment_plan`,
+   `persona_capital_binding`, `capital_pool`, and `approval_decision` nodes
+   are still only populated from the static LIN-001A corpus. Live
+   `capital_pool_projection` / `forensic_plan_trace` queries for pools or
+   plans created after corpus load still 404
+   (`traverse_from` requires the *starting* node to exist). This is fine for
+   `CanonicalReferenceValidator` today (see above) but leaves the
+   pool/plan-centric lineage read routes stale for anything not in the
+   corpus. Governance/control-plane emitting live writes for these node
+   types is a separate task.
+3. **Durability and horizontal scale**: the live graph is in-memory only. A
+   telemetry process restart drops all live-admitted lineage until the
+   corresponding events are re-ingested; multiple telemetry replicas each
+   hold their own graph, so an event admitted on one replica is invisible
+   to a lineage read hitting a different replica. The current compose
+   topology runs a single telemetry instance, so this is a known and
+   accepted limitation, not a regression — but it must be resolved (e.g. a
+   shared/durable lineage store) before telemetry is horizontally scaled.
 
-```text
-POST /api/telemetry/ingest (real event)        -> 202
-POST /api/incidents/consume-threshold           -> 201 (real IncidentCase)
-same payload replayed                           -> 200 (deduped, same incident)
-```
+## Exit evidence
 
-exercised against the *default* (unmocked) `CanonicalReferenceValidator()`
-and a *live-deployed* (not corpus-fixture) `runtime_binding` — i.e. either a
-live running telemetry+runtime-manager stack (matching EVOCHAIN-010's
-"producer-chain live verifier" scope) or an equivalent in-process
-integration test that seeds a real `RuntimeBindingStore`/`deploy()` call and
-a real bound telemetry HTTP server, with no hand-rolled fake lookup classes.
+- `services/telemetry/lineage_read/test_service.py`: unit coverage for
+  `admit_telemetry_event` — new node + edges, idempotent replay, thin
+  runtime_binding admission when missing, corpus-loaded binding left
+  untouched.
+- `services/telemetry/test_lineage_write_path.py`: integration coverage
+  proving the default-wiring contract end to end, in two layers:
+  - `TestLiveLineageWritePathDefaultWiring`: `TelemetryIngestService` wired
+    with a real `LineageReadService` (no fakes) admits an event through
+    `ingest()`, and the same `LineageReadService.query()` used by the
+    deployed HTTP routes then resolves `telemetry_event_trace` and
+    `runtime_binding_projection` for that event/binding; a subsequent
+    `CanonicalReferenceValidator.validate_incident()` call — against a small
+    adapter that forwards to the live `LineageReadService.query()`, not a
+    hand-authored fixture — succeeds for an `IncidentCase` referencing data
+    that was never in the static corpus. A control test confirms the same
+    scenario 404s (`node_not_found`) without `lineage_write_store` wired,
+    proving the fix isn't passing vacuously.
+  - `TestLiveLineageWritePathFullStackHTTPRoute`: the literal
+    "telemetry ingest 202 -> incident 201 -> same replay 200" acceptance
+    form — a real `RuntimeManagerClient`-backed `RuntimeManagerService`
+    deploy, real telemetry ingest, and the real
+    `services.incidents.main` FastAPI app's
+    `POST /api/incidents/consume-threshold` route (module-level
+    `CanonicalReferenceValidator` swapped for one wired to this test's live
+    runtime-manager client and lineage service, no other lookups replaced)
+    return 201 on first delivery and 200 on idempotent replay.
 
-## Consequences until this lands
+## Consequences
 
-- Every telemetry-derived incident producer (EVOCHAIN-001 included) can
-  only be proven reference-shape-consistent with `CanonicalReferenceValidator`
-  using injected fakes shaped like what the canonical stores would return
-  once wired — not against the literal default validator instance running
-  in compose.
-- `test_consume_threshold_route_422s_against_default_deployed_reference_validator`
-  (`services/evolution/test_threshold_sweep_worker.py`) pins today's actual
-  422 behavior so this gap closing is a visible, deliberate change to that
-  test, not a silent regression.
-- EVOCHAIN-001 remains blocked on this task for its
-  "breach POSTs canonical payload accepted by `ThresholdTelemetryIncidentConsumer`
-  and creates an `IncidentCase`" acceptance criterion against the *default*
-  deployed path; EVOCHAIN-010 (producer-chain live verifier) depends on both
-  EVOCHAIN-001 and this task landing first.
+1. EVOCHAIN-001 (and any other deployed incident producer) can now retest
+   its default-wiring acceptance criterion against a telemetry instance
+   that carries this change; the producer-side task itself is unaffected
+   and out of scope here.
+2. EVOCHAIN-010 (producer-chain live verifier) can rely on telemetry
+   resolving live-ingested events without a corpus reload, but should still
+   expect `capital_pool_projection` / `forensic_plan_trace` to stay
+   corpus-bound until the control-plane/governance follow-on lands.

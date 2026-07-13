@@ -147,6 +147,135 @@ class _FakeConsultationClient:
         raise AssertionError("committee not found")
 
 
+def test_service_session_projection_preserves_runtime_lifecycle_and_freshness_truth() -> None:
+    raw = {
+        "id": "legacy-session-id",
+        "session_id": "session-authoritative-001",
+        "persona_id": "persona-alpha",
+        "session_type": "paper_runtime",
+        "status": "ended",
+        "state": "degraded",
+        "lifecycle_state": "terminal",
+        "active": False,
+        "runtime_binding_id": "rb-authoritative-001",
+        "binding_id": "rb-authoritative-001",
+        "runtime_id": "runtime-authoritative-001",
+        "runtime_identity": {
+            "runtime_id": "runtime-authoritative-001",
+            "runtime_binding_id": "rb-authoritative-001",
+            "deployment_stage": "paper",
+        },
+        "runtime_kind": "lean_runtime",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+        "created_at": "2026-07-13T11:59:00Z",
+        "started_at": "2026-07-13T12:00:00Z",
+        "last_heartbeat_at": "2026-07-13T12:04:00Z",
+        "last_seen_at": "2026-07-13T12:04:01Z",
+        "updated_at": "2026-07-13T12:06:00Z",
+        "ended_at": "2026-07-13T12:05:31Z",
+        "heartbeat_status": "stale",
+        "stale": True,
+        "stale_at": "2026-07-13T12:05:30Z",
+        "stale_after_seconds": 90,
+        "staleness": {
+            "status": "stale",
+            "reason": "stale_heartbeat",
+            "age_seconds": 91,
+            "threshold_seconds": 90,
+        },
+        "degraded": True,
+        "degraded_at": "2026-07-13T12:05:30Z",
+        "reason": "runtime_session_unavailable",
+        "ended_reason": "stale_monitoring_session",
+        "terminal_reason": "stale_heartbeat",
+        "degraded_reasons": ["heartbeat_expired"],
+        "last_error": {"code": "heartbeat_expired"},
+        "metadata": {"source": "runtime-manager"},
+    }
+
+    projected = ReadSurfaceStore._project_service_session(raw)
+
+    assert projected["id"] == "session-authoritative-001"
+    assert projected["session_id"] == "session-authoritative-001"
+    for field in (
+        "runtime_binding_id",
+        "binding_id",
+        "runtime_id",
+        "runtime_identity",
+        "runtime_kind",
+        "deployment_stage",
+        "deployment_mode",
+        "status",
+        "state",
+        "lifecycle_state",
+        "active",
+        "created_at",
+        "started_at",
+        "last_heartbeat_at",
+        "last_seen_at",
+        "updated_at",
+        "ended_at",
+        "heartbeat_status",
+        "stale",
+        "stale_at",
+        "stale_after_seconds",
+        "staleness",
+        "degraded",
+        "degraded_at",
+        "reason",
+        "ended_reason",
+        "terminal_reason",
+        "degraded_reasons",
+        "last_error",
+    ):
+        assert projected[field] == raw[field]
+
+    projected["runtime_identity"]["runtime_id"] = "mutated"
+    projected["staleness"]["status"] = "fresh"
+    projected["metadata"]["source"] = "mutated"
+    assert raw["runtime_identity"]["runtime_id"] == "runtime-authoritative-001"
+    assert raw["staleness"]["status"] == "stale"
+    assert raw["metadata"]["source"] == "runtime-manager"
+
+
+def test_service_session_projection_does_not_invent_optional_freshness_state() -> None:
+    projected = ReadSurfaceStore._project_service_session(
+        {
+            "session_id": "session-no-freshness-001",
+            "persona_id": "persona-alpha",
+            "status": "active",
+            "started_at": "2026-07-13T12:00:00Z",
+            "runtime_binding_id": "rb-authoritative-001",
+            "runtime_id": "runtime-authoritative-001",
+        }
+    )
+
+    assert "last_heartbeat_at" not in projected
+    assert "updated_at" not in projected
+    assert "staleness" not in projected
+    assert "stale" not in projected
+    assert "degraded" not in projected
+    assert "reason" not in projected
+
+
+def test_runtime_binding_projection_does_not_infer_deployment_mode() -> None:
+    projected = ReadSurfaceStore._project_canonical_runtime_binding(
+        {
+            "binding_id": "runtime-binding-with-legacy-stage",
+            "runtime_id": "runtime-with-legacy-stage",
+            "status": "active",
+            "state": "running",
+            "deployment_stage": "live",
+            "runtime_kind": "live",
+        }
+    )
+
+    assert projected["deployment_stage"] == "live"
+    assert projected["runtime_kind"] == "live"
+    assert projected["deployment_mode"] is None
+
+
 def test_governance_runtime_and_evidence_reads_use_http_service_clients_without_snapshot_fallback() -> None:
     responses = {
         ("http://deployment:8095", "/api/deployment/plans"): [

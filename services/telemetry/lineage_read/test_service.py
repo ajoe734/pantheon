@@ -817,6 +817,115 @@ class TestLineageReadService(unittest.TestCase):
             self.assertEqual(result["target_id"], "rb-alpha-live-001")
 
 
+class TestLiveLineageWritePath(unittest.TestCase):
+    """LIN-003: live admission of accepted telemetry events / bindings."""
+
+    def setUp(self):
+        self.service = LineageReadService()
+        self.service.load_corpus(_MINIMAL_CORPUS)
+
+    def _new_event(self, **overrides):
+        event = {
+            "event_id": "evt-live-1",
+            "event_type": "pnl_snapshot",
+            "binding_id": "rb-1",
+            "plan_id": "plan-1",
+            "capital_pool_id": "pool-1",
+            "persona_capital_binding_id": "pb-1",
+            "artifact_id": "art-1",
+            "artifact_version": "1.0.0",
+            "runtime_id": "rt-1",
+            "trace_id": "trace-live-1",
+        }
+        event.update(overrides)
+        return event
+
+    def test_admitted_event_resolves_immediately(self):
+        # evt-live-1 is not in _MINIMAL_CORPUS; a query before admission 404s.
+        before = self.service.query("telemetry_event_trace", event_id="evt-live-1")
+        self.assertTrue(
+            any(m.get("code") == "node_not_found" for m in before["conflict_markers"])
+        )
+
+        self.service.admit_telemetry_event(self._new_event())
+
+        after = self.service.query("telemetry_event_trace", event_id="evt-live-1")
+        self.assertFalse(
+            any(m.get("code") == "node_not_found" for m in after["conflict_markers"])
+        )
+        self.assertEqual(after["refs"]["runtime_binding_ids"], ["rb-1"])
+        self.assertEqual(after["refs"]["deployment_plan_ids"], ["plan-1"])
+        self.assertEqual(after["refs"]["capital_pool_ids"], ["pool-1"])
+        self.assertEqual(after["refs"]["persona_capital_binding_ids"], ["pb-1"])
+        self.assertEqual(after["refs"]["artifact_refs"], ["art-1@1.0.0"])
+        self.assertIn({"type": "runtime_ref", "id": "rt-1"}, after["downstream_chain"])
+
+    def test_admit_is_idempotent(self):
+        event = self._new_event()
+        self.service.admit_telemetry_event(event)
+        self.service.admit_telemetry_event(event)
+        node = self.service.graph.get_node(NODE_TELEMETRY_EVENT, "evt-live-1")
+        self.assertIsNotNone(node)
+        edges = [
+            e for e in self.service.graph.edges
+            if e.edge_type == EDGE_TELEMETRY_BINDING and e.from_id == "evt-live-1"
+        ]
+        self.assertEqual(len(edges), 1)
+
+    def test_admit_missing_binding_admits_thin_runtime_binding_node(self):
+        binding = {
+            "runtime_id": "rt-live",
+            "capital_pool_id": "pool-1",
+            "artifact_id": "art-live",
+            "artifact_version": "2.0.0",
+            "deployment_mode": "live",
+            "effective_at": "2026-07-01T00:00:00Z",
+            "retired_at": None,
+            "plan_id": "plan-1",
+            "persona_capital_binding_id": "pb-1",
+        }
+        event = self._new_event(
+            event_id="evt-live-2",
+            binding_id="rb-live",
+            artifact_id="art-live",
+            artifact_version="2.0.0",
+            runtime_id="rt-live",
+        )
+
+        self.assertIsNone(self.service.graph.get_node(NODE_RUNTIME_BINDING, "rb-live"))
+        self.service.admit_telemetry_event(event, binding)
+        binding_node = self.service.graph.get_node(NODE_RUNTIME_BINDING, "rb-live")
+        self.assertIsNotNone(binding_node)
+        self.assertEqual(binding_node.data["artifact_id"], "art-live")
+
+        projection = self.service.query("runtime_binding_projection", binding_id="rb-live")
+        self.assertIn("art-live@2.0.0", projection["refs"]["artifact_refs"])
+
+    def test_admit_does_not_overwrite_existing_corpus_binding(self):
+        corpus_binding_data = dict(
+            self.service.graph.get_node(NODE_RUNTIME_BINDING, "rb-1").data
+        )
+        conflicting_binding = {
+            "runtime_id": "rt-different",
+            "capital_pool_id": "pool-1",
+            "artifact_id": "art-different",
+            "artifact_version": "9.9.9",
+            "deployment_mode": "live",
+            "plan_id": "plan-1",
+            "persona_capital_binding_id": "pb-1",
+        }
+        self.service.admit_telemetry_event(self._new_event(), conflicting_binding)
+        self.assertEqual(
+            self.service.graph.get_node(NODE_RUNTIME_BINDING, "rb-1").data,
+            corpus_binding_data,
+        )
+
+    def test_admit_without_event_id_is_a_noop(self):
+        before_count = len(self.service.graph.nodes)
+        self.service.admit_telemetry_event({"binding_id": "rb-1"})
+        self.assertEqual(len(self.service.graph.nodes), before_count)
+
+
 class TestBenchmarkValidation(unittest.TestCase):
     """Validate the service against the LIN-001A benchmark corpus."""
 

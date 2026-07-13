@@ -7,7 +7,7 @@
   },
   "files": {
     "specs/agora/v8/pint_ooda_live_routes.schema.json": "45d9e6e07ba6a2fb1980027d8b0bc0dbae0810ea5181e52ede7c24a9b09ae750",
-    "specs/agora/v8/trading_room_workspace_v1_7.schema.json": "17b3ede6bc9a5c21e57c40fb1e4d7adb10600239a6f103c17246fa020e98bf8f",
+    "specs/agora/v8/trading_room_workspace_v1_7.schema.json": "74bef9743d0b77f90aacba8164ff2b9daeb9b4609c21e5bc15ac86ba7dc4d10f",
     "specs/agora/v8/capability_manifest_v1_7.json": "3ce6b5a2203b2c8b65c0262ed29642ff017f2d7748fa59306a256f474ac8139d"
   },
   "openapi": {
