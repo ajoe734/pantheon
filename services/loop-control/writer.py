@@ -1,10 +1,9 @@
+import json
 import os
 import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from .store import LoopControllerStore
-
-
 class LoopControllerWriter:
     def __init__(
         self,
