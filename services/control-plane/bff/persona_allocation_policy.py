@@ -60,6 +60,13 @@ def calculate_target_allocations(rows: Iterable[Dict[str, Any]]) -> List[Dict[st
         row = dict(source)
         stage = str(row.get("stage") or "")
         exclusions = [flag for flag in _EXCLUSION_FLAGS if bool(row.get(flag))]
+        exclusions.extend(
+            str(value)
+            for value in row.get("exclusion_codes") or []
+            if str(value) and str(value) not in exclusions
+        )
+        if row.get("eligible") is False and not exclusions:
+            exclusions.append("ranking_ineligible")
         if stage not in _POSITIVE_ALLOCATION_STAGES:
             exclusions.append("stage_not_real_allocation_eligible")
         rank_score = _rank_score(row)
@@ -73,7 +80,8 @@ def calculate_target_allocations(rows: Iterable[Dict[str, Any]]) -> List[Dict[st
     denominator = sum(row["capacity_adjusted_score"] for row in prepared)
     result: List[Dict[str, Any]] = []
     for row in prepared:
-        current = max(0.0, float(row.get("current_weight") or 0.0))
+        source_current = row.get("current_weight")
+        current = max(0.0, float(source_current or 0.0))
         raw_target = row["capacity_adjusted_score"] / denominator if denominator else 0.0
         cap, tier_reason = _tier_cap(row)
         target = min(raw_target, cap)
@@ -89,13 +97,15 @@ def calculate_target_allocations(rows: Iterable[Dict[str, Any]]) -> List[Dict[st
             cap_reasons.append("quarterly_increase_cap_25pct")
         target = round(target, 8)
         current = round(current, 8)
+        projected_current = current if source_current is not None else None
         result.append({
+            "ranking_snapshot_id": row.get("ranking_snapshot_id"),
             "persona_id": row.get("persona_id"),
             "stage": row.get("stage"),
             "capital_scope": row.get("capital_scope") or "real",
             "capital_pool_id": row.get("capital_pool_id"),
             "capital_sleeve_id": row.get("capital_sleeve_id"),
-            "current_weight": current,
+            "current_weight": projected_current,
             "target_weight": target,
             "delta": round(target - current, 8),
             "rank_score": round(row["rank_score"], 8),
@@ -104,6 +114,9 @@ def calculate_target_allocations(rows: Iterable[Dict[str, Any]]) -> List[Dict[st
             "cap_reasons": cap_reasons,
             "exclusions": row["exclusions"],
             "evidence_refs": list(row.get("evidence_refs") or []),
+            "eligible": row.get("eligible"),
+            "exclusion_reasons": list(row.get("exclusion_reasons") or []),
+            "exclusion_codes": list(row.get("exclusion_codes") or []),
             "requires_human_approval": target > current,
         })
     return result

@@ -19,6 +19,7 @@ def _proposal(**overrides):
     payload = {
         "capital_pool_id": "pool-real", "ranking_snapshot_id": "rank-q3", "reason": "quarterly",
         "lines": [{"persona_id": "p-live", "stage": "live_running", "capital_scope": "pool",
+                   "ranking_snapshot_id": "rank-q3",
                    "capital_pool_id": "pool-real", "current_weight": .1, "target_weight": .12,
                    "delta": .02, "cap_reasons": ["quarterly_increase_cap_25pct"], "evidence_refs": ["ev-1"]}],
         "simulation": {"status": "passed"}, "constraints": {"pool_total_max": 1},
@@ -35,12 +36,31 @@ def test_create_and_read_auditable_proposal_does_not_apply_capital():
             client = _client(td)
             response = client.post("/bff/rebalances", json=_proposal(), headers={**HEADERS, "Idempotency-Key": "rb-proposal-1"})
             assert response.status_code == 202, response.text
+            assert response.json()["ranking_snapshot_id"] == "rank-q3"
             detail = client.get(f"/bff/rebalances/{response.json()['rebalance_id']}", headers=HEADERS).json()["data"]
             assert detail["ranking_snapshot_id"] == "rank-q3"
+            assert detail["lines"][0]["ranking_snapshot_id"] == "rank-q3"
             assert detail["lines"][0]["delta"] == .02
             assert detail["simulation"]["status"] == "passed"
             assert detail["rollback_target"]["snapshot_id"] == "allocation-before-q3"
             assert detail["applied"] is False
+        finally:
+            bff_main.read_store = original
+
+
+def test_rebalance_proposal_rejects_mixed_ranking_snapshots():
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _client(td)
+            payload = _proposal()
+            payload["lines"][0]["ranking_snapshot_id"] = "rank-other"
+            response = client.post(
+                "/bff/rebalances",
+                json=payload,
+                headers={**HEADERS, "Idempotency-Key": "rb-proposal-mixed-snapshot"},
+            )
+            assert response.status_code == 422, response.text
         finally:
             bff_main.read_store = original
 

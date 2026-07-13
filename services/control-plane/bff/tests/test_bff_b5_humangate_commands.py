@@ -206,6 +206,7 @@ def test_quarterly_ranking_recommendation_submit_uses_command_response_without_l
                 "recommendation_id": item["recommendation_id"],
                 "recommendation_action_id": item["action_id"],
                 "persona_id": item["persona_id"],
+                "ranking_snapshot_id": item["ranking_snapshot_id"],
                 "live_capital_mutation": item["live_capital_mutation"],
             },
             idempotency_key="bff-b5-quarterly-recommendation-submit",
@@ -222,6 +223,7 @@ def test_quarterly_ranking_recommendation_submit_uses_command_response_without_l
         assert record["target"] == {"type": "Ranking", "id": item["recommendation_id"]}
         assert record["params"]["recommendation_id"] == item["recommendation_id"]
         assert record["params"]["recommendation_action_id"] == item["action_id"]
+        assert record["params"]["ranking_snapshot_id"] == item["ranking_snapshot_id"]
         assert record["params"]["action_id"] == "submit_recommendation"
         assert record["params"]["audit_event"] == "quarterly_ranking.recommendation_submitted"
         assert record["audit"]["receipt_dual_write"]["command_receipt"]["command"] == (

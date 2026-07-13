@@ -5182,7 +5182,7 @@ def _validate_quarterly_ranking_recommendation_submit(
             suggestion="Escalate to a user with operator, approver, or admin role",
         )
 
-    required = {"quarter", "recommendation_id"}
+    required = {"quarter", "recommendation_id", "ranking_snapshot_id"}
     missing = required - {key for key, value in params.items() if value not in (None, "")}
     if missing:
         raise _bff_error(
@@ -24075,14 +24075,47 @@ async def bff_evaluate_persona_allocation_policy(
     rows = payload.get("rows")
     if not isinstance(rows, list):
         raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "rows is required", "Allocation evaluation requires a rows array")
-    lines = calculate_target_allocations(rows)
+    ranking_snapshot_id = str(payload.get("ranking_snapshot_id") or "").strip()
+    if not ranking_snapshot_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking_snapshot_id is required",
+            "Allocation evaluation must join to one immutable ranking snapshot.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    normalized_rows: List[Dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "invalid allocation row",
+                f"rows[{index}] must be an object.",
+                precondition_failed="rows",
+            )
+        row_snapshot_id = str(row.get("ranking_snapshot_id") or "").strip()
+        if row_snapshot_id and row_snapshot_id != ranking_snapshot_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking snapshot mismatch",
+                f"rows[{index}].ranking_snapshot_id does not match the request snapshot.",
+                precondition_failed="ranking_snapshot_id",
+            )
+        normalized_rows.append({**row, "ranking_snapshot_id": ranking_snapshot_id})
+    lines = calculate_target_allocations(normalized_rows)
     return {
         "data": {
-            "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+            "ranking_snapshot_id": ranking_snapshot_id,
             "lines": lines,
             "applied": False,
         },
-        "meta": {"snapshot_at": utc_now(), "policy": "persona-real-allocation-v1"},
+        "meta": {
+            "snapshot_at": utc_now(),
+            "ranking_snapshot_id": ranking_snapshot_id,
+            "policy": "persona-real-allocation-v1",
+        },
     }
 
 
@@ -24093,11 +24126,25 @@ def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[s
     if not isinstance(lines, list) or not lines:
         missing.append("lines")
     line_fields = ("persona_id", "stage", "capital_scope", "current_weight", "target_weight", "delta", "cap_reasons", "evidence_refs")
+    normalized_lines: List[Dict[str, Any]] = []
     if not missing:
+        ranking_snapshot_id = str(payload.get("ranking_snapshot_id") or "").strip()
         for index, line in enumerate(lines):
+            if not isinstance(line, dict):
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid proposal line", f"lines[{index}] must be an object")
             absent = [field for field in line_fields if field not in line]
             if absent:
                 raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid proposal line", f"lines[{index}] missing: {', '.join(absent)}")
+            line_snapshot_id = str(line.get("ranking_snapshot_id") or "").strip()
+            if line_snapshot_id and line_snapshot_id != ranking_snapshot_id:
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "ranking snapshot mismatch",
+                    f"lines[{index}].ranking_snapshot_id does not match the proposal snapshot.",
+                    precondition_failed="ranking_snapshot_id",
+                )
+            normalized_lines.append({**line, "ranking_snapshot_id": ranking_snapshot_id})
     if missing:
         raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "incomplete rebalance proposal", f"Missing proposal fields: {', '.join(missing)}")
     if payload.get("emergency"):
@@ -24105,7 +24152,7 @@ def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[s
             validate_emergency_lines(lines)
         except ValueError as exc:
             raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid emergency proposal", str(exc)) from exc
-    return lines
+    return normalized_lines
 
 @app.get("/bff/rebalances")
 async def bff_list_rebalances(
@@ -24174,6 +24221,7 @@ async def bff_create_rebalance(
         )
         combined = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
         combined["rebalance_id"] = f"dryrun-rb-{uuid.uuid4().hex[:8]}"
+        combined["ranking_snapshot_id"] = payload.get("ranking_snapshot_id")
         return JSONResponse(status_code=200, content=jsonable_encoder(combined))
     target = TargetObject(type=ObjectType.REBALANCE, id=capital_pool_id)
     audit_record = {
@@ -24225,6 +24273,9 @@ async def bff_create_rebalance(
     )
     combined = result.model_dump() if hasattr(result, "model_dump") else dict(result)
     combined["rebalance_id"] = rebalance["rebalance_id"]
+    if proposal_lines is not None:
+        combined["ranking_snapshot_id"] = payload.get("ranking_snapshot_id")
+        combined["lines"] = proposal_lines
     _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": combined}
     return combined
 
@@ -41524,7 +41575,7 @@ def _pm12_quarter_evidence_refs(
 def _pm12_public_quarter_evidence_refs(
     identity: OperatorIdentity,
     quarter_window: Dict[str, Any],
-) -> tuple[List[Dict[str, Any]], int, bool]:
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, bool]:
     raw_evidence_refs = read_store.list_evidence_refs()
     evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
     quarter_evidence_refs = (
@@ -41547,6 +41598,7 @@ def _pm12_public_quarter_evidence_refs(
             for item in processed_evidence_refs
             if isinstance(item, dict)
         ],
+        quarter_evidence_refs,
         redacted_count,
         evidence_dataset_available,
     )
@@ -41772,9 +41824,11 @@ def _pm12_quarterly_drilldown_payload(
         "total_weighted_contribution": total_weighted,
         "evidence_ref_count": len(evidence_refs),
         "basis": item.get("basis") or formula["basis"],
+        "ranking_snapshot_id": item.get("ranking_snapshot_id"),
     }
     return {
         "id": f"pm12-quarterly-ranking-drilldown-{quarter_window['quarter'].lower()}-{persona_id}",
+        "ranking_snapshot_id": item.get("ranking_snapshot_id"),
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "persona_id": persona_id,
@@ -41849,12 +41903,12 @@ def _pm12_binding_runtime_context(
     bindings: List[Dict[str, Any]],
     runtimes: List[Dict[str, Any]],
 ) -> tuple[Dict[str, Any], Dict[str, Any], str]:
+    metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
     declared_binding_ids = {
         str(value or "").strip()
         for value in (
             item.get("binding_id"),
             item.get("persona_capital_binding_id"),
-            item.get("runtime_binding_id"),
             (item.get("capital_binding") or {}).get("id")
             if isinstance(item.get("capital_binding"), dict)
             else None,
@@ -41864,24 +41918,47 @@ def _pm12_binding_runtime_context(
     declared_sleeve_id = str(
         item.get("capital_sleeve_id") or item.get("sleeve_id") or ""
     ).strip()
-    declared_stage = str(
-        item.get("deployment_stage") or item.get("capital_mode") or item.get("stage") or ""
-    ).strip().lower()
-    declared_stage = {
-        "paper_running": "paper",
-        "canary_running": "canary",
-        "live_running": "live",
-    }.get(declared_stage, declared_stage)
+    declared_runtime_ids = {
+        str(value or "").strip()
+        for value in [
+            *(item.get("runtime_ids") if isinstance(item.get("runtime_ids"), list) else []),
+            *(metrics.get("runtime_ids") if isinstance(metrics.get("runtime_ids"), list) else []),
+            item.get("runtime_id"),
+            item.get("runtime_binding_id"),
+        ]
+        if str(value or "").strip()
+    }
     active_bindings = [
         record
         for record in bindings
         if str(record.get("status") or record.get("validity") or "").strip().lower()
         in {"active", "ready", "bound"}
     ]
-    binding_candidates = active_bindings or bindings
+    active_runtimes = [
+        record
+        for record in runtimes
+        if str(record.get("status") or record.get("state") or "").strip().lower()
+        in {"active", "ready", "bound", "running", "idle"}
+    ]
+    declared_runtime_matches = [
+        record
+        for record in active_runtimes
+        if str(record.get("runtime_id") or record.get("runtime_binding_id") or record.get("id") or "").strip()
+        in declared_runtime_ids
+    ]
+    declared_runtime = declared_runtime_matches[0] if len(declared_runtime_matches) == 1 else {}
+    declared_runtime_binding_id = str(
+        _persona_fleet_record_value(
+            declared_runtime,
+            "persona_capital_binding_id",
+            "binding_id",
+        )
+        or ""
+    ).strip()
+
     explicit_matches = [
         record
-        for record in binding_candidates
+        for record in active_bindings
         if {
             str(record.get("id") or "").strip(),
             str(record.get("binding_id") or "").strip(),
@@ -41891,7 +41968,7 @@ def _pm12_binding_runtime_context(
     if not explicit_matches and declared_sleeve_id:
         explicit_matches = [
             record
-            for record in binding_candidates
+            for record in active_bindings
             if str(
                 _persona_fleet_record_value(
                     record,
@@ -41904,37 +41981,39 @@ def _pm12_binding_runtime_context(
             ).strip()
             == declared_sleeve_id
         ]
-    if not explicit_matches and declared_stage in {"paper", "canary", "live"}:
+    if not explicit_matches and declared_runtime_binding_id:
         explicit_matches = [
             record
-            for record in binding_candidates
-            if str(
-                _persona_fleet_record_value(
-                    record,
-                    "capital_mode",
-                    "capitalMode",
-                    "allowed_deployment_scope",
-                    "deployment_stage",
-                )
-                or ""
-            ).strip().lower()
-            == declared_stage
+            for record in active_bindings
+            if declared_runtime_binding_id
+            in {
+                str(record.get("id") or "").strip(),
+                str(record.get("binding_id") or "").strip(),
+                str(record.get("persona_capital_binding_id") or "").strip(),
+            }
         ]
     if len(explicit_matches) == 1:
         binding = explicit_matches[0]
         binding_resolution = "explicit"
-    elif len(binding_candidates) == 1:
-        binding = binding_candidates[0]
-        binding_resolution = "single"
-    elif binding_candidates:
+    elif len(explicit_matches) > 1:
         binding = {}
         binding_resolution = "ambiguous"
+    elif len(active_bindings) == 1:
+        binding = active_bindings[0]
+        binding_resolution = "single"
+    elif active_bindings:
+        binding = {}
+        binding_resolution = "ambiguous"
+    elif bindings:
+        binding = {}
+        binding_resolution = "inactive"
     else:
         binding = {}
         binding_resolution = "missing"
-    binding_ids = {
+
+    selected_binding_ids = {
         str(value or "").strip()
-        for record in bindings
+        for record in ([binding] if binding else [])
         for value in (
             record.get("id"),
             record.get("binding_id"),
@@ -41942,47 +42021,73 @@ def _pm12_binding_runtime_context(
         )
         if str(value or "").strip()
     }
-    metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
-    declared_runtime_ids = {
-        str(value or "").strip()
-        for value in [
-            *(item.get("runtime_ids") or []),
-            *(metrics.get("runtime_ids") or []),
-            item.get("runtime_id"),
-        ]
-        if str(value or "").strip()
-    }
 
-    candidates = [
-        runtime
-        for runtime in runtimes
-        if str(runtime.get("persona_id") or "").strip() == persona_id
-        or str(runtime.get("runtime_id") or runtime.get("id") or "").strip() in declared_runtime_ids
-        or str(
-            runtime.get("persona_capital_binding_id")
-            or runtime.get("binding_id")
-            or runtime.get("runtime_binding_id")
-            or ""
-        ).strip() in binding_ids
-    ]
-    active_runtime_candidates = [
+    if len(declared_runtime_matches) > 1:
+        runtime_candidates: List[Dict[str, Any]] = []
+        binding_resolution = f"{binding_resolution}_runtime_ambiguous"
+    elif declared_runtime:
+        runtime_candidates = [declared_runtime]
+    elif binding:
+        runtime_candidates = [
+            record
+            for record in active_runtimes
+            if str(
+                _persona_fleet_record_value(
+                    record,
+                    "persona_capital_binding_id",
+                    "binding_id",
+                )
+                or ""
+            ).strip()
+            in selected_binding_ids
+        ]
+    else:
+        runtime_candidates = [
+            record
+            for record in active_runtimes
+            if str(record.get("persona_id") or "").strip() == persona_id
+        ]
+
+    persona_runtime_candidates = [
         record
-        for record in candidates
-        if str(record.get("status") or record.get("state") or "").strip().lower()
-        in {"active", "ready", "bound", "running", "idle"}
+        for record in runtime_candidates
+        if not str(record.get("persona_id") or "").strip()
+        or str(record.get("persona_id") or "").strip() == persona_id
     ]
-    runtime_candidates = active_runtime_candidates or candidates
-    if len(runtime_candidates) == 1:
-        runtime = runtime_candidates[0]
-    elif runtime_candidates:
+    if len(persona_runtime_candidates) == 1:
+        runtime = persona_runtime_candidates[0]
+    elif persona_runtime_candidates:
         runtime = {}
-        binding_resolution = (
-            "runtime_ambiguous"
-            if binding_resolution in {"single", "explicit"}
-            else f"{binding_resolution}_runtime_ambiguous"
-        )
+        if "runtime_ambiguous" not in binding_resolution:
+            binding_resolution = f"{binding_resolution}_runtime_ambiguous"
     else:
         runtime = {}
+
+    runtime_binding_id = str(
+        _persona_fleet_record_value(
+            runtime,
+            "persona_capital_binding_id",
+            "binding_id",
+        )
+        or ""
+    ).strip()
+    if binding and runtime_binding_id and runtime_binding_id not in selected_binding_ids:
+        runtime = {}
+        binding_resolution = "binding_mismatch"
+    elif not binding and runtime_binding_id:
+        active_binding_ids = {
+            str(value or "").strip()
+            for record in active_bindings
+            for value in (
+                record.get("id"),
+                record.get("binding_id"),
+                record.get("persona_capital_binding_id"),
+            )
+            if str(value or "").strip()
+        }
+        if runtime_binding_id not in active_binding_ids:
+            runtime = {}
+            binding_resolution = "binding_mismatch"
     return binding, runtime, binding_resolution
 
 
@@ -42030,7 +42135,7 @@ _PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
     "eligible",
     "exclusion_reasons",
     "evidence_coverage",
-    "evidence_refs",
+    "evidence_ref_ids",
     "source_confidence",
 )
 
@@ -42047,14 +42152,15 @@ def _pm12_ranking_snapshot_id(
         for field in _PM12_RANKING_SNAPSHOT_ITEM_FIELDS:
             if field not in item:
                 continue
-            if field == "evidence_refs":
+            if field == "evidence_ref_ids":
                 payload_item[field] = sorted(
-                    key
-                    for key in (
-                        _pm12_evidence_ref_key(ref)
-                        for ref in item.get(field) or []
+                    str(value).strip()
+                    for value in (
+                        item.get("_snapshot_evidence_ref_ids")
+                        or item.get(field)
+                        or []
                     )
-                    if key
+                    if str(value).strip()
                 )
             else:
                 payload_item[field] = item.get(field)
@@ -42079,7 +42185,11 @@ def _pm12_attach_ranking_snapshot(
     return (
         [
             {
-                **item,
+                **{
+                    key: value
+                    for key, value in item.items()
+                    if key != "_snapshot_evidence_ref_ids"
+                },
                 "ranking_snapshot_id": snapshot_id,
             }
             for item in items
@@ -42090,27 +42200,38 @@ def _pm12_attach_ranking_snapshot(
 
 def _pm12_attach_ranking_evidence(
     items: List[Dict[str, Any]],
-    evidence_refs: List[Dict[str, Any]],
+    public_evidence_refs: List[Dict[str, Any]],
+    *,
+    canonical_evidence_refs: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
+    canonical_refs = canonical_evidence_refs if canonical_evidence_refs is not None else public_evidence_refs
+    public_by_id = {
+        _pm12_evidence_ref_key(ref): ref
+        for ref in public_evidence_refs
+        if _pm12_evidence_ref_key(ref)
+    }
     enriched: List[Dict[str, Any]] = []
     for item in items:
         linked_entities = {
             ("persona", str(item.get("persona_id") or "").strip()),
             *(('runtime', str(value).strip()) for value in item.get("runtime_ids") or []),
             *(('runtime_binding', str(value).strip()) for value in item.get("runtime_ids") or []),
+            *(('persona_binding', str(value).strip()) for value in item.get("binding_ids") or []),
+            *(('persona_capital_binding', str(value).strip()) for value in item.get("binding_ids") or []),
             *(('strategy', str(value).strip()) for value in item.get("strategy_ids") or []),
             *(('strategy_spec', str(value).strip()) for value in item.get("strategy_ids") or []),
             *(('artifact', str(value).strip()) for value in item.get("artifact_ids") or []),
             *(('capital_pool', str(value).strip()) for value in item.get("capital_pool_ids") or []),
             *(('capital_sleeve', str(value).strip()) for value in item.get("sleeve_ids") or []),
+            ("paper_ledger", str(item.get("paper_ledger_id") or "").strip()),
         }
         linked_entities = {
             (entity_type, entity_ref)
             for entity_type, entity_ref in linked_entities
             if entity_ref
         }
-        scoped_refs: List[Dict[str, Any]] = []
-        for ref in evidence_refs:
+        canonical_ref_ids: List[str] = []
+        for ref in canonical_refs:
             linked = (
                 ref.get("linked_object_summary")
                 if isinstance(ref.get("linked_object_summary"), dict)
@@ -42119,13 +42240,32 @@ def _pm12_attach_ranking_evidence(
             entity_type = str(linked.get("entity_type") or "").strip().lower()
             entity_ref = str(linked.get("entity_ref") or "").strip()
             if (entity_type, entity_ref) in linked_entities:
-                scoped_refs.append(ref)
+                ref_id = _pm12_evidence_ref_key(ref)
+                if ref_id:
+                    canonical_ref_ids.append(ref_id)
+        telemetry_refs = list(item.get("evidence_refs") or [])
+        snapshot_evidence_ref_ids = sorted({
+            *(_pm12_evidence_ref_key(ref) for ref in telemetry_refs),
+            *canonical_ref_ids,
+        } - {""})
+        visible_scoped_refs = [
+            public_by_id[ref_id]
+            for ref_id in canonical_ref_ids
+            if ref_id in public_by_id
+        ]
+        visible_refs = _pm12_merge_evidence_refs(
+            telemetry_refs,
+            visible_scoped_refs,
+        )
         enriched.append({
             **item,
-            "evidence_refs": _pm12_merge_evidence_refs(
-                item.get("evidence_refs"),
-                scoped_refs,
-            ),
+            "evidence_refs": visible_refs,
+            "evidence_ref_ids": sorted({
+                _pm12_evidence_ref_key(ref)
+                for ref in visible_refs
+                if _pm12_evidence_ref_key(ref)
+            }),
+            "_snapshot_evidence_ref_ids": snapshot_evidence_ref_ids,
         })
     return enriched
 
@@ -42158,6 +42298,7 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
     raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
     binding_context_item = {
         **item,
+        "runtime_ids": _pm12_persona_runtime_ids(item),
         "binding_id": (
             league_entry.get("binding_id")
             or league_entry.get("persona_capital_binding_id")
@@ -42188,29 +42329,51 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
         bindings=bindings,
         runtimes=runtimes,
     )
-    matching_runtimes = [
-        candidate
-        for candidate in runtimes
-        if str(candidate.get("persona_id") or "").strip() == persona_id
-        or candidate is runtime
-    ]
+    session_runtime_ids = set(_pm12_persona_runtime_ids(item))
+    matching_runtimes = (
+        [runtime]
+        if runtime
+        else [
+            candidate
+            for candidate in runtimes
+            if str(candidate.get("runtime_id") or candidate.get("id") or "").strip()
+            in session_runtime_ids
+        ]
+    )
 
     strategy_ids = []
+    binding_ids = []
     pool_ids = []
-    runtime_ids = []
+    runtime_ids = list(session_runtime_ids)
     sleeve_ids = []
     artifact_ids = []
     broker_ids = []
 
-    for b in bindings:
-        if b.get("strategy_id"):
-            strategy_ids.append(str(b["strategy_id"]))
-        if b.get("capital_pool_id"):
-            pool_ids.append(str(b["capital_pool_id"]))
-        if b.get("sleeve_id"):
-            sleeve_ids.append(str(b["sleeve_id"]))
-        if b.get("broker_id"):
-            broker_ids.append(str(b["broker_id"]))
+    for b in ([binding] if binding else []):
+        binding_id = str(
+            b.get("binding_id")
+            or b.get("persona_capital_binding_id")
+            or b.get("id")
+            or ""
+        ).strip()
+        if binding_id:
+            binding_ids.append(binding_id)
+        binding_strategy_id = _persona_fleet_record_value(b, "strategy_id")
+        if binding_strategy_id:
+            strategy_ids.append(str(binding_strategy_id))
+        binding_pool_id = _persona_fleet_record_value(b, "capital_pool_id", "pool_id")
+        if binding_pool_id:
+            pool_ids.append(str(binding_pool_id))
+        binding_sleeve_id = _persona_fleet_record_value(
+            b,
+            "capital_sleeve_id",
+            "sleeve_id",
+        )
+        if binding_sleeve_id:
+            sleeve_ids.append(str(binding_sleeve_id))
+        binding_broker_id = _persona_fleet_record_value(b, "broker_id")
+        if binding_broker_id:
+            broker_ids.append(str(binding_broker_id))
 
     for r in matching_runtimes:
         if r.get("runtime_id"):
@@ -42219,12 +42382,18 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
             strategy_ids.append(str(r["strategy_id"]))
         elif r.get("params", {}).get("strategy_id"):
             strategy_ids.append(str(r["params"]["strategy_id"]))
-        if r.get("capital_pool_id"):
-            pool_ids.append(str(r["capital_pool_id"]))
-        if r.get("artifact_id"):
-            artifact_ids.append(str(r["artifact_id"]))
-        if r.get("broker_id"):
-            broker_ids.append(str(r["broker_id"]))
+        runtime_pool_id = _persona_fleet_record_value(r, "capital_pool_id", "pool_id")
+        if runtime_pool_id:
+            pool_ids.append(str(runtime_pool_id))
+        runtime_sleeve_id = _persona_fleet_record_value(r, "capital_sleeve_id", "sleeve_id")
+        if runtime_sleeve_id:
+            sleeve_ids.append(str(runtime_sleeve_id))
+        runtime_artifact_id = _persona_fleet_record_value(r, "artifact_id")
+        if runtime_artifact_id:
+            artifact_ids.append(str(runtime_artifact_id))
+        runtime_broker_id = _persona_fleet_record_value(r, "broker_id")
+        if runtime_broker_id:
+            broker_ids.append(str(runtime_broker_id))
 
     deployment_stage = (
         runtime.get("deployment_stage")
@@ -42307,12 +42476,80 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
         runtime=runtime,
         has_runtime_or_binding=bool(runtime or binding or source_pool_id),
     )
+    stage_capital_mode = {
+        "paper_running": "paper",
+        "canary_running": "canary",
+        "live_running": "live",
+    }.get(stage)
+    stage_binding_mismatch = bool(
+        stage_capital_mode
+        and capital_mode in _PERSONA_FLEET_RUNNING_STAGE_STATES
+        and capital_mode != stage_capital_mode
+    )
+    binding_for_weight = binding
+    runtime_for_weight = runtime
+    if stage_binding_mismatch:
+        binding_resolution = f"{binding_resolution}_stage_mismatch"
+    identity_resolution_failed = any(
+        token in binding_resolution
+        for token in ("ambiguous", "mismatch")
+    )
+    if identity_resolution_failed:
+        binding_for_weight = {}
+        runtime_for_weight = {}
+        binding_ids = []
+        pool_ids = []
+        sleeve_ids = []
+    if stage_capital_mode == "paper":
+        capital_mode = "paper"
+        live_pool_id = None
+        paper_ledger_id = _persona_fleet_paper_ledger_id(
+            persona_id=persona_id,
+            capital_mode="paper",
+            league_entry=league_entry,
+            raw_metadata=raw_metadata,
+            context_metadata={},
+            binding=binding if not stage_binding_mismatch else {},
+            runtime=runtime if not stage_binding_mismatch else {},
+        )
+        capital_projection = _persona_fleet_capital_binding_projection(
+            persona_id=persona_id,
+            capital_mode="paper",
+            deployment_stage="paper",
+            paper_ledger_id=paper_ledger_id,
+            live_pool_id=None,
+            binding={},
+            runtime={},
+            league_entry={},
+            raw_metadata={},
+            context_metadata={},
+        )
+        pool_ids = []
+        sleeve_ids = []
+    elif identity_resolution_failed and stage_capital_mode:
+        capital_mode = stage_capital_mode
+        live_pool_id = None
+        capital_projection = _persona_fleet_capital_binding_projection(
+            persona_id=persona_id,
+            capital_mode=stage_capital_mode,
+            deployment_stage=stage_capital_mode,
+            paper_ledger_id=None,
+            live_pool_id=None,
+            binding={},
+            runtime={},
+            league_entry={},
+            raw_metadata={},
+            context_metadata={},
+        )
     capital_projection["stage"] = stage
     capital_projection["capital_binding"]["stage"] = stage
     authoritative_current_weight = None
     authoritative_target_weight = None
     current_weight_source = "unavailable"
-    for source_name, record in (("persona_binding", binding), ("runtime_binding", runtime)):
+    for source_name, record in (
+        ("persona_binding", binding_for_weight),
+        ("runtime_binding", runtime_for_weight),
+    ):
         value = _persona_fleet_record_value(
             record,
             "current_weight",
@@ -42327,7 +42564,7 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
                 break
             except (TypeError, ValueError):
                 pass
-    for record in (binding, runtime):
+    for record in (binding_for_weight, runtime_for_weight):
         value = _persona_fleet_record_value(
             record,
             "target_weight",
@@ -42344,7 +42581,7 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
     capital_projection["target_weight"] = authoritative_target_weight
     capital_projection["capital_binding"]["current_weight"] = authoritative_current_weight
     capital_projection["capital_binding"]["target_weight"] = authoritative_target_weight
-    if capital_mode == "paper":
+    if stage == "paper_running":
         capital_projection["current_weight"] = None
         capital_projection["target_weight"] = None
         capital_projection["capital_binding"]["current_weight"] = None
@@ -42360,6 +42597,7 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
         pool_ids = []
 
     enriched["strategy_ids"] = sorted(set(strategy_ids))
+    enriched["binding_ids"] = sorted(set(binding_ids))
     enriched["capital_pool_ids"] = sorted(set(pool_ids))
     enriched["runtime_ids"] = sorted(set(runtime_ids))
     enriched["sleeve_ids"] = sorted(set(sleeve_ids))
@@ -42407,7 +42645,7 @@ def _pm12_quarterly_recommendation_item(
     action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
-    evidence_sample = evidence_refs[:5]
+    evidence_sample = list(item.get("evidence_refs") or [])[:5]
     evidence_ref_ids = [
         str(ref.get("refId") or ref.get("ref_id") or ref.get("id"))
         for ref in evidence_sample
@@ -42451,11 +42689,41 @@ def _pm12_quarterly_recommendation_item(
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "persona_id": persona_id,
-        "ranking_evidence_ref": f"ranking-evidence:{quarter_window['quarter'].lower()}-{persona_id}",
+        "ranking_snapshot_id": item.get("ranking_snapshot_id"),
+        "ranking_evidence_ref": (
+            f"ranking-snapshot:{item.get('ranking_snapshot_id')}"
+            if item.get("ranking_snapshot_id")
+            else f"ranking-evidence:{quarter_window['quarter'].lower()}-{persona_id}"
+        ),
         "human_review_state": human_review_state,
         "name": item.get("name"),
         "owner": item.get("owner"),
         "state": item.get("state"),
+        "stage": item.get("stage"),
+        "deployment_stage": item.get("deployment_stage"),
+        "capital_mode": item.get("capital_mode"),
+        "capital_scope": item.get("capital_scope"),
+        "capital_scope_id": item.get("capital_scope_id"),
+        "capital_pool_id": item.get("capital_pool_id"),
+        "capital_sleeve_id": item.get("capital_sleeve_id"),
+        "paper_ledger_id": item.get("paper_ledger_id"),
+        "current_weight": item.get("current_weight"),
+        "target_weight": item.get("target_weight"),
+        "current_weight_source": item.get("current_weight_source"),
+        "binding_state": item.get("binding_state"),
+        "binding_resolution": item.get("binding_resolution"),
+        "strategy_ids": list(item.get("strategy_ids") or []),
+        "runtime_ids": list(item.get("runtime_ids") or []),
+        "capital_pool_ids": list(item.get("capital_pool_ids") or []),
+        "sleeve_ids": list(item.get("sleeve_ids") or []),
+        "artifact_ids": list(item.get("artifact_ids") or []),
+        "broker_ids": list(item.get("broker_ids") or []),
+        "eligible": item.get("eligible"),
+        "exclusion_reason": item.get("exclusion_reason"),
+        "exclusion_reasons": list(item.get("exclusion_reasons") or []),
+        "exclusion_codes": list(item.get("exclusion_codes") or []),
+        "evidence_coverage": item.get("evidence_coverage"),
+        "source_confidence": item.get("source_confidence"),
         "risk": item.get("risk"),
         "rank": item.get("rank"),
         "score": score,
@@ -42551,10 +42819,12 @@ def _promotion_review_quarter_from_id(review_id: Any) -> Optional[str]:
 
 def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, Any]:
     action_id = str(recommendation.get("action_id") or "").strip()
-    state = str(recommendation.get("state") or "").strip().lower()
-    if "canary" in state:
+    stage = str(
+        recommendation.get("stage") or recommendation.get("state") or ""
+    ).strip().lower()
+    if "canary" in stage:
         from_stage = "canary"
-    elif "live" in state:
+    elif "live" in stage:
         from_stage = "live"
     else:
         from_stage = "paper"
@@ -42702,6 +42972,7 @@ def _promotion_review_item_from_recommendation(
         "review_id": review_id,
         "promotion_review_id": review_id,
         "recommendation_id": recommendation.get("recommendation_id") or recommendation.get("id"),
+        "ranking_snapshot_id": recommendation.get("ranking_snapshot_id"),
         "quarter": recommendation.get("quarter"),
         "quarter_window": recommendation.get("quarter_window"),
         "persona_id": recommendation.get("persona_id"),
@@ -42710,6 +42981,18 @@ def _promotion_review_item_from_recommendation(
         "rank": recommendation.get("rank"),
         "score": recommendation.get("score"),
         "tier": recommendation.get("tier"),
+        "stage": recommendation.get("stage"),
+        "capital_scope": recommendation.get("capital_scope"),
+        "capital_scope_id": recommendation.get("capital_scope_id"),
+        "capital_pool_id": recommendation.get("capital_pool_id"),
+        "capital_sleeve_id": recommendation.get("capital_sleeve_id"),
+        "paper_ledger_id": recommendation.get("paper_ledger_id"),
+        "current_weight": recommendation.get("current_weight"),
+        "current_weight_source": recommendation.get("current_weight_source"),
+        "eligible": recommendation.get("eligible"),
+        "exclusion_reason": recommendation.get("exclusion_reason"),
+        "exclusion_reasons": list(recommendation.get("exclusion_reasons") or []),
+        "exclusion_codes": list(recommendation.get("exclusion_codes") or []),
         "action_id": action_id,
         "action_label": recommendation.get("action_label"),
         "priority": recommendation.get("priority"),
@@ -42766,11 +43049,32 @@ def _promotion_review_items(
     q: str = "",
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any], int, bool]:
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows()
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
-    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+    (
+        public_evidence_refs,
+        canonical_evidence_refs,
+        redacted_count,
+        evidence_dataset_available,
+    ) = _pm12_public_quarter_evidence_refs(
         identity,
         quarter_window,
+    )
+    ranked_items = _pm12_attach_ranking_evidence(
+        ranked_items,
+        public_evidence_refs,
+        canonical_evidence_refs=canonical_evidence_refs,
+    )
+    ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        ranked_items,
+        surface="quarterly",
+        period=quarter_window["quarter"],
+    )
+    ranked_items = _pm12_filter_persona_items(
+        ranked_items,
+        state=state,
+        archetype=archetype,
+        q=q,
     )
     recommendations = _pm12_quarterly_recommendations(
         ranked_items,
@@ -42987,6 +43291,7 @@ def _promotion_review_submit_response(
             "recommendation_id": refreshed["recommendation_id"],
             "persona_id": refreshed.get("persona_id"),
             "action_id": refreshed.get("action_id"),
+            "ranking_snapshot_id": refreshed.get("ranking_snapshot_id"),
             "status": refreshed.get("status"),
             "submitted": True,
             "human_inbox_id": refreshed.get("human_inbox_id"),
@@ -43002,6 +43307,7 @@ def _promotion_review_submit_response(
     meta = content.setdefault("meta", {})
     meta.update(
         {
+            "ranking_snapshot_id": refreshed.get("ranking_snapshot_id"),
             "live_capital_mutation": False,
             "liveCapitalMutation": False,
             "direct_live_capital_mutation": False,
@@ -43051,6 +43357,24 @@ async def bff_management_quarterly_ranking_recommendation_submit(
             precondition_failed="recommendation_id",
         )
 
+    authoritative_ranking_snapshot_id = str(
+        review.get("ranking_snapshot_id") or ""
+    ).strip()
+    requested_ranking_snapshot_id = str(
+        payload.get("ranking_snapshot_id") or ""
+    ).strip()
+    if (
+        requested_ranking_snapshot_id
+        and requested_ranking_snapshot_id != authoritative_ranking_snapshot_id
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking_snapshot_id does not match the recommendation",
+            "Submit the immutable ranking snapshot attached to the recommendation.",
+            precondition_failed="ranking_snapshot_id",
+        )
+
     existing_submission = _promotion_review_submission_projection(review["review_id"])
     if existing_submission:
         already = _promotion_review_item_from_recommendation(review["source_recommendation"])
@@ -43065,6 +43389,7 @@ async def bff_management_quarterly_ranking_recommendation_submit(
                         "recommendation_id": already["recommendation_id"],
                         "persona_id": already.get("persona_id"),
                         "action_id": already.get("action_id"),
+                        "ranking_snapshot_id": already.get("ranking_snapshot_id"),
                         "status": already.get("status"),
                         "submitted": True,
                         "human_inbox_id": already.get("human_inbox_id"),
@@ -43075,6 +43400,7 @@ async def bff_management_quarterly_ranking_recommendation_submit(
                     },
                     "meta": {
                         **_snapshot_meta(snapshot_at),
+                        "ranking_snapshot_id": already.get("ranking_snapshot_id"),
                         "idempotency": {"replayed": True, "source": "existing_submission"},
                         "live_capital_mutation": False,
                         "direct_live_capital_mutation": False,
@@ -43094,6 +43420,7 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         "recommendationId": review["recommendation_id"],
         "recommendation_action_id": review.get("action_id"),
         "recommendationActionId": review.get("action_id"),
+        "ranking_snapshot_id": authoritative_ranking_snapshot_id,
         "persona_id": review.get("persona_id"),
         "stage_from": (review.get("promotion_path") or {}).get("from_stage"),
         "stage_to": (review.get("promotion_path") or {}).get("target_stage"),
@@ -43410,31 +43737,54 @@ def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _pm12_persona_league_rows(
+def _pm12_filter_persona_items(
+    items: List[Dict[str, Any]],
     *,
-    state: Optional[str],
-    archetype: Optional[str],
-    q: str,
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = "",
 ) -> List[Dict[str, Any]]:
-    rows = [
-        _enrich_persona_item_with_bindings(_project_persona_league_row(raw))
-        for raw in _list_persona_records()
-    ]
+    filtered = items
     if state:
         normalized_state = _normalize_lifecycle_state(state)
-        rows = [row for row in rows if row.get("state") == normalized_state]
+        filtered = [item for item in filtered if item.get("state") == normalized_state]
     if archetype:
-        rows = [row for row in rows if str(row.get("archetype") or "") == archetype]
+        filtered = [
+            item
+            for item in filtered
+            if str(item.get("archetype") or "") == archetype
+        ]
     needle = q.strip().lower()
     if needle:
-        rows = [
-            row for row in rows
-            if needle in str(row.get("id") or "").lower()
-            or needle in str(row.get("name") or "").lower()
-            or needle in str(row.get("owner") or "").lower()
-            or needle in str(row.get("archetype") or "").lower()
+        filtered = [
+            item for item in filtered
+            if needle in str(item.get("id") or "").lower()
+            or needle in str(item.get("name") or "").lower()
+            or needle in str(item.get("owner") or "").lower()
+            or needle in str(item.get("archetype") or "").lower()
         ]
-    return sorted(rows, key=lambda row: str(row.get("name") or row.get("id") or ""))
+    return list(filtered)
+
+
+def _pm12_persona_league_rows(
+    *,
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = "",
+) -> List[Dict[str, Any]]:
+    rows = sorted(
+        [
+            _enrich_persona_item_with_bindings(_project_persona_league_row(raw))
+            for raw in _list_persona_records()
+        ],
+        key=lambda row: str(row.get("name") or row.get("id") or ""),
+    )
+    return _pm12_filter_persona_items(
+        rows,
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
 
 
 def _pm12_persona_league_source_surfaces(snapshot_at: str) -> Dict[str, Dict[str, Any]]:
@@ -43476,9 +43826,12 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
     if stage in {"canary_running", "live_running"} and row.get("capital_scope") == "unbound":
         exclusion_codes.append("missing_capital_binding")
         exclusion_reasons.append("Missing authoritative real-capital binding")
-    if "ambiguous" in str(row.get("binding_resolution") or ""):
+    if any(
+        token in str(row.get("binding_resolution") or "")
+        for token in ("ambiguous", "mismatch")
+    ):
         exclusion_codes.append("binding_mismatch")
-        exclusion_reasons.append("Multiple active bindings prevent an authoritative allocation join")
+        exclusion_reasons.append("Binding/runtime identity prevents an authoritative allocation join")
     eligible = not exclusion_reasons
     exclusion_reason = "; ".join(exclusion_reasons) if exclusion_reasons else None
 
@@ -43491,6 +43844,7 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
     else:
         source_confidence = "formal"
 
+    telemetry_evidence_refs = list(metrics.get("telemetry_evidence_refs") or [])
     return {
         "id": row.get("id"),
         "persona_id": row.get("persona_id") or row.get("id"),
@@ -43530,7 +43884,12 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
         "exclusion_reasons": exclusion_reasons,
         "exclusion_codes": exclusion_codes,
         "evidence_coverage": evidence_coverage,
-        "evidence_refs": list(metrics.get("telemetry_evidence_refs") or []),
+        "evidence_refs": telemetry_evidence_refs,
+        "evidence_ref_ids": sorted({
+            _pm12_evidence_ref_key(ref)
+            for ref in telemetry_evidence_refs
+            if _pm12_evidence_ref_key(ref)
+        }),
         "source_confidence": source_confidence,
     }
 def _pm12_persona_league_rankings(
@@ -43938,9 +44297,9 @@ async def bff_management_persona_league(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    all_rows = _pm12_persona_league_rows()
     ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
-        [_pm12_persona_league_ranking_item(row) for row in rows],
+        [_pm12_persona_league_ranking_item(row) for row in all_rows],
         surface="rolling",
         period="short_cycle",
     )
@@ -43949,7 +44308,8 @@ async def bff_management_persona_league(
         for item in ranking_basis
         if str(item.get("persona_id") or "")
     }
-    rows = [
+    rows = _pm12_filter_persona_items(
+        [
         {
             **row,
             **{
@@ -43966,8 +44326,12 @@ async def bff_management_persona_league(
                 )
             },
         }
-        for row in rows
-    ]
+        for row in all_rows
+        ],
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
     total = len(rows)
     page_items, next_page_token = _page_slice(rows, page_token, page_size)
     summary = {
@@ -44044,7 +44408,7 @@ async def bff_management_persona_league_rankings(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows()
 
     # Pre-enrich and filter the base league rows represented as ranking items
     base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
@@ -44052,7 +44416,12 @@ async def bff_management_persona_league_rankings(
         surface="rolling",
         period="short_cycle",
     )
-    enriched_items = base_items
+    enriched_items = _pm12_filter_persona_items(
+        base_items,
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
     filtered_items = _filter_by_common_identifiers(
         enriched_items,
         persona_id=persona_id, persona=persona,
@@ -44062,7 +44431,7 @@ async def bff_management_persona_league_rankings(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage or state, period=period, as_of=as_of
+        stage=stage, period=period, as_of=as_of
     )
 
     blocks = _pm12_persona_league_rankings(
@@ -44083,7 +44452,7 @@ async def bff_management_persona_league_rankings(
     )
     top_item = (blocks[0].get("items") or [None])[0] if blocks else None
     summary = {
-        "persona_count": len(rows),
+        "persona_count": len(filtered_items),
         "criteria": [block["criteria"] for block in blocks],
         "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
         "ranking_snapshot_id": ranking_snapshot_id,
@@ -44220,11 +44589,9 @@ async def bff_management_persona_league_tiers(
     snapshot_at = utc_now()
     rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
 
-    # Pre-enrich and filter the base league rows represented as ranking items
     base_items = [_pm12_persona_league_ranking_item(row) for row in rows]
-    enriched_items = [_enrich_persona_item_with_bindings(item) for item in base_items]
     filtered_items = _filter_by_common_identifiers(
-        enriched_items,
+        base_items,
         persona_id=persona_id, persona=persona,
         runtime_id=runtime_id, runtime=runtime,
         strategy_id=strategy_id, strategy=strategy,
@@ -44232,7 +44599,7 @@ async def bff_management_persona_league_tiers(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage or state, period=period, as_of=as_of
+        stage=stage, period=period, as_of=as_of
     )
 
     tiers, assignments, summary = _pm12_persona_league_tier_payload(
@@ -44427,13 +44794,22 @@ async def bff_management_quarterly_ranking(
     _require_read_role(identity)
     snapshot_at = utc_now()
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows()
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
-    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+    (
+        public_evidence_refs,
+        canonical_evidence_refs,
+        redacted_count,
+        evidence_dataset_available,
+    ) = _pm12_public_quarter_evidence_refs(
         identity,
         quarter_window,
     )
-    ranked_items = _pm12_attach_ranking_evidence(ranked_items, public_evidence_refs)
+    ranked_items = _pm12_attach_ranking_evidence(
+        ranked_items,
+        public_evidence_refs,
+        canonical_evidence_refs=canonical_evidence_refs,
+    )
     ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
         ranked_items,
         surface="quarterly",
@@ -44441,7 +44817,12 @@ async def bff_management_quarterly_ranking(
     )
 
     # Apply common filters after the immutable full-universe snapshot is built.
-    enriched_items = ranked_items
+    enriched_items = _pm12_filter_persona_items(
+        ranked_items,
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
     filtered_items = _filter_by_common_identifiers(
         enriched_items,
         persona_id=persona_id, persona=persona,
@@ -44451,7 +44832,7 @@ async def bff_management_quarterly_ranking(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage or state, period=period, as_of=as_of
+        stage=stage, period=period, as_of=as_of
     )
     total = len(filtered_items)
     page_items, next_page_token = _page_slice(filtered_items, page_token, page_size)
@@ -44486,7 +44867,8 @@ async def bff_management_quarterly_ranking(
     summary = {
         "quarter": quarter_window["quarter"],
         "formula_version": formula["formula_version"],
-        "persona_count": len(rows),
+        "persona_count": len(enriched_items),
+        "ranking_universe_count": len(rows),
         "ranked_count": total,
         "returned_count": len(page_items),
         "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
@@ -44576,8 +44958,27 @@ async def bff_management_quarterly_ranking_drilldown(
 
     snapshot_at = utc_now()
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows()
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    (
+        public_evidence_refs,
+        canonical_evidence_refs,
+        redacted_count,
+        evidence_dataset_available,
+    ) = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    ranked_items = _pm12_attach_ranking_evidence(
+        ranked_items,
+        public_evidence_refs,
+        canonical_evidence_refs=canonical_evidence_refs,
+    )
+    ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        ranked_items,
+        surface="quarterly",
+        period=quarter_window["quarter"],
+    )
     ranking_item = _pm12_quarterly_find_persona_item(ranked_items, resolved_persona_id)
     if ranking_item is None:
         raise _bff_error(
@@ -44589,10 +44990,14 @@ async def bff_management_quarterly_ranking_drilldown(
             correlation_id=correlation_id,
         )
 
-    # Enrich and apply common filters
-    enriched_item = _enrich_persona_item_with_bindings(ranking_item)
+    legacy_filtered_results = _pm12_filter_persona_items(
+        [ranking_item],
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
     filtered_results = _filter_by_common_identifiers(
-        [enriched_item],
+        legacy_filtered_results,
         persona_id=resolved_persona_id, persona=persona,
         runtime_id=runtime_id, runtime=runtime,
         strategy_id=strategy_id, strategy=strategy,
@@ -44600,7 +45005,7 @@ async def bff_management_quarterly_ranking_drilldown(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage or state, period=period, as_of=as_of
+        stage=stage, period=period, as_of=as_of
     )
     if not filtered_results:
         raise _bff_error(
@@ -44614,17 +45019,14 @@ async def bff_management_quarterly_ranking_drilldown(
 
     ranking_item = filtered_results[0]
 
-    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
-        identity,
-        quarter_window,
-    )
     row = _pm12_quarterly_find_persona_row(rows, resolved_persona_id)
+    item_evidence_refs = list(ranking_item.get("evidence_refs") or [])
     drilldown = _pm12_quarterly_drilldown_payload(
         item=ranking_item,
         row=row,
         quarter_window=quarter_window,
         ranked_count=len(ranked_items),
-        evidence_refs=public_evidence_refs,
+        evidence_refs=item_evidence_refs,
     )
 
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
@@ -44661,10 +45063,11 @@ async def bff_management_quarterly_ranking_drilldown(
         "source_breakdown": drilldown["source_breakdown"],
         "formula": drilldown["formula"],
         "quarter_window": quarter_window,
-        "evidence_refs": public_evidence_refs,
+        "evidence_refs": item_evidence_refs,
         "summary": summary,
         "meta": {
             **_snapshot_meta(snapshot_at),
+            "ranking_snapshot_id": ranking_snapshot_id,
             "correlation_id": correlation_id,
             "surfaces": {
                 "quarterly_ranking_drilldown": drilldown_surface,
@@ -44720,11 +45123,26 @@ async def bff_management_quarterly_ranking_recommendations(
     _require_read_role(identity)
     snapshot_at = utc_now()
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows()
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
-    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+    (
+        public_evidence_refs,
+        canonical_evidence_refs,
+        redacted_count,
+        evidence_dataset_available,
+    ) = _pm12_public_quarter_evidence_refs(
         identity,
         quarter_window,
+    )
+    ranked_items = _pm12_attach_ranking_evidence(
+        ranked_items,
+        public_evidence_refs,
+        canonical_evidence_refs=canonical_evidence_refs,
+    )
+    ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        ranked_items,
+        surface="quarterly",
+        period=quarter_window["quarter"],
     )
     recommendations = _pm12_quarterly_recommendations(
         ranked_items,
@@ -44732,8 +45150,12 @@ async def bff_management_quarterly_ranking_recommendations(
         evidence_refs=public_evidence_refs,
     )
 
-    # Enrich and apply common filters
-    enriched_recs = [_enrich_persona_item_with_bindings(rec) for rec in recommendations]
+    enriched_recs = _pm12_filter_persona_items(
+        recommendations,
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
     filtered_recs = _filter_by_common_identifiers(
         enriched_recs,
         persona_id=persona_id, persona=persona,
@@ -44743,7 +45165,7 @@ async def bff_management_quarterly_ranking_recommendations(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage or state, period=period, as_of=as_of
+        stage=stage, period=period, as_of=as_of
     )
     total = len(filtered_recs)
     page_items, next_page_token = _page_slice(filtered_recs, page_token, page_size)
@@ -44770,6 +45192,7 @@ async def bff_management_quarterly_ranking_recommendations(
         "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
         "basis": formula["basis"],
         "policy": "read_only_governance_advisory",
+        "ranking_snapshot_id": ranking_snapshot_id,
     }
 
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
@@ -44814,6 +45237,7 @@ async def bff_management_quarterly_ranking_recommendations(
     governance_destinations = ["human_inbox", "governance_queue", "human_gate_decision"]
     data = {
         "id": f"pm12-quarterly-ranking-recommendations-{quarter_window['quarter'].lower()}",
+        "ranking_snapshot_id": ranking_snapshot_id,
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "formula": formula,
@@ -44833,6 +45257,7 @@ async def bff_management_quarterly_ranking_recommendations(
         },
         "meta": {
             **_snapshot_meta(snapshot_at),
+            "ranking_snapshot_id": ranking_snapshot_id,
             "surfaces": {
                 "quarterly_ranking_recommendations": recommendations_surface,
                 "quarterly_ranking": quarterly_surface,

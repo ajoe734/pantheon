@@ -4,6 +4,7 @@ from persona_allocation_policy import calculate_target_allocations, stage_recomm
 def _row(persona_id, stage, tier, current, **extra):
     return {
         "persona_id": persona_id, "stage": stage, "tier": tier, "current_weight": current,
+        "ranking_snapshot_id": "rank-q3",
         "capital_scope": "pool", "capital_pool_id": "pool-real", "evidence_refs": [f"ev-{persona_id}"],
         "pnl_score": 1, "sharpe_score": 1, "drawdown_control_score": 1,
         "execution_quality_score": 1, "risk_compliance_score": 1, "improvement_score": 1,
@@ -35,6 +36,8 @@ def test_targets_enforce_stage_tier_caps_smoothing_and_exclusions():
     assert by_id["live-b"]["target_weight"] <= by_id["live-b"]["current_weight"]
     assert "missing_required_evidence" in by_id["live-b"]["exclusions"]
     assert by_id["live-a"]["requires_human_approval"] is True
+    assert by_id["live-a"]["ranking_snapshot_id"] == "rank-q3"
+    assert by_id["live-a"]["evidence_refs"] == ["ev-live-a"]
 
 
 def test_fresh_real_allocation_entrants_bootstrap_to_stage_tier_caps():
