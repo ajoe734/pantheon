@@ -624,6 +624,54 @@ def test_human_inbox_capacity_prevents_late_queue_and_bounds_cockpit_hiq_overlap
         assert calls == 2
 
 
+def test_cockpit_composition_timeout_does_not_block_event_loop(monkeypatch) -> None:
+    with _isolated_client() as client:
+        entered_worker = threading.Event()
+        release_worker = threading.Event()
+        worker_finished = threading.Event()
+
+        def blocked_cockpit_composition(*_args, **_kwargs):
+            entered_worker.set()
+            release_worker.wait(timeout=5)
+            worker_finished.set()
+            return {"late_result": True}
+
+        monkeypatch.setenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "0.08")
+        monkeypatch.setattr(
+            bff_main,
+            "_MANAGEMENT_COCKPIT_READ_SLOTS",
+            threading.BoundedSemaphore(1),
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_build_management_cockpit_payload",
+            blocked_cockpit_composition,
+        )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            cockpit_future = pool.submit(
+                client.get,
+                "/bff/management/cockpit",
+                headers=OPERATOR_HEADERS,
+            )
+            assert entered_worker.wait(timeout=3)
+            started_at = time.monotonic()
+            health_future = pool.submit(client.get, "/health")
+            try:
+                health = health_future.result(timeout=0.6)
+                health_elapsed = time.monotonic() - started_at
+                cockpit = cockpit_future.result(timeout=1)
+            finally:
+                release_worker.set()
+
+        assert health.status_code == 200, health.text
+        assert health_elapsed < 0.5
+        assert cockpit.status_code == 200, cockpit.text
+        cockpit_surface = cockpit.json()["meta"]["surfaces"]["management_cockpit"]
+        assert cockpit_surface["reason"] == "read_timeout"
+        assert worker_finished.wait(timeout=2)
+
+
 def test_human_inbox_filtered_local_snapshot_empty_remains_degraded(monkeypatch) -> None:
     with _isolated_client() as client:
         monkeypatch.setattr(
