@@ -1229,13 +1229,15 @@ def _extract_identity(
     session_cookie: Optional[str] = None,
 ) -> OperatorIdentity:
     if _bff_auth_stub_enabled():
-        return _extract_identity_stub(authorization)
+        return _enforce_public_browser_identity(_extract_identity_stub(authorization))
     # Cookie session: treat cookie value as a bearer token when no Authorization header present.
     if not authorization and session_cookie:
         identity = _extract_identity_jwt(f"Bearer {session_cookie}", mfa_token=mfa_token)
         identity = identity.model_copy(update={"token_kind": "cookie"})
-        return identity
-    return _extract_identity_jwt(authorization, mfa_token=mfa_token)
+        return _enforce_public_browser_identity(identity)
+    return _enforce_public_browser_identity(
+        _extract_identity_jwt(authorization, mfa_token=mfa_token)
+    )
 
 
 def _resolve_session_kind(identity: OperatorIdentity) -> str:
@@ -1245,6 +1247,50 @@ def _resolve_session_kind(identity: OperatorIdentity) -> str:
     if identity.token_kind == "cookie":
         return "cookie"
     return "bearer"
+
+
+_PUBLIC_BROWSER_OPERATOR_ID = "pantheon-dev-browser"
+_PUBLIC_BROWSER_CAPABILITY_CLAIMS = (
+    "capabilities",
+    "capability",
+    "permissions",
+    "scp",
+    "scope",
+)
+
+
+def _enforce_public_browser_identity(identity: OperatorIdentity) -> OperatorIdentity:
+    """Reserve the browser-build subject for capability-free viewer access.
+
+    A Vite bearer is public by construction.  Historical bundles used this
+    stable subject with operator/admin roles, so treating only newly built
+    bundles as safe would leave retained assets privileged.  Enforce the
+    subject boundary at the BFF regardless of which old bundle sent it.
+    """
+
+    if identity.operator_id != _PUBLIC_BROWSER_OPERATOR_ID:
+        return identity
+    roles = [str(role).strip().lower() for role in identity.roles if str(role).strip()]
+    claims = dict(identity.claims or {})
+    has_capability_claim = any(
+        bool(value.strip()) if isinstance(value, str) else bool(value)
+        for value in (claims.get(key) for key in _PUBLIC_BROWSER_CAPABILITY_CLAIMS)
+    )
+    if roles != ["viewer"] or identity.mfa_verified or has_capability_claim:
+        raise _bff_error(
+            status_code=403,
+            code=ErrorCode.FORBIDDEN,
+            message="Public browser identity is restricted to viewer access",
+            reason="AUTH_PUBLIC_BROWSER_IDENTITY_PRIVILEGED",
+            suggestion="Use an interactive cookie or session token for operator actions",
+        )
+    for key in _PUBLIC_BROWSER_CAPABILITY_CLAIMS:
+        claims.pop(key, None)
+    claims["roles"] = ["viewer"]
+    claims["capabilities"] = []
+    return identity.model_copy(
+        update={"roles": ["viewer"], "mfa_verified": False, "claims": claims}
+    )
 
 
 def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
@@ -1312,7 +1358,18 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             if len(parts) > 3 and parts[3]:
                 token_capabilities = parts[3].split(",")
                 
-    capabilities = _stub_identity_capabilities(token_capabilities)
+    if operator_id == _PUBLIC_BROWSER_OPERATOR_ID:
+        if roles != ["viewer"] or mfa_verified or token_capabilities or tenant_ids:
+            raise _bff_error(
+                status_code=403,
+                code=ErrorCode.FORBIDDEN,
+                message="Public browser identity is restricted to viewer access",
+                reason="AUTH_PUBLIC_BROWSER_IDENTITY_PRIVILEGED",
+                suggestion="Use Bearer pantheon-dev-browser:viewer for public dev reads",
+            )
+        capabilities = []
+    else:
+        capabilities = _stub_identity_capabilities(token_capabilities)
     claims = {"sub": operator_id, "roles": roles, "capabilities": capabilities}
     if tenant_ids:
         claims["tenant_ids"] = tenant_ids
@@ -1338,6 +1395,8 @@ def _stub_identity_capabilities(token_capabilities: List[str]) -> List[str]:
 
 def _with_structured_identity_capabilities(identity: OperatorIdentity) -> OperatorIdentity:
     if identity.token_kind != "structured":
+        return identity
+    if identity.operator_id == _PUBLIC_BROWSER_OPERATOR_ID:
         return identity
     claims = dict(identity.claims or {})
     raw_capabilities = claims.get("capabilities") or claims.get("capability") or []
@@ -6263,6 +6322,9 @@ def _capabilities_for_identity(identity: OperatorIdentity) -> List[str]:
     are not provided by upstream auth. It is intentionally permissive for
     admin and conservative for other roles.
     """
+    if identity.operator_id == _PUBLIC_BROWSER_OPERATOR_ID:
+        return []
+
     caps: List[str] = []
     for role in identity.roles:
         mapped = _ROLE_CAPABILITY_MAP.get(role)

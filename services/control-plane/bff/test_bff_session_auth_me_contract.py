@@ -16,7 +16,7 @@ from services.runtime_auth_inbound import encode_jwt_hs256
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator,reviewer:mfa"
-DEV_GATE_TOKEN = "Bearer pantheon-dev-browser:operator,reviewer,approver:mfa"
+DEV_GATE_TOKEN = "Bearer pantheon-dev-operator:operator,reviewer,approver:mfa"
 JWT_SECRET = "test-bff-me-secret"
 JWT_ISSUER = "pantheon-bff-me-test"
 JWT_AUDIENCE = "bff-operators"
@@ -107,7 +107,7 @@ def test_bff_me_permissive_structured_token_includes_dev_kernel_capabilities(mon
     client = TestClient(bff_main.app)
     response = client.get(
         "/bff/me",
-        headers={"Authorization": "Bearer pantheon-dev-browser:admin,operator:mfa"},
+        headers={"Authorization": "Bearer pantheon-dev-operator:admin,operator:mfa"},
     )
 
     assert response.status_code == 200, response.text
@@ -116,6 +116,83 @@ def test_bff_me_permissive_structured_token_includes_dev_kernel_capabilities(mon
     assert set(data["roles"]) == {"admin", "operator"}
     assert "assistant.kernel.debug" in data["capabilities"]
     assert "assistant.kernel.repair" in data["capabilities"]
+
+
+def test_bff_me_public_browser_subject_is_viewer_only(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv(
+        "PANTHEON_BFF_STUB_CAPABILITIES",
+        "assistant.kernel.debug,assistant.kernel.repair",
+    )
+    client = TestClient(bff_main.app)
+
+    viewer = client.get(
+        "/bff/me",
+        headers={"Authorization": "Bearer pantheon-dev-browser:viewer"},
+    )
+    privileged = client.get(
+        "/bff/me",
+        headers={"Authorization": "Bearer pantheon-dev-browser:admin,operator:mfa"},
+    )
+
+    assert viewer.status_code == 200, viewer.text
+    assert viewer.json()["data"]["roles"] == ["viewer"]
+    assert viewer.json()["data"]["capabilities"] == []
+    assert privileged.status_code == 403, privileged.text
+    assert (
+        privileged.json()["error"]["details"]["reason"]
+        == "AUTH_PUBLIC_BROWSER_IDENTITY_PRIVILEGED"
+    )
+
+
+def test_bff_me_public_browser_strict_jwt_does_not_inherit_dev_capabilities(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv(
+        "PANTHEON_BFF_STUB_CAPABILITIES",
+        "assistant.kernel.debug,assistant.kernel.repair",
+    )
+    token = _jwt_token(roles=["viewer"], extra={"sub": "pantheon-dev-browser"})
+
+    response = TestClient(bff_main.app).get(
+        "/bff/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["roles"] == ["viewer"]
+    assert response.json()["data"]["capabilities"] == []
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        {"capabilities": ["assistant.kernel.repair"]},
+        {"capability": "assistant.kernel.repair"},
+        {"permissions": ["assistant.kernel.repair"]},
+        {"scp": "assistant.kernel.repair"},
+        {"scope": "assistant.kernel.repair"},
+    ],
+)
+def test_bff_me_public_browser_strict_jwt_rejects_capability_aliases(
+    monkeypatch,
+    claim,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    token = _jwt_token(
+        roles=["viewer"],
+        extra={"sub": "pantheon-dev-browser", **claim},
+    )
+
+    response = TestClient(bff_main.app).get(
+        "/bff/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 403, response.text
+    assert (
+        response.json()["error"]["details"]["reason"]
+        == "AUTH_PUBLIC_BROWSER_IDENTITY_PRIVILEGED"
+    )
 
 
 def test_bff_me_permissive_rejects_plain_no_role_bearer(monkeypatch) -> None:

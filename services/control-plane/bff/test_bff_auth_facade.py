@@ -288,6 +288,36 @@ class TestExtractIdentityStub:
             "assistant.kernel.repair",
         ]
 
+    def test_public_browser_viewer_never_inherits_dev_kernel_capabilities(self):
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.debug,assistant.kernel.repair"},
+            clear=False,
+        ):
+            identity = self._call("Bearer pantheon-dev-browser:viewer")
+
+        assert identity.roles == ["viewer"]
+        assert identity.mfa_verified is False
+        assert identity.claims["capabilities"] == []
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "Bearer pantheon-dev-browser:operator",
+            "Bearer pantheon-dev-browser:viewer,admin",
+            "Bearer pantheon-dev-browser:viewer:mfa",
+            "Bearer pantheon-dev-browser:viewer:tenant-a:assistant.kernel.debug",
+        ],
+    )
+    def test_public_browser_subject_rejects_privileged_claims(self, token):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(token)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["error"]["details"]["reason"] == "AUTH_PUBLIC_BROWSER_IDENTITY_PRIVILEGED"
+
     def test_colon_format_multiple_roles(self):
         identity = self._call("Bearer op-multi:operator,reviewer")
         assert "operator" in identity.roles
