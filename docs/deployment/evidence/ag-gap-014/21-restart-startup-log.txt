@@ -1,0 +1,2 @@
+INFO:agora.strategy_workshop.store:Agora workshop store initialized backend=postgres store=PostgresWorkshopStore schema=agora
+INFO:agora.dashboard.store:Agora dashboard recipe store initialized backend=postgres store=PostgresDashboardRecipeStore
