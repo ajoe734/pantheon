@@ -9,8 +9,16 @@ quality: mixed-language copy, duplicated availability badges, nested double
 scrollbars, ghost headers, and contradictory readiness/completeness state.
 These defects were never covered by AG-DYNUI-* (workflow correctness) or
 AG-GAP-* (backend truth) waves, and AG-GAP-010 baselined visual parity on
-current screenshots because the design zip is lost — so gates pass while the
-UI reads as unfinished.
+current screenshots while the design zip was unavailable — so gates passed
+while the UI read as unfinished.
+
+## Design-source recovery update
+
+The original design export was recovered on 2026-07-13 and is now versioned at
+`docs/design/agora-trading-desk-design/`. Its checksum, source precedence, V2–
+V11 documents, interactive `Agora.dc.html`, and 26 screenshots are indexed in
+that directory. AG-UIPOL-005 supersedes the earlier “lost source” parity
+assumption with `parity-matrix.md` and deploy-SHA-pinned hosted evidence.
 
 ## Production-Level Rule
 
@@ -48,11 +56,18 @@ only in `ajoe734/execute-plans@dev`. Fixture screenshots do not count.
 | AG-UIPOL-002 | Fix standalone shell double scrollbar and ghost headers | execute-plans |
 | AG-UIPOL-003 | Real per-widget data availability; collapse badge spam into a summary | pantheon + execute-plans |
 | AG-UIPOL-004 | Reconcile readiness/completeness display; performance tab honesty | execute-plans |
+| AG-UIPOL-005 | Re-verify all shipped surfaces against the recovered design source | pantheon docs/evidence |
+| AG-UIPOL-006 (draft) | Shell command, Servant, and layout-control parity | execute-plans + additive pantheon contract work if required |
+| AG-UIPOL-007 (draft) | Multi-lens monitoring and candidate parity | execute-plans + additive pantheon contract work if required |
+| AG-UIPOL-008 (draft) | Winner Branch workspace information parity | execute-plans + additive pantheon projection work if required |
+| AG-UIPOL-009 (draft) | V10 expert Strategy Workshop parity | execute-plans + pantheon |
+| AG-UIPOL-010 (draft) | Performance cockpit parity | execute-plans + additive pantheon projection work if required |
+| AG-UIPOL-011 (draft) | Narrow responsive task parity | execute-plans |
 
-Design parity proper remains blocked on a real design source (the
-AI Trading Desk Design zip is declared lost; owner has been asked whether a
-copy or Figma source exists). Do not close any AG-UIPOL task by claiming
-design parity — these tasks fix objective defects only.
+The source is no longer blocked. Design parity itself is still not achieved;
+AG-UIPOL-005 records the remaining gaps and assigns every major/missing row to
+AG-UIPOL-001..004 or a ranked AG-UIPOL-006+ draft. Do not close an individual
+task by claiming whole-product parity.
 
 ## Supervisor Instructions
 
