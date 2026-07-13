@@ -17,6 +17,7 @@ id" from "not yours" (gap spec section 12).
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import json
 import os
@@ -708,6 +709,30 @@ def _sse_frame(*, event_id: int, event: str, data: Mapping[str, Any]) -> str:
     return f"id: {event_id}\nevent: {event}\ndata: {json.dumps(dict(data), separators=(',', ':'), sort_keys=True)}\n\n"
 
 
+def _normalize_event(event: dict) -> dict:
+    result = dict(event)
+    envelope = result.pop("correlation_envelope", None)
+    if isinstance(envelope, dict):
+        for name in ("journey_id", "tenant_id", "environment", "correlation_id", "trace_id", "research_journey_id", "strategy_lifecycle_id"):
+            result.setdefault(name, envelope.get(name))
+    for field in ("occurred_at", "recorded_at"):
+        val = result.get(field)
+        if val:
+            dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc)
+                result[field] = dt.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    return result
+
+
+def _canonical(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple((key, _canonical(item)) for key, item in sorted(value.items()))
+    if isinstance(value, list):
+        return tuple(_canonical(item) for item in value)
+    return value
+
+
 # --------------------------------------------------------------------------- #
 # Router factory
 # --------------------------------------------------------------------------- #
@@ -1334,25 +1359,117 @@ def create_trade_journeys_router(
     )
     async def bff_publish_trade_journey_events(
         events: List[dict],
+        authorization: Optional[str] = Header(default=None),
     ):
         """Append first-class journey events to the events store in real-time."""
+        identity = _identity(authorization)
+        if require_operator_role:
+            require_operator_role(identity)
+        else:
+            require_read_role(identity)
+
+        if not events:
+            return _err(400, "VALIDATION_FAILED", "Event batch cannot be empty")
+
+        normalized_batch = []
+        batch_ids = {}
+
         for event in events:
             if not isinstance(event, dict):
                 return _err(400, "VALIDATION_FAILED", "Each event must be a JSON object")
+            
+            # 1. Required fields validation
             for field in ("event_id", "journey_id", "tenant_id", "environment", "occurred_at"):
-                if not event.get(field):
+                val = event.get(field)
+                if not isinstance(val, str) or not val.strip():
                     return _err(400, "VALIDATION_FAILED", f"Event missing required field: {field}")
+            
+            # 2. Tenant scope check
+            if not _tenant_allowed(identity, event["tenant_id"]):
+                return _err(403, "FORBIDDEN", f"Tenant access denied for tenant: {event['tenant_id']}")
+                
+            # 3. Timezone-aware ISO-8601 validation
+            for ts_field in ("occurred_at", "recorded_at"):
+                val = event.get(ts_field)
+                if val:
+                    try:
+                        dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+                        if dt.tzinfo is None:
+                            return _err(400, "VALIDATION_FAILED", f"{ts_field} must be timezone-aware")
+                    except Exception:
+                        return _err(400, "VALIDATION_FAILED", f"Invalid ISO-8601 format for {ts_field}")
+                        
+            # 4. stage validation (if stage present)
+            stage = event.get("stage")
+            if stage is not None and stage not in STAGES:
+                return _err(400, "VALIDATION_FAILED", f"Unknown stage: {stage}")
+
+            # Normalize event to ensure consistent key sorting/comparison
+            try:
+                norm_event = _normalize_event(event)
+            except Exception as exc:
+                return _err(400, "VALIDATION_FAILED", f"Failed to normalize event: {exc}")
+
+            event_id = norm_event["event_id"]
+            fingerprint = repr(_canonical(norm_event))
+            
+            # Check duplicate within the batch
+            if event_id in batch_ids:
+                if batch_ids[event_id] != fingerprint:
+                    return _err(400, "CONFLICTING_DUPLICATE", f"Conflicting duplicate event_id within batch: {event_id}")
+            else:
+                batch_ids[event_id] = fingerprint
+                normalized_batch.append(norm_event)
 
         store_path_str = os.getenv(EVENTS_STORE_ENV, "")
         if not store_path_str:
             return _err(503, "STORE_UNCONFIGURED", "Events store path is not configured")
         store_path = Path(store_path_str)
+        lock_path = store_path.with_suffix(".lock")
+        
         try:
-            existing = load_store_events(store_path)
-            merged = merge_with_store(existing, events)
-            write_store_atomic(store_path, merged)
+            # Ensure the directory exists
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(lock_path, "w") as lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                
+                # Now we hold the lock!
+                existing = load_store_events(store_path)
+                
+                # Check conflict with existing store events
+                existing_normalized = {}
+                for ev in existing:
+                    if isinstance(ev, dict) and "event_id" in ev:
+                        try:
+                            norm_ev = _normalize_event(ev)
+                            existing_normalized[norm_ev["event_id"]] = repr(_canonical(norm_ev))
+                        except Exception:
+                            # Skip unnormalizable existing events
+                            pass
+
+                for norm_event in normalized_batch:
+                    event_id = norm_event["event_id"]
+                    fingerprint = repr(_canonical(norm_event))
+                    if event_id in existing_normalized:
+                        if existing_normalized[event_id] != fingerprint:
+                            return _err(409, "CONFLICTING_DUPLICATE", f"Conflicting duplicate event_id: {event_id}")
+
+                # Merge/append to preserve telemetry_backfill events!
+                merged_dict = {}
+                for ev in existing:
+                    if isinstance(ev, dict) and "event_id" in ev:
+                        merged_dict[ev["event_id"]] = ev
+                for ev in normalized_batch:
+                    merged_dict[ev["event_id"]] = ev
+
+                merged_list = sorted(
+                    merged_dict.values(),
+                    key=lambda event: (event.get("occurred_at") or "", event.get("event_id") or "")
+                )
+                
+                write_store_atomic(store_path, merged_list)
         except Exception as exc:
             return _err(500, "WRITE_FAILED", f"Failed to write events to store: {exc}")
-        return {"status": "ok", "count": len(events)}
+        return {"status": "ok", "count": len(normalized_batch)}
 
     return router
