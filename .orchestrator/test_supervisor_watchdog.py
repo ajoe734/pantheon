@@ -225,5 +225,44 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertFalse(result["lock_held"])
 
 
+class ActiveWorkerCountDedupeTests(unittest.TestCase):
+    """active_worker_count() reads runtime_state["workers"], which supervisor.py
+    keys by worker run_id (one entry per logical run), not a live /proc PID
+    scan. It is therefore already immune to the worker_runner.py wrapper /
+    child-process triple-counting bug that affected scan_live_worker_pids_by_agent()
+    in supervisor.py; this pins that behavior so a future refactor can't
+    silently reintroduce PID-based counting here.
+    """
+
+    def test_counts_one_per_worker_run_regardless_of_os_process_count(self) -> None:
+        runtime_state = {
+            "workers": {
+                "run-1": {"run_id": "run-1", "agent_id": "claude", "status": "running"},
+                "run-2": {"run_id": "run-2", "agent_id": "codex", "status": "waiting_approval"},
+                "run-3": {"run_id": "run-3", "agent_id": "gemini", "status": "done"},
+            }
+        }
+        self.assertEqual(supervisor_watchdog.active_worker_count(runtime_state), 2)
+
+    def test_resource_pressure_reason_uses_active_worker_count_not_pid_scan(self) -> None:
+        settings = {
+            "min_disk_free_gb": 2.0,
+            "max_disk_used_percent": 95.0,
+            "min_memory_available_mb": 512,
+            "max_load_1m": 24.0,
+            "max_active_workers": 2,
+        }
+        snapshot = {
+            "disk_free_gb": 10.0,
+            "disk_used_percent": 50.0,
+            "memory_available_mb": 4096,
+            "load_1m": 1.0,
+            "active_worker_count": 3,
+            "state_parent_writable": True,
+        }
+        reasons = supervisor_watchdog.resource_pressure_reasons(snapshot, settings)
+        self.assertIn("active_worker_count_above_threshold", reasons)
+
+
 if __name__ == "__main__":
     unittest.main()
