@@ -6,8 +6,8 @@ Status: implementation anchored; live dev proof pending
 - Reviewer: Claude
 - Branch: `task/EVOCHAIN-002`
 - PR target: `dev`
-- Activation anchor: `7a04ca7fe`
-- Deploy-proof anchor: `78defbfda`
+- Activation anchor: `b402ea8be`
+- Deploy-proof anchor: `5adb45937`
 
 ## Scope
 
@@ -68,6 +68,9 @@ python3 -m pytest \
   services/evolution/test_evolution_service.py -q
 bash -n scripts/deploy_nonprod_vm.sh
 python3 -m pytest scripts/test_evolution_daily_sweep_deploy_contract.py -q
+PATH=/tmp/evochain-002-acceptance-venv/bin:$PATH \
+  PYTHON=/tmp/evochain-002-acceptance-venv/bin/python \
+  scripts/run-acceptance.sh smoke
 git diff --check
 ```
 
@@ -78,6 +81,9 @@ Results:
 - Focused compose/worker tests: `2 passed in 7.55s`.
 - Full evolution service file plus compose contract: `69 passed in 99.23s`.
 - Deploy proof contract: `1 passed in 5.66s`.
+- Repository smoke acceptance: passed in an isolated Python virtual
+  environment. The first system-Python attempt stopped before project tests
+  because PEP 668 forbids global package installation; no override was used.
 - Shell syntax and diff checks: passed.
 
 ## Dev Tick And Proposal Evidence
