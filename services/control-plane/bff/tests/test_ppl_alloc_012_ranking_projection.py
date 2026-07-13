@@ -185,6 +185,71 @@ def _install_runtime_observations(
     store.get_telemetry_summary = telemetry_for_runtime  # type: ignore[method-assign]
 
 
+def test_snapshot_id_is_stable_across_semantically_equivalent_item_ordering() -> None:
+    items = [
+        {
+            "persona_id": "persona-snapshot-a",
+            "rank": 1,
+            "overall_score": 91.0,
+            "runtime_ids": ["runtime-a-1", "runtime-a-2"],
+            "metrics": {
+                "runtime_ids": ["runtime-a-1", "runtime-a-2"],
+                "telemetry_evidence_refs": [
+                    {"ref_id": "telemetry-a-1", "runtime_id": "runtime-a-1"},
+                    {"ref_id": "telemetry-a-2", "runtime_id": "runtime-a-2"},
+                ],
+                "pnl": 0.12,
+            },
+            "stage": "live_running",
+            "current_weight": 0.08,
+            "eligible": True,
+        },
+        {
+            "persona_id": "persona-snapshot-b",
+            "rank": 2,
+            "overall_score": 84.0,
+            "runtime_ids": ["runtime-b-1", "runtime-b-2"],
+            "metrics": {
+                "runtime_ids": ["runtime-b-1", "runtime-b-2"],
+                "telemetry_evidence_refs": [
+                    {"ref_id": "telemetry-b-1", "runtime_id": "runtime-b-1"},
+                    {"ref_id": "telemetry-b-2", "runtime_id": "runtime-b-2"},
+                ],
+                "pnl": 0.07,
+            },
+            "stage": "canary_running",
+            "current_weight": 0.03,
+            "eligible": True,
+        },
+    ]
+    permuted_items = [
+        {
+            **item,
+            "runtime_ids": list(reversed(item["runtime_ids"])),
+            "metrics": {
+                **item["metrics"],
+                "runtime_ids": list(reversed(item["metrics"]["runtime_ids"])),
+                "telemetry_evidence_refs": list(
+                    reversed(item["metrics"]["telemetry_evidence_refs"])
+                ),
+            },
+        }
+        for item in reversed(items)
+    ]
+
+    snapshot_id = bff_main._pm12_ranking_snapshot_id(
+        items,
+        surface="quarterly",
+        period="2026-Q3",
+    )
+    permuted_snapshot_id = bff_main._pm12_ranking_snapshot_id(
+        permuted_items,
+        surface="quarterly",
+        period="2026-Q3",
+    )
+    assert permuted_snapshot_id == snapshot_id
+
+
 def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
@@ -860,6 +925,143 @@ def test_promotion_submit_replay_preserves_original_snapshot_after_ranking_mutat
             assert bff_main.command_store._get_all_commands()[0]["params"][
                 "ranking_snapshot_id"
             ] == original_snapshot_id
+        finally:
+            bff_main.read_store = original_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+
+
+def test_promotion_submit_cross_role_replay_redacts_admin_only_evidence() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        try:
+            client = _client(td)
+            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            store = bff_main.read_store
+            assert isinstance(store, ReadSurfaceStore)
+            _seed_live_persona(store)
+            restricted_ref_id = "evidence-ppl-alloc-012-admin-only-binding"
+            _install_evidence_records(
+                store,
+                [
+                    _binding_evidence_ref(
+                        restricted_ref_id,
+                        binding_id=LIVE_BINDING_ID,
+                    )
+                ],
+            )
+            admin_headers = {"Authorization": "Bearer ppl-alloc-submit-admin:admin"}
+
+            admin_recommendations = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=admin_headers,
+                params={
+                    "quarter": "2026-Q3",
+                    "personaId": LIVE_PERSONA_ID,
+                    "page_size": 200,
+                },
+            )
+            assert admin_recommendations.status_code == 200, admin_recommendations.text
+            recommendation = admin_recommendations.json()["data"]["items"][0]
+            admin_evidence_by_id = {
+                ref["ref_id"]: ref for ref in recommendation["evidence_refs"]
+            }
+            assert admin_evidence_by_id[restricted_ref_id]["redacted"] is False
+            recommendation_id = recommendation["recommendation_id"]
+            stored_snapshot_id = recommendation["ranking_snapshot_id"]
+
+            submit = client.post(
+                f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
+                headers={
+                    **admin_headers,
+                    "Idempotency-Key": "ppl-alloc-012-admin-submit",
+                },
+                json={
+                    "quarter": "2026-Q3",
+                    "ranking_snapshot_id": stored_snapshot_id,
+                },
+            )
+            assert submit.status_code == 202, submit.text
+            assert submit.json()["data"]["ranking_snapshot_id"] == stored_snapshot_id
+
+            operator_recommendations = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={
+                    "quarter": "2026-Q3",
+                    "personaId": LIVE_PERSONA_ID,
+                    "page_size": 200,
+                },
+            )
+            assert operator_recommendations.status_code == 200, operator_recommendations.text
+            operator_recommendation = next(
+                item
+                for item in operator_recommendations.json()["data"]["items"]
+                if item["recommendation_id"] == recommendation_id
+            )
+            operator_evidence_by_id = {
+                ref["ref_id"]: ref
+                for ref in operator_recommendation["evidence_refs"]
+            }
+            assert operator_evidence_by_id[restricted_ref_id]["redacted"] is True
+
+            replay = client.post(
+                f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
+                headers={
+                    **HEADERS,
+                    "Idempotency-Key": "ppl-alloc-012-operator-replay",
+                },
+                json={
+                    "quarter": "2026-Q3",
+                    "ranking_snapshot_id": stored_snapshot_id,
+                },
+            )
+            assert replay.status_code == 200, replay.text
+            replay_body = replay.json()
+            assert replay_body["meta"]["idempotency"]["replayed"] is True
+            assert replay_body["data"]["ranking_snapshot_id"] == stored_snapshot_id
+            assert replay_body["meta"]["ranking_snapshot_id"] == stored_snapshot_id
+            assert len(bff_main.command_store._get_all_commands()) == 1
+
+            operator_review = replay_body["data"]["review"]
+            operator_review_evidence = {
+                ref["ref_id"]: ref for ref in operator_review["evidence_refs"]
+            }
+            source_recommendation = operator_review["source_recommendation"]
+            source_recommendation_evidence = {
+                ref["ref_id"]: ref
+                for ref in source_recommendation["evidence_refs"]
+            }
+            for evidence_by_id in (
+                operator_review_evidence,
+                source_recommendation_evidence,
+            ):
+                restricted_ref = evidence_by_id.get(restricted_ref_id)
+                if restricted_ref is not None:
+                    assert restricted_ref["redacted"] is True
+                    assert {
+                        "source_document",
+                        "source_ref",
+                        "linked_object_summary",
+                        "credibility",
+                        "resolved_link",
+                    }.isdisjoint(restricted_ref)
+
+            def contains_source_document(value: Any) -> bool:
+                if isinstance(value, dict):
+                    return "source_document" in value or any(
+                        contains_source_document(item) for item in value.values()
+                    )
+                if isinstance(value, list):
+                    return any(contains_source_document(item) for item in value)
+                return False
+
+            assert contains_source_document(operator_review) is False
+            assert contains_source_document(source_recommendation) is False
         finally:
             bff_main.read_store = original_store
             bff_main.command_store = original_command_store

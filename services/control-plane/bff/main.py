@@ -41271,6 +41271,13 @@ def _pm12_telemetry_record_timestamp(record: Dict[str, Any]) -> Optional[datetim
     return None
 
 
+def _pm12_finite_number(value: Any) -> Optional[float]:
+    parsed = _management_number(value)
+    if parsed is None or not math.isfinite(parsed):
+        return None
+    return parsed
+
+
 def _pm12_telemetry_metrics_from_records(
     runtime_ids: List[str],
     telemetry: List[Dict[str, Any]],
@@ -41282,27 +41289,27 @@ def _pm12_telemetry_metrics_from_records(
     )
     pnl_values = [
         value
-        for value in (_management_number(item.get("pnl")) for item in telemetry)
+        for value in (_pm12_finite_number(item.get("pnl")) for item in telemetry)
         if value is not None
     ]
     drawdown_values = [
         value
-        for value in (_management_number(item.get("drawdown")) for item in telemetry)
+        for value in (_pm12_finite_number(item.get("drawdown")) for item in telemetry)
         if value is not None
     ]
     fill_rate_values = [
         value
-        for value in (_management_number(item.get("fill_rate")) for item in telemetry)
+        for value in (_pm12_finite_number(item.get("fill_rate")) for item in telemetry)
         if value is not None
     ]
     slippage_values = [
         value
-        for value in (_management_number(item.get("avg_slippage_bps")) for item in telemetry)
+        for value in (_pm12_finite_number(item.get("avg_slippage_bps")) for item in telemetry)
         if value is not None
     ]
     trade_values = [
         value
-        for value in (_management_number(item.get("total_trades")) for item in telemetry)
+        for value in (_pm12_finite_number(item.get("total_trades")) for item in telemetry)
         if value is not None
     ]
     latest_timestamp = _pm12_telemetry_record_timestamp(telemetry[0]) if telemetry else None
@@ -42242,6 +42249,20 @@ def _pm12_ranking_snapshot_id(
                         ensure_ascii=True,
                     ),
                 )
+            elif field == "metrics" and isinstance(item.get(field), dict):
+                metrics = json.loads(json.dumps(item.get(field)))
+                for nested_field in ("runtime_ids", "telemetry_evidence_refs"):
+                    if isinstance(metrics.get(nested_field), list):
+                        metrics[nested_field] = sorted(
+                            metrics[nested_field],
+                            key=lambda value: json.dumps(
+                                value,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                                ensure_ascii=True,
+                            ),
+                        )
+                payload_item[field] = metrics
             else:
                 payload_item[field] = item.get(field)
         payload_items.append(payload_item)
@@ -42989,13 +43010,17 @@ def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, An
     return None
 
 
-def _promotion_review_submission_projection(review_id: Any) -> Optional[Dict[str, Any]]:
+def _promotion_review_submission_projection(
+    review_id: Any,
+    *,
+    include_source_recommendation: bool = False,
+) -> Optional[Dict[str, Any]]:
     record = _latest_promotion_review_submission(review_id)
     if record is None:
         return None
     params = record.get("params") if isinstance(record.get("params"), dict) else {}
     audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    return {
+    projection = {
         "submitted": True,
         "submit_status": record.get("status"),
         "command_id": record.get("command_id"),
@@ -43011,15 +43036,15 @@ def _promotion_review_submission_projection(review_id: Any) -> Optional[Dict[str
         "stage_from": params.get("stage_from"),
         "stage_to": params.get("stage_to"),
         "review_kind": params.get("review_kind"),
-        "source_recommendation": (
-            json.loads(json.dumps(params.get("source_recommendation")))
-            if isinstance(params.get("source_recommendation"), dict)
-            else None
-        ),
         "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}",
         "live_capital_mutation": False,
         "requires_human_gate_decision": True,
     }
+    if include_source_recommendation and isinstance(params.get("source_recommendation"), dict):
+        projection["source_recommendation"] = json.loads(
+            json.dumps(params.get("source_recommendation"))
+        )
+    return projection
 
 
 def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
@@ -43445,6 +43470,17 @@ def _promotion_review_submit_response(
     return JSONResponse(status_code=command_response.status_code, content=jsonable_encoder(content))
 
 
+def _promotion_review_stored_source(
+    recommendation: Dict[str, Any],
+) -> Dict[str, Any]:
+    stored = json.loads(json.dumps(recommendation))
+    # Command params are visible on governance read surfaces. Persist the
+    # immutable ranking tuple, never a submitter-specific evidence expansion.
+    stored["evidence_refs"] = []
+    stored["evidence_ref_ids"] = []
+    return stored
+
+
 @app.post("/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit", status_code=202)
 async def bff_management_quarterly_ranking_recommendation_submit(
     recommendation_id: str,
@@ -43471,7 +43507,10 @@ async def bff_management_quarterly_ranking_recommendation_submit(
     requested_ranking_snapshot_id = str(
         payload.get("ranking_snapshot_id") or ""
     ).strip()
-    existing_submission = _promotion_review_submission_projection(recommendation_id)
+    existing_submission = _promotion_review_submission_projection(
+        recommendation_id,
+        include_source_recommendation=True,
+    )
     if existing_submission:
         stored_ranking_snapshot_id = str(
             existing_submission.get("ranking_snapshot_id") or ""
@@ -43507,6 +43546,11 @@ async def bff_management_quarterly_ranking_recommendation_submit(
                 stored_ranking_snapshot_id
                 or str(stored_source.get("ranking_snapshot_id") or "").strip()
             )
+        # The stored recommendation may have been submitted by a more privileged
+        # actor. Snapshot replay is identity-stable, but evidence visibility is
+        # request-scoped, so never replay stored evidence bodies across roles.
+        stored_source["evidence_refs"] = []
+        stored_source["evidence_ref_ids"] = []
         already = _promotion_review_item_from_recommendation(stored_source)
         replay_snapshot_id = str(
             stored_ranking_snapshot_id
@@ -43599,7 +43643,9 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         "runtime_mutation": False,
         "source_type": "quarterly_ranking_recommendation",
         "source_record_id": review["recommendation_id"],
-        "source_recommendation": json.loads(json.dumps(review["source_recommendation"])),
+        "source_recommendation": _promotion_review_stored_source(
+            review["source_recommendation"]
+        ),
         "audit_event": "quarterly_ranking.recommendation_submitted",
         "policy": "promotion_governance_human_gate_no_direct_live_capital",
     }
