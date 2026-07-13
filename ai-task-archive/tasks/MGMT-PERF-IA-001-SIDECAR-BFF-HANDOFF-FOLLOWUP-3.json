@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-11T07:42:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-PERF-IA-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 frontend routes",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-001/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only handoff refresh merged via Pantheon PR #3136 at 935e097989462b4a2dcca76c2479274bbced0d55; records blocked parent, failed execute-plans PR #250 gate, required Human/Ops IA-precedence decision, and BFF/read-model absorption boundary.",
+    "last_update": "2026-07-11T07:42:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Follow-up 3 approved: it accurately records the blocked parent, failed PR gate, required IA-precedence decision, and support-only read-model boundary."
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-001/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T07:42:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-001-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "3277419f03bf050e096a1aacfb660057a6abfb3a",
+      "commit_subject": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: finalize packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend handoff and closeout evidence.",
+        "Not changing": "canonical truth, runtime contracts, frontend code, or governance.",
+        "Composes with": "parent MGMT-PERF-IA-001 and execute-plans PR #250.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; ai-status show"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "935e097989462b4a2dcca76c2479274bbced0d55",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only closeout-gate refresh ready at commit ecb9ef46b; execute-plans PR #250 remains OPEN with integration-gate in progress, prior sidecars are merged, and MGMT-PERF-IA-002 residual read-model gaps remain outside the parent claim. Verified git diff --check; no canonical/runtime/frontend changes.",
+      "status": "done",
+      "created_at": "2026-07-11T07:19:48Z",
+      "resolved_at": "2026-07-11T07:35:37Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review changes requested: see support/reviews/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-review-claude.md. The observed-state table is stale: MGMT-PERF-IA-001 is now status=blocked (waiting_for=Human/Ops), not review_approved, and execute-plans PR #250 integration-gate now FAILS due to a genuine conflict with PPL-ALLOC-006's concurrent expansion of PromotionAllocation.tsx, not IN_PROGRESS. Refresh the packet to state the gate needs a human/product IA-precedence decision before re-attempting merge, then hand back for review.",
+      "status": "done",
+      "created_at": "2026-07-11T07:35:37Z",
+      "resolved_at": "2026-07-11T07:35:37Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Reviewer changes addressed at 87eed687f: packet now records parent blocked/waiting for Human/Ops, PR #250 integration-gate FAILURE, PPL-ALLOC-006 PromotionAllocation conflict, and required human/product IA-precedence decision before re-attempt and merge. Support artifact only.",
+      "status": "done",
+      "created_at": "2026-07-11T07:37:22Z",
+      "resolved_at": "2026-07-11T07:39:16Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Support-only blocked parent and IA-precedence gate refresh approved for owner absorption.",
+      "status": "done",
+      "created_at": "2026-07-11T07:39:16Z",
+      "resolved_at": "2026-07-11T07:42:35Z"
+    }
+  ],
+  "blockers": []
+}

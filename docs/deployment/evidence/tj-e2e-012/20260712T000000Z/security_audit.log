@@ -1,0 +1,23 @@
+  /bff/runtimes: no-auth=401 empty=401 bearer=401
+  /bff/strategies: no-auth=401 empty=401 bearer=401
+  /bff/personas: no-auth=401 empty=401 bearer=401
+  /bff/capital-pools: no-auth=401 empty=401 bearer=401
+  /bff/deployments: no-auth=401 empty=401 bearer=401
+  /bff/approvals: no-auth=401 empty=401 bearer=401
+  /bff/incidents: no-auth=401 empty=401 bearer=401
+  /bff/v5/loop-runs: no-auth=401 empty=401 bearer=401
+  /bff/v5/sentinel/findings: no-auth=401 empty=401 bearer=401
+  /api/v1/operator/runtime-state: no-auth=401 empty=401 bearer=200
+  /bff/artifacts: no-auth=401 empty=401 bearer=401
+  /bff/management/trade-journeys: no-auth=401 empty=401 bearer=401
+  /bff/management/trade-journeys/metrics: no-auth=401 empty=401 bearer=401
+
+== auth boundary over 13 protected endpoints ==
+OK: every protected endpoint rejects missing/empty credentials
+
+== verifying tenant isolation and metric masking ==
+  Query own tenant (pantheon-dev) with scoped token: status=200
+  Cross-tenant query (tenant_id=pantheon-dev) with token scoped to tenant-a: status=403
+  Cross-tenant metrics query (tenant_id=pantheon-dev) with token scoped to tenant-a: status=403
+  Query own metrics (pantheon-dev) with scoped token: status=200
+OK: tenant isolation and metric masking successfully verified

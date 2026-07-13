@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "PINT-001",
+  "archived_at": "2026-07-12T12:48:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PINT-001",
+    "title": "Persona interaction contract and authority closure",
+    "summary_zh": "Freeze cross-repo interaction opinion consultation proposal and event contracts.",
+    "phase": "Persona Interaction / Wave 0 contract",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/specs/agora/",
+      "services/control-plane/openapi/",
+      "docs/04/",
+      "docs/product/persona-interaction-and-governed-action-plan.md"
+    ],
+    "acceptance": [
+      "Trace existing contracts;Freeze additive schemas;Prove authority boundary;Merge Pantheon PR"
+    ],
+    "next": "Closeout verified: PR #3412 merged to dev at 7d8bffeaab9761cc2b34919aeb9b5c53f297208a; re-ran python3 -m pytest scripts/test_agora_v1_6_bundle.py -v, 13/13 Agora v1.6 contract tests passed (bundle digests, capability manifest wiring, session-mediation null-loophole regression, resolved-decision proof for governed_action_authority_request). Working tree clean; HEAD confirmed ancestor of origin/dev.",
+    "last_update": "2026-07-12T12:48:49Z",
+    "review_notes_zh": [
+      "審查通過：Persona opinion consultation 與 governed action authority 兩份 v7 schema 符合 session mediation、治理決策可稽核與 no-capital/no-command boundary；null loophole regression、bundle digest 與 manifest wiring 共 13 tests 通過。",
+      "Owner Claude 依 closeout spec 完成 review_approved -> done。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T12:48:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/pint-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PINT-001",
+      "git_clean_required": false,
+      "commit": "c5af89f9131babd51f25c4b3593aed1e46d9388d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PINT-001",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PINT-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cba887828a9a41fa0c66321207d7899cf483fe7b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PINT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PINT-001 implemented and PR opened: https://github.com/ajoe734/pantheon/pull/3412 (task/PINT-001 -> dev, auto-merge enabled). Freezes services/control-plane/specs/agora/v7/persona_opinion_consultation_event.schema.json + governed_action_authority_request.schema.json, capability_manifest_v1_6.json, bundle_index.v1_6.json, and docs/product/persona-interaction-and-governed-action-plan.md. Contract freeze only, no backend routes. Please review the authority-boundary proof in section 5 of the plan doc against PERSONA_RUNTIME_MODEL.md and the two control-plane decision docs.",
+      "status": "done",
+      "created_at": "2026-07-12T12:27:38Z",
+      "resolved_at": "2026-07-12T12:29:16Z"
+    },
+    {
+      "task_id": "PINT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes required: both schemas use nullableString/nullableDateTime in fields whose mere presence is claimed as proof. A persona_session with session_id:null validates, violating PERSONA_RUNTIME_MODEL.md section 13 mediation; a resolved authorized authority request with decision_by:null and resolved_at:null also validates, contradicting section 5's auditable governance-owner proof. Make conditional session_id non-null for persona_session actors and resolved decision_by/resolved_at non-null, then add negative validation cases and refresh bundle digests.",
+      "status": "done",
+      "created_at": "2026-07-12T12:29:16Z",
+      "resolved_at": "2026-07-12T12:29:16Z"
+    },
+    {
+      "task_id": "PINT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Fixed the null-loophole: sessionActorRef's persona_session branch now overrides session_id to a non-null string in its then-clause (PERSONA_RUNTIME_MODEL.md section 13), and GovernedActionAuthorityRequest's resolved-status branch now overrides decision_by/resolved_at to non-null (section 5). Added scripts/test_agora_v1_6_bundle.py (13 cases covering both null-loophole negatives plus positive/other-status acceptance) and refreshed bundle_index.v1_6.json digests for both schema files. Also merged origin/dev into task/PINT-001 to resolve an add/add path conflict on docs/product/persona-interaction-and-governed-action-plan.md against the newly-merged PINT-PLAN-001 baseline (kept dev's canonical planning doc; our contract-trace narrative remains in the commit history). PR #3412 merged into dev at 7d8bffeaa. python3 -m pytest scripts/test_agora_v1_6_bundle.py -q: 13 passed.",
+      "status": "done",
+      "created_at": "2026-07-12T12:41:43Z",
+      "resolved_at": "2026-07-12T12:44:55Z"
+    },
+    {
+      "task_id": "PINT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "APPROVED: PR #3412 merged to dev at 7d8bffeaab9761cc2b34919aeb9b5c53f297208a; 13 Agora v1.6 contract tests passed; bundle digests, session mediation, resolved-decision proof, and no-capital/no-command boundaries verified.",
+      "status": "done",
+      "created_at": "2026-07-12T12:44:55Z",
+      "resolved_at": "2026-07-12T12:48:50Z"
+    }
+  ],
+  "blockers": []
+}

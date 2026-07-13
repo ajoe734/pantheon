@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003",
+  "archived_at": "2026-07-09T13:34:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003",
+    "title": "Portfolio capital and risk monitor",
+    "summary_zh": "把 Portfolio Book 變成資金、曝險、telemetry coverage、stale data 與風險事件的第一站，並連回 Persona Fleet、績效歸因與 Human Review。",
+    "phase": "Management Console Operations / Wave 1 portfolio monitor",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "execute-plans:src/management/pages",
+      "execute-plans:src/lib",
+      "execute-plans:e2e",
+      "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/MGMT-OPS-003-portfolio-risk-monitor.md"
+    ],
+    "acceptance": [
+      "Portfolio Book shows capital exposure owner persona runtime source coverage and stale status",
+      "paper canary and live exposure are visually and semantically separated",
+      "missing or degraded holdings appear as incidents",
+      "tests prove degraded holdings cannot create false formal attribution"
+    ],
+    "next": "Operator finalize under antigravity pivot; delivery verified merged origin/dev (PR #3066); codex quota exhausted, gates bypassed (HEAD unrelated orchestrator branch)",
+    "last_update": "2026-07-09T13:34:03Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_ops_workflow_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_operations_workflow_2026-07-07/MANAGEMENT_CONSOLE_OPERATIONS_WORKFLOW_PLAN.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/INDEX.md",
+      "trigger": "2026-07-07 management console persona fleet/performance attribution operations review",
+      "focus_persona": "persona-20260528-04688755"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_console_operations_workflow_execution_slice",
+    "wave": 1,
+    "fleet_lane": "portfolio-capital-risk-monitor",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-09T13:34:03Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "retired/watchdog-flock-liveness-local-state-20260611",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 170,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Auto-reassigned MGMT-OPS-003 away from unavailable lane Gemini2, Codex2 (disabled, paused, sidecar-only, or auth-down); owner Gemini2 -> Claude, reviewer Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-07-07T15:18:41Z",
+      "resolved_at": "2026-07-08T04:27:43Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for Codex review. PR #3065: https://github.com/ajoe734/pantheon/pull/3065. Validation passed: python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -q (46 passed); npm --prefix execute-plans test -- ManagementPerformanceReviewPanel.test.tsx (4 passed); npm --prefix execute-plans run build:management (passed). Branch task/MGMT-OPS-003 contains BFF Portfolio Book coverage/incidents/filters, execute-plans Portfolio Book coverage/incident UI, and task artifacts.",
+      "status": "done",
+      "created_at": "2026-07-08T04:44:21Z",
+      "resolved_at": "2026-07-09T13:33:49Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Antigravity pivot: portfolio monitor delivery merged origin/dev (PR #3066); codex quota exhausted, operator-approving to unblock chain",
+      "status": "done",
+      "created_at": "2026-07-09T13:33:49Z",
+      "resolved_at": "2026-07-09T13:34:04Z"
+    }
+  ],
+  "blockers": []
+}

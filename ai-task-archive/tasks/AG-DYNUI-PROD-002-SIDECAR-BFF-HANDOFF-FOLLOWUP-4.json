@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-07-04T06:32:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare AG-DYNUI-PROD-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Shell Architecture",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-002/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: packet (commit a124cf4a2, PR #2905) already merged into dev; re-verified PR #171/#170 state, execute-plans dev tip, hosted dev FE deployment.json, dev BFF health unchanged since Follow-up 3; no further code change needed. Finalizing review_approved -> done.",
+    "last_update": "2026-07-04T06:32:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已獨立重新驗證 PR #171 (OPEN/CLEAN/MERGEABLE/integration-gate SUCCESS，未變)、PR #170 (CLOSED，未變)、execute-plans dev tip (dd597405e0，未變)、hosted dev FE deployment.json (同一 commit/deployedAt，未重新部署)、dev BFF /health 正常",
+      "AG-DYNUI-PROD-002 (review_approved, check 45)、AG-DYNUI-PROD-003 (review_approved, PR #2860 approved 但 hosted screenshot 仍缺)、AG-DYNUI-PROD-006 (todo/owner Codex，三個週期零進度) 三者狀態皆與封包所述完全一致",
+      "Scope 檢查：commit a124cf4a2 僅新增 task-brief 與 support/sidecars/AG-DYNUI-PROD-002/ 底下的 support artifact，未觸及 canonical/runtime/frontend/registry/governance 檔案；PR #2905 已 merge 進 dev",
+      "核准 (approve)：此為支援性 handoff packet，未執行任何 merge/deploy 動作，符合 sidecar 範圍限制"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-PROD-002/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T06:32:56Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-002-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "a7260d2ba6d6fc01b2ce889072f509821c8c9b46",
+      "commit_subject": "Merge pull request #2905 from ajoe734/task/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4": "add packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a7260d2ba6d6fc01b2ce889072f509821c8c9b46",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Follow-up 4 packet committed (a124cf4a2), PR #2905 opened to dev with auto-merge enabled: https://github.com/ajoe734/pantheon/pull/2905. Re-verified independently that nothing has changed since Follow-up 3 (PR #171 still open/unmerged, dev tip and hosted deployment.json unchanged, AG-DYNUI-PROD-006 still todo/unowned across 3 cycles); also flagged the same pattern now visible on AG-DYNUI-PROD-003. Ready for reviewer approval; will finalize to done only after PR #2905 merges.",
+      "status": "done",
+      "created_at": "2026-07-04T06:28:39Z",
+      "resolved_at": "2026-07-04T06:31:03Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Reviewed and approved: independently re-verified PR #171/#170 state, execute-plans dev tip, hosted dev FE deployment.json, dev BFF health, and AG-DYNUI-PROD-002/003/006 status all match the packet's claims exactly. Commit a124cf4a2 (PR #2905, merged) touches only the task brief and the new support artifact -- no canonical/runtime changes. Owner (Claude2) may finalize to done.",
+      "status": "done",
+      "created_at": "2026-07-04T06:31:03Z",
+      "resolved_at": "2026-07-04T06:32:57Z"
+    }
+  ],
+  "blockers": []
+}

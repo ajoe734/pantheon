@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-12T01:41:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 mobile repair",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-003-GAP-001",
+      "MGMT-OPS-003-GAP-002",
+      "MGMT-OPS-003-GAP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "DONE: sidecar follow-up packet already reviewed and merged via Pantheon PR #3332; parent mobile fix and MGMT-OPS-003-GAP-004 closeout are done. Root board mirror finalize only; no canonical runtime mutation.",
+    "last_update": "2026-07-12T01:41:37Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審閱通過：已核對 execute-plans 的 route construction、humanInbox adapter、HumanInboxPage/useV5Live 與 strict-live observation points；已核對 Pantheon BFF list/detail 路由僅支援 source_type/status/priority/page_token/page_size。Packet 未宣稱未知 root cause、未放寬 fail-closed、未修改 canonical truth，並要求 desktop/mobile 同語意且零 required-request failures 的證據回傳。Focused verification: git diff --check 通過；python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_human_inbox.py = 5 passed。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T01:41:37Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/clear-default-market-blockers",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 277,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only packet ready in commit 63f47954f / PR #3332. Please verify concrete frontend observation points, BFF query boundary, strict fail-closed evidence return contract, and canonical non-mutation.",
+      "status": "done",
+      "created_at": "2026-07-12T01:28:09Z",
+      "resolved_at": "2026-07-12T01:35:16Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: support-only packet accurately identifies frontend observation points and BFF query boundary, preserves strict fail-closed evidence semantics and uncertainty, and does not mutate canonical truth. PR #3332 is merged; owner Codex should perform task closeout and mark done.",
+      "status": "done",
+      "created_at": "2026-07-12T01:35:16Z",
+      "resolved_at": "2026-07-12T01:41:37Z"
+    }
+  ],
+  "blockers": []
+}

@@ -108,11 +108,13 @@ def test_commands_delegate_to_durable_owner_and_replay(monkeypatch) -> None:
         assert first.json()["data"]["facts_snapshot_ref"] == "facts://same"
         assert conflict.status_code == 409
         submit = client.post("/bff/personas/p1/trade-lessons/l1:submit-review", headers={**HEADERS, "Idempotency-Key": "s1"}, json={"reason": "review"})
-        decide = client.post("/bff/personas/p1/trade-lessons/l2:decide", headers={**HEADERS, "Idempotency-Key": "d1"}, json={"reason": "endorse", "decision": "endorsed"})
+        decide = client.post("/bff/personas/p1/trade-lessons/l2:decide", headers={**HEADERS, "Idempotency-Key": "d1"}, json={"reason": "endorse", "decision": "endorsed", "variance_attribution": "alpha_decay"})
         assert submit.status_code == decide.status_code == 202
         assert duplicate.json()["meta"]["idempotent_replay"] is True
         assert len(owner.records) == 3
         assert owner.calls[0]["action"] == "reflection.retry"
+        decide_call = next(c for c in owner.calls if c["action"] == "lesson.decide")
+        assert decide_call["variance_attribution"] == "alpha_decay"
         assert first.json()["meta"]["audit"]["durable"] is True
 
 

@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "SRCLIVE-004-READBACK-RECONCILE",
+  "archived_at": "2026-07-07T15:31:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SRCLIVE-004-READBACK-RECONCILE",
+    "title": "Reconcile SRCLIVE-004 readback and task state",
+    "summary_zh": "不要重做 SRCLIVE-004 code；用有效 operator token 重跑 read-only verifier，並 reconcile archive/status。",
+    "phase": "SRCLIVE production closeout follow-up",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-07-06-srclive-production-closeout/SRCLIVE-004-state-readback-reconciliation.md",
+      "scripts/verify_srclive_readback.py",
+      "ai-status.json",
+      "current-work.md"
+    ],
+    "acceptance": [
+      "verify_srclive_readback.py runs with valid operator token or records a concrete auth blocker",
+      "SRCLIVE-004 is represented as completed or blocked in status/archive",
+      "No source-ingest or BFF behavior is changed unless verifier proves regression",
+      "PR checks pass and merge evidence is recorded"
+    ],
+    "next": "Done: PR #3045 merged into dev at 31dc263529ac7b6219cd86af0c84f2bba4e5d604; authenticated readback verifier passed with support/evidence/SRCLIVE-004/readback-reconcile-20260707.json; default op-dev token remains blocked by AUTH_REQUIRED/SESSION_LOGGED_OUT; no BFF/source-ingest behavior changes.",
+    "last_update": "2026-07-07T15:31:27Z",
+    "review_notes_zh": [
+      "PR #3045 checks 全綠；readback reconcile evidence JSON 存在，authenticated verifier pass，default op-dev auth blocker 記錄正確；未改 BFF/source-ingest behavior。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-07T15:31:27Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/srclive-004-readback-reconcile",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SRCLIVE-004-READBACK-RECONCILE",
+      "git_clean_required": false,
+      "commit": "43ab5a015c4f4a0fc565f0cd8cd9dc336dd0f599",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/SRCLIVE-004-READBACK-RECONCILE",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SRCLIVE-004-READBACK-RECONCILE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "488ed686cfe38f83acdea10ea1e9fdca6018005a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SRCLIVE-004-READBACK-RECONCILE",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "PR #3045 merged into dev at 31dc263529ac7b6219cd86af0c84f2bba4e5d604. Evidence recorded at support/evidence/SRCLIVE-004/readback-reconcile-20260707.json; verifier passed with dev structured token; default op-dev session remains logged_out. Please review reconciliation doc and approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-07T15:14:35Z",
+      "resolved_at": "2026-07-07T15:24:24Z"
+    },
+    {
+      "task_id": "SRCLIVE-004-READBACK-RECONCILE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Rerouted from disabled Copilot reviewer lane to Gemini fleet reviewer. Please independently review PR #3045, merged commit 31dc263529ac7b6219cd86af0c84f2bba4e5d604, checks, readback reconciliation evidence, authenticated verifier pass, and default-token auth blocker before approving.",
+      "status": "done",
+      "created_at": "2026-07-07T15:27:42Z",
+      "resolved_at": "2026-07-07T15:29:30Z"
+    },
+    {
+      "task_id": "SRCLIVE-004-READBACK-RECONCILE",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Gemini fleet review approved: PR #3045 checks green, authenticated readback verifier passed, default op-dev auth blocker correctly recorded, no BFF/source-ingest behavior changes.",
+      "status": "done",
+      "created_at": "2026-07-07T15:29:30Z",
+      "resolved_at": "2026-07-07T15:31:28Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "SRCLIVE-004-READBACK-RECONCILE",
+      "owner": "Codex",
+      "waiting_for": "Copilot",
+      "message": "Review lane blocked: assigned reviewer Copilot is disabled in live ready_dispatcher; PR #3045 is merged at 31dc263529ac7b6219cd86af0c84f2bba4e5d604 and awaits independent review approval.",
+      "status": "resolved",
+      "created_at": "2026-07-07T15:24:24Z",
+      "resolved_at": "2026-07-07T15:27:42Z"
+    }
+  ]
+}

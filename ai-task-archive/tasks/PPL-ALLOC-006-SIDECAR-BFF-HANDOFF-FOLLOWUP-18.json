@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18",
+  "archived_at": "2026-07-11T16:29:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Stale review_ready_dispatch re-wake. This packet was already reviewer-approved (commit 650ff42a7, PR #3239 merged into dev) and its escalation was already closed by Follow-Up 19 (commit 3e03deeaa, PR #3242 merged), which confirmed execute-plans PR #251 merged. No new evidence exists to re-review; redoing this review would just repeat the fifth-repeat no-delta dispatch defect the packet itself flags. Closing as superseded rather than cycling review again.",
+    "last_update": "2026-07-11T16:29:08Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded",
+    "superseded_by": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19"
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only packet committed at be206fa5f. PR #251 remains OPEN/MERGEABLE at unchanged head 436aa32e with successful integration-gate and no merge/review decision. Follow-Up 12 remains operative; this fifth no-delta dispatch is escalated as a standing supervisor/queue defect. Please review the packet boundary and evidence.",
+      "status": "done",
+      "created_at": "2026-07-11T13:51:42Z",
+      "resolved_at": "2026-07-11T16:29:08Z"
+    }
+  ],
+  "blockers": []
+}

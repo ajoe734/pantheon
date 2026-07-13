@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-07-04T13:28:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE",
+    "title": "Prepare OPENCLAW-PERSONA-CRON-BACKFILL acceptance packet and dependency map",
+    "summary_zh": "平行支援 OPENCLAW-PERSONA-CRON-BACKFILL，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "OpenClaw live wiring / persona cron backfill",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OPENCLAW-PERSONA-CRON-BACKFILL/OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet after PR #2969 merged; closeout commit 371bec8d09310dccbe48a169a866e993dd8dd789 records review approval, PR #2966/#2969 evidence, and focused cron registrar verification (19 passed).",
+    "last_update": "2026-07-04T13:28:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OPENCLAW-PERSONA-CRON-BACKFILL",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Packet 內容逐項核對過 code：workflows.py 四個 schedule、persona_cron_registrar.py 的 AdapterCronRuntime/cron.list 冪等 skip 邏輯、bff/main.py 的 cron_registration_mode/cron_registered_count 都準確對應。與 OPENCLAW-CRON-WRITE-SCOPE sidecar 的 operator.admin scope 依賴敘述一致。test_persona_cron_registrar.py 19/19 通過。Packet 維持 support-only,未動 canonical truth,paper-only 與 non-claims 邊界清楚。核准。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T13:28:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/openclaw-persona-cron-backfill-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "371bec8d09310dccbe48a169a866e993dd8dd789",
+      "commit_subject": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "sidecar acceptance packet closeout record and generated task brief review-approved note.",
+        "Not changing": "L1 canonical truth, cron runtime/BFF implementation, registry/governance behavior, or parent task completion status.",
+        "Composes with": "PR #2966 sidecar packet merge and the parent owner's live adapter-proxy backfill evidence.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/control-plane/cron/test_persona_cron_registrar.py -q (19 passed in 1.41s)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ae4b740250098f9fdf0147b94f07eb7bcb3ad381",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Sidecar acceptance packet merged in PR #2966; ready for Claude review. Packet captures live adapter-proxy backfill criteria, Human/Ops scope dependency, idempotent reconcile checks, creation-time BFF alignment, and paper-only non-claims.",
+      "status": "done",
+      "created_at": "2026-07-04T13:18:37Z",
+      "resolved_at": "2026-07-04T13:21:25Z"
+    },
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed and approved: acceptance criteria and dependency map verified against services/control-plane/cron code and BFF meta fields; 19/19 unit tests pass; stays support-only. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-07-04T13:21:25Z",
+      "resolved_at": "2026-07-04T13:28:41Z"
+    }
+  ],
+  "blockers": []
+}

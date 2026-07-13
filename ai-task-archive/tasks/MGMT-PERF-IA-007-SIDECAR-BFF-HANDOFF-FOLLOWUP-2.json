@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-12T07:03:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare MGMT-PERF-IA-007 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-007，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 2 cleanup",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-007/MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support packet plus technical review merged in PR #3344; formal reviewer metadata reconciled and merged in PR #3378 at 9f1c5b207ffe986dc10aae86a7430a12f5b1b5df. Verified git diff --check and all required Branch CI Gate checks passed. No canonical, runtime, registry, governance, or frontend implementation changed.",
+    "last_update": "2026-07-12T07:03:59Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-007",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "平行支援 MGMT-PERF-IA-007，BFF 查詢保留及操作員路徑整理完成，不影響 canonical 層"
+    ],
+    "review_file": "support/reviews/MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T07:03:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-007-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "5a40f0dc7235d44192ab1fdd54ddde32c5e28cca",
+      "commit_subject": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2: finalize packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check; task metadata and merged PR evidence reconciled"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9f1c5b207ffe986dc10aae86a7430a12f5b1b5df",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only cleanup gate packet ready at commit 3e63ca229. Review dependency gating, query/source-health preservation, governed-action boundaries, and canonical non-mutation.",
+      "status": "done",
+      "created_at": "2026-07-12T03:37:15Z",
+      "resolved_at": "2026-07-12T06:58:00Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Auto-reassigned review from Claude to Antigravity after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-07-12T06:58:00Z",
+      "resolved_at": "2026-07-12T07:00:28Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Review approved; advisory handoff packet and review notes merged.",
+      "status": "done",
+      "created_at": "2026-07-12T07:00:28Z",
+      "resolved_at": "2026-07-12T07:04:00Z"
+    }
+  ],
+  "blockers": []
+}

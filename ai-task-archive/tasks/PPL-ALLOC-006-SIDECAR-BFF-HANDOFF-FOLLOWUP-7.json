@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+  "archived_at": "2026-07-11T08:16:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: readiness ledger 3d88b399d, Claude review 0b84e7ee8, and finalization checkpoint abfec7044 are merged into dev via PR #3138/#3140/#3146 (merge 3a48d8cbf21a5f09ae80a8ae93f9b05ac3cb142e). Verified artifact/review presence, commit ancestry, one-file support scope, and required PR checks. No canonical/runtime/frontend implementation changed; parent PPL-ALLOC-006 owns absorption.",
+    "last_update": "2026-07-11T08:16:45Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：readiness ledger 已於 3d88b399d 合併進 dev，審查內容於 support/reviews/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7-review-claude.md 完整記錄，僅新增 support-only markdown，未觸及 canonical truth/BFF/runtime",
+      "複查時點：PPL-ALLOC-003/004 已轉為 done，ledger 中列為 still-required 的證據現已存在，parent 可直接引用，不影響本 sidecar 文件的正確性"
+    ],
+    "review_file": "support/reviews/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T08:16:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-7",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "git_clean_required": false,
+      "commit": "abfec70446085a3092ba8ad547fec6fd89592b67",
+      "commit_subject": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7: finalize packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend handoff finalization checkpoint.",
+        "Not changing": "canonical truth, BFF/frontend/runtime/registry/governance implementation.",
+        "Composes with": "PPL-ALLOC-006 parent absorption and dependency evidence from PPL-ALLOC-003/004/008.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+        "Reviewer": "Claude",
+        "Verified": "artifact presence; git ancestry and one-file support scope checks"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3a48d8cbf21a5f09ae80a8ae93f9b05ac3cb142e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only readiness ledger committed at 3d88b399d. Please review merge gates, proof chain, fail-closed dependency handling, and confirm no new BFF guarantees or canonical truth are asserted.",
+      "status": "done",
+      "created_at": "2026-07-11T07:50:33Z",
+      "resolved_at": "2026-07-11T08:13:39Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: readiness ledger (3d88b399d) and its review record (0b84e7ee8) are both already merged into dev via PR #3138/#3140. Re-verified scope is still support-only (single sidecar markdown, no L1/L2/BFF/runtime/execute-plans changes) and re-checked dependency status: PPL-ALLOC-003 and PPL-ALLOC-004 are now done (were todo at review time), so their evidence is now available to the parent; PPL-ALLOC-008 remains blocked. No ledger claim is inaccurate given this progress. Returned to owner Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T08:13:39Z",
+      "resolved_at": "2026-07-11T08:16:46Z"
+    }
+  ],
+  "blockers": []
+}

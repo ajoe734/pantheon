@@ -109,6 +109,23 @@ def _load_json(path: Path) -> tuple[object | None, str | None]:
         return None, f"JSON parse error in {path}: {exc}"
 
 
+_TYPE_TO_KEY = {
+    "raw_dataset": "raw_dataset_id",
+    "normalized_dataset": "normalized_dataset_id",
+    "feature_dataset": "feature_dataset_id",
+    "dataset_version": "dataset_version_id",
+    "regime_state": "regime_id",
+    "universe_selection": "universe_id",
+    "signal_inference": "signal_id",
+    "allocation_decision": "allocation_id",
+    "risk_adjudication": "risk_adjudication_id",
+    "approval_decision": "approval_decision_id",
+    "deployment_plan": "deployment_plan_id",
+    "runtime_binding": "runtime_binding_id",
+    "contract_master": "contract_master_id",
+}
+
+
 def _flatten_keys(obj: object, _seen: set[str] | None = None) -> set[str]:
     """Return the set of all string keys that appear anywhere in a JSON object."""
     if _seen is None:
@@ -118,10 +135,16 @@ def _flatten_keys(obj: object, _seen: set[str] | None = None) -> set[str]:
             if isinstance(k, str):
                 _seen.add(k)
             _flatten_keys(v, _seen)
+        ref_type = obj.get("ref_type")
+        if isinstance(ref_type, str):
+            mapped_key = _TYPE_TO_KEY.get(ref_type)
+            if mapped_key:
+                _seen.add(mapped_key)
     elif isinstance(obj, list):
         for item in obj:
             _flatten_keys(item, _seen)
     return _seen
+
 
 
 # ---------------------------------------------------------------------------

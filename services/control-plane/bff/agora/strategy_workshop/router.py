@@ -34,10 +34,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import sys
 import uuid
 from collections import deque
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
@@ -45,6 +47,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .store import make_workshop_store
+
+_CONTROL_PLANE_DIR = Path(__file__).resolve().parents[3]
+if str(_CONTROL_PLANE_DIR) not in sys.path:
+    sys.path.insert(0, str(_CONTROL_PLANE_DIR))
 
 
 # --------------------------------------------------------------------------- #
@@ -124,23 +130,80 @@ def _ws_publish(
     return event_id
 
 
-def _ws_replay_after(workshop_id: str, last_event_id: str) -> List[dict]:
+def _ws_replay_after(
+    workshop_id: str,
+    last_event_id: str,
+    store: Optional[Any] = None,
+) -> List[dict]:
     """Return buffered events that came after *last_event_id*.
 
     Returns an empty list when last_event_id is not found (caller may treat
     this as a missed-event condition and reconnect from the top).
     """
     buf = _workshop_sse_buffers.get(workshop_id)
-    if not buf:
-        return []
     found = False
     replayed: List[dict] = []
-    for eid, evt in buf:
+    if buf:
+        for eid, evt in buf:
+            if found:
+                replayed.append(evt)
+            elif eid == last_event_id:
+                found = True
         if found:
-            replayed.append(evt)
-        elif eid == last_event_id:
-            found = True
-    return replayed  # empty when last_event_id is not in buffer
+            return replayed
+
+    # Database fallback to ensure reconnect/readback does not lose durable cards/events
+    if store and hasattr(store, "list_events"):
+        try:
+            db_events = store.list_events(workshop_id)
+            idx = -1
+            for i, ev in enumerate(db_events):
+                if ev.get("event_id") == last_event_id:
+                    idx = i
+                    break
+            if idx != -1:
+                replayed = []
+                for ev in db_events[idx + 1:]:
+                    payload_refs = ev.get("payload_refs_json")
+                    if isinstance(payload_refs, str) and payload_refs:
+                        try:
+                            payload_refs = json.loads(payload_refs)
+                        except Exception:
+                            pass
+                    if isinstance(payload_refs, dict) and "event_type" in payload_refs:
+                        # Reconstructed SSE event format from full DB event
+                        evt = {
+                            "id": ev["event_id"],
+                            "type": ev["event_type"],
+                            "timestamp": ev["created_at"],
+                            "data": {
+                                "workshop_id": workshop_id,
+                                **payload_refs
+                            }
+                        }
+                    else:
+                        evt = {
+                            "id": ev["event_id"],
+                            "type": ev["event_type"],
+                            "timestamp": ev["created_at"],
+                            "data": {
+                                "workshop_id": workshop_id,
+                                "event_id": ev["event_id"],
+                                "sequence_no": ev["sequence_no"],
+                                "actor_type": ev["actor_type"],
+                                "event_type": ev["event_type"],
+                                "private_content_ref": ev.get("private_content_ref"),
+                                "redacted_summary": ev.get("redacted_summary"),
+                                "payload_refs_json": payload_refs,
+                                "trace_id": ev.get("trace_id"),
+                            }
+                        }
+                    replayed.append(evt)
+                return replayed
+        except Exception:
+            pass
+    return []
+
 
 
 # --------------------------------------------------------------------------- #
@@ -846,6 +909,7 @@ def create_strategy_workshop_router(
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
     workshop_store: Any = None,
+    private_content_store: Any = None,
 ) -> APIRouter:
     """Build and return the strategy-workshop APIRouter.
 
@@ -853,6 +917,9 @@ def create_strategy_workshop_router(
     When omitted the store is constructed from AGORA_WORKSHOP_STORE_BACKEND env.
     """
     store = workshop_store if workshop_store is not None else make_workshop_store()
+    if private_content_store is None:
+        from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
+        private_content_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
     router = APIRouter(tags=["agora-workshop"])
 
     # Lazy import to avoid circular import at module load time
@@ -970,8 +1037,8 @@ def create_strategy_workshop_router(
                 suggestion="Supply a UUID v4 in the Idempotency-Key request header",
             )
         # Reject duplicate keys for the same user+tenant+endpoint.
+        idem_scope = f"{scope.user_id}:{scope.tenant_id}:POST:/bff/agora/workshops"
         if hasattr(store, "check_and_record_idempotency_key"):
-            idem_scope = f"{scope.user_id}:{scope.tenant_id}:POST:/bff/agora/workshops"
             if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
                 from models import ErrorCode
                 raise bff_error(
@@ -987,18 +1054,40 @@ def create_strategy_workshop_router(
             "active_strategy_spec_registry_id": body.strategy_spec_ref,
             "status": "open",
         })
-        # Privacy rule: raw initial_message must NOT appear in the event payload.
-        # In production this content goes to the encrypted private-content store;
-        # here we generate a stub ref and leave redacted_summary empty.
-        initial_event_id = str(uuid.uuid4())
-        store.create_event({
-            "event_id": initial_event_id,
-            "workshop_id": workshop_id,
-            "actor_type": "operator",
-            "event_type": "message",
-            "private_content_ref": f"priv-content-stub://{initial_event_id}",
-            "redacted_summary": None,
-        })
+        try:
+            if private_content_store is None:
+                raise bff_error(503, "PRIVATE_CONTENT_STORE_UNAVAILABLE",
+                                "Private content store is not configured", "private_content_store")
+            initial_event_id = str(uuid.uuid4())
+            private = private_content_store.put(
+                tenant_id=scope.tenant_id, owner_user_id=scope.user_id,
+                workshop_id=workshop_id, event_id=initial_event_id,
+                content_type="text/plain", plaintext=body.initial_message.encode("utf-8"),
+                retention_class="workshop_default", idempotency_key=idempotency_key,
+            )
+            try:
+                store.create_event({
+                    "event_id": initial_event_id,
+                    "workshop_id": workshop_id,
+                    "actor_type": "operator",
+                    "event_type": "message",
+                    "private_content_ref": private.private_content_ref,
+                    "redacted_summary": "Private workshop message",
+                })
+            except Exception:
+                private_content_store.discard_failed_write(
+                    private_content_ref=private.private_content_ref,
+                    tenant_id=scope.tenant_id,
+                    owner_user_id=scope.user_id,
+                )
+                raise
+        except Exception:
+            store.rollback_create_session(
+                workshop_id,
+                idempotency_scope=idem_scope,
+                idempotency_key=idempotency_key,
+            )
+            raise
         return {
             "data": session,
             "meta": {
@@ -1097,10 +1186,16 @@ def create_strategy_workshop_router(
                     409, ErrorCode.IDEMPOTENCY_CONFLICT,
                     "Duplicate Idempotency-Key", idempotency_key,
                 )
-        # Privacy rule: raw message content must NOT appear in the event payload.
-        # In production the content is handed off to the encrypted private-content store;
-        # here we generate a stub ref and leave redacted_summary empty.
         event_id = str(uuid.uuid4())
+        private = private_content_store.put(
+            tenant_id=scope.tenant_id, owner_user_id=scope.user_id,
+            workshop_id=workshop_id, event_id=event_id, content_type="text/plain",
+            plaintext=body.content.encode("utf-8"), retention_class="workshop_default",
+            idempotency_key=idempotency_key,
+        ) if private_content_store is not None else None
+        if private is None:
+            raise bff_error(503, "PRIVATE_CONTENT_STORE_UNAVAILABLE",
+                            "Private content store is not configured", "private_content_store")
         expected_version = _parse_etag_lock_version(if_match, workshop_id)
         # Atomic CAS: compare expected lock_version, append event, bump version —
         # all in one store transaction so concurrent same-ETag writes both cannot succeed.
@@ -1109,12 +1204,17 @@ def create_strategy_workshop_router(
             "workshop_id": workshop_id,
             "actor_type": "operator",
             "event_type": "message",
-            "private_content_ref": f"priv-content-stub://{event_id}",
-            "redacted_summary": None,
+            "private_content_ref": private.private_content_ref,
+            "redacted_summary": "Private workshop message",
             "payload_refs_json": body.attachment_refs or None,
         })
         if event is None:
             from models import ErrorCode
+            private_content_store.discard_failed_write(
+                private_content_ref=private.private_content_ref,
+                tenant_id=scope.tenant_id,
+                owner_user_id=scope.user_id,
+            )
             # _new_version is the actual current lock_version (or None if not found)
             current_lock_version = _new_version if _new_version is not None else 1
             current_etag = f'W/"workshop:{workshop_id}:v{current_lock_version}"'
@@ -1604,7 +1704,7 @@ def create_strategy_workshop_router(
             try:
                 # Replay missed events when client reconnects with Last-Event-ID
                 if last_event_id:
-                    for replayed_evt in _ws_replay_after(workshop_id, last_event_id):
+                    for replayed_evt in _ws_replay_after(workshop_id, last_event_id, store=store):
                         yield _ws_sse_format(replayed_evt)
 
                 # Immediate ack on connect — satisfies the < 2s first-acknowledgement requirement.

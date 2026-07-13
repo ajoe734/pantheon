@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-007",
+  "archived_at": "2026-07-09T14:58:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-007",
+    "title": "Hosted operations acceptance and closeout",
+    "summary_zh": "彙整所有 PR、測試、merge、dev publish 與 hosted smoke，證明 Portfolio Book -> Persona Fleet -> 績效歸因 -> Human Review 的操作閉環。",
+    "phase": "Management Console Operations / Wave 3 closeout",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-002",
+      "MGMT-OPS-003",
+      "MGMT-OPS-004",
+      "MGMT-OPS-005",
+      "MGMT-OPS-006"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_management_console_operations_workflow_2026-07-07/archive",
+      "services/control-plane/bff",
+      "execute-plans:src",
+      "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/MGMT-OPS-007-hosted-ops-acceptance-closeout.md"
+    ],
+    "acceptance": [
+      "all child tasks are done merged or explicitly superseded with evidence",
+      "hosted smoke proves the full operator loop",
+      "fallback attribution is labeled and nan is absent",
+      "closeout names PRs merge SHAs deployment target validation and residual risks"
+    ],
+    "next": "Owner finalized approved task and closed it. Verified pytest 15/15 passed, vitest 44/44 passed, and build compiled cleanly at 411.40 kB.",
+    "last_update": "2026-07-09T14:58:15Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_ops_workflow_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_operations_workflow_2026-07-07/MANAGEMENT_CONSOLE_OPERATIONS_WORKFLOW_PLAN.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/INDEX.md",
+      "trigger": "2026-07-07 management console persona fleet/performance attribution operations review",
+      "focus_persona": "persona-20260528-04688755"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_console_operations_workflow_execution_slice",
+    "wave": 3,
+    "fleet_lane": "hosted-ops-closeout",
+    "review_notes_zh": [
+      "Reviewer 驗證：pytest 15/15、vitest 44/44、npm run build:management 成功（411.40 kB）、hosted BFF/health 與 deployment.json 皆與 closeout 文件一致",
+      "所有引用的 merge SHA 皆為 origin/dev 的祖先，六個子任務 archive 皆為 terminal done",
+      "NaN 抑制、fallback confidence banner、Persona League/Quarterly Ranking 唯讀性經程式碼交叉檢查屬實"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-09T14:58:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-007",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-007",
+      "git_clean_required": false,
+      "commit": "fbb681ed319fa7ae6adcd0e62127c9863fe3cee6",
+      "commit_subject": "Merge pull request #3073 from ajoe734/task/MGMT-OPS-007",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-OPS-007": "archive hosted operations acceptance closeout"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-007",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fbb681ed319fa7ae6adcd0e62127c9863fe3cee6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-007",
+      "from": "Human/Ops",
+      "to": "Codex",
+      "message": "Auto-reassigned MGMT-OPS-007 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "status": "done",
+      "created_at": "2026-07-07T15:44:52Z",
+      "resolved_at": "2026-07-09T14:42:09Z"
+    },
+    {
+      "task_id": "MGMT-OPS-007",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Hosted operations acceptance and closeout evidence collected, PR #3073 merged.",
+      "status": "done",
+      "created_at": "2026-07-09T14:48:05Z",
+      "resolved_at": "2026-07-09T14:55:39Z"
+    },
+    {
+      "task_id": "MGMT-OPS-007",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Reviewed hosted ops closeout: verified all cited PR merge SHAs are ancestors of dev, child tasks MGMT-OPS-001..006 are archived done, pytest 15/15 and vitest 44/44 pass, management build succeeds at cited bundle size, hosted BFF health and FE deployment.json match doc exactly, and NaN-suppression/fallback-confidence/ranking-readonly code claims verified against source. Approved — returning to Antigravity for finalization.",
+      "status": "done",
+      "created_at": "2026-07-09T14:55:39Z",
+      "resolved_at": "2026-07-09T14:58:16Z"
+    }
+  ],
+  "blockers": []
+}

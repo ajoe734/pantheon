@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-11T23:25:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 1 workflow repair",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-003-GAP-001",
+      "MGMT-OPS-003-GAP-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX/MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend handoff packet finalized via PR #3298; merged to dev at 1b02499655288b96697033a560dee02a3af64680. Verified git diff --check origin/dev...HEAD and green Commit trailers, Runtime mirror guard, Smoke acceptance, and Orchestrator Sync checks. Parent Codex2 owns composition into the canonical frontend repair.",
+    "last_update": "2026-07-11T23:25:08Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已驗證 sidecar 僅新增支援 packet，不修改 canonical truth、BFF/runtime 或 frontend；內容涵蓋 server-side persona query、Human Inbox exact-target receipt、desktop/mobile 與 degraded evidence matrix；git diff --check origin/dev...HEAD 通過。"
+    ],
+    "review_file": "support/sidecars/MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX/MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T23:25:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-003-flow-focus-fix-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "243423a9763c6a205026dff09d43efc49db2b225",
+      "commit_subject": "MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF: fix packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF and frontend handoff packet hygiene",
+        "Not changing": "canonical truth, BFF runtime, frontend implementation, or acceptance",
+        "Composes with": "parent flow-focus repair and Codex2 sidecar review",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex2",
+        "Verified": "git diff --check against task base after commit"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 19,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1b02499655288b96697033a560dee02a3af64680",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only BFF/frontend handoff packet anchored at 6f287fc6b. Maps canonical Portfolio route, persona_id/persona URL normalization to server-side Fleet q query, exact Human Inbox target context, and desktop/mobile rerunnable evidence. Verified git diff --check and required packet sections; no canonical/runtime/frontend changes.",
+      "status": "done",
+      "created_at": "2026-07-11T23:00:37Z",
+      "resolved_at": "2026-07-11T23:07:16Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Changes requested: remove trailing whitespace at packet lines 3-6, rerun git diff --check against the task base, and update the verification claim before re-handoff. Content scope and BFF/frontend mapping otherwise accepted.",
+      "status": "done",
+      "created_at": "2026-07-11T23:07:16Z",
+      "resolved_at": "2026-07-11T23:07:16Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer-requested whitespace fix committed at 243423a97; git diff --check origin/dev...HEAD passes; support-only scope unchanged.",
+      "status": "done",
+      "created_at": "2026-07-11T23:09:17Z",
+      "resolved_at": "2026-07-11T23:19:22Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: support-only packet is scoped and patch-clean; owner Codex must finalize via task PR into dev before done.",
+      "status": "done",
+      "created_at": "2026-07-11T23:19:22Z",
+      "resolved_at": "2026-07-11T23:25:09Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-07-11T18:19:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare OCLAW-PMEM-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 1 agent reconcile",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-001"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-002/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: reviewer-approved support-only BFF/frontend handoff packet merged via PR #3256 at a303f27d5; verified artifact non-empty, diff clean, scope limited to the sidecar packet, fail-closed unavailable/unknown handling, stale-generation guards, and explicit parent ownership.",
+    "last_update": "2026-07-11T18:19:02Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：PR #3256 僅新增 support handoff packet；current-code claim limits 與程式碼一致，desired/observed 分離、BFF fail-closed projection、execute-plans stale-generation handling 均明確，且未修改 canonical 或 runtime 實作。",
+      "Parent owner 決定是否採納 route/schema；本 sidecar 不構成 runtime proof。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T18:19:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-002-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "a303f27d5ce587c26aae97c3806c23e47fe5b51d",
+      "commit_subject": "Merge pull request #3256 from ajoe734/task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4": "add handoff packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a303f27d5ce587c26aae97c3806c23e47fe5b51d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only adoption packet committed in 73a01543f and opened as PR #3256. Please verify current-code claim limits, desired/observed separation, fail-closed BFF projection, execute-plans stale-generation handling, and no canonical/runtime implementation changes.",
+      "status": "done",
+      "created_at": "2026-07-11T18:17:00Z",
+      "resolved_at": "2026-07-11T18:18:19Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only packet truthfully limits current-code claims, separates desired and observed truth, fails closed on unavailable/unknown data, guards stale generations, and changes no canonical/runtime implementation.",
+      "status": "done",
+      "created_at": "2026-07-11T18:18:19Z",
+      "resolved_at": "2026-07-11T18:19:04Z"
+    }
+  ],
+  "blockers": []
+}

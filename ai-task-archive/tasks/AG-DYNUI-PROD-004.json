@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-004",
+  "archived_at": "2026-07-04T00:57:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-004",
+    "title": "Trading Room error diagnostics and stale bundle recovery",
+    "summary_zh": "修 Trading Room production error state：不能只顯示 Failed to load Trading Room；保留 BFF status/code/request/correlation，提供 retry/safe reload，並讓 probe 能抓出 stale bundle/cache/header 問題。",
+    "phase": "Agora DYNUI Production Gap / Observability",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx",
+      "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts",
+      "deploy/caddy/dev.Caddyfile.tmpl",
+      "deploy/caddy/sync-caddy.sh",
+      "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-004-error-cache-diagnostics.md"
+    ],
+    "acceptance": [
+      "root error state exposes safe actionable diagnostics and retry behavior",
+      "hosted probe fails on generic-only Failed to load Trading Room",
+      "cache-header policy remains verified after changes",
+      "Do not rebuild from imagination or static screenshots.",
+      "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+      "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+      "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+      "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+    ],
+    "next": "Owner finalized PR #2855 merged at dec68e0bbc60935ee8bd4455cc572641f4981c75; nonprod deploy run 28689452900 succeeded; hosted probe passed against Pantheon dev FE/BFF with cache policy ok and generic-only failure false.",
+    "last_update": "2026-07-04T00:57:11Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+      "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-004-error-cache-diagnostics.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "fleet_lane": "agora-dynui-production-gap",
+    "review_notes_zh": [
+      "獨立重跑驗證通過：node --check probe、79/79 Vitest、npm run build:agora、bash -n sync-caddy 全部通過",
+      "診斷涵蓋 401/403/404/409/412/500/network 符合 acceptance",
+      "Caddy 無需改動，快取政策由 probe 的 cache-header 檢查驗證",
+      "Owner 收尾前需留意：dev host 尚未部署此分支，hosted proof 需等 human-approved deploy dispatch 之後再補"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-004-error-cache-diagnostics.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T00:57:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-004",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "c1653f10d4d5f7255bc09a8b6c9f4f1075fc8e72",
+      "commit_subject": "AG-DYNUI-PROD-004: refresh closeout through latest dev",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "AG-DYNUI-PROD-004 task evidence and PR closeout note.",
+        "Not changing": "Trading Room runtime behavior, hosted probe behavior, sidecar handoff content, Caddy deployment scripts, or canonical architecture policy.",
+        "Composes with": "PR #2855 auto-merge into dev, human-gated dev deploy dispatch, and hosted proof before done.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-DYNUI-PROD-004",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; earlier post-dev-refresh validation passed node --check probe, bash -n sync-caddy.sh, npm test -- --run tradingRoom.test.ts TradingRoomPage.test.tsx (79/79), npm run build:agora"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d03422df2304f248787fe9c78c20596c05b2f32c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: Trading Room diagnostics/retry/safe reload and hosted probe hardening committed at 23a537ab7. Validation passed: node --check probe, focused Vitest 79 tests, npm run build:agora, bash -n sync-caddy. Hosted smoke against current dev host intentionally pass=false pre-deploy due existing CORS/chunk failures; artifact records evidence.",
+      "status": "done",
+      "created_at": "2026-07-04T00:22:01Z",
+      "resolved_at": "2026-07-04T00:25:44Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: diagnostics/probe/cache hardening verified independently (tests, build, node --check, bash -n). Owner should capture real hosted proof after this branch is deployed (deploy dispatch needs human approval) before running done.",
+      "status": "done",
+      "created_at": "2026-07-04T00:25:44Z",
+      "resolved_at": "2026-07-04T00:57:12Z"
+    }
+  ],
+  "blockers": []
+}

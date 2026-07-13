@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "TJ-E2E-001",
+  "archived_at": "2026-07-11T23:13:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "title": "Producer and correlation inventory",
+    "summary_zh": "依 Trade Journey E2E gap 規格執行：Producer and correlation inventory。",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "phase": "Trade Journey E2E / Wave 0",
+    "next": "Producer matrix, paper and broker-sandbox lifecycle samples, and correlation-envelope freeze input reviewed, verified (23 passed, 4 skipped), and merged via PR #3295 at c0fce10c363f2ea60ccbbcf799173922a09184ca.",
+    "source_ref": {
+      "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-001-producer-correlation-inventory.md",
+      "target_repo": "pantheon",
+      "merge_target": "dev"
+    },
+    "metadata": {
+      "wave": 0,
+      "fleet_lane": "producer-correlation-inventory",
+      "target_repo": "pantheon"
+    },
+    "created_at": "2026-07-11T22:58:28.902157+00:00",
+    "id": "TJ-E2E-001",
+    "depends_on": [],
+    "last_update": "2026-07-11T23:13:00Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11",
+    "review_notes_zh": [
+      "Producer/correlation matrix、兩條 proven lifecycle samples（paper 與 shioaji sandbox）、data-quality risks、envelope freeze input 均已核對原始碼與測試，5 項抽查 claim 全部與程式碼相符；pytest 23 passed 4 skipped 重跑確認",
+      "無 runtime behavior 變更，符合 TJ-E2E-002/003 的 freeze input 需求"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T23:13:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TJ-E2E-001",
+      "git_clean_required": false,
+      "commit": "995e7724558a6c7d59698e465a6a823f3a8af179",
+      "commit_subject": "TJ-E2E-001: record approved closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped reviewer approval and finalization record.",
+        "Not changing": "producer inventory findings, runtime behavior, or canonical contracts.",
+        "Composes with": "the reviewed inventory commit and TJ-E2E-002/TJ-E2E-003 follow-on work.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "TJ-E2E-001",
+        "Reviewer": "Claude",
+        "Verified": "pytest -q tests/e2e/test_allocation_policy_to_paper_run.py tests/e2e/test_shioaji_adapter_filled_readback_memory_e2e.py (23 passed, 4 skipped); git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TJ-E2E-001",
+      "ahead": 0,
+      "behind": 7,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c0fce10c363f2ea60ccbbcf799173922a09184ca",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TJ-E2E-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T22:59:58Z",
+      "resolved_at": "2026-07-11T23:00:13Z"
+    },
+    {
+      "task_id": "TJ-E2E-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Inventory committed at 4c58a2dd7. Please review producer matrix, two proven lifecycle samples, data-quality risks, and envelope freeze input. Verification: 23 passed, 4 skipped.",
+      "status": "done",
+      "created_at": "2026-07-11T23:03:08Z",
+      "resolved_at": "2026-07-11T23:07:51Z"
+    },
+    {
+      "task_id": "TJ-E2E-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: producer matrix, both lifecycle samples, and correlation-envelope freeze input verified against source and tests; returned to Codex2 for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T23:07:51Z",
+      "resolved_at": "2026-07-11T23:13:01Z"
+    }
+  ],
+  "blockers": []
+}

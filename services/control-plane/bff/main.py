@@ -1239,14 +1239,34 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
     parts = token.split(":")
     operator_id = parts[0] if parts else "unknown"
     roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
-    mfa_verified = len(parts) > 2 and parts[2] == "mfa"
-    token_capabilities = parts[3].split(",") if len(parts) > 3 else []
+    
+    mfa_verified = False
+    tenant_ids = None
+    token_capabilities = []
+    
+    if len(parts) > 2:
+        if parts[2] == "mfa":
+            mfa_verified = True
+            if len(parts) > 3 and parts[3]:
+                token_capabilities = parts[3].split(",")
+            if len(parts) > 4 and parts[4]:
+                tenant_ids = parts[4].split(",")
+        else:
+            tenant_ids = parts[2].split(",")
+            if len(parts) > 3 and parts[3]:
+                token_capabilities = parts[3].split(",")
+                
     capabilities = _stub_identity_capabilities(token_capabilities)
+    claims = {"sub": operator_id, "roles": roles, "capabilities": capabilities}
+    if tenant_ids:
+        claims["tenant_ids"] = tenant_ids
+        claims["tenantIds"] = tenant_ids
+        
     return OperatorIdentity(
         operator_id=operator_id,
         roles=roles,
         mfa_verified=mfa_verified,
-        claims={"sub": operator_id, "roles": roles, "capabilities": capabilities},
+        claims=claims,
         token_kind="stub",
     )
 
@@ -53695,7 +53715,42 @@ async def sem_agora_evaluation_runs(authorization: Optional[str] = Header(defaul
 @app.get("/bff/healthz")
 @app.get("/bff/readyz")
 async def sem_bff_health_alias():
-    return {"status": "ok", "service": "operator-bff", "version": "0.2.0"}
+    commit = os.environ.get("BFF_COMMIT") or os.environ.get("GIT_SHA")
+    if not commit:
+        git_dir = "/workspace/status-root/.git"
+        if os.path.exists(git_dir):
+            try:
+                head_path = os.path.join(git_dir, "HEAD")
+                if os.path.exists(head_path):
+                    with open(head_path, "r") as f:
+                        ref = f.read().strip()
+                    if ref.startswith("ref: "):
+                        ref_path = os.path.join(git_dir, ref[5:])
+                        if os.path.exists(ref_path):
+                            with open(ref_path, "r") as f:
+                                commit = f.read().strip()
+                        else:
+                            packed_path = os.path.join(git_dir, "packed-refs")
+                            if os.path.exists(packed_path):
+                                ref_name = ref[5:]
+                                with open(packed_path, "r") as f:
+                                    for line in f:
+                                        if line.startswith("#") or not line.strip():
+                                            continue
+                                        parts = line.strip().split()
+                                        if len(parts) == 2 and parts[1] == ref_name:
+                                            commit = parts[0]
+                                            break
+                    else:
+                        commit = ref
+            except Exception:
+                pass
+    return {
+        "status": "ok",
+        "service": "operator-bff",
+        "version": "0.2.0",
+        "commit": commit or "unknown"
+    }
 
 
 @app.get("/bff/capabilities")
@@ -58361,6 +58416,7 @@ from trade_journeys import create_trade_journeys_router as _create_trade_journey
 app.include_router(_create_trade_journeys_router(
     extract_identity=_extract_identity,
     require_read_role=_require_read_role,
+    require_operator_role=_require_operator_role,
 ))
 
 

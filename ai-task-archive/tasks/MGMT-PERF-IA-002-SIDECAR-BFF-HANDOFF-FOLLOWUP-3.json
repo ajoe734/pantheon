@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-11T07:23:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-PERF-IA-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 BFF contract",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend handoff packet finalized; PR #3133 merged as df26b5c1a1d0aa61ccfaee35a8ea9a18faf9be54 after commit-trailer, runtime-mirror, and smoke-acceptance checks passed. Parent owner Antigravity retains absorption decision.",
+    "last_update": "2026-07-11T07:23:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "交付之 BFF 與 frontend handoff packet 格式及完整度良好",
+      "已確認負面案例規格（Negative query cases）與非標準範圍（Non-canonical scope）符合 sidecar 協同規則",
+      "已確認 PR #3133 合併後，主線可評估吸收此 packet"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T07:23:27Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-002-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "549dfa9c60a811cf239ce8da416dc1a4a0327311",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "df26b5c1a1d0aa61ccfaee35a8ea9a18faf9be54",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only query-envelope and frontend handoff delta committed at 6bf39fa12; PR #3133 open with auto-merge. Verify candidate evidence wording, negative query cases, and non-canonical scope, then return findings to parent owner for selective absorption.",
+      "status": "done",
+      "created_at": "2026-07-11T07:18:24Z",
+      "resolved_at": "2026-07-11T07:19:58Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Verified bff handoff packet and approved for closeout",
+      "status": "done",
+      "created_at": "2026-07-11T07:19:58Z",
+      "resolved_at": "2026-07-11T07:23:29Z"
+    }
+  ],
+  "blockers": []
+}

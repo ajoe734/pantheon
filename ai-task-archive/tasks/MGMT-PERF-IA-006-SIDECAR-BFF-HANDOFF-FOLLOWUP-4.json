@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-07-12T03:55:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare MGMT-PERF-IA-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 2 integration",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-006/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3347 merged; support-only BFF/frontend handoff packet finalized. Verified git diff --check and CI commit-trailers/runtime-mirror/smoke gates.",
+    "last_update": "2026-07-12T03:55:33Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "確認此為 support-only 且不改動任何 L1 canonical/runtime 實作，checklist 內容亦符合需求。"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-006/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T03:55:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-006-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "1d4a370cff94934d4d4627671ae48e4ba7a2ef67",
+      "commit_subject": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4: add handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend implementation handoff packet.",
+        "Not changing": "canonical truth, runtime/schema, governance, or frontend code.",
+        "Composes with": "MGMT-PERF-IA-006 parent implementation owned by Antigravity.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+        "Reviewer": "Antigravity",
+        "Verified": "scoped content and boundary inspection"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5093d98785d3c5115edebdb3c0015f38b8c0d0af",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only implementation handoff committed at 1d4a370cf; verify query-gap escalation, operator journey, evidence checklist, and unchanged canonical/runtime boundary.",
+      "status": "done",
+      "created_at": "2026-07-12T03:52:17Z",
+      "resolved_at": "2026-07-12T03:53:15Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-12T03:53:15Z",
+      "resolved_at": "2026-07-12T03:55:34Z"
+    }
+  ],
+  "blockers": []
+}

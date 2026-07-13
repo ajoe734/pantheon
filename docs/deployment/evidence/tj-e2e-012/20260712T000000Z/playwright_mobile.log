@@ -1,0 +1,9 @@
+
+Running 5 tests using 1 worker
+
+[1/5] …rneys.spec.ts:39:1 › renders all five outcomes and honest degraded detail
+[2/5] …ebar exposes a Trade Journeys entry that navigates to the canonical route
+[3/5] …pit exposes a Trade Journeys destination that round-trips back to Cockpit
+[4/5] …forwards the filter to the BFF query and renders a clearable focus banner
+[5/5] …e Journeys list -> journey detail -> back to Runtimes with filters intact
+  5 passed (13.2s)

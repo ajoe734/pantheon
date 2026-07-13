@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-11T06:44:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare MGMT-PERF-IA-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 BFF contract",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend handoff packet approved and merged via PR #3129 at de88de7895e1b965e23e6534c1677cd195891f08; verified git diff --check origin/dev...41ff85d84 and required PR checks (Commit trailers, Runtime mirror guard, Smoke acceptance). Return to parent owner Antigravity for selective absorption; no canonical/runtime/governance/frontend/live-capital behavior changed.",
+    "last_update": "2026-07-11T06:44:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T06:44:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-002-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "50fb7730437476ea32d517055423f9b3b1e28546",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "de88de7895e1b965e23e6534c1677cd195891f08",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Follow-up handoff packet 已提交；請審查 support-only boundary、query effectiveness/snapshot gaps、operator invariants 與 frontend negative cases，通過後交由 parent owner Antigravity 選擇吸收。",
+      "status": "done",
+      "created_at": "2026-07-11T06:37:15Z",
+      "resolved_at": "2026-07-11T06:38:28Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requests one narrow correction: remove the extra blank line at EOF in the handoff artifact so git diff --check origin/dev...HEAD passes, then resubmit. Support-only boundary, query effectiveness/snapshot gaps, operator invariants, and frontend negative cases are otherwise approved.",
+      "status": "done",
+      "created_at": "2026-07-11T06:38:28Z",
+      "resolved_at": "2026-07-11T06:38:28Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewer-requested EOF correction committed at 41ff85d84; git diff --check origin/dev...HEAD passes. Please re-review the support-only handoff packet.",
+      "status": "done",
+      "created_at": "2026-07-11T06:40:28Z",
+      "resolved_at": "2026-07-11T06:41:36Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved support-only handoff packet at 41ff85d84: diff is limited to the sidecar artifact; stronger BFF/filter/snapshot/ranking/action claims remain framed as gaps; no canonical, runtime, governance, frontend, or live-capital behavior is approved. Verified: git diff --check origin/dev...HEAD.",
+      "status": "done",
+      "created_at": "2026-07-11T06:41:36Z",
+      "resolved_at": "2026-07-11T06:44:35Z"
+    }
+  ],
+  "blockers": []
+}

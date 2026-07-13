@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-001",
+  "archived_at": "2026-07-08T04:26:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-001",
+    "title": "Operations read model and source confidence contract",
+    "summary_zh": "鎖定 management console 共同 operations read model，讓 Persona Fleet、Portfolio Book、績效歸因、排行榜與 Human Review 使用一致的 identity、source confidence 與 action state。",
+    "phase": "Management Console Operations / Wave 0 source truth",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/control-plane/bff/tests",
+      "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/MGMT-OPS-001-operations-read-model.md"
+    ],
+    "acceptance": [
+      "shared read model covers persona runtime ledger pool sleeve strategy artifact broker period and as_of identity",
+      "formal partial fallback degraded unavailable states are represented in BFF payloads",
+      "missing joins are diagnostics not dropped rows or nan metrics",
+      "tests cover normal partial fallback degraded and unavailable states"
+    ],
+    "next": "Closed after PR #3062 merged to dev at e55fa10956a52ba03f4b8dfd66cd52517bc127a3; delivery PR #3050 merge cea8d1f94fd3a3f5efb831331435ced071f303d0 remains on dev, closeout commit 263ce8b7a1773e924f1c62b2a84cbe47dcdfea9e recorded review artifact, validation passed: focused BFF pytest 16 passed and git diff --check.",
+    "last_update": "2026-07-08T04:26:55Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_ops_workflow_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_operations_workflow_2026-07-07/MANAGEMENT_CONSOLE_OPERATIONS_WORKFLOW_PLAN.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/INDEX.md",
+      "trigger": "2026-07-07 management console persona fleet/performance attribution operations review",
+      "focus_persona": "persona-20260528-04688755"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_console_operations_workflow_execution_slice",
+    "wave": 0,
+    "fleet_lane": "ops-read-model-source-confidence",
+    "review_notes_zh": [
+      "Codex review approved MGMT-OPS-001 after verifying PR #3050 is merged at cea8d1f94fd3a3f5efb831331435ced071f303d0, focused BFF contract tests passed (16 passed), git diff --check passed, and no blocking findings remain. Owner Codex2 should perform done closeout."
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/MGMT-OPS-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-08T04:26:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-001",
+      "git_clean_required": false,
+      "commit": "263ce8b7a1773e924f1c62b2a84cbe47dcdfea9e",
+      "commit_subject": "MGMT-OPS-001: record review closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped Codex review artifact for MGMT-OPS-001 owner closeout.",
+        "Not changing": "BFF implementation, frontend adoption, runtime data sources, governed actions, or canonical L1 architecture policy.",
+        "Composes with": "PR #3050 merged at cea8d1f94fd3a3f5efb831331435ced071f303d0 and sidecar handoff PR #3061 merged at 0f5274fff5d5065c6f5d562ccdea5ee97adb670c.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-OPS-001",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py services/control-plane/bff/test_no_undefined_call_symbols.py services/control-plane/bff/test_route_resolution_no_shadowing.py -q; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e55fa10956a52ba03f4b8dfd66cd52517bc127a3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned MGMT-OPS-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-07-07T15:18:35Z",
+      "resolved_at": "2026-07-07T15:20:22Z"
+    },
+    {
+      "task_id": "MGMT-OPS-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Repo delivery merged in PR #3050 at cea8d1f94fd3a3f5efb831331435ced071f303d0; task head 19c6da5552353d5ff0199594aeccbdcf46600623. Please review/approve status so owner can run done closeout. Local verification: MGMT-OPS-001 + route/undefined guards 16 passed; management OpenAPI schema guard 2 passed; git diff --check. GitHub checks passed.",
+      "status": "done",
+      "created_at": "2026-07-08T04:17:40Z",
+      "resolved_at": "2026-07-08T04:20:28Z"
+    },
+    {
+      "task_id": "MGMT-OPS-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: PR #3050 merged at cea8d1f94fd3a3f5efb831331435ced071f303d0; focused BFF contract validation passed. Owner Codex2 should run done closeout.",
+      "status": "done",
+      "created_at": "2026-07-08T04:20:28Z",
+      "resolved_at": "2026-07-08T04:26:56Z"
+    }
+  ],
+  "blockers": []
+}

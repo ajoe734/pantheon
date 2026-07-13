@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19",
+  "archived_at": "2026-07-12T07:04:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19",
+    "title": "Prepare MGMT-PERF-IA-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 2 integration",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-006/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3377 merged into dev at 6716214f693076aca8bf1ddac59e4c2c98b498ae; support-only frontend/BFF handoff packet approved for parent absorption. Verified git diff --check, scoped phrase checks, commit trailers, runtime mirror guard, and smoke acceptance.",
+    "last_update": "2026-07-12T07:04:00Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已審查並通過隨附之 BFF query gap、operator journey 與前端 handoff packet",
+      "確認該 packet 為 support-only，未修改 L1 canonical 實作與合約結構，並維持 parent task 獨立完成目標與 hosted evidence 之職責"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-006/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T07:04:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-006-sidecar-bff-handoff-followup-19",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19",
+      "git_clean_required": false,
+      "commit": "cb148e22e52d56e064ff72da642eba428c0d7e04",
+      "commit_subject": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19: add BFF handoff packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only frontend/BFF journey handoff units and bounded ticket cut lines.",
+        "Not changing": "canonical truth, runtime routes or schemas, registry/governance behavior, and frontend implementation.",
+        "Composes with": "parent MGMT-PERF-IA-006 contextual integration owned by Antigravity.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check; focused phrase checks for requested/fulfilled separation, fail-closed behavior, bounded BFF scope, and canonical non-mutation"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9f1c5b207ffe986dc10aae86a7430a12f5b1b5df",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only handoff packet ready in commit cb148e22e and PR #3377. Verify requested-versus-fulfilled separation, fail-closed journeys, bounded BFF cut lines, and canonical non-mutation.",
+      "status": "done",
+      "created_at": "2026-07-12T07:01:48Z",
+      "resolved_at": "2026-07-12T07:02:55Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-19",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Support-only frontend/BFF handoff units and bounded ticket cut lines approved for parent absorption.",
+      "status": "done",
+      "created_at": "2026-07-12T07:02:55Z",
+      "resolved_at": "2026-07-12T07:04:01Z"
+    }
+  ],
+  "blockers": []
+}

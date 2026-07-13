@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-008",
+  "archived_at": "2026-07-10T09:45:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-008",
+    "title": "Mutation / Evolution contract for Persona Fleet",
+    "summary_zh": "鎖定 Persona Fleet 最近 mutation 與 Evolution Journal 的共同契約：正式 mutation id、日期、fallback summary、confidence、diagnostics 必須分開，不准把 nan 或日期當成 mutation id。",
+    "phase": "Management Console Operations / Mutation Evolution Wave 0 contract",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/control-plane/bff/tests",
+      "execute-plans:src/lib/bff-v1",
+      "execute-plans:src/management",
+      "docs/bff/execution-tasks/2026-07-10-persona-fleet-mutation-evolution-gap/MGMT-OPS-008-mutation-evolution-contract.md"
+    ],
+    "acceptance": [
+      "Persona Fleet rows expose mutation identity timestamp source kind and confidence as separate fields",
+      "BFF and adapter output never use nan undefined empty strings labels or dates as mutation ids",
+      "contract tests cover persona-20260528-04688755 fallback-only state",
+      "formal mutation/evolution row is covered when the source exists"
+    ],
+    "next": "Closed out MGMT-OPS-008: finalized and merged PR #3077 covering mutation and evolution contract fields.",
+    "last_update": "2026-07-10T09:45:04Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_fleet_mutation_evolution_gap_2026-07-10",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_mutation_evolution_gap_2026-07-10/PERSONA_FLEET_MUTATION_EVOLUTION_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-10-persona-fleet-mutation-evolution-gap/INDEX.md",
+      "extends": "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/INDEX.md",
+      "trigger": "2026-07-10 Persona Fleet recent mutation links open Evolution Journal fallback with mutation:nan",
+      "focus_persona": "persona-20260528-04688755"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "persona_fleet_mutation_evolution_gap_execution_slice",
+    "wave": 0,
+    "fleet_lane": "ops-mutation-evolution-contract",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-10T09:45:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-008",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-008",
+      "git_clean_required": false,
+      "commit": "0004bd0fa4eade66e770093258be129082623b3d",
+      "commit_subject": "MGMT-OPS-008: update task brief status to review_approved",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "MGMT-OPS-008",
+        "Reviewer": "Claude",
+        "Verified": "none; update task brief only"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-008",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "75c6771b5cea618cdc6eadc32236c6d592d78efa",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-008",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "mutation/evolution contract fields and tests implemented",
+      "status": "done",
+      "created_at": "2026-07-10T09:41:36Z",
+      "resolved_at": "2026-07-10T09:41:49Z"
+    },
+    {
+      "task_id": "MGMT-OPS-008",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "mutation/evolution contract fields and tests implemented",
+      "status": "done",
+      "created_at": "2026-07-10T09:41:49Z",
+      "resolved_at": "2026-07-10T09:45:06Z"
+    }
+  ],
+  "blockers": []
+}

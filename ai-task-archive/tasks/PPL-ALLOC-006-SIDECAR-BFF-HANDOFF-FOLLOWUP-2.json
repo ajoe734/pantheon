@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-11T05:21:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only BFF/frontend handoff packet reviewed by Claude and merged via PR #3115 at merge commit 0e978235c4dfea88b502026a04e394d983f7a23c; verified git diff --check and non-empty artifact; parent PPL-ALLOC-006 retains absorption authority.",
+    "last_update": "2026-07-11T05:21:59Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "批准 sidecar handoff follow-up packet：scope 保持 support-only，git diff --check 乾淨，僅新增 support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md（commit ff03286fd），未觸及 canonical truth 或 BFF/runtime 實作。",
+      "逐條核對 services/control-plane/bff/main.py：quarterly-ranking (data.items/page_info/meta.surfaces.quarterly_ranking)、recommendations (data.items)、drilldown (personaId 必填)、promotion-reviews (object envelope，data.items 非 bare list)、persona-fleet、allocation-policy/evaluate (data.lines + applied:false)、rebalances list/detail (bare array vs object) 皆與封包描述一致。",
+      "write 語意核實：POST recommendations/{id}/submit 202 首次、200 replay 皆含 review_id/promotion_review_id/command_id/human_inbox_id/links，並回報 live_capital_mutation:false；POST /bff/rebalances 需 Idempotency-Key，dry-run 回傳 200 與 dryrun-* id；POST /bff/rebalances/{id}/apply 對 live_running weight 增加且無 approval_ref 時回 409 precondition_failed=approval_ref，全數與封包一致。",
+      "核准，交回 owner Codex 收尾；parent PPL-ALLOC-006 workbench 是否吸收此矩陣由 owner 決定。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T05:21:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "0e978235c4dfea88b502026a04e394d983f7a23c",
+      "commit_subject": "Merge pull request #3115 from ajoe734/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2": "add handoff follow-up"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0e978235c4dfea88b502026a04e394d983f7a23c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet committed at ff03286fd; please review response envelopes, write preconditions, query gaps, and fail-closed acceptance matrix for parent absorption.",
+      "status": "done",
+      "created_at": "2026-07-11T05:17:54Z",
+      "resolved_at": "2026-07-11T05:21:02Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: envelope/precondition/query-gap claims verified against services/control-plane/bff/main.py; scope stayed support-only; returned to owner Codex for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T05:21:02Z",
+      "resolved_at": "2026-07-11T05:22:00Z"
+    }
+  ],
+  "blockers": []
+}

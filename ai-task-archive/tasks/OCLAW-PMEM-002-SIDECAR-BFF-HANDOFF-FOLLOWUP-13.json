@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+  "archived_at": "2026-07-11T21:54:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+    "title": "Prepare OCLAW-PMEM-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-002，整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 1 agent reconcile",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-001"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-002/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3276 merged to dev at 5b2c542b70170f7cfbc7e028e984ef96a75be803; support-only dispatch-return receipt committed at cea1d93308df161f52c30bad76658a8745433f8e; verified git diff --check, remote branch identities, single-artifact scope, and successful Branch CI Gate. Redispatch gate remains unchanged, frontend stays gated, and parent owner retains the BFF implementation/defer decision.",
+    "last_update": "2026-07-11T21:54:08Z",
+    "task_class": "execution",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "核准範圍僅限 support-only dispatch-return receipt。已重抓並驗證 origin/dev=2c63d1d62、origin/task/OCLAW-PMEM-002=db8e7ca0f；parent diff 仍僅 task brief 與 execution-task 文件，四項 redispatch gate 無變化。未宣稱 desired-only surface 為 observed reconcile truth，未發明 route/schema/storage owner，frontend 仍受 merged BFF evidence gate 約束。此核准不滿足 parent acceptance；缺少的 BFF 實作仍由 OCLAW-PMEM-002 owner 決定 assign 或 defer。"
+    ],
+    "review_file": "support/sidecars/OCLAW-PMEM-002/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T21:54:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-002-sidecar-bff-handoff-followup-13",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "git_clean_required": false,
+      "commit": "cea1d93308df161f52c30bad76658a8745433f8e",
+      "commit_subject": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13: return dispatch",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend handoff dispatch receipt",
+        "Not changing": "reconciler, BFF, frontend, registry, memory, governance, or canonical truth",
+        "Composes with": "parent OCLAW-PMEM-002 owner decision and follow-up 10 implementation contract",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check; branch and parent remote identity audit"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5b2c542b70170f7cfbc7e028e984ef96a75be803",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review support-only dispatch-return receipt at cea1d9330; verify unchanged redispatch gate and preserve parent-owned BFF implementation decision.",
+      "status": "done",
+      "created_at": "2026-07-11T21:51:41Z",
+      "resolved_at": "2026-07-11T21:52:54Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only dispatch-return receipt approved at cea1d9330 after remote identity and diff audit; redispatch gate remains unchanged, frontend stays gated, and the parent owner retains the BFF implementation/defer decision.",
+      "status": "done",
+      "created_at": "2026-07-11T21:52:54Z",
+      "resolved_at": "2026-07-11T21:54:09Z"
+    }
+  ],
+  "blockers": []
+}

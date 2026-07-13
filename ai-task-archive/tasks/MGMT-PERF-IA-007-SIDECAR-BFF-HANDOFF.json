@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-12T03:05:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-PERF-IA-007 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-007，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 2 cleanup",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-007/MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed approved support-only BFF/frontend handoff: initial packet/review merged via PR #3337 (0b40ce037de1721733bcc8bff017bafa5911f1f9), closeout record merged via PR #3341 (f4157be9539ec805de778b42e1b6a93a9f44fd6f), checks passed; canonical/runtime layers unchanged and parent absorption remains with MGMT-PERF-IA-007.",
+    "last_update": "2026-07-12T03:05:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-007",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "獨立審查通過：sidecar 僅提供 dependency-gated BFF query gap、operator journey、frontend cleanup 與 regression handoff；未變更 canonical truth、runtime、registry 或 governance。PR #3337 已合併，merge 0b40ce037de1721733bcc8bff017bafa5911f1f9，CI checks 成功。"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-007/MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T03:05:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-007-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "bf184915f612a467b3bf6c80053b4cf7c1421a0f",
+      "commit_subject": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF: record closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend handoff closeout record.",
+        "Not changing": "canonical truth, runtime, schemas, registries, governance, or frontend source.",
+        "Composes with": "parent task MGMT-PERF-IA-007 and merged PR #3337.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verified": "merge scope inspection; review artifact presence; trailing-whitespace scan"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f4157be9539ec805de778b42e1b6a93a9f44fd6f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only BFF/frontend packet committed at 6580fb2bb; please review dependency gates, query-context preservation, operator journeys, regression matrix, and no-canonical/runtime-change boundary.",
+      "status": "done",
+      "created_at": "2026-07-12T02:03:36Z",
+      "resolved_at": "2026-07-12T03:01:37Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Chair reassigned review from Claude to Codex: PR #3337 is merged and repeated Claude review dispatches from 02:09–02:58Z cannot approve because the automated identity is classified as self-approval; Codex is distinct from owner Codex2.",
+      "status": "done",
+      "created_at": "2026-07-12T03:01:37Z",
+      "resolved_at": "2026-07-12T03:02:15Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-007-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "APPROVED by reassigned independent reviewer Codex; support packet may return to owner Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-07-12T03:02:15Z",
+      "resolved_at": "2026-07-12T03:05:06Z"
+    }
+  ],
+  "blockers": []
+}

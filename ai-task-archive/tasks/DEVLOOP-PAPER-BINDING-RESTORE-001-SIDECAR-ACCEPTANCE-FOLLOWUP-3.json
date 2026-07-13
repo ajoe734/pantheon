@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3",
+  "archived_at": "2026-07-04T00:20:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3",
+    "title": "Prepare DEVLOOP-PAPER-BINDING-RESTORE-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 DEVLOOP-PAPER-BINDING-RESTORE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "devloop paper runtime / binding restore",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/DEVLOOP-PAPER-BINDING-RESTORE-001/DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #2850 merged into dev as ab91c5a53038eed5fcf8c31fd6a31250fb661236; support packet and task brief are durable. Attempting owner closeout.",
+    "last_update": "2026-07-04T00:20:42Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "DEVLOOP-PAPER-BINDING-RESTORE-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Follow-up 3 是 follow-up 2 與原始 sidecar packet 的正確濃縮版，抽查過 RuntimeBinding 錯誤訊息、queue key 格式與相關測試檔皆與 repo 現況一致；純支援材料，未觸碰 canonical truth",
+      "建議 parent owner 依 Section 3 依序補齊 C1-C9 證據，缺任一項需記錄 blocker 而非用弱證據頂替"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T00:20:42Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/devloop-paper-binding-restore-001-sidecar-acceptance-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "1dcafd93aa1fe8a2023662f7debf0e224269a720",
+      "commit_subject": "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3: close",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout context for the sidecar acceptance follow-up 3 support packet.",
+        "Not changing": "L1 canonical truth, runtime contracts, RuntimeBinding ownership, fleet reconciliation, telemetry ingest, governance policy, supervisor cadence, or live paper-loop scripts.",
+        "Composes with": "support/sidecars/DEVLOOP-PAPER-BINDING-RESTORE-001/DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md and Claude's support-material approval.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check origin/dev..HEAD; git diff --check -- .orchestrator/task-briefs/devloop_paper_binding_restore_001_sidecar_acceptance_followup_3.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "86d099f794d49e5eeda7fc40d1b72f96503b3b4b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Sidecar acceptance follow-up 3 support packet is committed in e7782aa023bcd4c4281ce02ca521005bed8bd83d; please review support/sidecars/DEVLOOP-PAPER-BINDING-RESTORE-001/DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md as support material only, not parent repair approval.",
+      "status": "done",
+      "created_at": "2026-07-04T00:13:25Z",
+      "resolved_at": "2026-07-04T00:14:51Z"
+    },
+    {
+      "task_id": "DEVLOOP-PAPER-BINDING-RESTORE-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed follow-up 3: dependency closure order, evidence bundle shape, and reviewer questions accurately condense follow-up 2 and the original sidecar packet; spot-checked RuntimeBinding-required error and queue key format against repo, both match. Approved as support material only; not parent repair approval.",
+      "status": "done",
+      "created_at": "2026-07-04T00:14:51Z",
+      "resolved_at": "2026-07-04T00:20:43Z"
+    }
+  ],
+  "blockers": []
+}

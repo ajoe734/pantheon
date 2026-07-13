@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-11T21:11:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-PERF-IA-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 1 Governance Decisions",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only BFF/frontend handoff packet. Artifact commits aa91512ba and 877d49f27 are merged through PRs #3271/#3272; review approval record merged through PR #3273 at b0cae5d89. Verification: git diff --check on task artifact and brief; pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py -k formula -q => 2 passed, 12 deselected. Canonical/runtime/frontend layers unchanged; parent owner Claude decides absorption.",
+    "last_update": "2026-07-11T21:11:05Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T21:11:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-005-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "b0cae5d897fe2d31d567a3c159b737648db9bd6d",
+      "commit_subject": "Merge pull request #3273 from ajoe734/task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3": "record re-verify note"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b0cae5d897fe2d31d567a3c159b737648db9bd6d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only capability-gated BFF/frontend handoff committed at aa91512ba and opened as PR #3271. Please review scope, route fact-check, fail-closed gates, and parent compose guidance.",
+      "status": "done",
+      "created_at": "2026-07-11T20:50:54Z",
+      "resolved_at": "2026-07-11T20:53:47Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Changes requested: Capability Matrix row 'Ranking policy collection' is factually wrong. GET /bff/management/quarterly-ranking/formula (main.py:43872) already exists, is tested, and is asserted in the live-wiring contract test -- it returns formula weights/version/policy/governance_evidence_refs, matching the parent's required Ranking Policy tab. Update SS1/3/4 to treat it as a compatible surface (gate on meta.surfaces health, not blanket-unavailable) rather than claiming no compatible collection exists. Full detail in .orchestrator/reviews/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-review-claude.md. All other cited routes verified correct.",
+      "status": "done",
+      "created_at": "2026-07-11T20:53:47Z",
+      "resolved_at": "2026-07-11T20:53:47Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Corrected §§1/3/4 and aligned tests/verification notes: GET /bff/management/quarterly-ranking/formula is a compatible Ranking Policy surface gated on meta.surfaces health. Commit 877d49f27; PR #3272; focused PM-12 formula test passed (1 passed). Please re-review.",
+      "status": "done",
+      "created_at": "2026-07-11T20:55:33Z",
+      "resolved_at": "2026-07-11T21:10:05Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Fact-check reconfirmed accurate; approving sidecar packet.",
+      "status": "done",
+      "created_at": "2026-07-11T21:10:05Z",
+      "resolved_at": "2026-07-11T21:11:06Z"
+    }
+  ],
+  "blockers": []
+}

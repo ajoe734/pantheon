@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-07-04T13:38:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare AG-DYNUI-PROD-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Shell Architecture",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-002/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend handoff follow-up merged via PR #2973; parent closeout evidence is reconciled and no canonical/runtime changes were made.",
+    "last_update": "2026-07-04T13:38:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "核准 support-only sidecar packet：PR #2970 已 merged，GitHub 顯示 changed_files=2，scope 為 task brief 與 support/sidecars/AG-DYNUI-PROD-002/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md；packet 未要求 BFF/frontend/runtime/registry/governance/canonical 變更。",
+      "重新核對 execute-plans PR #171/#173、pantheon PR #2955/#2959/#2968 均已 merged；hosted /deployment.json 目前已前進到 e8fbdc1b1f0676d02e37915c82ec3496f743ac17，但 merge-base 驗證它仍包含 #171 的 467d930957bf109405fa50a5bc252ff66ec3a7ee 與 #173 的 691f2ec56af9bbc592814563558c001860d8bc7f，因此 handoff 結論仍成立。",
+      "Parent AG-DYNUI-PROD-002 在 live status root 已 archived done；此 sidecar 可由 owner Codex2 依 closeout-finalization 做正常 done 收尾。"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-PROD-002/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T13:38:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-002-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "cbd63289abbb76d73000830daafea59a3e142c6f",
+      "commit_subject": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "sidecar handoff packet closeout note and generated task brief approval text.",
+        "Not changing": "canonical architecture, BFF/runtime code, frontend implementation, registries, governance, deploy config, or parent task status.",
+        "Composes with": "merged PR #2970 and reviewer approval from Codex before owner done finalization.",
+        "Verified": "git diff --check -- .orchestrator/task-briefs/ag_dynui_prod_002_sidecar_bff_handoff_followup_5.md support/sidecars/AG-DYNUI-PROD-002/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md; AI_NAME=Codex2 python3 scripts/ai_status.py show AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5; gh pr view 2970 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,url,statusCheckRollup",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+        "Reviewer": "Codex"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9fecc4b1309bd45304f1f4a8a69bad8b357f6e25",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-04T13:20:04Z",
+      "resolved_at": "2026-07-04T13:20:11Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support packet ready in pantheon PR #2970. Scope is task brief plus support/sidecars/AG-DYNUI-PROD-002/AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md only. Packet records that execute-plans PR #171/#173, pantheon evidence PR #2955/#2959, and parent closeout PR #2968 are merged; parent still reports review_approved in ai-status, so remaining AG-DYNUI-PROD-002 issue is status closeout/reconciliation, not BFF/frontend handoff material. Validation: git diff --check origin/dev...HEAD.",
+      "status": "done",
+      "created_at": "2026-07-04T13:29:01Z",
+      "resolved_at": "2026-07-04T13:33:26Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved. Support packet is scoped correctly; reviewed PR/evidence chain still holds, with hosted deployment now at descendant commit e8fbdc1b1f0676d02e37915c82ec3496f743ac17. Owner Codex2 should finalize this sidecar to done after closeout.",
+      "status": "done",
+      "created_at": "2026-07-04T13:33:26Z",
+      "resolved_at": "2026-07-04T13:38:27Z"
+    }
+  ],
+  "blockers": []
+}

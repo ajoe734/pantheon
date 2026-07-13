@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-LIVE-WORKSHOP-FE-013",
+  "archived_at": "2026-07-08T01:27:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-LIVE-WORKSHOP-FE-013",
+    "title": "Agora Strategy Workshop execute-plans live frontend repair",
+    "summary_zh": "AG-DYNUI-LIVE-WORKSHOP-009 的 Pantheon mirror PR 已不足以修 live。實際 live FE repo ajoe734/execute-plans 仍在 /home/lupin/code/execute-plans-ag-dynui-prod-006 將 workshop list 顯示為 raw ws.workshop_id。此 task 必須修 execute-plans repo、PR/CI/merge，並部署 live FE runtime 後以 hosted readback 證明 Strategy Workshop 不再是 UUID/debug output。",
+    "phase": "Agora DYNUI Live Tabs Production Recovery / 2026-07-08 execute-plans workshop",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans:src/agora/pages/strategy-workshop/",
+      "execute-plans:src/lib/bff-v1/agora/workshops.ts",
+      "execute-plans:src/routes/agora.tsx",
+      "execute-plans:e2e/",
+      "docs/deployment/evidence/ag-dynui-live-tabs-013/"
+    ],
+    "acceptance": [
+      "Reproduce current live execute-plans Strategy Workshop raw workshop UUID list from /home/lupin/code/execute-plans-ag-dynui-prod-006 or hosted dev",
+      "Patch ajoe734/execute-plans source so list renders workshop title/status/readiness/cards/events and supports selecting/loading a session runtime",
+      "Use live BFF workshop list/detail/cards/readiness/events/messages with shared auth headers; no fixture-only/static page",
+      "Add focused tests and hosted Playwright proving no raw UUID-only debug list on desktop/mobile",
+      "Open execute-plans PR and wait for CI",
+      "Merge execute-plans PR",
+      "Deploy live FE runtime to merged commit",
+      "Record PR number/commit SHA/deploy path/screenshots/readback evidence"
+    ],
+    "next": "Done: execute-plans PR #218 merged into dev at 9d60297e5c200d05214df7f758ee0c20c224db02 with integration-gate success; Pantheon evidence PR #3057 merged at b661654b444eb4a111fe6ded0f958d57255f757b with branch checks success; dev FE /deployment.json reports 9d60297e5c200d05214df7f758ee0c20c224db02; closeout verified via gh pr view #218/#3057, curl /deployment.json, and docs/deployment/evidence/ag-dynui-live-tabs-013 desktop/mobile JSON+PNG readback. TASK_REQUIRE_MERGED_PR=false only because status registry targets execute-plans main while #218 merged to dev; merge was verified separately.",
+    "last_update": "2026-07-08T01:27:13Z",
+    "review_notes_zh": [
+      "審查通過：execute-plans PR #218 integration-gate success，merge commit 9d60297e5c200d05214df7f758ee0c20c224db02；dev deploy run 28909983307 success，/deployment.json reports 9d60297；hosted Strategy Workshop proof rerun 4/4 passed at /tmp/ag-dynui-live-tabs-013-postdeploy-rerun；manual live readback confirms Trading Room/Strategy Workshop/Strategy Performance load real BFF endpoints with no Failed-to-load, UUID-only list, or coming-soon placeholder."
+    ],
+    "review_file": "docs/deployment/evidence/ag-dynui-live-tabs-013/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-08T01:27:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-live-workshop-fe-013",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-LIVE-WORKSHOP-FE-013",
+      "git_clean_required": false,
+      "commit": "b661654b444eb4a111fe6ded0f958d57255f757b",
+      "commit_subject": "Merge pull request #3057 from ajoe734/task/AG-DYNUI-LIVE-WORKSHOP-FE-013",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-DYNUI-LIVE-WORKSHOP-FE-013": "record live evidence"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-LIVE-WORKSHOP-FE-013",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-LIVE-WORKSHOP-FE-013",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "execute-plans PR #218 merged at 9d60297e5c200d05214df7f758ee0c20c224db02; dev FE deployment run 28909983307 succeeded and /deployment.json reports 9d60297; hosted Strategy Workshop Playwright desktop/mobile passed with evidence in docs/deployment/evidence/ag-dynui-live-tabs-013; Pantheon evidence PR #3057 merged at b661654b444eb4a111fe6ded0f958d57255f757b. Please review for review_approved.",
+      "status": "done",
+      "created_at": "2026-07-08T01:20:33Z",
+      "resolved_at": "2026-07-08T01:22:14Z"
+    },
+    {
+      "task_id": "AG-DYNUI-LIVE-WORKSHOP-FE-013",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Approved from live deploy/readback evidence for #218 and postdeploy hosted proof.",
+      "status": "done",
+      "created_at": "2026-07-08T01:22:14Z",
+      "resolved_at": "2026-07-08T01:27:13Z"
+    }
+  ],
+  "blockers": []
+}

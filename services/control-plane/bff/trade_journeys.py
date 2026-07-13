@@ -16,16 +16,23 @@ id" from "not yours" (gap spec section 12).
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Header, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.trade_journey.alert_transport import DataQualityAlertTransport, SLO_ALERT_TRANSPORT
+from services.trade_journey.action_ledger import ActionLedger, MemoryActionLedger, make_action_ledger
+from services.trade_journey.api_latency_recorder import ApiLatencyRecorder
+from services.trade_journey.dashboard import load_dashboard, render_dashboard_snapshot
 from services.trade_journey.materializer import (
     IDENTIFIER_FIELDS,
     STAGES,
@@ -34,6 +41,13 @@ from services.trade_journey.materializer import (
     JourneyProjection,
     MaterializationError,
 )
+from services.trade_journey.slo_data_quality import (
+    compute_data_quality_metrics,
+    evaluate_data_quality,
+    incident_to_dict,
+    load_slo_targets,
+    metrics_to_dict,
+)
 
 EVENTS_STORE_ENV = "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"
 _ALLOWED_ENVIRONMENTS = {"paper", "broker_sandbox", "canary", "live"}
@@ -41,6 +55,13 @@ _ANOMALY_DIAGNOSTIC_CODES = {"identifier_conflict", "conflicting_terminal_states
 _ALLOWED_SORTS = {"updated_at_desc", "updated_at_asc", "created_at_desc", "created_at_asc"}
 _RESOLVABLE_IDENTIFIER_TYPES: Tuple[str, ...] = ("journey_id",) + IDENTIFIER_FIELDS
 _STALLED_AFTER_SECONDS = 900  # 15 minutes; see gap-spec section 13 SLO discussion.
+_STALLED_THRESHOLDS_ENV = "PANTHEON_BFF_TRADE_JOURNEY_STALLED_THRESHOLDS"
+_DEFAULT_STALLED_THRESHOLDS = {
+    "paper": {"default": 900, "broker_acknowledgement": 120, "reconciliation": 600},
+    "broker_sandbox": {"default": 600, "broker_acknowledgement": 90, "reconciliation": 300},
+    "canary": {"default": 300, "broker_acknowledgement": 60, "reconciliation": 180},
+    "live": {"default": 180, "broker_acknowledgement": 30, "reconciliation": 120},
+}
 # Stages 1-6 (research_rationale .. deployment_runtime) precede signal
 # generation and, per contract.md section 5.1, never carry a `journey_id` —
 # they belong to the ResearchJourney/StrategyLifecycle event streams, not
@@ -54,6 +75,39 @@ _LIVE_CAPITAL_FIELDS = ("quantity", "price")
 _LIVE_CAPITAL_VISIBLE_ROLES = {"operator", "approver", "admin", "reviewer"}
 
 ReadState = Literal["formal", "partial", "degraded", "unavailable"]
+
+_JOURNEY_ACTIONS = {
+    "escalate", "human_review", "pause", "cancel",
+    "reconciliation_retry", "incident_acknowledge",
+}
+_LIVE_ACTIONS = {"pause", "cancel", "reconciliation_retry"}
+
+
+class TradeJourneyActionRequest(BaseModel):
+    action: str
+    reason: str = Field(min_length=3, max_length=1000)
+    expected_revision: int = Field(ge=0)
+    confirm_token: str = Field(min_length=1)
+    incident_id: Optional[str] = None
+    return_to: Optional[str] = None
+
+
+class TradeJourneyActionEnvelope(BaseModel):
+    data: Dict[str, Any]
+    meta: Dict[str, Any]
+
+
+JourneyActionLedger = MemoryActionLedger  # compatibility for focused tests
+ACTION_LEDGER = make_action_ledger()
+
+
+def _unconfigured_action_dispatcher(command: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "status": "partial_failure",
+        "code": "ACTION_DISPATCH_UNAVAILABLE",
+        "message": "Canonical governed command dispatcher is unavailable",
+        "readback": None,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -182,6 +236,11 @@ class TradeJourneyEventStore:
 
 
 EVENT_STORE = TradeJourneyEventStore()
+
+# TJ-E2E-011: real request-latency samples for the `detail`/`resolve` p95
+# SLO targets (gap-spec section 13), and the governed alert transport that
+# `slo` publishes every emitted `DataQualityIncident` through.
+API_LATENCY_RECORDER = ApiLatencyRecorder()
 
 
 # --------------------------------------------------------------------------- #
@@ -596,6 +655,54 @@ def _default_utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _stalled_thresholds() -> Dict[str, Dict[str, int]]:
+    """Return validated environment/stage thresholds, falling back safely."""
+    configured = os.getenv(_STALLED_THRESHOLDS_ENV, "").strip()
+    if not configured:
+        return {env: dict(values) for env, values in _DEFAULT_STALLED_THRESHOLDS.items()}
+    try:
+        raw = json.loads(configured)
+        result = {env: dict(values) for env, values in _DEFAULT_STALLED_THRESHOLDS.items()}
+        for env, values in raw.items():
+            if env not in _ALLOWED_ENVIRONMENTS or not isinstance(values, Mapping):
+                continue
+            for stage, seconds in values.items():
+                if (stage == "default" or stage in STAGES) and isinstance(seconds, int) and seconds > 0:
+                    result[env][stage] = seconds
+        return result
+    except (TypeError, ValueError):
+        return {env: dict(values) for env, values in _DEFAULT_STALLED_THRESHOLDS.items()}
+
+
+def _attention_item(projection: JourneyProjection, *, now: datetime) -> Optional[Dict[str, Any]]:
+    snapshot = projection.snapshot
+    if snapshot.get("status") in TERMINAL_STATUSES:
+        return None
+    stages = snapshot.get("stages") or {}
+    latest_stage = max(stages, key=lambda name: stages[name].get("updated_at", ""), default="signal_generation")
+    updated = _parse_iso(snapshot.get("updated_at"))
+    age = max(0, int((now - updated).total_seconds())) if updated else 0
+    threshold = _stalled_thresholds()[projection.environment].get(
+        latest_stage, _stalled_thresholds()[projection.environment]["default"]
+    )
+    diagnostics = [item.get("code") for item in projection.diagnostics]
+    stalled = bool(updated and age >= threshold)
+    if not stalled and not diagnostics:
+        return None
+    severity = "critical" if stalled and age >= threshold * 3 else "high" if stalled else "medium"
+    return {
+        "id": f"attention-{projection.journey_id}", "journey_id": projection.journey_id,
+        "stage": latest_stage, "severity": severity, "stalled": stalled,
+        "age_seconds": age, "threshold_seconds": threshold, "reason_codes": diagnostics + (["stage_stalled"] if stalled else []),
+        "owner_role": "operator", "allowed_actions": ["open_journey", "inspect_evidence"],
+        "updated_at": snapshot.get("updated_at"), "revision": snapshot.get("revision", 0),
+    }
+
+
+def _sse_frame(*, event_id: int, event: str, data: Mapping[str, Any]) -> str:
+    return f"id: {event_id}\nevent: {event}\ndata: {json.dumps(dict(data), separators=(',', ':'), sort_keys=True)}\n\n"
+
+
 # --------------------------------------------------------------------------- #
 # Router factory
 # --------------------------------------------------------------------------- #
@@ -605,8 +712,13 @@ def create_trade_journeys_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[[Any], None],
+    require_operator_role: Optional[Callable[[Any], None]] = None,
     get_event_store: Callable[[], TradeJourneyEventStore] = lambda: EVENT_STORE,
+    dispatch_action: Callable[[Dict[str, Any]], Dict[str, Any]] = _unconfigured_action_dispatcher,
+    action_ledger: ActionLedger = ACTION_LEDGER,
     utc_now: Callable[[], str] = _default_utc_now,
+    get_slo_alert_transport: Callable[[], DataQualityAlertTransport] = lambda: SLO_ALERT_TRANSPORT,
+    latency_recorder: ApiLatencyRecorder = API_LATENCY_RECORDER,
 ) -> APIRouter:
     """Factory for the `/bff/management/trade-journeys` route family.
 
@@ -619,11 +731,145 @@ def create_trade_journeys_router(
     def _identity(authorization: Optional[str]) -> Any:
         return extract_identity(authorization)
 
+    @router.post(
+        "/bff/management/trade-journeys/{journey_id}/actions",
+        response_model=TradeJourneyActionEnvelope,
+    )
+    async def bff_trade_journey_action(
+        journey_id: str,
+        request: TradeJourneyActionRequest,
+        tenant_id: str = Query(...),
+        environment: str = Query(...),
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ):
+        identity = _identity(authorization)
+        (require_operator_role or require_read_role)(identity)
+        if request.action not in _JOURNEY_ACTIONS:
+            return _err(400, "VALIDATION_FAILED", f"action must be one of {sorted(_JOURNEY_ACTIONS)}")
+        if not idempotency_key or len(idempotency_key.strip()) < 8:
+            return _err(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must contain at least 8 characters")
+        if environment not in _ALLOWED_ENVIRONMENTS:
+            return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
+        if environment == "live" and request.action in _LIVE_ACTIONS and os.getenv("PANTHEON_TRADE_JOURNEY_LIVE_ACTIONS", "false").lower() != "true":
+            return _err(403, "LIVE_ACTION_DISABLED", "Live-capital journey actions are feature-flagged off")
+        materializer = get_event_store().materializer()
+        projection = materializer.get(journey_id, tenant_id=tenant_id, environment=environment) if materializer and _tenant_allowed(identity, tenant_id) else None
+        if projection is None:
+            return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
+        if request.expected_revision != projection.snapshot.get("revision"):
+            return _err(409, "STALE_JOURNEY_REVISION", "Canonical journey changed; refetch before retry")
+
+        body = request.model_dump()
+        request_hash = hashlib.sha256(json.dumps({"journey_id": journey_id, "tenant_id": tenant_id, "environment": environment, **body}, sort_keys=True).encode()).hexdigest()
+        disposition, cached = action_ledger.reserve(idempotency_key.strip(), request_hash)
+        if disposition == "conflict":
+            return _err(409, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for a different command")
+        if disposition == "pending":
+            return _err(409, "ACTION_IN_PROGRESS", "An action with this idempotency key is already in progress")
+        if cached is not None:
+            cached["idempotent_replay"] = True
+            return {"data": cached, "meta": {"snapshot_at": utc_now(), "refetch_required": True}}
+
+        command = {
+            "command_type": "trade_journey_action",
+            "journey_id": journey_id,
+            "tenant_id": tenant_id,
+            "environment": environment,
+            "idempotency_key": idempotency_key.strip(),
+            **body,
+            "human_inbox": {
+                "href": "/bff/management/human-inbox",
+                "return_to": request.return_to or f"/management/trade-journeys/{journey_id}",
+            },
+        }
+        result = dict(dispatch_action(command) or {})
+        status = str(result.get("status") or "partial_failure")
+        receipt = {
+            "receipt_id": str(result.get("receipt_id") or f"tja-{idempotency_key.strip()}"),
+            "journey_id": journey_id,
+            "action": request.action,
+            "status": status,
+            "readback": result.get("readback"),
+            "human_inbox": command["human_inbox"],
+            "idempotent_replay": False,
+        }
+        if status == "succeeded" and receipt["readback"] is None:
+            receipt["status"] = "partial_failure"
+            receipt["code"] = "READBACK_REQUIRED"
+        if result.get("code"):
+            receipt["code"] = result["code"]
+        action_ledger.complete(idempotency_key.strip(), request_hash, receipt)
+        response_status = 200 if receipt["status"] == "succeeded" else 502
+        return JSONResponse(status_code=response_status, content={"data": receipt, "meta": {"snapshot_at": utc_now(), "refetch_required": True}})
+
     # NOTE: `resolve` and `metrics` are static siblings of the `{journey_id}`
     # path segment and MUST be registered before the `{journey_id}` routes
     # below — Starlette matches routes in registration order, so a param
     # route registered first would shadow these literal paths (the exact bug
     # class `test_route_resolution_no_shadowing.py` guards against).
+
+    @router.get("/bff/management/trade-journeys/events")
+    async def bff_trade_journeys_events(
+        tenant_id: str = Query(...), environment: str = Query(...),
+        authorization: Optional[str] = Header(default=None),
+        last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+    ):
+        """Revisioned SSE cursor. Payloads are invalidation hints, never snapshots."""
+        identity = _identity(authorization)
+        require_read_role(identity)
+        if environment not in _ALLOWED_ENVIRONMENTS:
+            return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
+        if not _tenant_allowed(identity, tenant_id):
+            return _err(403, "FORBIDDEN", "Cross-tenant access denied")
+        materializer = get_event_store().materializer()
+        if materializer is None:
+            return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade journey materializer unavailable", retryable=True)
+        try:
+            cursor = int(last_event_id or 0)
+            if cursor < 0:
+                raise ValueError
+        except ValueError:
+            return _err(400, "VALIDATION_FAILED", "Last-Event-ID must be a non-negative integer")
+        revision = materializer.revision
+
+        async def stream():
+            event = "snapshot_refetch_required" if cursor and cursor != revision - 1 else "journeys_changed"
+            yield _sse_frame(event_id=revision, event=event, data={
+                "revision": revision, "previous_revision": cursor,
+                "gap": bool(cursor and cursor != revision - 1), "snapshot_refetch": True,
+                "tenant_id": tenant_id, "environment": environment,
+            })
+            await asyncio.sleep(0)
+
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={
+            "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
+        })
+
+    @router.get("/bff/management/trade-journeys/attention", response_model=TradeJourneyListEnvelope)
+    async def bff_trade_journeys_attention(
+        tenant_id: str = Query(...), environment: str = Query(...),
+        authorization: Optional[str] = Header(default=None),
+    ):
+        identity = _identity(authorization)
+        require_read_role(identity)
+        if environment not in _ALLOWED_ENVIRONMENTS:
+            return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
+        if not _tenant_allowed(identity, tenant_id):
+            return _err(403, "FORBIDDEN", "Cross-tenant access denied")
+        snapshot_at = utc_now()
+        materializer = get_event_store().materializer()
+        if materializer is None:
+            return _unavailable_list_envelope(snapshot_at, 200, entity_id="trade-journey-attention")
+        now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
+        items = [item for projection in materializer.projections
+                 if projection.tenant_id == tenant_id and projection.environment == environment
+                 if (item := _attention_item(projection, now=now)) is not None]
+        items.sort(key=lambda item: ({"critical": 0, "high": 1, "medium": 2}[item["severity"]], -item["age_seconds"]))
+        return {"data": {"id": "trade-journey-attention", "tenant_id": tenant_id,
+                         "environment": environment, "items": items},
+                "page_info": {"total": len(items), "returned": len(items), "has_more": False},
+                "meta": _meta(snapshot_at, "formal", materializer)}
 
     @router.get("/bff/management/trade-journeys/resolve", response_model=TradeJourneyDetailEnvelope)
     async def bff_trade_journeys_resolve(
@@ -639,6 +885,7 @@ def create_trade_journeys_router(
         instead of silently picking the first match; `ambiguous=true` when
         more than one distinct journey matches.
         """
+        _slo_timer_start = time.perf_counter()
         identity = _identity(authorization)
         require_read_role(identity)
         if environment not in _ALLOWED_ENVIRONMENTS:
@@ -674,6 +921,7 @@ def create_trade_journeys_router(
             "ambiguous": len(all_ids) > 1,
         }
         meta = _meta(snapshot_at, "formal", materializer)
+        latency_recorder.record("resolve", (time.perf_counter() - _slo_timer_start) * 1000.0)
         return {"data": data, "meta": meta}
 
     @router.get("/bff/management/trade-journeys/metrics", response_model=TradeJourneyDetailEnvelope)
@@ -704,6 +952,63 @@ def create_trade_journeys_router(
         projections = [p for p in materializer.projections if p.tenant_id == tenant_id and p.environment == environment]
         metrics = _metrics(projections, now=now)
         data = {"id": "trade-journey-metrics", "tenant_id": tenant_id, "environment": environment, **metrics}
+        read_state = "formal" if projections else "partial"
+        meta = _meta(snapshot_at, read_state, materializer)
+        return {"data": data, "meta": meta}
+
+    @router.get("/bff/management/trade-journeys/slo", response_model=TradeJourneyDetailEnvelope)
+    async def bff_trade_journeys_slo(
+        tenant_id: str = Query(...),
+        environment: str = Query(...),
+        authorization: Optional[str] = Header(default=None),
+    ):
+        """TJ-E2E-011: SLO/data-quality metrics, incidents, and dashboard snapshot.
+
+        This is the runtime/materializer-health integration the TJ-E2E-011
+        review required: it computes `slo_data_quality.DataQualityMetrics`
+        from the live materializer (not a synthetic drill), evaluates the
+        gap-spec section 13 targets against real request latency recorded by
+        `API_LATENCY_RECORDER`, and forwards every emitted `DataQualityIncident`
+        to the governed alert transport (`alert_transport.py`) so it reaches
+        the same durable outbox other Pantheon services publish through.
+        """
+        identity = _identity(authorization)
+        require_read_role(identity)
+        if environment not in _ALLOWED_ENVIRONMENTS:
+            return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
+        if not _tenant_allowed(identity, tenant_id):
+            return _err(403, "FORBIDDEN", "Cross-tenant access denied")
+
+        snapshot_at = utc_now()
+        materializer = get_event_store().materializer()
+        if materializer is None:
+            return _unavailable_envelope(snapshot_at, entity_id="trade-journey-slo")
+
+        now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
+        projections = [p for p in materializer.projections if p.tenant_id == tenant_id and p.environment == environment]
+        targets = load_slo_targets(environment)
+        metrics = compute_data_quality_metrics(
+            projections,
+            environment=environment,
+            source_watermarks=materializer.source_watermarks,
+            now=now,
+            stalled_after_seconds=targets.stalled_after_seconds,
+            detail_api_latencies_ms=latency_recorder.samples("detail"),
+            resolve_api_latencies_ms=latency_recorder.samples("resolve"),
+        )
+        incidents = evaluate_data_quality(metrics, targets, projections, now=now)
+        published = get_slo_alert_transport().publish_incidents(incidents)
+        dashboard_snapshot = render_dashboard_snapshot(load_dashboard(), metrics, targets)
+
+        data = {
+            "id": "trade-journey-slo",
+            "tenant_id": tenant_id,
+            "environment": environment,
+            "metrics": metrics_to_dict(metrics),
+            "incidents": [incident_to_dict(incident) for incident in incidents],
+            "alerts_published": len(published),
+            "dashboard": dashboard_snapshot,
+        }
         read_state = "formal" if projections else "partial"
         meta = _meta(snapshot_at, read_state, materializer)
         return {"data": data, "meta": meta}
@@ -817,6 +1122,7 @@ def create_trade_journeys_router(
         authorization: Optional[str] = Header(default=None),
     ):
         """TJ-E2E-005: canonical detail snapshot (gap-spec section 7.2)."""
+        _slo_timer_start = time.perf_counter()
         identity = _identity(authorization)
         require_read_role(identity)
         if environment not in _ALLOWED_ENVIRONMENTS:
@@ -838,6 +1144,7 @@ def create_trade_journeys_router(
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
         detail = _mask_live_capital(_detail(projection, now=now), identity, projection.environment)
         meta = _meta(snapshot_at, detail.get("read_state", "formal"), materializer)
+        latency_recorder.record("detail", (time.perf_counter() - _slo_timer_start) * 1000.0)
         return {"data": detail, "meta": meta}
 
     @router.get(

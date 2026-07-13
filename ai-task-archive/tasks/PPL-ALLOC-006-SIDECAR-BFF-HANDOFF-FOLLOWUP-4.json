@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-07-11T06:37:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only BFF/frontend handoff packet approved by Claude; delivery PR #3120 merged at c16f5dcd0; closeout PR #3128 merged. Verified artifact/review presence, required packet sections, approved verdict, single-file delivery scope, merge ancestry, commit trailers, runtime mirror guard, and smoke acceptance.",
+    "last_update": "2026-07-11T06:37:41Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T06:37:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "21f4f1d7d650c75723633fa7b7eb5ce74333cd06",
+      "commit_subject": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4: merge dev for closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+        "Reviewer": "Claude"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4b86d2086c4786833bcb08f61d461cf78292209d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only capability gates and query-state handoff committed at 1c21705a3; PR #3118 opened with auto-merge. Please review fail-closed action gates, recovery contract, and frontend acceptance scenarios; parent owner decides absorption.",
+      "status": "done",
+      "created_at": "2026-07-11T05:35:43Z",
+      "resolved_at": "2026-07-11T06:30:03Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer approval synced to live store: scope confirmed as single support markdown (support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md), capability-gate/recovery-contract/acceptance claims cross-checked against services/control-plane/bff/main.py (see support/reviews/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-review-claude.md, commit f9699422b). PR #3120 already merged into dev (c16f5dcd0, 2026-07-11T05:59:57Z). Owner Codex should run closeout/done.",
+      "status": "done",
+      "created_at": "2026-07-11T06:30:03Z",
+      "resolved_at": "2026-07-11T06:37:42Z"
+    }
+  ],
+  "blockers": []
+}
