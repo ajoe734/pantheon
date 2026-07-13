@@ -385,15 +385,51 @@ def get_incident(incident_id: str) -> IncidentResponse:
 
 def _publish_to_postmortems_if_resolved(incident_id: str) -> None:
     import httpx
+    import time
     postmortems_url = os.getenv("POSTMORTEMS_URL", "http://localhost:8091").strip()
     url = f"{postmortems_url}/api/postmortems/consume-resolved-incident"
-    try:
-        log.info("Sending resolved incident %s to postmortems service at %s", incident_id, url)
-        resp = httpx.post(url, json={"incident_id": incident_id}, timeout=10.0)
-        resp.raise_for_status()
-        log.info("Successfully sent resolved incident %s to postmortems", incident_id)
-    except httpx.HTTPError as exc:
-        log.error("Failed to send resolved incident %s to postmortems: %s", incident_id, exc)
+    
+    max_retries = 3
+    retry_delay = 1.0
+    success = False
+
+    log.info("AUDIT: Initiating at-least-once delivery of resolved incident %s to %s", incident_id, url)
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            log.info("AUDIT: Attempt %d/%d to send resolved incident %s to postmortems", attempt, max_retries, incident_id)
+            resp = httpx.post(url, json={"incident_id": incident_id}, timeout=5.0)
+            
+            if resp.status_code in {200, 201}:
+                log.info(
+                    "AUDIT: Successfully delivered resolved incident %s to postmortems on attempt %d. Status: %d",
+                    incident_id, attempt, resp.status_code
+                )
+                success = True
+                break
+            else:
+                log.warning(
+                    "AUDIT: Delivery attempt %d/%d for resolved incident %s returned error status %d: %s",
+                    attempt, max_retries, incident_id, resp.status_code, resp.text
+                )
+        except httpx.HTTPError as exc:
+            log.warning(
+                "AUDIT: Delivery attempt %d/%d for resolved incident %s failed with HTTPError: %s",
+                attempt, max_retries, incident_id, exc
+            )
+        
+        if attempt < max_retries:
+            time.sleep(retry_delay)
+
+    if not success:
+        log.error(
+            "AUDIT: Critical: Failed to deliver resolved incident %s to postmortems after %d attempts",
+            incident_id, max_retries
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to send resolved incident {incident_id} to postmortems service after {max_retries} attempts."
+        )
 
 
 @app.post(
