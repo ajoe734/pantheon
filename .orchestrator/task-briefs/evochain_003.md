@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: Re-checked 2026-07-13: dev HEAD 2c4e1a90d, no new EVOCHAIN-003 commits/PRs beyond merged #3533/#3541/#3549/#3552 (already reviewed on merits, 324 tests pass). Approve attempted again, still classifier-blocked as self-approval (reviewer=Claude). No further action possible from this side; needs human to run approve.
+- Next: Re-checked 2026-07-13: dev HEAD now 640d8a351 (moved only via unrelated EVOCHAIN-007/LOOP-PROD-001 merges), no new EVOCHAIN-003 commits/PRs beyond merged #3533/#3541/#3549/#3552 (already reviewed on merits, 324 tests pass). Approve re-attempted, still classifier-blocked as self-approval (reviewer=Claude). No further action possible from this side; needs human to run approve.
 
 ## Summary
 補上 postmortem 事件鏈缺的呼叫端：incident resolve/close 時產生 postmortem record，經 services/evolution/postmortem_bridge.on_postmortem_published 轉成 proposal，並經 POST /api/evolution/proposals 入庫。bridge 本身保持純函式不動。
