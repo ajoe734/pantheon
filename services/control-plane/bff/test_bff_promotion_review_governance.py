@@ -460,6 +460,17 @@ def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch)
         assert body["meta"]["surfaces"]["persona_readiness"]["reason"] == "read_timeout"
 
 
+def test_human_inbox_surface_timeout_has_a_hard_one_second_ceiling(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "9.5")
+    assert bff_main._human_inbox_surface_timeout_seconds() == 1.0
+
+    monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.17")
+    assert bff_main._human_inbox_surface_timeout_seconds() == 0.17
+
+    monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "invalid")
+    assert bff_main._human_inbox_surface_timeout_seconds() == 1.0
+
+
 def test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one(monkeypatch) -> None:
     with _isolated_client() as client:
         calls = {"personas": 0, "league": 0}

@@ -33989,12 +33989,18 @@ def _human_inbox_all_items(
     }
 
 
+_HUMAN_INBOX_MAX_SURFACE_TIMEOUT_SECONDS = 1.0
+
+
 def _human_inbox_surface_timeout_seconds() -> float:
-    raw = os.getenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "2.5").strip()
+    raw = os.getenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "1.0").strip()
     try:
-        return max(0.05, float(raw))
+        return min(
+            _HUMAN_INBOX_MAX_SURFACE_TIMEOUT_SECONDS,
+            max(0.05, float(raw)),
+        )
     except (TypeError, ValueError):
-        return 2.5
+        return _HUMAN_INBOX_MAX_SURFACE_TIMEOUT_SECONDS
 
 
 def _human_inbox_read_error_surface(
