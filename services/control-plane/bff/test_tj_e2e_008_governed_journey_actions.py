@@ -14,7 +14,7 @@ import trade_journeys as tj  # noqa: E402
 from services.trade_journey.materializer import JourneyMaterializer  # noqa: E402
 
 
-def _client(dispatch=None, *, unrelated_events=0):
+def _client(dispatch=None, *, unrelated_events=0, action_ledger=None):
     materializer = JourneyMaterializer()
     materializer.rebuild([{
         "event_id": "event-1", "journey_id": "tj-8", "tenant_id": "tenant-a",
@@ -55,7 +55,7 @@ def _client(dispatch=None, *, unrelated_events=0):
             "status": "succeeded", "receipt_id": "receipt-1",
             "readback": {"journey_id": command["journey_id"], "state": "paused"},
         }),
-        action_ledger=tj.JourneyActionLedger(),
+        action_ledger=action_ledger or tj.JourneyActionLedger(),
         utc_now=lambda: "2026-07-12T01:00:00Z",
     ))
     revision = materializer.get(
@@ -123,3 +123,24 @@ def test_human_review_preserves_inbox_return_context():
     assert response.status_code == 200
     assert captured[0]["human_inbox"]["href"] == "/bff/management/human-inbox"
     assert captured[0]["human_inbox"]["return_to"] == "/management/trade-journeys/tj-8"
+
+
+def test_concurrent_reservation_fails_closed_without_double_dispatch():
+    ledger = tj.JourneyActionLedger()
+    dispatched = []
+    client, revision = _client(lambda command: dispatched.append(command) or {
+        "status": "succeeded", "readback": {"state": "paused"},
+    }, action_ledger=ledger)
+    body = {
+        "journey_id": "tj-8", "tenant_id": "tenant-a", "environment": "paper",
+        "action": "pause", "reason": "operator requested pause",
+        "expected_revision": revision, "confirm_token": "confirm-1",
+        "incident_id": None, "return_to": None,
+    }
+    import hashlib, json
+    request_hash = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+    assert ledger.reserve("idem-pending-01", request_hash)[0] == "new"
+    response = _post(client, revision, key="idem-pending-01")
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "ACTION_IN_PROGRESS"
+    assert dispatched == []
