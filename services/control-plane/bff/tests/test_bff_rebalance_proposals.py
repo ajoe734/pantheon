@@ -56,6 +56,18 @@ def test_live_increase_apply_requires_human_approval_reference():
             assert denied.status_code == 409
             accepted = client.post(f"/bff/rebalances/{rebalance_id}/apply", json={"approval_ref": "approval-human-1"}, headers={**HEADERS, "Idempotency-Key": "rb-apply-2"})
             assert accepted.status_code == 202, accepted.text
+            command_id = accepted.json()["data"]["command_id"]
+            command = client.get(
+                f"/api/v1/operator/commands/{command_id}",
+                headers=HEADERS,
+            )
+            assert command.status_code == 200, command.text
+            receipt = command.json()
+            assert receipt["status"] == "executed"
+            assert receipt["result"]["action_id"] == "apply"
+            assert receipt["result"]["entity_type"] == "Rebalance"
+            assert receipt["result"]["entity_id"] == rebalance_id
+            assert receipt["result"]["live_capital_side_effects"] is False
         finally:
             bff_main.read_store = original
 

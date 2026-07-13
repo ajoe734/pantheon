@@ -18,6 +18,34 @@ packet's required end-to-end proof.
 Sanitized probe results are recorded in
 `PPL-ALLOC-009-HOSTED-EVIDENCE-2026-07-13.json` in this directory.
 
+### Redispatch recheck
+
+The supervisor redispatched the task after all formal dependencies became
+terminal. A read-only hosted recheck at `2026-07-13T04:35:50Z` confirmed that
+this did not clear the execution blocker:
+
+- `GET /healthz` returned HTTP 200 and reported all named dependencies ready.
+- `GET /api/v1/operator/commands/7a3e7310-0596-4805-81d6-40b75fd7a412`
+  returned HTTP 200 with `status=submitted`, `result=null`, and `error=null`.
+
+No capital-affecting command was issued during this recheck. The required
+terminal execution/readback and legitimate second-operator containment proof
+remain outstanding.
+
+### Local terminal-receipt repair candidate
+
+The redispatch identified that the proposal apply route persisted a command
+but never registered the existing background command processor. A narrow local
+repair now queues that processor and preserves the rebalance entity identity
+in the execution params. Its regression test proves the command reaches
+`executed` with an adapter receipt that explicitly reports
+`live_capital_side_effects=false`.
+
+This is not hosted evidence and does not claim authoritative allocation
+application. It must merge, deploy, and pass a hosted terminal-receipt recheck;
+the Capital Pool / Execution Plane write contract and post-apply allocation
+readback remain separate blocking evidence.
+
 ## Dependency And PR Ledger
 
 All implementation dependencies have durable `done` records. The relevant
@@ -205,7 +233,7 @@ assertion described above after rendering the task persona.
 
 | Severity | Blocking | Risk | Owner | Objective expiry / recheck |
 | --- | --- | --- | --- | --- |
-| S1 | Yes | Approved rebalance command remains `submitted`; no terminal execution or authoritative applied-weight readback exists. | Control Plane / Execution Plane | Recheck when the command reaches a terminal state and Capital/Fleet reads return the same applied weights and identities. |
+| S1 | Yes | Hosted approved rebalance command remains `submitted`; a local processor-queue repair passes tests but is not merged/deployed, and no authoritative applied-weight readback exists. | Control Plane / Execution Plane | Merge/deploy the repair, recheck terminal receipt, then require Capital/Fleet reads to return the same applied weights and identities. |
 | S1 | Yes | Safe emergency freeze cannot be admitted without a distinct second authorized operator, so no containment receipt/post-state proof exists. | Human/Ops + Risk Owner | Re-run with two legitimate operators and preserve confirmation, signature, terminal receipt, and unchanged promotion/allocation readback. |
 | S2 | Yes | Hosted ranking rows omit stage, current weight, and evidence fields needed for a response-derived ranking-to-proposal join. | BFF Allocation Read Model | Recheck after one immutable ranking response carries the complete allocation universe and proposal join fields. |
 | S2 | Yes | Original single Promotion & Allocation workbench contract was replaced by later IA redirects; the supersession needs explicit closeout reviewer acceptance. | Management Frontend + Claude | Resolve during PPL-ALLOC-009 review by accepting the newer canonical-center model or reopening the original route target. |
@@ -216,8 +244,9 @@ assertion described above after rendering the task persona.
 
 ## Required Next Action
 
-Keep `PPL-ALLOC-009` blocked. The Control Plane / Execution Plane must first
-make approved rebalance commands terminal and expose authoritative allocation
+Keep `PPL-ALLOC-009` in progress. First publish and deploy the local
+terminal-receipt repair, then recheck the apply command on hosted dev. The
+Control Plane / Execution Plane must still expose authoritative allocation
 readback. Human/Ops and the Risk Owner must then execute the safe containment
 probe with a genuine second signer. After the ranking join and route
 supersession are reviewed, rerun the hosted journey and only then hand the task
