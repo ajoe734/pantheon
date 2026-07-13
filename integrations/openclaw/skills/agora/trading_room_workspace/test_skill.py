@@ -14,7 +14,11 @@ def _registry() -> dict[str, dict[str, Any]]:
         "candidate_table": {
             "renderer": "chart_spec",
             "allowed_chart_kinds": ["table", "bar"],
-            "allowed_data_sources": ["agora.candidate.members"],
+            "allowed_data_sources": [
+                "agora.candidate.members",
+                "winner_branch.score_breakdown",
+                "winner_branch.related_branch_flow",
+            ],
             "allowed_interactions": ["open_candidate", "request_widget_revision"],
             "sensitivity": "user_private",
             "status": "active",
@@ -120,6 +124,63 @@ def test_generator_preserves_evidence_freshness_and_filters_unsafe_personalizati
     assert "ev-001" in source["reason"]
     assert "2026-06-28T23:00:00Z" in source["reason"]
     assert result.meta()["evidenceRefs"] == ["ev-001"]
+
+
+def test_generator_derives_widget_and_view_availability_from_source_evidence():
+    widgets = [
+        _widget(id="full", dataSource="agora.candidate.members"),
+        _widget(id="degraded", dataSource="winner_branch.score_breakdown"),
+        _widget(id="missing", dataSource="winner_branch.related_branch_flow"),
+    ]
+
+    def view_factory(_input_data: WorkspaceGenerationInput) -> list[dict[str, Any]]:
+        return [{
+            "id": "test_view",
+            "title": "Test View",
+            "purpose": "Test generated view.",
+            "order": 1,
+            "layoutTemplate": "test_grid",
+            "widgets": widgets,
+        }]
+
+    result = generate_trading_room_workspace_proposal(
+        _input(data_freshness={
+            "agora.candidate.members": {"wired": True, "rowCount": 4},
+            "winner_branch.score_breakdown": {"status": "degraded", "wired": True},
+            "winner_branch.related_branch_flow": {"wired": False},
+        }),
+        view_factory=view_factory,
+        widget_registry=_registry(),
+        validate_widget=_no_extra_errors,
+        required_view_ids=("test_view",),
+    )
+
+    assert result.status == "completed"
+    assert result.proposal is not None
+    view = result.proposal["views"][0]
+    assert [widget["dataAvailability"] for widget in view["widgets"]] == [
+        "complete",
+        "partial",
+        "unavailable",
+    ]
+    assert view["dataAvailability"] == "partial"
+    assert result.proposal["dataAvailability"]["status"] == "partial"
+
+
+def test_generator_does_not_claim_unreported_source_is_partial():
+    result = generate_trading_room_workspace_proposal(
+        _input(),
+        view_factory=_view_factory(_widget()),
+        widget_registry=_registry(),
+        validate_widget=_no_extra_errors,
+        required_view_ids=("test_view",),
+    )
+
+    assert result.status == "completed"
+    assert result.proposal is not None
+    assert result.proposal["views"][0]["widgets"][0]["dataAvailability"] == "unavailable"
+    assert result.proposal["views"][0]["dataAvailability"] == "unavailable"
+    assert result.proposal["dataAvailability"]["status"] == "unavailable"
 
 
 def test_generator_uses_supported_fallback_for_unsupported_renderer():

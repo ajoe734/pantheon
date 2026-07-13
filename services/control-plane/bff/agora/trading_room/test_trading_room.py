@@ -796,6 +796,34 @@ def test_workspace_proposal_preserves_generator_metadata_on_create_and_get():
     print("✅ workspace proposal generator metadata: create/get preserve evidence and freshness")
 
 
+def test_workspace_proposal_derives_widget_availability_from_scoped_sources():
+    store = make_trading_room_store()
+    store.upsert_decision_event(_make_event(event_id="evt-wb", strategy_id="strat-wb"))
+    client = _client(store)
+    proposal = _create_proposal_response(
+        client,
+        {
+            "strategyVersion": "V4",
+            "evidenceRefs": ["ev-wb-001"],
+            "dataFreshness": {
+                "agora.candidate.members": {"wired": True, "rowCount": 3},
+                "winner_branch.score_breakdown": {"status": "degraded", "wired": True},
+                "winner_branch.related_branch_flow": {"wired": False},
+            },
+        },
+    ).json()["data"]
+
+    widgets = {widget["id"]: widget for view in proposal["views"] for widget in view["widgets"]}
+    assert widgets["overview_candidate_funnel"]["dataAvailability"] == "complete"
+    assert widgets["overview_strategy_health"]["dataAvailability"] == "partial"
+    assert widgets["migration_branch_network"]["dataAvailability"] == "unavailable"
+    assert widgets["overview_decision_queue"]["dataAvailability"] == "complete"
+    assert widgets["positions_pyramid_plan"]["dataAvailability"] == "complete"
+    assert widgets["evidence_trace"]["dataAvailability"] == "complete"
+    assert proposal["views"][0]["dataAvailability"] == "partial"
+    _workspace_schema_validate(proposal)
+
+
 def test_workspace_proposal_get_and_accept_materializes_active_workspace():
     store = make_trading_room_store()
     client = _client(store)

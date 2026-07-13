@@ -156,7 +156,6 @@ def generate_trading_room_workspace_proposal(
         view["widgets"] = resolved_widgets
         view["widgetCount"] = len(resolved_widgets)
         view.setdefault("warnings", [])
-        view.setdefault("dataAvailability", "partial")
 
     if component_task_requests:
         validation_warnings.append(
@@ -183,6 +182,16 @@ def generate_trading_room_workspace_proposal(
         evidence_refs=evidence_refs,
         data_freshness=data_freshness,
     )
+    source_statuses = {
+        row["dataSource"]: row["status"] for row in data_availability["sources"]
+    }
+    for view in views:
+        widget_statuses: list[str] = []
+        for widget in view.get("widgets") or []:
+            status = source_statuses.get(str(widget.get("dataSource") or ""), "unavailable")
+            widget["dataAvailability"] = status
+            widget_statuses.append(status)
+        view["dataAvailability"] = _aggregate_availability(widget_statuses)
 
     proposal = {
         "strategyId": input_data.strategy_id,
@@ -376,14 +385,17 @@ def _build_data_availability(
         _source_availability(source, evidence_refs=evidence_refs, data_freshness=data_freshness)
         for source in ordered_sources
     ]
-    statuses = {row["status"] for row in source_rows}
-    if statuses == {"complete"}:
-        status = "complete"
-    elif statuses == {"unavailable"}:
-        status = "unavailable"
-    else:
-        status = "partial"
+    status = _aggregate_availability([row["status"] for row in source_rows])
     return {"status": status, "sources": source_rows}
+
+
+def _aggregate_availability(statuses: Sequence[str]) -> str:
+    status_set = set(statuses)
+    if status_set == {"complete"}:
+        return "complete"
+    if not status_set or status_set == {"unavailable"}:
+        return "unavailable"
+    return "partial"
 
 
 def _source_availability(
@@ -393,17 +405,34 @@ def _source_availability(
     data_freshness: Mapping[str, Any],
 ) -> dict[str, str]:
     freshness = data_freshness.get(data_source)
-    status = "partial"
-    reason_parts = ["generated from ready StrategySpec version; live projection may lag research"]
+    status = "unavailable"
+    reason_parts: list[str] = []
     if isinstance(freshness, Mapping):
-        requested_status = str(freshness.get("status") or "").strip()
-        if requested_status in {"complete", "partial", "unavailable"}:
-            status = requested_status
+        requested_status = str(freshness.get("status") or freshness.get("state") or "").strip().lower()
+        wired = freshness.get("wired")
+        row_count = freshness.get("rowCount", freshness.get("row_count"))
+        if wired is False or requested_status in {"unavailable", "missing", "not_wired", "not_configured"}:
+            status = "unavailable"
+        elif requested_status in {"partial", "degraded", "stale"}:
+            status = "partial"
+        elif requested_status in {"complete", "full", "healthy", "ok", "read_ok"}:
+            status = "complete"
+        elif wired is True and isinstance(row_count, int):
+            status = "complete" if row_count > 0 else "partial"
+        elif wired is True:
+            status = "partial"
+        if freshness.get("reason"):
+            reason_parts.append(str(freshness["reason"]))
+        if isinstance(row_count, int):
+            reason_parts.append(f"rowCount={row_count}")
         for key in ("asOf", "as_of", "dataCutoff", "data_cutoff", "lag"):
             if freshness.get(key):
                 reason_parts.append(f"{key}={freshness[key]}")
     elif freshness:
         reason_parts.append(f"freshness={freshness}")
+        status = "partial"
+    else:
+        reason_parts.append("source health not reported; backing surface is not confirmed wired")
     if evidence_refs:
         reason_parts.append("evidenceRefs=" + ",".join(evidence_refs[:5]))
     return {"dataSource": data_source, "status": status, "reason": "; ".join(reason_parts)}

@@ -400,6 +400,7 @@ _WIDGET_ALLOWED_FIELDS = frozenset({
     "purpose",
     "whyIncluded",
     "dataSource",
+    "dataAvailability",
     "query",
     "chartSpec",
     "interactions",
@@ -857,8 +858,50 @@ def _normalize_view(view: Dict[str, Any]) -> Dict[str, Any]:
     widgets = normalized.get("widgets") or []
     normalized["widgetCount"] = len(widgets)
     normalized.setdefault("warnings", [])
-    normalized.setdefault("dataAvailability", "partial")
     return normalized
+
+
+def _workspace_data_freshness(
+    *,
+    store: TradingRoomStore,
+    strategy_id: str,
+    evidence_refs: List[str],
+    reported: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Combine caller source-health evidence with locally queryable surfaces."""
+    resolved = copy.deepcopy(reported)
+    events = store.list_decision_events(page_size=10_000).get("items") or []
+    strategy_events = [
+        event
+        for event in events
+        if str((event.get("subject") or {}).get("strategy_id") or event.get("strategy_id") or "")
+        == strategy_id
+    ]
+    resolved.setdefault(
+        "agora.trading.events",
+        {
+            "wired": True,
+            "rowCount": len(strategy_events),
+            "reason": "scoped TradingRoomStore decision-event query",
+        },
+    )
+    resolved.setdefault(
+        "agora.research.evidence_refs",
+        {
+            "wired": True,
+            "rowCount": len(evidence_refs),
+            "reason": "workspace generation evidence refs",
+        },
+    )
+    resolved.setdefault(
+        "agora.strategy.summary",
+        {
+            "wired": True,
+            "rowCount": 1,
+            "reason": "ready StrategySpec version used for workspace generation",
+        },
+    )
+    return resolved
 
 
 def _find_widget(workspace: Dict[str, Any], widget_id: str) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
@@ -896,7 +939,6 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
             "layoutTemplate": "winner_branch_overview_grid",
             "thumbnailRef": "winner_branch/overview",
             "rationale": "彙整候選、策略健康、裁示隊列、事件與資金遷移警示。",
-            "dataAvailability": "partial",
             "warnings": ["部分分點關係與遷移資料以推定信賴值呈現。"],
             "widgets": [
                 _widget(
@@ -957,7 +999,6 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
             "layoutTemplate": "winner_branch_candidate_entry_grid",
             "thumbnailRef": "winner_branch/candidates-entry",
             "rationale": "把候選排序、進場 readiness、機率/EV 與訊號時間軸放在同一頁。",
-            "dataAvailability": "partial",
             "warnings": [],
             "widgets": [
                 _widget(
@@ -1006,7 +1047,6 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
             "layoutTemplate": "winner_branch_intelligence_grid",
             "thumbnailRef": "winner_branch/intelligence",
             "rationale": "放大分點排名、分數拆解、歷史 horizon 與校準可靠度。",
-            "dataAvailability": "partial",
             "warnings": [],
             "widgets": [
                 _widget(
@@ -1067,7 +1107,6 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
             "layoutTemplate": "winner_branch_flow_migration_grid",
             "thumbnailRef": "winner_branch/flow-migration",
             "rationale": "把關係人概率、分點 cluster、資金遷移與反向證據合併檢視。",
-            "dataAvailability": "partial",
             "warnings": ["Restricted relationship graph data is shown as evidence-strength context only."],
             "widgets": [
                 _widget(
@@ -1128,7 +1167,6 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
             "layoutTemplate": "winner_branch_event_lead_grid",
             "thumbnailRef": "winner_branch/event-lead",
             "rationale": "使用資訊領先代理、統計關聯與證據強度，不斷言違法或內線。",
-            "dataAvailability": "partial",
             "warnings": ["Event lead views state statistical association only."],
             "widgets": [
                 _widget(
@@ -1177,7 +1215,6 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
             "layoutTemplate": "winner_branch_positions_exit_grid",
             "thumbnailRef": "winner_branch/positions-exit",
             "rationale": "把持倉、行動隊列、thesis health、曝險與失效條件一起呈現。",
-            "dataAvailability": "partial",
             "warnings": ["Position data is scoped to the current trader and remains decision-support only."],
             "widgets": [
                 _widget(
@@ -1238,7 +1275,6 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
             "layoutTemplate": "winner_branch_evidence_monitoring_grid",
             "thumbnailRef": "winner_branch/evidence-monitoring",
             "rationale": "保留策略版本摘要、監控規則、資料新鮮度、證據與最近規則變更。",
-            "dataAvailability": "partial",
             "warnings": [],
             "widgets": [
                 _widget(
@@ -1281,50 +1317,6 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
         },
     ]
     return [_normalize_view(view) for view in views]
-
-
-def _build_workspace_proposal(
-    *,
-    strategy_id: str,
-    strategy_version: str,
-    proposal_id: str,
-    now: str,
-    personalization_hints: Dict[str, Any],
-) -> Dict[str, Any]:
-    views = _build_winner_branch_views(strategy_id, strategy_version)
-    return {
-        "strategyId": strategy_id,
-        "strategyVersion": strategy_version,
-        "proposalId": proposal_id,
-        "generatedAt": now,
-        "status": "preview",
-        "views": views,
-        "rationale": (
-            "Generated from the V11 Winner Branch Trading Room contract: seven strategy-specific "
-            "views covering overview, entry, branch intelligence, migration, event lead, positions, and evidence."
-        ),
-        "dataAvailability": {
-            "status": "partial",
-            "sources": [
-                {"dataSource": "agora.candidate.members", "status": "partial", "reason": "candidate projection may lag live research"},
-                {"dataSource": "winner_branch.score_breakdown", "status": "partial", "reason": "score calibration is strategy-version scoped"},
-                {"dataSource": "winner_branch.related_branch_flow", "status": "partial", "reason": "relationship and migration links are probabilistic"},
-                {"dataSource": "agora.trading.events", "status": "partial", "reason": "decision queue is request-only and may be empty"},
-            ],
-        },
-        "warnings": [
-            "Workspace is decision-support only; it cannot route orders, bind capital, or mutate runtime bindings.",
-            "Relationship, migration, and event-lead widgets represent evidence strength and statistical association only.",
-        ],
-        "personalizationApplied": {
-            "status": "applied" if personalization_hints else "not_applied",
-            "items": [
-                {"key": str(key), "value": value}
-                for key, value in sorted(personalization_hints.items())
-                if key not in {"rawHtml", "javascript", "react"}
-            ],
-        },
-    }
 
 
 def _generate_workspace_proposal(
@@ -2028,6 +2020,12 @@ def create_trading_room_router(
             _validation_failed(["tradingRoomReady must be a boolean"], status_code=400)
 
         now = utc_now()
+        resolved_data_freshness = _workspace_data_freshness(
+            store=store,
+            strategy_id=strategy_id,
+            evidence_refs=evidence_refs,
+            reported=data_freshness,
+        )
         generation = _generate_workspace_proposal(
             strategy_id=strategy_id,
             strategy_version=strategy_version,
@@ -2035,7 +2033,7 @@ def create_trading_room_router(
             now=now,
             personalization_hints=personalization_hints,
             evidence_refs=evidence_refs,
-            data_freshness=data_freshness,
+            data_freshness=resolved_data_freshness,
             trading_room_ready=trading_room_ready,
         )
         if generation.status != "completed" or generation.proposal is None:
