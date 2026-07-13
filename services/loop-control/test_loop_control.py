@@ -5,9 +5,16 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import jsonschema
 
-from services.loop_control.store import LoopControllerStore
-from services.loop_control.writer import LoopControllerWriter
-from services.loop_control.projector import project_controller_record_to_bff
+import importlib
+store_module = importlib.import_module("services.loop-control.store")
+LoopControllerStore = store_module.LoopControllerStore
+
+writer_module = importlib.import_module("services.loop-control.writer")
+LoopControllerWriter = writer_module.LoopControllerWriter
+
+projector_module = importlib.import_module("services.loop-control.projector")
+project_controller_record_to_bff = projector_module.project_controller_record_to_bff
+
 
 # Using the DSN available in the environment or default to local dev stack container address
 DB_DSN = os.environ.get("DATABASE_URL") or "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon"
