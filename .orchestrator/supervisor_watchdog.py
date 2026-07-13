@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import fcntl
 import os
 import subprocess
@@ -154,8 +155,86 @@ def pid_is_alive(pid: int | None) -> bool:
 
 
 def active_worker_count(runtime_state: dict[str, Any]) -> int:
+    """Return the supervisor's recorded active-worker count for diagnostics.
+
+    Runtime state is intentionally not a liveness authority.  A dead supervisor
+    cannot reap its own stale worker rows, so using this value as a restart gate
+    can permanently suppress the watchdog that would repair that supervisor.
+    """
     workers = runtime_state.get("workers", {}) if isinstance(runtime_state.get("workers"), dict) else {}
     return sum(1 for worker in workers.values() if str(worker.get("status") or "") in ACTIVE_WORKER_STATUSES)
+
+
+def cmdline_is_worker_runner(parts: list[str]) -> bool:
+    """Match only the one-per-worker wrapper, never CLI children or prompts."""
+    for part in parts[:4]:
+        if not part.startswith(("/", ".")) or any(character.isspace() for character in part):
+            continue
+        path = Path(part)
+        if path.name == "worker_runner.py" and ".orchestrator" in path.parts:
+            return True
+    return False
+
+
+def worker_runner_process_identity(proc_dir: Path) -> tuple[int, int]:
+    """Return a PID plus Linux start-time identity to reject PID reuse."""
+    pid = int(proc_dir.name)
+    raw_stat = (proc_dir / "stat").read_text(encoding="utf-8")
+    command_end = raw_stat.rfind(")")
+    if command_end < 0:
+        raise ValueError(f"malformed stat record for pid {pid}")
+    # Fields after the command start with field 3 (state); starttime is field
+    # 22, therefore index 19 in this suffix.
+    suffix = raw_stat[command_end + 1 :].split()
+    if len(suffix) <= 19:
+        raise ValueError(f"stat record missing starttime for pid {pid}")
+    return pid, int(suffix[19])
+
+
+def scan_live_worker_runner_identities(
+    proc_root: Path = Path("/proc"),
+) -> tuple[set[tuple[int, int]], str | None]:
+    """Scan live worker wrappers and return deduplicated process identities.
+
+    The wrapper is the only one-per-worker process.  Its CLI shim and model
+    binary inherit the same prompt, so substring matching would count one run
+    roughly three times.  Any scan failure is returned to the resource gate so
+    the watchdog fails closed instead of restarting from an unproven count.
+    """
+    identities: set[tuple[int, int]] = set()
+    errors: list[str] = []
+    try:
+        proc_dirs = list(proc_root.iterdir())
+    except OSError as exc:
+        return identities, f"proc_scan_failed:{type(exc).__name__}:{exc}"
+
+    for proc_dir in proc_dirs:
+        if not proc_dir.name.isdigit():
+            continue
+        try:
+            raw_cmdline = (proc_dir / "cmdline").read_bytes()
+        except FileNotFoundError:
+            # Normal exit race while walking /proc.
+            continue
+        except OSError as exc:
+            if exc.errno in {errno.ENOENT, errno.ESRCH}:
+                continue
+            errors.append(f"pid={proc_dir.name}:cmdline:{type(exc).__name__}")
+            continue
+        if not raw_cmdline:
+            continue
+        parts = [part.decode("utf-8", errors="ignore") for part in raw_cmdline.split(b"\x00") if part]
+        if not cmdline_is_worker_runner(parts):
+            continue
+        try:
+            identities.add(worker_runner_process_identity(proc_dir))
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError) as exc:
+            errors.append(f"pid={proc_dir.name}:identity:{type(exc).__name__}")
+
+    error = ";".join(errors[:8]) if errors else None
+    return identities, error
 
 
 def load_watchdog_state(config: dict[str, Any], settings: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -213,12 +292,27 @@ def resource_snapshot(config: dict[str, Any], runtime_state: dict[str, Any], set
         load_1m = float(os.getloadavg()[0])
     except OSError:
         load_1m = 0.0
+    live_worker_identities, worker_scan_error = scan_live_worker_runner_identities()
+    recorded_worker_count = active_worker_count(runtime_state)
+    if worker_scan_error:
+        # The explicit scan error below suppresses restart.  Keep the larger
+        # count as a second fail-safe so consumers that only understand the
+        # legacy numeric field cannot accidentally understate pressure.
+        effective_worker_count = max(len(live_worker_identities), recorded_worker_count)
+        worker_count_source = "fail_safe_max_live_and_runtime_state"
+    else:
+        effective_worker_count = len(live_worker_identities)
+        worker_count_source = "live_worker_runner_pid_identity"
     return {
         "disk_free_gb": round(disk_free_gb, 3),
         "disk_used_percent": round(disk_used_percent, 2),
         "memory_available_mb": round(memory_available_mb, 1) if memory_available_mb is not None else None,
         "load_1m": round(load_1m, 2),
-        "active_worker_count": active_worker_count(runtime_state),
+        "active_worker_count": effective_worker_count,
+        "active_worker_count_source": worker_count_source,
+        "active_worker_live_count": len(live_worker_identities),
+        "active_worker_runtime_state_count": recorded_worker_count,
+        "active_worker_scan_error": worker_scan_error,
         "state_parent_writable": os.access(state_path.parent, os.W_OK),
     }
 
@@ -227,6 +321,8 @@ def resource_pressure_reasons(snapshot: dict[str, Any], settings: dict[str, Any]
     reasons: list[str] = []
     if state_error:
         reasons.append("state_read_failed")
+    if snapshot.get("active_worker_scan_error"):
+        reasons.append("active_worker_scan_failed")
     if not snapshot.get("state_parent_writable"):
         reasons.append("state_parent_not_writable")
     if float(snapshot.get("disk_free_gb") or 0) < float(settings.get("min_disk_free_gb")):

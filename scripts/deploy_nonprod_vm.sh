@@ -382,6 +382,19 @@ curl_with_retry() {
   curl -fsS "$url" >/dev/null
 }
 
+assert_bff_source_sha() {
+  local url="$1"
+  local payload
+  local actual
+
+  payload="$(curl -fsS "$url")"
+  actual="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' <<<"$payload")"
+  if [[ "$actual" != "${PANTHEON_DEPLOY_SHA}" ]]; then
+    error "BFF source SHA mismatch: expected ${PANTHEON_DEPLOY_SHA}, got ${actual:-missing}"
+  fi
+  info "BFF source SHA verified: ${actual}"
+}
+
 snapshot_remote_state() {
   local project="$1"
   local compose_file="$2"
@@ -960,6 +973,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     prune_dev_docker_storage_for_build
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
+    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     PANTHEON_ENV=dev \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
@@ -992,6 +1006,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     verify_dev_evolution_daily_sweep \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     # Prove the Trade Journey action ledger is genuinely durable on the dev
@@ -1011,6 +1027,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     prepare_deploy_worktree
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
+    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     PANTHEON_ENV=dev \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
@@ -1048,6 +1065,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     ;;
 
   exec)
@@ -1055,7 +1074,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     prepare_deploy_worktree
     env_file="$(real_env_or_example env/prod-exec.env env/prod-exec.env.example)"
     docker compose --env-file "$env_file" -p pantheon-exec -f docker-compose.exec.yml config --quiet
-    COMPOSE_BAKE=false docker compose --env-file "$env_file" -p pantheon-exec -f docker-compose.exec.yml up -d --build
+    COMPOSE_BAKE=false GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
+      docker compose --env-file "$env_file" -p pantheon-exec -f docker-compose.exec.yml up -d --build
     curl_with_retry http://127.0.0.1:28081/__health__
     curl_with_retry http://127.0.0.1:28097/__health__
     curl_with_retry http://127.0.0.1:28098/__health__
@@ -1070,11 +1090,13 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     env_file="$(real_env_or_example env/prod-control.env env/prod-control.env.example)"
     docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml config --quiet
     COMPOSE_BAKE=false \
+    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     PANTHEON_ENV=staging-live \
     PANTHEON_LIVE_BROKER_ENABLED=true \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_STAGING_BFF_CORS_ORIGINS}" \
       docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml up -d --build
     curl_with_retry http://127.0.0.1:38001/health
+    assert_bff_source_sha http://127.0.0.1:38001/bff/version
     curl_with_retry "${PANTHEON_STAGING_EXEC_HEALTH_URL%/}/__health__"
     ;;
 

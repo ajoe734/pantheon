@@ -418,6 +418,78 @@ def get_operator_payload(postmortem_id: str) -> OperatorPostmortemPayload:
 # Routes — status transitions
 # ---------------------------------------------------------------------------
 
+def _publish_postmortem_to_evolution_if_needed(postmortem_id: str) -> None:
+    import httpx
+    import time
+    from services.evolution.postmortem_bridge import decision_id_for_published_postmortem
+
+    pm = store.get_postmortem(postmortem_id)
+    if pm is None:
+        log.error("AUDIT: Failed to publish postmortem %s: postmortem not found in store", postmortem_id)
+        return
+
+    incident = store.get_incident(pm.incident_id)
+    if incident is None:
+        log.error("AUDIT: Failed to publish postmortem %s: parent incident %s not found in store", postmortem_id, pm.incident_id)
+        return
+
+    try:
+        det_decision_id = decision_id_for_published_postmortem(pm, incident)
+    except Exception as exc:
+        log.error("AUDIT: Failed to compute decision_id for postmortem %s: %s", postmortem_id, exc)
+        return
+
+    proposal_payload = {
+        "postmortem_id": postmortem_id,
+        "decision_id": det_decision_id,
+    }
+
+    evolution_url = os.getenv("EVOLUTION_URL", "http://localhost:8093").strip()
+    url = f"{evolution_url}/api/evolution/proposals/from-postmortem-published"
+
+    max_retries = 3
+    retry_delay = 1.0
+    success = False
+
+    log.info("AUDIT: Initiating at-least-once delivery of postmortem %s proposal to %s", postmortem_id, url)
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            log.info("AUDIT: Attempt %d/%d to post proposal for postmortem %s", attempt, max_retries, postmortem_id)
+            resp = httpx.post(url, json=proposal_payload, timeout=5.0)
+            
+            if resp.status_code in {200, 201}:
+                log.info(
+                    "AUDIT: Successfully delivered proposal for postmortem %s (decision_id: %s) to evolution on attempt %d. Status: %d",
+                    postmortem_id, proposal_payload.get("decision_id"), attempt, resp.status_code
+                )
+                success = True
+                break
+            else:
+                log.warning(
+                    "AUDIT: Delivery attempt %d/%d for postmortem %s returned error status %d: %s",
+                    attempt, max_retries, postmortem_id, resp.status_code, resp.text
+                )
+        except httpx.HTTPError as exc:
+            log.warning(
+                "AUDIT: Delivery attempt %d/%d for postmortem %s failed with HTTPError: %s",
+                attempt, max_retries, postmortem_id, exc
+            )
+        
+        if attempt < max_retries:
+            time.sleep(retry_delay)
+
+    if not success:
+        log.error(
+            "AUDIT: Critical: Failed to deliver proposal for postmortem %s (decision_id: %s) to evolution after %d attempts",
+            postmortem_id, proposal_payload.get("decision_id"), max_retries
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to publish postmortem {postmortem_id} to evolution service after {max_retries} attempts."
+        )
+
+
 @app.post(
     "/api/postmortems/{postmortem_id}/status",
     response_model=PostmortemResponse,
@@ -444,6 +516,10 @@ def update_status(
         raise HTTPException(status_code=400, detail=str(exc))
 
     log.info("Postmortem %s → status=%s", postmortem_id, body.status)
+
+    if body.status == "published":
+        _publish_postmortem_to_evolution_if_needed(postmortem_id)
+
     return _to_response(updated)
 
 

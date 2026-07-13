@@ -108,6 +108,19 @@ same assertions, unrelated modules) and are out of scope for EVOCHAIN-006.
 - Live producer chain (threshold breach -> incident -> sweep -> proposal)
   is `EVOCHAIN-001`/`-002`/`-003`; this task only wires the review/approve/
   reject/execute side once a proposal exists.
-- Owner: Claude. Reviewer: Codex2. Expiry: re-check after EVOCHAIN-010
-  (producer-chain live verifier) lands, since that is the first task that
-  exercises this wiring against a real (non-seed) proposal end to end.
+- Owner: Claude. Reviewer: Antigravity (reassigned from Codex2 after the
+  implementation PR merged, because the Codex2 lane became unavailable;
+  Antigravity reviewed the merged diff and approved it — see
+  `review_notes_zh` on this task in the status board). Expiry: re-check
+  after EVOCHAIN-010 (producer-chain live verifier) lands, since that is
+  the first task that exercises this wiring against a real (non-seed)
+  proposal end to end.
+
+## Closeout note
+
+Implementation merged as PR #3512 (`086f96951`) into `dev` before the
+reviewer reassignment above took effect, so that commit's `Reviewer`
+trailer reads `Codex2` (correct at the time it was written). This
+closeout commit updates the record to reflect the reviewer who actually
+approved the task (`Antigravity`) and carries the trailer required by
+the current task metadata.

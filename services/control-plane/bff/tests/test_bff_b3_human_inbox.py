@@ -105,7 +105,7 @@ def test_human_inbox_includes_persona_readiness_blockers(monkeypatch) -> None:
             client = _fresh_client(td)
             monkeypatch.setattr(
                 bff_main,
-                "_build_persona_health_items",
+                "_build_persona_readiness_items",
                 lambda snapshot_at, include_market_persona_defaults=False: [
                     {
                         "id": "persona-tw-equity",
@@ -172,14 +172,14 @@ def test_human_inbox_supports_filters_pagination_and_detail(monkeypatch) -> None
             bff_main._V5_INTERVENTIONS_STORE.clear()
             _seed_intervention()
             persona_fanout_calls = 0
-            original_persona_fanout = bff_main._build_persona_health_items
+            original_persona_fanout = bff_main._build_persona_readiness_items
 
             def tracking_persona_fanout(*args, **kwargs):
                 nonlocal persona_fanout_calls
                 persona_fanout_calls += 1
                 return original_persona_fanout(*args, **kwargs)
 
-            monkeypatch.setattr(bff_main, "_build_persona_health_items", tracking_persona_fanout)
+            monkeypatch.setattr(bff_main, "_build_persona_readiness_items", tracking_persona_fanout)
 
             list_resp = client.get(
                 "/bff/management/human-inbox?source_type=intervention&status=pending&page_size=1",
