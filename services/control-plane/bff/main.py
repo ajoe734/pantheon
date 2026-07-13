@@ -54188,10 +54188,26 @@ def _action_adapter_command_payload(
         "audit_event": audit_event,
         "adapter_source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
     }
+    command_type = spec["command_type"].value
+    target_type = spec["target_type"].value
+
+    if normalized_entity_type == "rebalance" and clean_action_id.lower() == "apply":
+        command_type = CommandType.APPROVED_APPLY.value
+        target_type = ObjectType.REBALANCE.value
+        params["entity_type"] = "Rebalance"
+        if "rebalance_id" not in params:
+            params["rebalance_id"] = clean_entity_id
+    elif normalized_entity_type == "persona" and clean_action_id.lower() == "emergencycontainment":
+        command_type = CommandType.EMERGENCY_CONTAINMENT.value
+        target_type = ObjectType.PERSONA.value
+        params["entity_type"] = "Persona"
+        if "persona_id" not in params:
+            params["persona_id"] = clean_entity_id
+
     return {
-        "command": spec["command_type"].value,
+        "command": command_type,
         "target": {
-            "type": spec["target_type"].value,
+            "type": target_type,
             "id": clean_entity_id,
         },
         "action": clean_action_id,
@@ -54511,7 +54527,7 @@ def _submit_canonical_action_command(
             "adapter_source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
         },
         extra_precondition=lambda identity, _cmd: _require_operator_role(identity),
-        enqueue=False,
+        enqueue=True,
         include_durable_meta=True,
         response_deprecation=deprecation,
     )

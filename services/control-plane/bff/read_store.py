@@ -8819,6 +8819,9 @@ class ReadSurfaceStore:
             raw = self._path.read_text().strip()
             if raw:
                 self._data = json.loads(raw)
+                for dataset, key in self._LOCAL_DATA_KEYS.items():
+                    if key in self._data:
+                        self._local_overlay_write_datasets.add(dataset)
                 if self._allow_local_snapshot_fallback and self._backfill_local_contract_defaults():
                     self._save()
                 return
