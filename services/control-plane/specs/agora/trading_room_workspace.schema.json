@@ -84,7 +84,7 @@
     },
     "TradingRoomViewSpec": {
       "type": "object",
-      "required": ["id", "title", "purpose", "order", "layoutTemplate", "widgetCount", "dataAvailability", "widgets"],
+      "required": ["id", "title", "purpose", "order", "layoutTemplate", "widgetCount", "widgets"],
       "properties": {
         "id": {"type": "string", "minLength": 1},
         "title": {"type": "string", "minLength": 1},
@@ -115,7 +115,6 @@
         "purpose",
         "whyIncluded",
         "dataSource",
-        "dataAvailability",
         "query",
         "chartSpec",
         "interactions",
