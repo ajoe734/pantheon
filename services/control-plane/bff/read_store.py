@@ -2313,6 +2313,30 @@ class CanonicalSnapshotAdapter:
             "keys": ["binding_id", "id"],
             "snapshot_key": "bindings",
         },
+        "rebalances": {
+            "env": "PANTHEON_BFF_REBALANCE_STORE",
+            "dirs": ("CAPITAL_DATA_DIR",),
+            "filenames": ("capital_allocation_authority.json",),
+            "keys": ["rebalance_id", "id"],
+            "snapshot_key": "rebalances",
+            "envelope_key": "proposals",
+        },
+        "capital_allocations": {
+            "env": "PANTHEON_BFF_CAPITAL_ALLOCATION_STORE",
+            "dirs": ("CAPITAL_DATA_DIR",),
+            "filenames": ("capital_allocation_authority.json",),
+            "keys": ["allocation_id", "id"],
+            "snapshot_key": "capital_allocations",
+            "envelope_key": "allocations",
+        },
+        "containments": {
+            "env": "PANTHEON_BFF_CONTAINMENT_STORE",
+            "dirs": ("CAPITAL_DATA_DIR",),
+            "filenames": ("capital_allocation_authority.json",),
+            "keys": ["containment_id", "id"],
+            "snapshot_key": "containments",
+            "envelope_key": "containments",
+        },
         "runtime_bindings": {
             "env": "PANTHEON_BFF_RUNTIME_BINDING_STORE",
             "dirs": ("PANTHEON_RUNTIME_DATA_DIR",),
@@ -2365,6 +2389,18 @@ class CanonicalSnapshotAdapter:
         "persona_bindings": {
             "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
             "list_path": "/api/bindings",
+        },
+        "rebalances": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/rebalances",
+        },
+        "capital_allocations": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/allocations",
+        },
+        "containments": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/containments",
         },
         "runtime_bindings": {
             "base_env": ("PANTHEON_RUNTIME_MANAGER_URL", "PANTHEON_INTERNAL_API_URL"),
@@ -7267,6 +7303,8 @@ class ReadSurfaceStore:
         "synthesis_conflict_logs": "synthesis_conflict_logs",
         "ranking_formulas": "ranking_formulas",
         "rebalances": "rebalances",
+        "capital_allocations": "capital_allocations",
+        "containments": "containments",
         "rankings": "rankings",
         "persona_league": "persona_league",
     }
@@ -11570,11 +11608,25 @@ class ReadSurfaceStore:
         pool_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         records = dict(self._local_overlay_records("rebalances"))
-        local_fallback = self._local_fallback("rebalances")
-        if isinstance(local_fallback, dict):
-            merged = dict(local_fallback)
-            merged.update(records)
+        available, authoritative = self._canonical.list_records("rebalances")
+        if available:
+            merged = {
+                str(item.get("rebalance_id") or item.get("id") or ""): item
+                for item in authoritative
+                if isinstance(item, dict)
+                and str(item.get("rebalance_id") or item.get("id") or "").strip()
+            }
+            # Compatibility-only local records may coexist; they cannot replace
+            # an owner record with the same stable identity.
+            for key, item in records.items():
+                merged.setdefault(str(key), item)
             records = merged
+        else:
+            local_fallback = self._local_fallback("rebalances")
+            if isinstance(local_fallback, dict):
+                merged = dict(local_fallback)
+                merged.update(records)
+                records = merged
         items = list(records.values())
         if status:
             items = [i for i in items if i.get("status") == status]
@@ -11585,6 +11637,12 @@ class ReadSurfaceStore:
     def get_rebalance(self, rebalance_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not rebalance_id:
             return None
+        available, authoritative = self._canonical.list_records("rebalances")
+        if available:
+            for item in authoritative:
+                if str(item.get("rebalance_id") or item.get("id") or "") == str(rebalance_id):
+                    return json.loads(json.dumps(item))
+            return None
         overlay = self._local_overlay_records("rebalances").get(rebalance_id)
         if overlay is not None:
             return overlay
@@ -11592,6 +11650,64 @@ class ReadSurfaceStore:
         if isinstance(local_fallback, dict):
             return local_fallback.get(rebalance_id)
         return None
+
+    def list_capital_allocations(
+        self,
+        *,
+        capital_pool_id: Optional[str] = None,
+        persona_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, records = self._canonical.list_records("capital_allocations")
+        if not available:
+            return []
+        items = [json.loads(json.dumps(item)) for item in records if isinstance(item, dict)]
+        if capital_pool_id:
+            items = [
+                item
+                for item in items
+                if str(item.get("capital_pool_id") or "") == str(capital_pool_id)
+            ]
+        if persona_id:
+            items = [
+                item
+                for item in items
+                if str(item.get("persona_id") or "") == str(persona_id)
+            ]
+        return sorted(
+            items,
+            key=lambda item: (
+                str(item.get("capital_pool_id") or ""),
+                str(item.get("persona_id") or ""),
+                str(item.get("capital_sleeve_id") or item.get("sleeve_id") or ""),
+            ),
+        )
+
+    def list_containments(
+        self,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, records = self._canonical.list_records("containments")
+        if not available:
+            return []
+        items = [json.loads(json.dumps(item)) for item in records if isinstance(item, dict)]
+        if persona_id:
+            items = [
+                item
+                for item in items
+                if str(item.get("persona_id") or "") == str(persona_id)
+            ]
+        return sorted(
+            items,
+            key=lambda item: str(item.get("updated_at") or item.get("applied_at") or item.get("created_at") or ""),
+            reverse=True,
+        )
+
+    def get_persona_containment(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        items = self.list_containments(persona_id=str(persona_id))
+        return items[0] if items else None
 
     def create_rebalance(
         self,

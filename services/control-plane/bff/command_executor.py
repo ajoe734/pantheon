@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import quote
 
 from models import CommandStatus, CommandType
 
@@ -52,6 +53,19 @@ def _governance_url(path: str) -> str:
     base = _configured_base_url(
         "PANTHEON_GOVERNANCE_API_URL",
         "PANTHEON_EVOLUTION_API_URL",
+    )
+    return f"{base}{path}"
+
+
+def _capital_url(path: str) -> str:
+    """Resolve the Capital service owner API.
+
+    Rebalance and containment execution must terminate at the Capital service;
+    the BFF command store is an audit/receipt surface, not capital authority.
+    """
+    base = _configured_base_url(
+        "PANTHEON_CAPITAL_API_URL",
+        "PANTHEON_CAPITAL_SERVICE_URL",
     )
     return f"{base}{path}"
 
@@ -134,6 +148,15 @@ def _post_json(
     )
     with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def create_capital_rebalance_proposal(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist an auditable proposal through the Capital owner boundary."""
+    body = _post_json(_capital_url("/api/rebalances"), payload)
+    rebalance_id = str(body.get("rebalance_id") or body.get("id") or "").strip()
+    if not rebalance_id:
+        raise RuntimeError("Capital authority returned a proposal without rebalance_id")
+    return body
 
 
 # --------------------------------------------------------------------------- #
@@ -1000,6 +1023,106 @@ def _execute_bff_action_adapter(
     return result
 
 
+def _execute_approved_rebalance_apply(
+    command_id: str,
+    params: Dict[str, Any],
+    auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Atomically apply the server-persisted proposal at Capital authority."""
+    del auth_token, mfa_token
+    rebalance_id = str(
+        params.get("rebalance_id") or params.get("entity_id") or ""
+    ).strip()
+    if not rebalance_id:
+        raise ValueError("ApprovedApply requires a trusted rebalance_id")
+    approval_ref = str(params.get("approval_ref") or "").strip()
+    if params.get("approval_required") and not approval_ref:
+        raise ValueError("ApprovedApply requires approval_ref")
+
+    payload = {
+        "command_id": command_id,
+        "idempotency_key": str(params.get("idempotency_key") or command_id),
+        "request_hash": str(params.get("request_hash") or ""),
+        "approval_ref": approval_ref,
+        "actor_id": str(params.get("actor_id") or "operator-bff"),
+        "actor_role": str(params.get("actor_role") or "operator"),
+        "proposal_version": params.get("proposal_version"),
+    }
+    body = _post_json(
+        _capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}/apply"),
+        payload,
+    )
+    if body.get("authoritative_capital_readback") is not True:
+        raise RuntimeError(
+            "Capital authority did not confirm authoritative allocation readback"
+        )
+    if body.get("authoritative_capital_state_applied") is not True:
+        raise RuntimeError("Capital authority did not confirm atomic rebalance application")
+    return {
+        **body,
+        "command_id": command_id,
+        "dispatch_path": "capital_service_rebalance_authority",
+        "status": body.get("status") or "applied",
+        "action_id": "apply",
+        "entity_type": "Rebalance",
+        "entity_id": rebalance_id,
+        "approval_ref": approval_ref,
+        "live_capital_side_effects": False,
+    }
+
+
+def _execute_emergency_containment_authority(
+    command_id: str,
+    params: Dict[str, Any],
+    auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Persist a risk-decreasing containment terminal state at Capital authority."""
+    del auth_token, mfa_token
+    # Admission already validates the risk-decreasing-only contract.  Send the
+    # admitted fields plus trusted command identity; the owner validates again.
+    payload = {
+        key: value
+        for key, value in params.items()
+        if key
+        not in {
+            "command_id",
+            "entity_type",
+            "entity_id",
+            "action_id",
+            "actor_id",
+            "actor_role",
+        }
+    }
+    payload.update(
+        {
+            "command_id": command_id,
+            "idempotency_key": str(params.get("idempotency_key") or command_id),
+            "request_hash": str(params.get("request_hash") or ""),
+            "entity_type": str(params.get("entity_type") or "Runtime"),
+            "entity_id": str(params.get("entity_id") or ""),
+            "actor_id": str(params.get("actor_id") or "operator-bff"),
+            "actor_role": str(params.get("actor_role") or "operator"),
+        }
+    )
+    body = _post_json(_capital_url("/api/containments"), payload)
+    if body.get("containment_state") != "frozen":
+        raise RuntimeError("Capital authority did not confirm frozen containment state")
+    return {
+        **body,
+        "command_id": command_id,
+        "dispatch_path": "capital_service_containment_authority",
+        "status": body.get("status") or "applied",
+        "action_id": "EmergencyContainment",
+        "entity_type": str(params.get("entity_type") or "Runtime"),
+        "entity_id": str(params.get("entity_id") or ""),
+        "containment": True,
+        "risk_direction": "decrease_only",
+        "live_capital_side_effects": False,
+    }
+
+
 # Dispatch table: CommandType -> execution function
 _EXECUTORS = {
     CommandType.ADVANCE_LIFECYCLE: _execute_advance_lifecycle,
@@ -1062,8 +1185,8 @@ _EXECUTORS = {
     CommandType.DEMOTE: _execute_bff_action_adapter,
     CommandType.PROMOTE_CANDIDATE: _execute_bff_action_adapter,
     CommandType.REBALANCE_PROPOSAL: _execute_bff_action_adapter,
-    CommandType.APPROVED_APPLY: _execute_bff_action_adapter,
-    CommandType.EMERGENCY_CONTAINMENT: _execute_bff_action_adapter,
+    CommandType.APPROVED_APPLY: _execute_approved_rebalance_apply,
+    CommandType.EMERGENCY_CONTAINMENT: _execute_emergency_containment_authority,
 }
 
 

@@ -137,7 +137,7 @@ from models import (
 )
 from action_catalog import get_action_catalog, get_catalog_entry
 from command_queue import CommandStore
-from command_executor import execute_command_with_status
+from command_executor import create_capital_rebalance_proposal, execute_command_with_status
 from persona_allocation_policy import calculate_target_allocations, validate_emergency_lines
 from emergency_containment_policy import validate_emergency_containment
 from session_lifecycle_store import SessionLifecycleStore
@@ -962,6 +962,20 @@ downstream_health_monitor = DownstreamHealthMonitor()
 @app.on_event("startup")
 async def _start_downstream_health_monitor() -> None:
     await downstream_health_monitor.start()
+    # A crash can leave a durable owner command submitted/processing.  Replay
+    # only the idempotent Capital authority commands; generic adapter commands
+    # are admission receipts and must not be reinterpreted as mutations.
+    recoverable_types = {
+        CommandType.APPROVED_APPLY.value,
+        CommandType.EMERGENCY_CONTAINMENT.value,
+    }
+    for record in command_store._get_all_commands():
+        if (
+            record.get("type") in recoverable_types
+            and record.get("status")
+            in {CommandStatus.SUBMITTED.value, CommandStatus.PROCESSING.value}
+        ):
+            asyncio.create_task(_process_command_stub(str(record.get("command_id"))))
 
 
 @app.on_event("shutdown")
@@ -3854,7 +3868,6 @@ def _stored_command_params(
 ) -> Dict[str, Any]:
     if cmd.command in _DRAWER_RUNTIME_COMMANDS:
         return dict(cmd.params)
-    del identity
     params = dict(cmd.params)
     if cmd.command == CommandType.REMEDIATE_SENTINEL_INTERVENTION and raw_payload:
         # Normalize any top-level two-man alias from the raw payload into the
@@ -3865,6 +3878,25 @@ def _stored_command_params(
                 if val:
                     params["two_man_signature_id"] = val
                     break
+    # The target/action/actor fields come from the validated command envelope,
+    # never from caller params.  Apart from fixing null adapter receipts, this
+    # prevents a caller from redirecting an admitted command after validation.
+    params.update(
+        {
+            "entity_type": cmd.target.type.value,
+            "entity_id": cmd.target.id,
+            "action_id": cmd.command.value,
+            "actor_id": identity.operator_id,
+            "actor_role": next(
+                (
+                    role
+                    for role in ("admin", "approver", "reviewer", "operator")
+                    if role in identity.roles
+                ),
+                "operator",
+            ),
+        }
+    )
     return params
 
 
@@ -23411,6 +23443,34 @@ def _capital_bff_action_command(
         "action_id": action_id,
         "payload": payload,
     })
+    durable = command_store.get_command_by_idempotency_key(
+        resolved_key,
+        operator_id=identity.operator_id,
+    )
+    if durable is not None:
+        durable_idempotency = (durable.get("foundation") or {}).get("idempotency_record") or {}
+        if durable_idempotency.get("request_hash") != request_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different payload",
+                f"Key {resolved_key!r} is bound to command {durable.get('command_id')}",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+        replay = _project_final_command_response(
+            command_id=str(durable["command_id"]),
+            command=CommandType(str(durable["type"])),
+            accepted_at=str(durable.get("submitted_at") or utc_now()),
+            status=CommandStatus(str(durable.get("status") or CommandStatus.SUBMITTED.value)),
+            staleness_warning=None,
+            meta=_command_response_durable_meta(resolved_key, replayed=True),
+        )
+        _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {
+            "request_hash": request_hash,
+            "result": replay,
+        }
+        return replay
     cached = _capital_bff_idempotency_check(resolved_key, request_hash)
     if cached is not None:
         return cached
@@ -23424,7 +23484,7 @@ def _capital_bff_action_command(
         command_type=command_type,
         target_type=entity_type,
         target_id=entity_id,
-        payload={"action_id": action_id, **payload},
+        payload={**payload, "action_id": action_id},
         reason=str(payload.get("reason") or action_id or command_type.value),
         command_id=command_id,
         idempotency_key=resolved_key,
@@ -23461,10 +23521,34 @@ def _capital_bff_action_command(
         target=target,
         submitted_at=submitted_at,
         params={
+            **{
+                key: value
+                for key, value in payload.items()
+                if key
+                not in {
+                    "entity_type",
+                    "entity_id",
+                    "action_id",
+                    "actor_id",
+                    "actor_role",
+                    "idempotency_key",
+                    "request_hash",
+                }
+            },
             "entity_type": entity_type.value,
             "entity_id": entity_id,
             "action_id": action_id,
-            **payload,
+            "actor_id": identity.operator_id,
+            "actor_role": next(
+                (
+                    role
+                    for role in ("admin", "approver", "reviewer", "operator")
+                    if role in identity.roles
+                ),
+                "operator",
+            ),
+            "idempotency_key": resolved_key,
+            "request_hash": request_hash,
         },
         audit_context=audit_record,
         foundation_context=foundation_ctx,
@@ -23498,6 +23582,7 @@ async def bff_list_capital_pools(
     snapshot_at = utc_now()
     pools = read_store.list_capital_pools(status=status, risk_policy_ref=risk_policy_ref)
     bindings = read_store.list_bindings() or []
+    allocations = read_store.list_capital_allocations()
     bindings_by_pool: Dict[str, List[Dict[str, Any]]] = {}
     for binding in bindings:
         pool_id = str(binding.get("capital_pool_id") or "").strip()
@@ -23506,23 +23591,80 @@ async def bff_list_capital_pools(
     normalized_pools = []
     for pool in pools:
         pool_id = str(pool.get("pool_id") or pool.get("id") or "").strip()
+        pool_allocations = [
+            allocation
+            for allocation in allocations
+            if str(allocation.get("capital_pool_id") or "") == pool_id
+        ]
         summaries = []
         for binding in bindings_by_pool.get(pool_id, []):
+            binding_persona_id = str(binding.get("persona_id") or "")
+            binding_sleeve_id = str(
+                _persona_fleet_record_value(
+                    binding, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
+                )
+                or ""
+            )
+            allocation = next(
+                (
+                    item
+                    for item in pool_allocations
+                    if str(item.get("persona_id") or "") == binding_persona_id
+                    and (
+                        not binding_sleeve_id
+                        or str(item.get("capital_sleeve_id") or item.get("sleeve_id") or "")
+                        == binding_sleeve_id
+                    )
+                ),
+                {},
+            )
             summaries.append({
                 "binding_id": binding.get("binding_id") or binding.get("id"),
                 "persona_id": binding.get("persona_id"),
                 "capital_sleeve_id": _persona_fleet_record_value(
                     binding, "capital_sleeve_id", "capitalSleeveId", "sleeve_id", "sleeveId"
                 ),
-                "current_weight": _persona_fleet_record_value(
+                "current_weight": allocation.get("current_weight") if allocation else _persona_fleet_record_value(
                     binding, "current_weight", "currentWeight", "allocation_weight", "weight"
                 ),
-                "target_weight": _persona_fleet_record_value(binding, "target_weight", "targetWeight"),
+                "target_weight": allocation.get("target_weight") if allocation else _persona_fleet_record_value(binding, "target_weight", "targetWeight"),
                 "binding_state": _persona_fleet_record_value(
                     binding, "binding_state", "bindingState", "status", "validity"
                 ) or "unknown",
+                "last_rebalance_id": allocation.get("last_rebalance_id") if allocation else None,
             })
-        normalized_pools.append({**pool, "persona_binding_summaries": summaries, "persona_binding_count": len(summaries)})
+        known_allocation_ids = {
+            (
+                str(summary.get("persona_id") or ""),
+                str(summary.get("capital_sleeve_id") or ""),
+            )
+            for summary in summaries
+        }
+        for allocation in pool_allocations:
+            key = (
+                str(allocation.get("persona_id") or ""),
+                str(allocation.get("capital_sleeve_id") or allocation.get("sleeve_id") or ""),
+            )
+            if key in known_allocation_ids:
+                continue
+            summaries.append(
+                {
+                    "binding_id": allocation.get("binding_id"),
+                    "persona_id": allocation.get("persona_id"),
+                    "capital_sleeve_id": allocation.get("capital_sleeve_id") or allocation.get("sleeve_id"),
+                    "current_weight": allocation.get("current_weight"),
+                    "target_weight": allocation.get("target_weight"),
+                    "binding_state": allocation.get("settlement_state") or "applied",
+                    "last_rebalance_id": allocation.get("last_rebalance_id"),
+                }
+            )
+        normalized_pools.append({
+            **pool,
+            "persona_binding_summaries": summaries,
+            "persona_binding_count": len(summaries),
+            "authoritative_capital_readback": bool(pool_allocations)
+            and all(item.get("authoritative_capital_readback") is True for item in pool_allocations),
+        })
     total = len(normalized_pools)
     page_items, next_page_token = _page_slice(normalized_pools, page_token, page_size)
     return {
@@ -23625,9 +23767,15 @@ async def bff_get_capital_pool(
             f"Capital pool {pool_id} does not exist",
         )
     bindings = read_store.get_bindings_for_pool(pool_id)
+    allocations = read_store.list_capital_allocations(capital_pool_id=pool_id)
     binding_surface = _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at)
     data = dict(pool)
     data["bindings"] = bindings
+    data["allocations"] = allocations
+    data["authoritative_capital_readback"] = bool(allocations) and all(
+        allocation.get("authoritative_capital_readback") is True
+        for allocation in allocations
+    )
     meta = _read_surface_meta(
         "capital_pools",
         "capital_pool_detail",
@@ -23635,6 +23783,12 @@ async def bff_get_capital_pool(
         surface=pool_surface,
     )
     meta.setdefault("surfaces", {})["persona_bindings"] = binding_surface
+    meta.setdefault("surfaces", {})["capital_allocations"] = _dataset_surface_status(
+        "capital_allocations",
+        snapshot_at=snapshot_at,
+        has_data=bool(allocations),
+        missing_message="No authoritative capital allocation readback is available for this pool.",
+    )
     binding_reason = _surface_degradation_reason(
         binding_surface,
         degraded_reason="persona bindings are degraded and may be stale.",
@@ -23949,6 +24103,46 @@ def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[s
             raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid emergency proposal", str(exc)) from exc
     return lines
 
+
+def _capital_owner_role(identity: OperatorIdentity) -> str:
+    return next(
+        (
+            role
+            for role in ("admin", "approver", "reviewer", "operator")
+            if role in identity.roles
+        ),
+        "operator",
+    )
+
+
+def _raise_capital_owner_error(exc: Exception, *, operation: str) -> None:
+    if isinstance(exc, urllib_error.HTTPError):
+        detail = ""
+        try:
+            downstream = json.loads(exc.read().decode("utf-8"))
+            detail = str(downstream.get("detail") or downstream.get("message") or "")
+        except Exception:
+            detail = ""
+        status_code = exc.code if 400 <= exc.code < 500 else 502
+        raise _bff_error(
+            status_code,
+            ErrorCode.UPSTREAM_ERROR,
+            f"Capital authority rejected {operation}",
+            detail or f"Capital service returned HTTP {exc.code}",
+            precondition_failed="capital_authority",
+            suggestion="Verify the capital pool/proposal state and retry with a new idempotency key if needed",
+        ) from exc
+    if isinstance(exc, (urllib_error.URLError, TimeoutError, RuntimeError)):
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Capital authority unavailable",
+            f"Unable to {operation}: {exc}",
+            precondition_failed="capital_authority",
+            suggestion="Restore the Capital service before retrying; the BFF will not fabricate local capital state",
+        ) from exc
+    raise exc
+
 @app.get("/bff/rebalances")
 async def bff_list_rebalances(
     status: Optional[str] = None,
@@ -23989,6 +24183,35 @@ async def bff_create_rebalance(
     request_hash = _stable_json_hash({"route": "POST /bff/rebalances", "payload": payload})
     dry_run = _request_dry_run_requested()
     if not dry_run:
+        durable = command_store.get_command_by_idempotency_key(
+            resolved_key,
+            operator_id=identity.operator_id,
+        )
+        if durable is not None:
+            durable_idempotency = (durable.get("foundation") or {}).get("idempotency_record") or {}
+            if durable_idempotency.get("request_hash") != request_hash:
+                raise _bff_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency key was already used with a different payload",
+                    f"Key {resolved_key!r} is bound to command {durable.get('command_id')}",
+                    precondition_failed="idempotency_conflict",
+                )
+            durable_result = durable.get("result") or {}
+            combined = _project_final_command_response(
+                command_id=str(durable["command_id"]),
+                command=CommandType(str(durable["type"])),
+                accepted_at=str(durable.get("submitted_at") or utc_now()),
+                status=CommandStatus(str(durable.get("status") or CommandStatus.SUBMITTED.value)),
+                staleness_warning=None,
+                meta=_command_response_durable_meta(resolved_key, replayed=True),
+            )
+            replay = combined.model_dump(mode="json") if hasattr(combined, "model_dump") else dict(combined)
+            replay["rebalance_id"] = (
+                durable_result.get("rebalance_id")
+                or (durable.get("target") or {}).get("id")
+            )
+            return replay
         cached = _capital_bff_idempotency_check(resolved_key, request_hash)
         if cached is not None:
             return cached
@@ -24017,56 +24240,121 @@ async def bff_create_rebalance(
         combined = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
         combined["rebalance_id"] = f"dryrun-rb-{uuid.uuid4().hex[:8]}"
         return JSONResponse(status_code=200, content=jsonable_encoder(combined))
-    target = TargetObject(type=ObjectType.REBALANCE, id=capital_pool_id)
+    # Full auditable proposals are owned by the Capital service.  The legacy
+    # minimal command shape (no proposal lines) remains a compatibility record,
+    # but it is terminal and never claims authoritative capital mutation.
+    if proposal_lines is not None:
+        try:
+            rebalance = create_capital_rebalance_proposal(
+                {
+                    "capital_pool_id": capital_pool_id,
+                    "proposal_type": (
+                        "emergency_containment"
+                        if payload.get("emergency")
+                        else "quarterly_rebalance"
+                    ),
+                    "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+                    "reason": payload.get("reason") or "",
+                    "params": payload.get("params") or {},
+                    "lines": proposal_lines,
+                    "simulation": payload.get("simulation"),
+                    "constraints": payload.get("constraints"),
+                    "rollback_target": payload.get("rollback_target"),
+                    "audit_refs": list(payload.get("audit_refs") or []),
+                    "emergency": bool(payload.get("emergency")),
+                    "actor_id": identity.operator_id,
+                    "actor_role": _capital_owner_role(identity),
+                    "idempotency_key": resolved_key,
+                    "request_hash": request_hash,
+                }
+            )
+        except Exception as exc:
+            _raise_capital_owner_error(exc, operation="persist rebalance proposal")
+            raise
+        command_type = CommandType.REBALANCE_PROPOSAL
+        authoritative = True
+    else:
+        rebalance = read_store.create_rebalance(
+            capital_pool_id=capital_pool_id,
+            actor_id=identity.operator_id,
+            created_at=submitted_at,
+            params=payload.get("params"),
+            reason=payload.get("reason"),
+        )
+        command_type = CommandType.REBALANCE_ACTION
+        authoritative = False
+
+    rebalance_id = str(rebalance.get("rebalance_id") or rebalance.get("id") or "").strip()
+    if not rebalance_id:
+        raise _bff_error(
+            502,
+            ErrorCode.UPSTREAM_ERROR,
+            "Rebalance identity missing",
+            "The rebalance authority returned no stable rebalance_id",
+            precondition_failed="rebalance_identity",
+        )
+    target = TargetObject(type=ObjectType.REBALANCE, id=rebalance_id)
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
         "preconditions_checked": ["authentication", "authorization", "idempotency"],
         "timestamp": submitted_at,
+        "executor": "capital_service" if authoritative else "bff_legacy_compatibility",
+        "downstream_verified": authoritative,
     }
     idempotency_record = IdempotencyRecord.reserve(
         idempotency_key=resolved_key,
-        operation_type=f"bff.{CommandType.REBALANCE_ACTION.value}",
-        target_ref=f"{ObjectType.REBALANCE.value}:{capital_pool_id}",
-        request_payload=payload,
+        operation_type=f"bff.{command_type.value}",
+        target_ref=f"{ObjectType.REBALANCE.value}:{rebalance_id}",
+        request_payload={"route": "POST /bff/rebalances", "payload": payload},
         trace_id=command_id,
     )
     command_store.submit_command(
         command_id=command_id,
-        command_type=CommandType.REBALANCE_ACTION,
+        command_type=command_type,
         target=target,
         submitted_at=submitted_at,
-        params={"capital_pool_id": capital_pool_id, **payload},
+        params={
+            "capital_pool_id": capital_pool_id,
+            "rebalance_id": rebalance_id,
+            "entity_type": ObjectType.REBALANCE.value,
+            "entity_id": rebalance_id,
+            "action_id": "proposal",
+            "actor_id": identity.operator_id,
+            "actor_role": _capital_owner_role(identity),
+            "idempotency_key": resolved_key,
+            "request_hash": request_hash,
+        },
         audit_context=audit_record,
         foundation_context={"idempotency_record": idempotency_record.to_dict()},
     )
-    rebalance = read_store.create_rebalance(
-        capital_pool_id=capital_pool_id,
-        actor_id=identity.operator_id,
-        created_at=submitted_at,
-        params=payload.get("params"),
-        reason=payload.get("reason"),
-        proposal={
-            "proposal_type": "emergency_containment" if payload.get("emergency") else "quarterly_rebalance",
-            "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
-            "lines": proposal_lines,
-            "simulation": payload.get("simulation"),
-            "constraints": payload.get("constraints"),
-            "rollback_target": payload.get("rollback_target"),
-            "approval_ref": payload.get("approval_ref"),
-            "audit_refs": list(payload.get("audit_refs") or []),
-            "applied": False,
-        } if proposal_lines is not None else None,
+    command_result = {
+        "command_id": command_id,
+        "rebalance_id": rebalance_id,
+        "capital_pool_id": capital_pool_id,
+        "status": "proposal_persisted",
+        "proposal_persisted": True,
+        "authoritative_capital_readback": authoritative,
+        "canonical_write_authority": "capital_service" if authoritative else "bff_legacy_compatibility",
+        "live_capital_side_effects": False,
+        "execution_completed_at": utc_now(),
+    }
+    command_store.update_status(
+        command_id,
+        CommandStatus.EXECUTED,
+        result=command_result,
+        audit={"execution_completed_at": command_result["execution_completed_at"]},
     )
     result = _project_final_command_response(
         command_id=command_id,
-        command=CommandType.REBALANCE_ACTION,
+        command=command_type,
         accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
+        status=CommandStatus.EXECUTED,
         staleness_warning=staleness_warning,
+        meta=_command_response_durable_meta(resolved_key, replayed=False),
     )
-    combined = result.model_dump() if hasattr(result, "model_dump") else dict(result)
-    combined["rebalance_id"] = rebalance["rebalance_id"]
+    combined = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
+    combined["rebalance_id"] = rebalance_id
     _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": combined}
     return combined
 
@@ -24080,9 +24368,10 @@ async def bff_apply_rebalance_proposal(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    """Authorize proposal application; execution remains a separate command."""
+    """Authorize and dispatch an immutable proposal to Capital authority."""
     identity = _extract_identity(authorization)
     _require_operator_role(identity)
+    _reject_body_idempotency_key(payload)
     rebalance = read_store.get_rebalance(rebalance_id)
     if not rebalance:
         raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Rebalance not found", f"Rebalance {rebalance_id} does not exist")
@@ -24090,7 +24379,7 @@ async def bff_apply_rebalance_proposal(
         line.get("stage") == "live_running" and float(line.get("target_weight") or 0) > float(line.get("current_weight") or 0)
         for line in rebalance.get("lines") or []
     )
-    approval_ref = payload.get("approval_ref") or rebalance.get("approval_ref")
+    approval_ref = str(payload.get("approval_ref") or rebalance.get("approval_ref") or "").strip()
     if increases_live and not approval_ref:
         raise _bff_error(409, ErrorCode.PRECONDITION_FAILED, "human approval required", "A human approval reference is required before applying a live capital increase", precondition_failed="approval_ref")
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
@@ -24100,8 +24389,14 @@ async def bff_apply_rebalance_proposal(
         action_id="apply",
         resolved_key=resolved_key,
         identity=identity,
-        payload={**payload, "approval_ref": approval_ref, "rollback_target": rebalance.get("rollback_target")},
-        command_type=CommandType.REBALANCE_ACTION,
+        payload={
+            "approval_ref": approval_ref or None,
+            "approval_required": increases_live,
+            "capital_pool_id": rebalance.get("capital_pool_id"),
+            "proposal_version": rebalance.get("version") or rebalance.get("proposal_version"),
+            "rollback_target": rebalance.get("rollback_target"),
+        },
+        command_type=CommandType.APPROVED_APPLY,
         background_tasks=background_tasks,
     )
 
@@ -39984,12 +40279,26 @@ async def bff_get_persona(
     base = raw or {"persona_id": persona_id, "name": (overlay or {}).get("name")}
     routed = _routed_strategies_for_persona(persona_id)
     dto = _project_persona_dto(base, overlay=overlay, routed_strategies=routed)
+    containment = read_store.get_persona_containment(persona_id)
+    if containment:
+        containment_state = str(containment.get("containment_state") or "frozen")
+        dto["containment_state"] = containment_state
+        dto["containmentState"] = containment_state
+        dto["frozen"] = containment_state == "frozen"
+        dto["containment"] = containment
+    meta = _read_surface_meta(
+        "personas", "persona_detail",
+        snapshot_at=snapshot_at,
+    )
+    if containment:
+        meta.setdefault("surfaces", {})["containment"] = _dataset_surface_status(
+            "containments",
+            snapshot_at=snapshot_at,
+            has_data=True,
+        )
     return {
         "data": dto,
-        "meta": _read_surface_meta(
-            "personas", "persona_detail",
-            snapshot_at=snapshot_at,
-        ),
+        "meta": meta,
     }
 
 
@@ -46341,7 +46650,11 @@ async def _process_command(command_id: str):
     audit["execution_completed_at"] = result.get("execution_completed_at") if result else error.get("failed_at") if error else None
     audit["executor"] = "command_executor"
     if result:
-        audit["downstream_verified"] = True
+        audit["downstream_verified"] = bool(
+            result.get("downstream_verified")
+            or result.get("authoritative_capital_readback")
+            or result.get("dispatch_path") != "bff_action_adapter"
+        )
     if error:
         audit["failure_reason"] = error.get("message", "")
         audit["failure_suggestion"] = error.get("suggestion", "")
@@ -53722,11 +54035,9 @@ async def sem_agora_evaluation_runs(authorization: Optional[str] = Header(defaul
 
 
 
-@app.get("/bff/healthz")
-@app.get("/bff/readyz")
-async def sem_bff_health_alias():
+def _bff_source_commit() -> str:
     commit = os.environ.get("BFF_COMMIT") or os.environ.get("GIT_SHA")
-    if not commit:
+    if not commit or commit == "unknown":
         git_dir = "/workspace/status-root/.git"
         if os.path.exists(git_dir):
             try:
@@ -53755,11 +54066,31 @@ async def sem_bff_health_alias():
                         commit = ref
             except Exception:
                 pass
+    return str(commit or "unknown")
+
+
+@app.get("/bff/version")
+async def sem_bff_version():
+    commit = _bff_source_commit()
+    return {
+        "service": "operator-bff",
+        "version": "0.2.0",
+        "source_commit_sha": commit,
+        "commit": commit,
+        "source_commit_known": bool(re.fullmatch(r"[0-9a-fA-F]{40}", commit)),
+    }
+
+
+@app.get("/bff/healthz")
+@app.get("/bff/readyz")
+async def sem_bff_health_alias():
+    commit = _bff_source_commit()
     return {
         "status": "ok",
         "service": "operator-bff",
         "version": "0.2.0",
-        "commit": commit or "unknown"
+        "commit": commit,
+        "source_commit_sha": commit,
     }
 
 
