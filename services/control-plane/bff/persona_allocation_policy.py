@@ -110,7 +110,6 @@ def _allocation_policy_input(row: Dict[str, Any]) -> Dict[str, Any] | None:
     if (
         "allocation_policy_input" in row
         or tier.startswith("tier-")
-        or tier in {"s", "a", "b", "watch"}
         or formula_version == _PM12_FORMULA_VERSION
         or "overall_score" in row
         or "score" in row
