@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import re
 from copy import deepcopy
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
+from threading import local
 from typing import Any
 
 from common import (
@@ -66,6 +70,7 @@ def default_state() -> dict[str, Any]:
             "task_failure_streaks": {},
             "task_failure_streak_aliases": {},
             "task_failure_streak_history": [],
+            "task_failure_streak_quarantine": [],
         },
         "execution_dispatch_guardrails": {
             "schema_version": 1,
@@ -176,12 +181,43 @@ def _merge_legacy_failure_streaks(
     records = raw_records if isinstance(raw_records, dict) else {}
     raw_aliases = provider_guardrails.get("task_failure_streak_aliases")
     aliases = dict(raw_aliases) if isinstance(raw_aliases, dict) else {}
+    raw_quarantine = provider_guardrails.get("task_failure_streak_quarantine")
+    quarantine = list(raw_quarantine) if isinstance(raw_quarantine, list) else []
     migrated: dict[str, dict[str, Any]] = {}
+
+    def quarantine_record(old_key: Any, raw_record: Any, disposition: str) -> None:
+        candidate = raw_record if isinstance(raw_record, dict) else {"raw_record": repr(raw_record)}
+        quarantine.append(
+            {
+                **deepcopy(candidate),
+                "record_key": str(old_key),
+                "quarantined_at": datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "quarantine_disposition": disposition,
+            }
+        )
 
     for old_key, raw_record in records.items():
         if not isinstance(raw_record, dict):
+            quarantine_record(old_key, raw_record, "malformed_record")
             continue
         record = deepcopy(raw_record)
+        schema_version = record.get("schema_version")
+        if isinstance(schema_version, bool) or not isinstance(schema_version, int):
+            quarantine_record(
+                old_key,
+                record,
+                "legacy_unbound" if not record.get("signature") else "missing_or_invalid_schema_version",
+            )
+            continue
+        if schema_version > 2:
+            quarantine_record(old_key, record, "future_schema_version")
+            continue
+        if schema_version != 2:
+            quarantine_record(old_key, record, "unsupported_schema_version")
+            continue
         task_id = str(record.get("task_id") or str(old_key).split(":", 1)[0] or "").strip()
         physical = str(
             record.get("logical_agent_id")
@@ -190,9 +226,31 @@ def _merge_legacy_failure_streaks(
         ).strip()
         logical = _logical_failure_lane(config, physical)
         if not task_id or not logical:
+            quarantine_record(old_key, record, "missing_task_or_logical_lane")
             continue
-        signature = str(record.get("signature") or _legacy_failure_signature(record))
-        scope = str(record.get("signature_scope") or "legacy_unbound")
+        signature = str(record.get("signature") or "").strip()
+        scope = str(record.get("signature_scope") or "").strip()
+        dispatch_signature = str(record.get("dispatch_task_signature") or "").strip()
+        dispatch_event_key = str(record.get("dispatch_event_key") or "").strip()
+        if scope != "exact_dispatch" or not signature or not dispatch_signature or not dispatch_event_key:
+            quarantine_record(old_key, record, "unbound_dispatch_signature")
+            continue
+        count = record.get("count")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            quarantine_record(old_key, record, "invalid_failure_count")
+            continue
+        first_dt = _parse_failure_record_time(record.get("first_failure_at"))
+        last_dt = _parse_failure_record_time(record.get("last_failure_at"))
+        if first_dt is None or last_dt is None:
+            quarantine_record(old_key, record, "missing_or_invalid_failure_time")
+            continue
+        now = datetime.now(timezone.utc)
+        if first_dt > now or last_dt > now:
+            quarantine_record(old_key, record, "future_failure_time")
+            continue
+        if last_dt < first_dt:
+            quarantine_record(old_key, record, "failure_time_order_invalid")
+            continue
         digest = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:24]
         key = f"{task_id}|{logical}|{digest}"
         previous = migrated.get(key)
@@ -213,7 +271,7 @@ def _merge_legacy_failure_streaks(
                     "provider": logical,
                     "signature": signature,
                     "signature_scope": scope,
-                    "count": _safe_nonnegative_int(record.get("count")),
+                    "count": count,
                     "first_failure_at": first_at or None,
                     "last_failure_at": last_at or None,
                     "evidence_refs": list(dict.fromkeys(evidence))[-20:],
@@ -255,7 +313,12 @@ def _merge_legacy_failure_streaks(
     }
     provider_guardrails["task_failure_streak_schema_version"] = 2
     provider_guardrails["task_failure_streaks"] = migrated
-    provider_guardrails["task_failure_streak_aliases"] = aliases
+    provider_guardrails["task_failure_streak_aliases"] = {
+        alias: target
+        for alias, target in aliases.items()
+        if target in migrated
+    }
+    provider_guardrails["task_failure_streak_quarantine"] = quarantine[-200:]
 
 
 def migrate_state(raw: dict[str, Any] | None, config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -299,6 +362,10 @@ def migrate_state(raw: dict[str, Any] | None, config: dict[str, Any] | None = No
     failure_history = state["provider_guardrails"].get("task_failure_streak_history")
     state["provider_guardrails"]["task_failure_streak_history"] = (
         failure_history if isinstance(failure_history, list) else []
+    )
+    failure_quarantine = state["provider_guardrails"].get("task_failure_streak_quarantine")
+    state["provider_guardrails"]["task_failure_streak_quarantine"] = (
+        failure_quarantine if isinstance(failure_quarantine, list) else []
     )
     _merge_legacy_failure_streaks(state["provider_guardrails"], config)
     if not isinstance(state.get("execution_dispatch_guardrails"), dict):
@@ -421,7 +488,7 @@ def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | No
         keep[run_id] = worker
     state["workers"] = keep
 
-def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
+def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     state = migrate_state(load_json(config_path(config, "state_file"), default=default_state()), config)
     queued_events = load_jsonl(config_path(config, "event_queue"))
     _rebuild_queue_records(state, queued_events)
@@ -462,8 +529,236 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
-def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
+def _save_runtime_state_unlocked(config: dict[str, Any], state: dict[str, Any]) -> None:
     write_json(config_path(config, "state_file"), migrate_state(state, config))
+
+
+_RUNTIME_LOCK_LOCAL = local()
+
+
+def runtime_state_lock_path(config: dict[str, Any]) -> Path:
+    return config_path(config, "state_file").with_suffix(".lock")
+
+
+@contextmanager
+def runtime_state_lock(config: dict[str, Any]):
+    """Serialize a complete runtime-state read/mutate/save transaction.
+
+    The lock is process-local re-entrant because the supervisor calls watcher
+    helpers inside its transaction.  Separate processes still contend on the
+    same advisory flock, so a watcher or self-claim cannot overwrite a newer
+    supervisor snapshot.
+    """
+
+    try:
+        path = runtime_state_lock_path(config)
+    except KeyError:
+        # Lightweight pure-unit configurations intentionally replace all
+        # runtime I/O with mocks. Production/self-claim/watcher configs always
+        # provide state_file and therefore always take the shared flock.
+        yield
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    locks = getattr(_RUNTIME_LOCK_LOCAL, "locks", None)
+    if locks is None:
+        locks = {}
+        _RUNTIME_LOCK_LOCAL.locks = locks
+    key = str(path.resolve())
+    held = locks.get(key)
+    if held is not None:
+        held[1] += 1
+        try:
+            yield
+        finally:
+            held[1] -= 1
+        return
+
+    handle = path.open("a+", encoding="utf-8")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    locks[key] = [handle, 1]
+    try:
+        yield
+    finally:
+        locks.pop(key, None)
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
+    with runtime_state_lock(config):
+        return _load_runtime_state_unlocked(config)
+
+
+def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
+    with runtime_state_lock(config):
+        _save_runtime_state_unlocked(config, state)
+
+
+def load_runtime_state_snapshot(config: dict[str, Any]) -> dict[str, Any]:
+    """Read a projection-only snapshot without joining a mutation transaction.
+
+    Runtime writes are atomic, so dashboards can safely tolerate this slightly
+    stale view. Code making an admission or mutation decision must use
+    ``load_runtime_state`` or ``task_runtime_admission_guard`` instead.
+    """
+
+    return _load_runtime_state_unlocked(config)
+
+
+_TASK_STATE_LOCK_LOCAL = local()
+
+
+def canonical_task_state_lock_path(status_file: str | Path) -> Path:
+    return Path(status_file).expanduser().resolve().parent / ".orchestrator" / "task-state.lock"
+
+
+@contextmanager
+def canonical_task_state_lock_file(status_file: str | Path):
+    """Lock the stable sidecar inode shared by every ai-status writer."""
+
+    path = canonical_task_state_lock_path(status_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    locks = getattr(_TASK_STATE_LOCK_LOCAL, "locks", None)
+    if locks is None:
+        locks = {}
+        _TASK_STATE_LOCK_LOCAL.locks = locks
+    key = str(path)
+    held = locks.get(key)
+    if held is not None:
+        held[1] += 1
+        try:
+            yield
+        finally:
+            held[1] -= 1
+        return
+
+    handle = path.open("a+", encoding="utf-8")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    locks[key] = [handle, 1]
+    try:
+        yield
+    finally:
+        locks.pop(key, None)
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+RUNTIME_TASK_TERMINAL_WORKER_STATUSES = {
+    "completed",
+    "failed",
+    "superseded",
+    "reassigned",
+    "retried",
+}
+RUNTIME_TASK_TERMINAL_QUEUE_STATUSES = {"completed", "failed", "done"}
+
+
+def inspect_task_runtime_admission(
+    state: dict[str, Any],
+    queued_events: list[dict[str, Any]],
+    task_id: str,
+) -> dict[str, Any]:
+    """Return a fail-closed task mutation decision from one locked snapshot."""
+
+    task_value = str(task_id or "").strip()
+    if not task_value:
+        return {
+            "allowed": False,
+            "task_id": task_value,
+            "reason": "task_id_missing",
+            "queue_event_ids": [],
+            "worker_run_ids": [],
+            "admitted_run_ids": [],
+        }
+    runtime_shape_valid = bool(
+        isinstance(state, dict)
+        and isinstance(queued_events, list)
+        and isinstance(state.get("queue"), dict)
+        and isinstance((state.get("queue") or {}).get("events"), dict)
+        and isinstance(state.get("workers"), dict)
+        and all(isinstance(event, dict) for event in queued_events)
+    )
+    if not runtime_shape_valid:
+        return {
+            "allowed": False,
+            "task_id": task_value,
+            "reason": "runtime_snapshot_malformed",
+            "queue_event_ids": [],
+            "worker_run_ids": [],
+            "admitted_run_ids": [],
+        }
+
+    queue_records = ((state.get("queue") or {}).get("events") or {}) if isinstance(state.get("queue"), dict) else {}
+    queue_event_ids: list[str] = []
+    for event in queued_events:
+        if not isinstance(event, dict) or str(event.get("task_id") or "").strip() != task_value:
+            continue
+        event_id = str(event.get("event_id") or "").strip()
+        record = queue_records.get(event_id, {}) if isinstance(queue_records, dict) and event_id else {}
+        queue_status = str((record or {}).get("status") or "queued").strip().lower()
+        if queue_status not in RUNTIME_TASK_TERMINAL_QUEUE_STATUSES:
+            queue_event_ids.append(event_id or "<missing-event-id>")
+
+    worker_run_ids: list[str] = []
+    admitted_run_ids: list[str] = []
+    workers = state.get("workers") if isinstance(state.get("workers"), dict) else {}
+    for run_key, worker in workers.items():
+        if not isinstance(worker, dict) or str(worker.get("task_id") or "").strip() != task_value:
+            continue
+        status = str(worker.get("status") or "").strip().lower()
+        run_id = str(worker.get("run_id") or run_key or "<missing-run-id>")
+        is_active = status in ACTIVE_QUEUE_STATUSES
+        is_admitted = (
+            isinstance(worker.get("execution_admission"), dict)
+            and status not in RUNTIME_TASK_TERMINAL_WORKER_STATUSES
+        )
+        if is_active:
+            worker_run_ids.append(run_id)
+        if is_admitted:
+            admitted_run_ids.append(run_id)
+
+    queue_event_ids = sorted(set(queue_event_ids))
+    worker_run_ids = sorted(set(worker_run_ids))
+    admitted_run_ids = sorted(set(admitted_run_ids))
+    allowed = not queue_event_ids and not worker_run_ids and not admitted_run_ids
+    return {
+        "allowed": allowed,
+        "task_id": task_value,
+        "reason": "runtime_clear" if allowed else "task_queued_running_or_admitted",
+        "queue_event_ids": queue_event_ids,
+        "worker_run_ids": worker_run_ids,
+        "admitted_run_ids": admitted_run_ids,
+    }
+
+
+@contextmanager
+def task_runtime_admission_guard(config: dict[str, Any], task_id: str):
+    """Hold runtime serialization across a caller's canonical task CAS/write.
+
+    Callers must enter this guard *before* ``canonical_task_state_lock_file``.
+    The returned decision is fail closed when runtime state cannot be read or
+    the task is already queued, running, or admitted.
+    """
+
+    with runtime_state_lock(config):
+        try:
+            state = _load_runtime_state_unlocked(config)
+            queued_events = load_jsonl(config_path(config, "event_queue"))
+            decision = inspect_task_runtime_admission(state, queued_events, task_id)
+        except Exception as exc:
+            decision = {
+                "allowed": False,
+                "task_id": str(task_id or "").strip(),
+                "reason": f"runtime_state_unavailable:{type(exc).__name__}",
+                "queue_event_ids": [],
+                "worker_run_ids": [],
+                "admitted_run_ids": [],
+            }
+        yield decision
 
 
 def load_event_queue(config: dict[str, Any]) -> list[dict[str, Any]]:

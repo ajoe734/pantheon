@@ -281,6 +281,28 @@ class SupervisorRuntimeStateTests(unittest.TestCase):
         self.assertIn("execution", supervisor_state["mode_occupancy"])
 
     def test_run_once_reconciles_execution_mode_state_from_running_workers(self) -> None:
+        task = {
+            "id": "BG-001",
+            "title": "Runtime occupancy regression task",
+            "phase": "Wave X",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "review_approved",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "Finalize the task",
+            "last_update": "2026-04-13T07:12:46Z",
+        }
+        dispatch = supervisor.build_dispatch_event(
+            task,
+            "Claude",
+            supervisor.REASON_OWNED_FINALIZE,
+            {task["id"]: task},
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps({"tasks": [task], "handoffs": []}),
+            encoding="utf-8",
+        )
         state = runtime_state.default_state()
         state["workers"] = {
             "run-1": {
@@ -291,7 +313,14 @@ class SupervisorRuntimeStateTests(unittest.TestCase):
                 "status": "running",
                 "pid": supervisor.os.getpid(),
                 "queue_event_id": None,
-                "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                "request_snapshot": {
+                    "reason": supervisor.REASON_OWNED_FINALIZE,
+                    "metadata": {
+                        "dispatch_event_key": dispatch["key"],
+                        "dispatch_task_signature": dispatch["signature"],
+                        "dispatch_target_display_name": "Claude",
+                    },
+                },
                 "last_event_at": "2026-04-13T07:12:46Z",
             }
         }

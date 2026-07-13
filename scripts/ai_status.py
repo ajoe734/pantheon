@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import fcntl
 import gzip
 import json
 import os
@@ -56,7 +55,12 @@ from multi_repo_registry import (
     task_artifact_repository_ids,
     task_primary_repository_id,
 )
-from runtime_state import load_runtime_state
+from runtime_state import canonical_task_state_lock_file, load_runtime_state_snapshot
+
+# Dashboard rendering historically patches this module-level name in tests and
+# extensions. It intentionally points at the projection-only snapshot reader;
+# mutation/admission callers must use runtime_state's locked APIs directly.
+load_runtime_state = load_runtime_state_snapshot
 
 STATUS_FILE = STATUS_ROOT / "ai-status.json"
 LOG_FILE = STATUS_ROOT / "ai-activity-log.jsonl"
@@ -599,14 +603,8 @@ def load_state() -> dict[str, Any]:
 def canonical_task_state_lock():
     """Serialize canonical task mutations across ai_status and supervisor."""
 
-    lock_path = STATUS_ROOT / ".orchestrator" / "task-state.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    with canonical_task_state_lock_file(STATUS_FILE):
+        yield
 
 
 def load_logs() -> list[dict[str, Any]]:

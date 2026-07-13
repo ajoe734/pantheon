@@ -32,7 +32,13 @@ from common import (
     write_approval_evidence,
     write_json,
 )
-from runtime_state import default_approval_state, load_approval_state, load_runtime_state, save_approval_state
+from runtime_state import (
+    default_approval_state,
+    load_approval_state,
+    load_runtime_state,
+    runtime_state_lock,
+    save_approval_state,
+)
 
 
 @contextmanager
@@ -136,56 +142,60 @@ def prune_stale_approvals(config: dict[str, Any]) -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc)
     stale_after_seconds = _stale_pending_seconds(config)
     pruned: list[dict[str, Any]] = []
-    with approval_lock(config):
-        state = load_approval_state(config)
+    # The supervisor owns runtime state before consulting the approval queue.
+    # Use that same global lock order here to avoid an approval->runtime vs
+    # runtime->approval deadlock while pruning worker-bound requests.
+    with runtime_state_lock(config):
         runtime_state = load_runtime_state(config)
         workers = runtime_state.get("workers", {})
-        keep: list[dict[str, Any]] = []
-        for item in state.get("pending", []):
-            orphaned_note = _orphaned_worker_note(config, item, workers)
-            if orphaned_note:
-                pruned_item = _pruned_pending_item(item, note=orphaned_note)
-                pruned_item["resolution_ref"] = write_approval_evidence(
-                    config,
-                    approval_id=str(item.get("approval_id") or ""),
-                    stage="pruned",
-                    payload={
-                        "provider": item.get("provider"),
-                        "task_id": item.get("task_id"),
-                        "worker_run_id": item.get("worker_run_id"),
-                        "tool_name": item.get("tool_name"),
-                        "decision": "deny",
-                        "note": orphaned_note,
-                        "request_ref": item.get("evidence_ref"),
-                    },
-                )
-                pruned.append(pruned_item)
-                continue
-            if _is_stale_pending(item, now=now, stale_after_seconds=stale_after_seconds):
-                note = f"Auto-pruned stale approval after {int(stale_after_seconds)}s without task/worker binding."
-                pruned_item = _pruned_pending_item(item, note=note)
-                pruned_item["resolution_ref"] = write_approval_evidence(
-                    config,
-                    approval_id=str(item.get("approval_id") or ""),
-                    stage="pruned",
-                    payload={
-                        "provider": item.get("provider"),
-                        "task_id": item.get("task_id"),
-                        "worker_run_id": item.get("worker_run_id"),
-                        "tool_name": item.get("tool_name"),
-                        "decision": "deny",
-                        "note": note,
-                        "request_ref": item.get("evidence_ref"),
-                    },
-                )
-                pruned.append(pruned_item)
-                continue
-            keep.append(item)
-        if not pruned:
-            return []
-        state["pending"] = keep
-        state.setdefault("history", []).extend(pruned)
-        save_approval_state(config, state)
+        with approval_lock(config):
+            state = load_approval_state(config)
+            keep: list[dict[str, Any]] = []
+            for item in state.get("pending", []):
+                orphaned_note = _orphaned_worker_note(config, item, workers)
+                if orphaned_note:
+                    pruned_item = _pruned_pending_item(item, note=orphaned_note)
+                    pruned_item["resolution_ref"] = write_approval_evidence(
+                        config,
+                        approval_id=str(item.get("approval_id") or ""),
+                        stage="pruned",
+                        payload={
+                            "provider": item.get("provider"),
+                            "task_id": item.get("task_id"),
+                            "worker_run_id": item.get("worker_run_id"),
+                            "tool_name": item.get("tool_name"),
+                            "decision": "deny",
+                            "note": orphaned_note,
+                            "request_ref": item.get("evidence_ref"),
+                        },
+                    )
+                    pruned.append(pruned_item)
+                    continue
+                if _is_stale_pending(item, now=now, stale_after_seconds=stale_after_seconds):
+                    note = f"Auto-pruned stale approval after {int(stale_after_seconds)}s without task/worker binding."
+                    pruned_item = _pruned_pending_item(item, note=note)
+                    pruned_item["resolution_ref"] = write_approval_evidence(
+                        config,
+                        approval_id=str(item.get("approval_id") or ""),
+                        stage="pruned",
+                        payload={
+                            "provider": item.get("provider"),
+                            "task_id": item.get("task_id"),
+                            "worker_run_id": item.get("worker_run_id"),
+                            "tool_name": item.get("tool_name"),
+                            "decision": "deny",
+                            "note": note,
+                            "request_ref": item.get("evidence_ref"),
+                        },
+                    )
+                    pruned.append(pruned_item)
+                    continue
+                keep.append(item)
+            if not pruned:
+                return []
+            state["pending"] = keep
+            state.setdefault("history", []).extend(pruned)
+            save_approval_state(config, state)
     for item in pruned:
         write_activity_log(
             config,

@@ -1986,37 +1986,43 @@ def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
         raise SystemExit("Human gate must be approved before materializing proposed execution tasks.")
 
     save_derived_state(derived)
-    state = ai_status.load_state()
-    created = 0
-    updated = 0
-    archived = 0
-    selected_task_ids = {
-        str(item).strip()
-        for item in derived.get("initial_materialization_task_ids", [])
-        if str(item).strip()
-    }
-    selected_payloads = [
-        payload
-        for payload in derived.get("proposed_execution_tasks", [])
-        if not selected_task_ids or str(payload.get("id") or "").strip() in selected_task_ids
-    ]
-    materialization_ref = {
-        "materialized_at": iso_now(),
-        "session_id": str(derived.get("session_id") or "").strip(),
-        "consensus_status": str(derived.get("consensus_status") or "").strip(),
-        "human_gate_status": str(derived.get("human_gate_status") or "").strip(),
-        "execution_materialization": planning_output_path(derived, "execution_materialization"),
-    }
-    if selected_task_ids:
-        materialization_ref["initial_materialization_task_ids"] = ",".join(sorted(selected_task_ids))
-    for payload in selected_payloads:
-        result = upsert_materialized_task(state, payload, materialization_ref=materialization_ref)
-        if result == "created":
-            created += 1
-        elif result == "updated":
-            updated += 1
-        elif result == "archived":
-            archived += 1
+    # Planning owns its session lock, but ai-status.json is also mutated by
+    # ai_status.py and the supervisor.  Hold the same canonical task flock for
+    # the complete load/upsert/sync transaction so materialization cannot
+    # overwrite a concurrent assignment or status transition.
+    with ai_status.canonical_task_state_lock():
+        state = ai_status.load_state()
+        created = 0
+        updated = 0
+        archived = 0
+        selected_task_ids = {
+            str(item).strip()
+            for item in derived.get("initial_materialization_task_ids", [])
+            if str(item).strip()
+        }
+        selected_payloads = [
+            payload
+            for payload in derived.get("proposed_execution_tasks", [])
+            if not selected_task_ids or str(payload.get("id") or "").strip() in selected_task_ids
+        ]
+        materialization_ref = {
+            "materialized_at": iso_now(),
+            "session_id": str(derived.get("session_id") or "").strip(),
+            "consensus_status": str(derived.get("consensus_status") or "").strip(),
+            "human_gate_status": str(derived.get("human_gate_status") or "").strip(),
+            "execution_materialization": planning_output_path(derived, "execution_materialization"),
+        }
+        if selected_task_ids:
+            materialization_ref["initial_materialization_task_ids"] = ",".join(sorted(selected_task_ids))
+        for payload in selected_payloads:
+            result = upsert_materialized_task(state, payload, materialization_ref=materialization_ref)
+            if result == "created":
+                created += 1
+            elif result == "updated":
+                updated += 1
+            elif result == "archived":
+                archived += 1
+        ai_status.sync_all(state)
     session["materialized_at"] = materialization_ref["materialized_at"]
     derived["materialized_at"] = materialization_ref["materialized_at"]
     message = f"Materialized {created} new tasks and refreshed {updated} existing tasks in ai-status.json."
@@ -2030,7 +2036,6 @@ def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
     )
     save_session(session)
     save_derived_state(derived)
-    ai_status.sync_all(state)
 
 
 def main(argv: list[str]) -> int:

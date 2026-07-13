@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import contextlib
 import json
 import tempfile
 import unittest
@@ -375,6 +376,45 @@ class PlanningStateTests(unittest.TestCase):
             "docs/02-architecture/consensus/phase2/execution-materialization.md",
         )
         self.assertEqual(task_map["PLAN-002"]["materialization_ref"]["human_gate_status"], "approved")
+
+    def test_materialize_holds_canonical_task_lock_across_load_and_sync(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="planning-state-materialize-lock-") as temp_dir:
+            root = Path(temp_dir)
+            with self.patch_paths(root), self.patch_ai_status_paths(root):
+                session = planning_state.default_session(planning_state.PHASE2_SESSION_ID, "phase2")
+                planning_state.command_reconcile_docs(session, ["completed", "Blueprint docs reconciled"])
+                planning_state.command_human_gate(session, ["approved", "Human accepted execution plan"])
+                planning_state.sync_all(session)
+                events: list[str] = []
+                original_load = planning_state.ai_status.load_state
+                original_sync = planning_state.ai_status.sync_all
+
+                @contextlib.contextmanager
+                def observed_lock():
+                    events.append("lock_enter")
+                    try:
+                        yield
+                    finally:
+                        events.append("lock_exit")
+
+                def observed_load():
+                    events.append("load")
+                    return original_load()
+
+                def observed_sync(state):
+                    events.append("sync")
+                    return original_sync(state)
+
+                with (
+                    mock.patch.object(planning_state.ai_status, "canonical_task_state_lock", side_effect=observed_lock),
+                    mock.patch.object(planning_state.ai_status, "load_state", side_effect=observed_load),
+                    mock.patch.object(planning_state.ai_status, "sync_all", side_effect=observed_sync),
+                ):
+                    planning_state.command_materialize(session, [])
+
+        self.assertLess(events.index("lock_enter"), events.index("load"))
+        self.assertLess(events.index("load"), events.index("sync"))
+        self.assertLess(events.index("sync"), events.index("lock_exit"))
 
     def test_materialize_preserves_existing_execution_truth_and_only_backfills_source_refs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="planning-state-backfill-") as temp_dir:

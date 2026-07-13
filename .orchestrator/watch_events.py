@@ -29,7 +29,7 @@ from common import (
     utc_now,
     write_activity_log,
 )
-from runtime_state import enqueue_event, load_runtime_state, save_runtime_state
+from runtime_state import enqueue_event, load_runtime_state, runtime_state_lock, save_runtime_state
 from task_archive import DEFAULT_RECENT_LIMIT, recent_terminal_summaries
 
 
@@ -396,18 +396,20 @@ def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provid
 def main() -> int:
     args = parse_args()
     config = load_config(args.config)
-    state = load_runtime_state(config)
     provider_capabilities = load_json(config_path(config, "provider_capabilities"), default={})
 
     poll_interval = args.poll_interval or float(config.get("watcher", {}).get("poll_interval_seconds", 2.0))
-    run_scan(config, state, replay=args.replay, provider_capabilities=provider_capabilities)
+    with runtime_state_lock(config):
+        state = load_runtime_state(config)
+        run_scan(config, state, replay=args.replay, provider_capabilities=provider_capabilities)
     if args.once:
         return 0
 
     while True:
         time.sleep(poll_interval)
-        state = load_runtime_state(config)
-        run_scan(config, state, replay=False, provider_capabilities=provider_capabilities)
+        with runtime_state_lock(config):
+            state = load_runtime_state(config)
+            run_scan(config, state, replay=False, provider_capabilities=provider_capabilities)
 
 
 if __name__ == "__main__":

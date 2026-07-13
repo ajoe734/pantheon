@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
+import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import runtime_state
@@ -142,7 +145,7 @@ class LoadRuntimeStateTests(unittest.TestCase):
             {"schema_version": 1, "records": {}, "history": []},
         )
 
-    def test_migrate_state_coalesces_legacy_physical_slots_into_schema_v2_logical_signature(self) -> None:
+    def test_migrate_state_quarantines_legacy_unbound_physical_slot_streaks(self) -> None:
         config = {
             "agents": {
                 "codex": {"id": "codex", "provider": "codex"},
@@ -182,19 +185,17 @@ class LoadRuntimeStateTests(unittest.TestCase):
         migrated = runtime_state.migrate_state(raw, config)
         guardrails = migrated["provider_guardrails"]
         self.assertEqual(guardrails["task_failure_streak_schema_version"], 2)
-        self.assertEqual(len(guardrails["task_failure_streaks"]), 1)
-        key, record = next(iter(guardrails["task_failure_streaks"].items()))
-        self.assertTrue(key.startswith("TASK-1|codex|"))
-        self.assertEqual(record["logical_agent_id"], "codex")
-        self.assertEqual(record["signature_scope"], "legacy_unbound")
-        self.assertTrue(record["signature"].startswith("legacy:fatal:"))
-        self.assertEqual(record["count"], 5)
-        self.assertEqual(record["first_failure_at"], "2026-07-13T10:00:00Z")
-        self.assertEqual(record["last_failure_at"], "2026-07-13T10:06:00Z")
-        self.assertEqual(record["worker_run_id"], "run-two")
-        self.assertEqual(record["evidence_refs"], ["evidence/one.json", "evidence/two.json"])
-        self.assertEqual(guardrails["task_failure_streak_aliases"]["TASK-1:codex1_1"], key)
-        self.assertEqual(guardrails["task_failure_streak_aliases"]["TASK-1:codex1_2"], key)
+        self.assertEqual(guardrails["task_failure_streaks"], {})
+        self.assertEqual(guardrails["task_failure_streak_aliases"], {})
+        self.assertEqual(len(guardrails["task_failure_streak_quarantine"]), 2)
+        self.assertEqual(
+            {item["record_key"] for item in guardrails["task_failure_streak_quarantine"]},
+            {"TASK-1:codex1_1", "TASK-1:codex1_2"},
+        )
+        self.assertEqual(
+            {item["quarantine_disposition"] for item in guardrails["task_failure_streak_quarantine"]},
+            {"legacy_unbound"},
+        )
 
         remigrated = runtime_state.migrate_state(migrated, config)
         self.assertEqual(
@@ -202,8 +203,8 @@ class LoadRuntimeStateTests(unittest.TestCase):
             guardrails["task_failure_streaks"],
         )
         self.assertEqual(
-            remigrated["provider_guardrails"]["task_failure_streak_aliases"],
-            guardrails["task_failure_streak_aliases"],
+            remigrated["provider_guardrails"]["task_failure_streak_quarantine"],
+            guardrails["task_failure_streak_quarantine"],
         )
 
     def test_migrate_state_corrupt_failure_count_and_timestamps_fail_closed(self) -> None:
@@ -211,8 +212,14 @@ class LoadRuntimeStateTests(unittest.TestCase):
             "provider_guardrails": {
                 "task_failure_streaks": {
                     "TASK-CORRUPT:codex": {
+                        "schema_version": 2,
                         "task_id": "TASK-CORRUPT",
                         "provider": "codex",
+                        "logical_agent_id": "codex",
+                        "signature": "dispatch:fatal:reason:task",
+                        "signature_scope": "exact_dispatch",
+                        "dispatch_task_signature": "task-signature",
+                        "dispatch_event_key": "event-key",
                         "count": "not-an-integer",
                         "last_failure_kind": "fatal",
                         "last_reason": "fatal runner failure",
@@ -224,11 +231,57 @@ class LoadRuntimeStateTests(unittest.TestCase):
         }
 
         migrated = runtime_state.migrate_state(raw, {"agents": {"codex": {"provider": "codex"}}})
-        record = next(iter(migrated["provider_guardrails"]["task_failure_streaks"].values()))
+        guardrails = migrated["provider_guardrails"]
+        self.assertEqual(guardrails["task_failure_streaks"], {})
+        self.assertEqual(len(guardrails["task_failure_streak_quarantine"]), 1)
+        self.assertEqual(
+            guardrails["task_failure_streak_quarantine"][0]["quarantine_disposition"],
+            "invalid_failure_count",
+        )
 
-        self.assertEqual(record["count"], 0)
-        self.assertIsNone(record["first_failure_at"])
-        self.assertIsNone(record["last_failure_at"])
+    def test_migrate_state_preserves_only_bound_current_failure_streaks(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        observed = (now - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+        future = (now + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+        valid = {
+            "schema_version": 2,
+            "task_id": "TASK-VALID",
+            "logical_agent_id": "codex",
+            "provider": "codex",
+            "signature": "dispatch:fatal:reason:task",
+            "signature_scope": "exact_dispatch",
+            "dispatch_task_signature": "task-signature",
+            "dispatch_event_key": "event-key",
+            "count": 2,
+            "first_failure_at": observed,
+            "last_failure_at": observed,
+        }
+        raw = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "valid": valid,
+                    "future": {**valid, "task_id": "TASK-FUTURE", "last_failure_at": future},
+                    "unbound": {
+                        **valid,
+                        "task_id": "TASK-UNBOUND",
+                        "signature_scope": "runtime_unbound",
+                        "dispatch_task_signature": None,
+                        "dispatch_event_key": None,
+                    },
+                    "future-schema": {**valid, "task_id": "TASK-SCHEMA", "schema_version": 99},
+                }
+            }
+        }
+
+        migrated = runtime_state.migrate_state(raw, {"agents": {"codex": {"provider": "codex"}}})
+        guardrails = migrated["provider_guardrails"]
+
+        self.assertEqual(len(guardrails["task_failure_streaks"]), 1)
+        self.assertEqual(next(iter(guardrails["task_failure_streaks"].values()))["task_id"], "TASK-VALID")
+        self.assertEqual(
+            {item["quarantine_disposition"] for item in guardrails["task_failure_streak_quarantine"]},
+            {"future_failure_time", "unbound_dispatch_signature", "future_schema_version"},
+        )
 
     def test_load_runtime_state_preserves_worker_worktree_cleanup_summary(self) -> None:
         last_run = {
@@ -252,3 +305,59 @@ class LoadRuntimeStateTests(unittest.TestCase):
         state = runtime_state.load_runtime_state(self.config)
 
         self.assertEqual(state["worker_worktree_cleanup"]["last_run"], last_run)
+
+    def test_runtime_state_lock_is_reentrant_and_serializes_other_threads(self) -> None:
+        acquired = threading.Event()
+
+        def contender() -> None:
+            with runtime_state.runtime_state_lock(self.config):
+                acquired.set()
+
+        with runtime_state.runtime_state_lock(self.config):
+            with runtime_state.runtime_state_lock(self.config):
+                thread = threading.Thread(target=contender, daemon=True)
+                thread.start()
+                time.sleep(0.05)
+                self.assertFalse(acquired.is_set())
+
+        thread.join(timeout=1.0)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(acquired.is_set())
+
+    def test_canonical_task_lock_uses_stable_sidecar_and_is_reentrant(self) -> None:
+        status_file = self.root / "ai-status.json"
+        expected = self.root / ".orchestrator" / "task-state.lock"
+
+        with runtime_state.canonical_task_state_lock_file(status_file):
+            with runtime_state.canonical_task_state_lock_file(status_file):
+                self.assertTrue(expected.exists())
+
+        self.assertEqual(runtime_state.canonical_task_state_lock_path(status_file), expected)
+
+    def test_runtime_admission_fails_closed_for_queued_running_or_admitted_task(self) -> None:
+        queued_events = [{"event_id": "evt-1", "task_id": "TASK-1"}]
+        state = runtime_state.default_state()
+        state["queue"]["events"] = {"evt-1": {"status": "queued"}}
+        state["workers"] = {
+            "run-active": {
+                "run_id": "run-active",
+                "task_id": "TASK-1",
+                "status": "running",
+                "execution_admission": {"event_key": "event-key"},
+            }
+        }
+
+        decision = runtime_state.inspect_task_runtime_admission(state, queued_events, "TASK-1")
+
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["queue_event_ids"], ["evt-1"])
+        self.assertEqual(decision["worker_run_ids"], ["run-active"])
+        self.assertEqual(decision["admitted_run_ids"], ["run-active"])
+
+    def test_runtime_admission_guard_holds_snapshot_and_allows_clear_task(self) -> None:
+        self._write_json(self.root / "state.json", runtime_state.default_state())
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+
+        with runtime_state.task_runtime_admission_guard(self.config, "TASK-CLEAR") as decision:
+            self.assertTrue(decision["allowed"])
+            self.assertEqual(decision["reason"], "runtime_clear")

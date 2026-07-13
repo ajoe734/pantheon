@@ -34,6 +34,7 @@ from approval_queue import prune_stale_approvals, resolve_approval
 from adapters.base import DeliveryRequest
 from common import (
     agent_config_for,
+    approval_tool_input_signature,
     command_exists,
     config_path,
     display_name_for,
@@ -72,7 +73,16 @@ from dispatch_policy import (
 from github_bus import sync_github_bus
 from provider_permissions import provider_capabilities as build_provider_capabilities, write_provider_capabilities
 from rebase_helper import continue_or_skip_empty
-from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, save_runtime_state
+from runtime_state import (
+    canonical_task_state_lock_file,
+    load_approval_state,
+    load_event_queue,
+    load_runtime_state,
+    prune_worker_records,
+    queue_event_record,
+    runtime_state_lock,
+    save_runtime_state,
+)
 from runtime_state import enqueue_event
 from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
@@ -238,12 +248,13 @@ def clear_supervisor_pid(config: dict[str, Any]) -> None:
         return
     if current == str(os.getpid()):
         try:
-            state = load_runtime_state(config)
-            supervisor_state = state.setdefault("supervisor", {})
-            supervisor_state["pid"] = os.getpid()
-            supervisor_state["lifecycle"] = "stopping"
-            supervisor_state["last_heartbeat_at"] = utc_now()
-            save_runtime_state(config, state)
+            with runtime_state_lock(config):
+                state = load_runtime_state(config)
+                supervisor_state = state.setdefault("supervisor", {})
+                supervisor_state["pid"] = os.getpid()
+                supervisor_state["lifecycle"] = "stopping"
+                supervisor_state["last_heartbeat_at"] = utc_now()
+                save_runtime_state(config, state)
         except Exception:
             pass
         path.unlink(missing_ok=True)
@@ -784,15 +795,16 @@ def stamp_supervisor_runtime_state(
 
 def bootstrap_supervisor_runtime_state(config: dict[str, Any], *, lifecycle: str = "starting") -> dict[str, Any]:
     heartbeat_at = utc_now()
-    state = load_runtime_state(config)
-    stamp_supervisor_runtime_state(
-        config,
-        state,
-        planning_state=load_discussion_planning_state(),
-        heartbeat_at=heartbeat_at,
-        lifecycle=lifecycle,
-    )
-    save_runtime_state(config, state)
+    with runtime_state_lock(config):
+        state = load_runtime_state(config)
+        stamp_supervisor_runtime_state(
+            config,
+            state,
+            planning_state=load_discussion_planning_state(),
+            heartbeat_at=heartbeat_at,
+            lifecycle=lifecycle,
+        )
+        save_runtime_state(config, state)
     return state
 
 
@@ -1299,6 +1311,21 @@ def request_snapshot(request: DeliveryRequest) -> dict[str, Any]:
 
 
 def request_from_snapshot(snapshot: dict[str, Any]) -> DeliveryRequest:
+    if not isinstance(snapshot, dict):
+        raise ValueError("worker request snapshot must be a mapping")
+    required = ("agent_id", "provider", "delivery_mode", "message")
+    missing = [key for key in required if not isinstance(snapshot.get(key), str) or not snapshot.get(key).strip()]
+    if missing:
+        raise ValueError(f"worker request snapshot missing required fields: {','.join(missing)}")
+    context_files = snapshot.get("context_files", []) or []
+    target_files = snapshot.get("target_files", []) or []
+    metadata = snapshot.get("metadata", {}) or {}
+    if not isinstance(context_files, list) or not all(isinstance(value, str) for value in context_files):
+        raise ValueError("worker request snapshot context_files must be a list of strings")
+    if not isinstance(target_files, list) or not all(isinstance(value, str) for value in target_files):
+        raise ValueError("worker request snapshot target_files must be a list of strings")
+    if not isinstance(metadata, dict):
+        raise ValueError("worker request snapshot metadata must be a mapping")
     return DeliveryRequest(
         agent_id=snapshot["agent_id"],
         provider=snapshot["provider"],
@@ -1306,9 +1333,9 @@ def request_from_snapshot(snapshot: dict[str, Any]) -> DeliveryRequest:
         message=snapshot["message"],
         task_id=snapshot.get("task_id"),
         reason=snapshot.get("reason"),
-        context_files=list(snapshot.get("context_files", []) or []),
-        target_files=list(snapshot.get("target_files", []) or []),
-        metadata=dict(snapshot.get("metadata", {}) or {}),
+        context_files=list(context_files),
+        target_files=list(target_files),
+        metadata=dict(metadata),
     )
 
 
@@ -2532,12 +2559,6 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 changed = True
             continue
         record = queue_status(state, event_id)
-        if record.get("status") in {"started", "manual_pending", "completed", "failed"}:
-            continue
-        if record.get("status") == "retry_backoff":
-            next_retry_at = _parse_iso_utc(str(record.get("next_retry_at") or ""))
-            if next_retry_at is not None and next_retry_at > datetime.now(timezone.utc):
-                continue
         active_worker = next(
             (
                 worker
@@ -2547,7 +2568,45 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             None,
         )
         if active_worker:
-            desired_status = "manual_pending" if active_worker.get("status") in {"manual_pending", "waiting_approval"} else "started"
+            # Runtime-state migration rebuilds live queue records as ``started``.
+            # Re-admit the exact same run before honoring that cached status;
+            # otherwise a restart turns the recovery branch below into dead
+            # code and a superseded worker can continue mutating the repo.
+            post_launch_admitted = True
+            if is_execution_dispatch_reason(str(event.get("reason") or "")):
+                admission = fresh_execution_dispatch_admission(
+                    config,
+                    state,
+                    active_worker,
+                    queue_events_by_id={str(event_id): event},
+                    audit_failure_kind="active_worker_recovery",
+                )
+                post_launch_admitted = bool(admission.get("admitted"))
+                if post_launch_admitted and admission.get("reason") == REASON_OWNED_READY:
+                    post_launch_admitted = bool(sync_dispatched_task_status(config, event))
+                    if post_launch_admitted:
+                        post_launch_admitted = refresh_execution_dispatch_baseline_after_status_sync(
+                            config,
+                            state,
+                            event,
+                            worker_run_id=str(active_worker.get("run_id") or ""),
+                        )
+            if not post_launch_admitted:
+                supersede_worker_after_stale_dispatch_cas(
+                    config,
+                    state,
+                    active_worker,
+                    event,
+                    record=record,
+                )
+                changed = True
+                continue
+
+            desired_status = (
+                "manual_pending"
+                if active_worker.get("status") in {"manual_pending", "waiting_approval", "suspended_approval"}
+                else "started"
+            )
             if record.get("status") != desired_status or record.get("run_id") != active_worker.get("run_id"):
                 record["status"] = desired_status
                 record["run_id"] = active_worker.get("run_id") or event_id
@@ -2555,35 +2614,14 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
-                post_launch_admitted = True
-                if is_execution_dispatch_reason(str(event.get("reason") or "")):
-                    admission = fresh_execution_dispatch_admission(
-                        config,
-                        state,
-                        active_worker,
-                        queue_events_by_id={str(event_id): event},
-                        audit_failure_kind="active_worker_recovery",
-                    )
-                    post_launch_admitted = bool(admission.get("admitted"))
-                    if post_launch_admitted and admission.get("reason") == REASON_OWNED_READY:
-                        post_launch_admitted = bool(sync_dispatched_task_status(config, event))
-                        if post_launch_admitted:
-                            post_launch_admitted = refresh_execution_dispatch_baseline_after_status_sync(
-                                config,
-                                state,
-                                event,
-                                worker_run_id=str(active_worker.get("run_id") or ""),
-                            )
-                if not post_launch_admitted:
-                    supersede_worker_after_stale_dispatch_cas(
-                        config,
-                        state,
-                        active_worker,
-                        event,
-                        record=record,
-                    )
                 changed = True
             continue
+        if record.get("status") in {"started", "manual_pending", "completed", "failed"}:
+            continue
+        if record.get("status") == "retry_backoff":
+            next_retry_at = _parse_iso_utc(str(record.get("next_retry_at") or ""))
+            if next_retry_at is not None and next_retry_at > datetime.now(timezone.utc):
+                continue
         skip_message = stale_dispatch_skip_message(config, event, task_map)
         if skip_message:
             record["status"] = "completed"
@@ -3147,14 +3185,180 @@ def active_worker_refs_for_agent_id(
     return sorted(set(refs))
 
 
-def terminate_worker_pid(pid: int | None) -> bool:
-    if not pid:
+def _worker_process_group_alive(pid: int, process_group_id: int | None) -> bool:
+    if process_group_id == pid:
+        try:
+            os.killpg(process_group_id, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+    return pid_is_alive(pid)
+
+
+def _reap_worker_child(pid: int) -> None:
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        pass
+
+
+def terminate_worker_pid(
+    pid: int | None,
+    *,
+    grace_seconds: float = 1.0,
+    kill_wait_seconds: float = 0.5,
+) -> bool:
+    """Terminate the worker's complete session and reap its wrapper child."""
+
+    try:
+        worker_pid = int(pid or 0)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if worker_pid <= 1 or worker_pid == os.getpid():
         return False
     try:
-        os.kill(pid, signal.SIGTERM)
+        process_group_id = os.getpgid(worker_pid)
+    except OSError:
+        _reap_worker_child(worker_pid)
+        return False
+    # A managed worker always owns a new session.  A record that points back
+    # into the supervisor's process group is corrupt; signalling it could kill
+    # the supervisor or an unrelated launcher/test process.
+    if process_group_id == os.getpgrp():
+        return False
+    # Every managed worker is launched with start_new_session=True.  Refuse to
+    # signal an inherited group if a corrupt record points at a non-leader PID.
+    group_owned = process_group_id == worker_pid
+    try:
+        if group_owned:
+            os.killpg(process_group_id, signal.SIGTERM)
+        else:
+            os.kill(worker_pid, signal.SIGTERM)
+    except ProcessLookupError:
+        _reap_worker_child(worker_pid)
+        return False
     except OSError:
         return False
+
+    deadline = time.monotonic() + max(0.0, float(grace_seconds))
+    while _worker_process_group_alive(worker_pid, process_group_id if group_owned else None):
+        _reap_worker_child(worker_pid)
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.02)
+    if _worker_process_group_alive(worker_pid, process_group_id if group_owned else None):
+        try:
+            if group_owned:
+                os.killpg(process_group_id, signal.SIGKILL)
+            else:
+                os.kill(worker_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        kill_deadline = time.monotonic() + max(0.0, float(kill_wait_seconds))
+        while _worker_process_group_alive(worker_pid, process_group_id if group_owned else None):
+            _reap_worker_child(worker_pid)
+            if time.monotonic() >= kill_deadline:
+                break
+            time.sleep(0.02)
+    _reap_worker_child(worker_pid)
     return True
+
+
+def _path_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def revoke_file_inbox_payload(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    reason: str,
+) -> bool:
+    """Tombstone an exact file-inbox delivery before removing its payload."""
+
+    if str(worker.get("mode") or "") != "file_inbox":
+        return False
+    payload_value = str(worker.get("payload_path") or "").strip()
+    run_id = str(worker.get("run_id") or "").strip()
+    if not payload_value or not run_id:
+        return False
+    payload_path = Path(payload_value).expanduser().resolve()
+    allowed_roots: list[Path] = []
+    try:
+        allowed_roots.append(config_path(config, "status_file").parent.resolve())
+    except KeyError:
+        pass
+    workspace_value = str(worker.get("workspace_path") or "").strip()
+    if workspace_value:
+        allowed_roots.append(Path(workspace_value).expanduser().resolve())
+    if not allowed_roots or not any(_path_within(payload_path, root) for root in allowed_roots):
+        worker["payload_revocation_error"] = "payload_path_outside_delivery_roots"
+        return False
+
+    current_body: bytes | None = None
+    try:
+        current_body = payload_path.read_bytes()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        worker["payload_revocation_error"] = f"payload_read_failed:{type(exc).__name__}"
+        return False
+    expected_hash = str((worker.get("metadata") or {}).get("payload_sha256") or "").strip()
+    marker = f"orchestrator-run-id: {run_id}".encode("utf-8")
+    exact_identity = bool(
+        current_body is not None
+        and marker in current_body
+        and expected_hash
+        and hashlib.sha256(current_body).hexdigest() == expected_hash
+    )
+    disposition = "payload_removed" if exact_identity else (
+        "payload_already_absent" if current_body is None else "payload_identity_mismatch"
+    )
+    tombstone_name = f".{payload_path.name}.{normalize_agent_id(run_id) or 'worker'}.revoked.json"
+    tombstone_path = payload_path.parent / tombstone_name
+    write_json(
+        tombstone_path,
+        {
+            "schema_version": 1,
+            "revoked_at": utc_now(),
+            "worker_run_id": run_id,
+            "task_id": worker.get("task_id"),
+            "queue_event_id": worker.get("queue_event_id"),
+            "payload_path": str(payload_path),
+            "reason": reason,
+            "disposition": disposition,
+        },
+    )
+    if exact_identity:
+        try:
+            payload_path.unlink()
+        except FileNotFoundError:
+            disposition = "payload_already_absent"
+        except OSError as exc:
+            worker["payload_revocation_error"] = f"payload_unlink_failed:{type(exc).__name__}"
+            return False
+    worker["payload_revoked_at"] = utc_now()
+    worker["payload_revocation_path"] = str(tombstone_path)
+    worker["payload_revocation_disposition"] = disposition
+    return exact_identity or current_body is None
+
+
+def retire_worker_delivery(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    reason: str,
+) -> bool:
+    # Revoke manual delivery first so a human cannot start it after runtime
+    # state has already declared the run terminal.
+    revoke_file_inbox_payload(config, worker, reason=reason)
+    return terminate_worker_pid(worker.get("pid"))
 
 
 def normalize_pr_url(config: dict[str, Any], url: str | None) -> str | None:
@@ -5347,6 +5551,8 @@ def _provider_guardrail_bucket(state: dict[str, Any]) -> dict[str, Any]:
         bucket["task_failure_streaks"] = {}
     if not isinstance(bucket.get("task_failure_streak_aliases"), dict):
         bucket["task_failure_streak_aliases"] = {}
+    if not isinstance(bucket.get("task_failure_streak_quarantine"), list):
+        bucket["task_failure_streak_quarantine"] = []
     return bucket
 
 
@@ -5935,7 +6141,39 @@ def prune_task_failure_streak_records(
     for key, record in list(bucket.items()):
         if not isinstance(record, dict):
             remove.add(str(key))
-            dispositions[str(key)] = "invalid"
+            dispositions[str(key)] = "quarantine:malformed_record"
+            continue
+        schema_version = record.get("schema_version")
+        count = record.get("count")
+        signature_scope = str(record.get("signature_scope") or "").strip()
+        first_at = _parse_iso_utc(str(record.get("first_failure_at") or ""))
+        last_at = _parse_iso_utc(str(record.get("last_failure_at") or ""))
+        quarantine_reason = None
+        if isinstance(schema_version, bool) or not isinstance(schema_version, int):
+            quarantine_reason = "missing_or_invalid_schema_version"
+        elif schema_version > 2:
+            quarantine_reason = "future_schema_version"
+        elif schema_version != 2:
+            quarantine_reason = "unsupported_schema_version"
+        elif signature_scope != "exact_dispatch":
+            quarantine_reason = "unbound_dispatch_signature"
+        elif not str(record.get("signature") or "").strip():
+            quarantine_reason = "signature_missing"
+        elif not str(record.get("dispatch_task_signature") or "").strip():
+            quarantine_reason = "dispatch_task_signature_missing"
+        elif not str(record.get("dispatch_event_key") or "").strip():
+            quarantine_reason = "dispatch_event_key_missing"
+        elif isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            quarantine_reason = "invalid_failure_count"
+        elif first_at is None or last_at is None:
+            quarantine_reason = "missing_or_invalid_failure_time"
+        elif first_at > now_dt or last_at > now_dt:
+            quarantine_reason = "future_failure_time"
+        elif last_at < first_at:
+            quarantine_reason = "failure_time_order_invalid"
+        if quarantine_reason:
+            remove.add(str(key))
+            dispositions[str(key)] = f"quarantine:{quarantine_reason}"
             continue
         task_id = str(record.get("task_id") or "").strip()
         task = task_map.get(task_id)
@@ -5993,14 +6231,35 @@ def prune_task_failure_streak_records(
     for key in sorted(remove):
         record = bucket.get(key)
         if isinstance(record, dict):
-            history.append(
+            archived_record = {
+                **record,
+                "record_key": key,
+                "archived_at": utc_now(),
+                "archive_disposition": dispositions.get(key),
+            }
+            history.append(archived_record)
+            if str(dispositions.get(key) or "").startswith("quarantine:"):
+                quarantine = guardrails.setdefault("task_failure_streak_quarantine", [])
+                quarantine.append(
+                    {
+                        **record,
+                        "record_key": key,
+                        "quarantined_at": utc_now(),
+                        "quarantine_disposition": str(dispositions.get(key)).split(":", 1)[1],
+                    }
+                )
+                del quarantine[:-200]
+        elif str(dispositions.get(key) or "").startswith("quarantine:"):
+            quarantine = guardrails.setdefault("task_failure_streak_quarantine", [])
+            quarantine.append(
                 {
-                    **record,
                     "record_key": key,
-                    "archived_at": utc_now(),
-                    "archive_disposition": dispositions.get(key),
+                    "raw_record": repr(record),
+                    "quarantined_at": utc_now(),
+                    "quarantine_disposition": str(dispositions.get(key)).split(":", 1)[1],
                 }
             )
+            del quarantine[:-200]
     del history[:-200]
     _drop_failure_streak_keys(state, remove)
     return True
@@ -6609,15 +6868,8 @@ def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
 def canonical_task_state_lock(config: dict[str, Any]):
     """Serialize every canonical task mutation across supervisor/ai_status."""
 
-    status_root = config_path(config, "status_file").parent
-    lock_path = status_root / ".orchestrator" / "task-state.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    with canonical_task_state_lock_file(config_path(config, "status_file")):
+        yield
 
 
 def canonical_task_mutation_signature(
@@ -6962,8 +7214,11 @@ def supersede_worker_after_stale_dispatch_cas(
     record: dict[str, Any],
 ) -> None:
     if isinstance(worker, dict):
-        if pid_is_alive(worker.get("pid")):
-            terminate_worker_pid(worker.get("pid"))
+        retire_worker_delivery(
+            config,
+            worker,
+            reason="Post-launch canonical admission failed.",
+        )
         worker["status"] = "superseded"
         worker["last_event_at"] = utc_now()
         worker["last_error"] = "Worker cancelled because post-launch dispatch signature lost canonical CAS."
@@ -7363,8 +7618,7 @@ def maybe_reassign_tasks_from_failure_streaks(config: dict[str, Any], state: dic
         fresh_task_map = task_index_from_status(config, load_status(config))
     except KeyError:
         fresh_task_map = {}
-    if fresh_task_map:
-        prune_task_failure_streak_records(config, state, fresh_task_map)
+    prune_task_failure_streak_records(config, state, fresh_task_map)
     threshold = _safe_int(settings.get("after_attempts", 2), 2, minimum=1)
     max_reassignments = _safe_int(
         settings.get("max_failure_streak_reassignments_per_cycle", 4),
@@ -7378,6 +7632,13 @@ def maybe_reassign_tasks_from_failure_streaks(config: dict[str, Any], state: dic
         if applied >= max_reassignments:
             break
         if not isinstance(record, dict):
+            continue
+        if (
+            record.get("schema_version") != 2
+            or str(record.get("signature_scope") or "") != "exact_dispatch"
+            or not str(record.get("dispatch_task_signature") or "").strip()
+            or not str(record.get("dispatch_event_key") or "").strip()
+        ):
             continue
         task_id = str(record.get("task_id") or "").strip()
         provider = str(record.get("provider") or "").strip()
@@ -7456,13 +7717,21 @@ def schedule_queue_event_retry(config: dict[str, Any], record: dict[str, Any], *
 def request_for_worker(config: dict[str, Any], worker: dict[str, Any]) -> DeliveryRequest | None:
     snapshot = worker.get("request_snapshot")
     if isinstance(snapshot, dict) and snapshot.get("message"):
-        return request_from_snapshot(snapshot)
+        try:
+            return request_from_snapshot(snapshot)
+        except (KeyError, TypeError, ValueError) as exc:
+            worker["request_reconstruction_error"] = f"{type(exc).__name__}: {exc}"
+            return None
     queue_event_id = worker.get("queue_event_id")
     if not queue_event_id:
         return None
     for event in load_event_queue(config):
         if event.get("event_id") == queue_event_id:
-            return build_request(config, event)
+            try:
+                return build_request(config, event)
+            except (KeyError, TypeError, ValueError) as exc:
+                worker["request_reconstruction_error"] = f"{type(exc).__name__}: {exc}"
+                return None
     return None
 
 
@@ -7495,6 +7764,11 @@ def refresh_relaunch_request_context(
                 )
                 if not admission.get("admitted"):
                     if isinstance(worker, dict):
+                        retire_worker_delivery(
+                            config,
+                            worker,
+                            reason="Retry canonical admission failed before relaunch.",
+                        )
                         worker["status"] = "superseded"
                         worker["last_event_at"] = utc_now()
                         worker["last_error"] = (
@@ -7566,6 +7840,11 @@ def refresh_relaunch_request_context(
             return True
     except Exception as exc:
         if isinstance(worker, dict):
+            retire_worker_delivery(
+                config,
+                worker,
+                reason="Retry canonical context refresh failed closed.",
+            )
             worker["status"] = "superseded"
             worker["last_event_at"] = utc_now()
             worker["last_error"] = f"Retry canonical refresh failed closed: {type(exc).__name__}."
@@ -7590,8 +7869,11 @@ def relaunched_worker_passes_final_admission(
     )
     if not admission.get("applicable") or admission.get("admitted"):
         return True
-    if pid_is_alive(worker.get("pid")):
-        terminate_worker_pid(worker.get("pid"))
+    retire_worker_delivery(
+        config,
+        worker,
+        reason="Retry post-launch canonical admission failed.",
+    )
     worker["status"] = "superseded"
     worker["last_event_at"] = utc_now()
     worker["last_error"] = "Relaunched worker cancelled because final canonical signature admission failed."
@@ -7817,6 +8099,107 @@ def maybe_trigger_retry_or_fallback(
     return False, False
 
 
+def _retry_due_worker(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any],
+    worker: dict[str, Any],
+    now: datetime,
+) -> bool:
+    if worker.get("status") != "retry_backoff":
+        return False
+    next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
+    if next_retry_at is None:
+        error = "Retry record quarantined because next_retry_at is missing or malformed."
+        retire_worker_delivery(config, worker, reason=error)
+        worker["status"] = "failed"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = error
+        worker["retry_quarantined_at"] = utc_now()
+        finalize_queue_event_record(config, state, worker, "failed", error)
+        write_activity_log(
+            config,
+            {
+                "type": "worker_retry_quarantined",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": error,
+                "worker_run_id": worker.get("run_id"),
+            },
+        )
+        return True
+    if next_retry_at > now:
+        return False
+    request = request_for_worker(config, worker)
+    if request is None:
+        error = str(
+            worker.get("request_reconstruction_error")
+            or "Retry was due, but the original request could not be reconstructed."
+        )
+        retire_worker_delivery(config, worker, reason=error)
+        worker["status"] = "failed"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = error
+        worker["retry_quarantined_at"] = utc_now()
+        finalize_queue_event_record(config, state, worker, "failed", error)
+        write_activity_log(
+            config,
+            {
+                "type": "worker_retry_quarantined",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": error,
+                "worker_run_id": worker.get("run_id"),
+            },
+        )
+        return True
+    if not refresh_relaunch_request_context(
+        config,
+        request,
+        queue_event_id=str(worker.get("queue_event_id") or "") or None,
+        state=state,
+        worker=worker,
+    ):
+        return True
+    ok, outcome, _ = start_worker_for_request(
+        config,
+        state,
+        provider_report,
+        request,
+        queue_event_id=worker.get("queue_event_id"),
+        attempt_count=_safe_int(worker.get("attempt_count"), 0, minimum=0) + 1,
+        event_id_for_log=worker.get("queue_event_id"),
+        parent_run_id=str(worker.get("run_id") or "") or None,
+        activity_type="worker_retried",
+        activity_message=f"Worker retry launched after backoff from {worker.get('run_id') or 'unknown-run'}",
+    )
+    if ok:
+        if not relaunched_worker_passes_final_admission(
+            config,
+            state,
+            worker_run_id=str(outcome or ""),
+            queue_event_id=str(worker.get("queue_event_id") or "") or None,
+        ):
+            worker["status"] = "superseded"
+            worker["last_event_at"] = utc_now()
+            return True
+        worker["status"] = "retried"
+        worker["superseded_by_run_id"] = outcome
+        worker["last_event_at"] = utc_now()
+        if worker.get("queue_event_id"):
+            record = queue_status(state, str(worker["queue_event_id"]))
+            record["status"] = "started"
+            record["run_id"] = outcome
+            for key in ("execution_outcome", "retry_not_before", "triage_required", "error"):
+                record.pop(key, None)
+    else:
+        worker["status"] = "failed"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = outcome
+        finalize_queue_event_record(config, state, worker, "failed", str(outcome or "Retry delivery failed."))
+    return True
+
+
 def retry_due_workers(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -7825,73 +8208,31 @@ def retry_due_workers(
 ) -> bool:
     changed = False
     for worker in list(state.get("workers", {}).values()):
-        if worker.get("status") != "retry_backoff":
+        if not isinstance(worker, dict):
             continue
-        next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
-        if next_retry_at is None or next_retry_at > now:
-            continue
-        request = request_for_worker(config, worker)
-        if request is None:
+        try:
+            changed = _retry_due_worker(config, state, provider_report, worker, now) or changed
+        except Exception as exc:
+            # One malformed retry record must never abort the rest of the
+            # cycle or become a permanent restart crash loop.
+            error = f"Retry record quarantined after {type(exc).__name__}: {exc}"
+            retire_worker_delivery(config, worker, reason=error)
             worker["status"] = "failed"
             worker["last_event_at"] = utc_now()
+            worker["last_error"] = error
+            worker["retry_quarantined_at"] = utc_now()
+            finalize_queue_event_record(config, state, worker, "failed", error)
             write_activity_log(
                 config,
                 {
-                    "type": "worker_failed",
+                    "type": "worker_retry_quarantined",
                     "provider": worker.get("provider"),
                     "task_id": worker.get("task_id"),
-                    "message": "Retry was due, but the original request could not be reconstructed.",
-                    "worker_run_id": worker["run_id"],
+                    "message": error,
+                    "worker_run_id": worker.get("run_id"),
                 },
             )
             changed = True
-            continue
-        if not refresh_relaunch_request_context(
-            config,
-            request,
-            queue_event_id=str(worker.get("queue_event_id") or "") or None,
-            state=state,
-            worker=worker,
-        ):
-            changed = True
-            continue
-        ok, outcome, _ = start_worker_for_request(
-            config,
-            state,
-            provider_report,
-            request,
-            queue_event_id=worker.get("queue_event_id"),
-            attempt_count=_safe_int(worker.get("attempt_count"), 0, minimum=0) + 1,
-            event_id_for_log=worker.get("queue_event_id"),
-            parent_run_id=worker["run_id"],
-            activity_type="worker_retried",
-            activity_message=f"Worker retry launched after backoff from {worker['run_id']}",
-        )
-        if ok:
-            if not relaunched_worker_passes_final_admission(
-                config,
-                state,
-                worker_run_id=str(outcome or ""),
-                queue_event_id=str(worker.get("queue_event_id") or "") or None,
-            ):
-                worker["status"] = "superseded"
-                worker["last_event_at"] = utc_now()
-                changed = True
-                continue
-            worker["status"] = "retried"
-            worker["superseded_by_run_id"] = outcome
-            worker["last_event_at"] = utc_now()
-            if worker.get("queue_event_id"):
-                record = queue_status(state, str(worker["queue_event_id"]))
-                record["status"] = "started"
-                record["run_id"] = outcome
-                for key in ("execution_outcome", "retry_not_before", "triage_required", "error"):
-                    record.pop(key, None)
-        else:
-            worker["status"] = "failed"
-            worker["last_event_at"] = utc_now()
-            worker["last_error"] = outcome
-        changed = True
     return changed
 
 
@@ -7945,6 +8286,144 @@ def worker_supports_approval_resume(config: dict[str, Any], worker: dict[str, An
         _provider_uses_claude_cli(config, worker.get("provider"))
         and (worker.get("session_id") or worker.get("resume_token"))
     )
+
+
+def _deferred_tool_use_fields(worker: dict[str, Any]) -> tuple[str, str, Any]:
+    deferred = worker.get("deferred_tool_use")
+    if not isinstance(deferred, dict):
+        return "", "", None
+    tool_use_id = str(
+        deferred.get("tool_use_id")
+        or deferred.get("toolUseId")
+        or deferred.get("id")
+        or ""
+    ).strip()
+    tool_name = str(deferred.get("tool_name") or deferred.get("toolName") or deferred.get("name") or "").strip()
+    tool_input = deferred.get("tool_input")
+    if tool_input is None:
+        tool_input = deferred.get("toolInput")
+    if tool_input is None:
+        tool_input = deferred.get("input")
+    return tool_use_id, tool_name, tool_input
+
+
+def _approval_deferred_binding_mismatch(
+    worker: dict[str, Any],
+    approval: dict[str, Any],
+) -> str | None:
+    if str(approval.get("worker_run_id") or "").strip() != str(worker.get("run_id") or "").strip():
+        return "worker_run_id_mismatch"
+    if not str(worker.get("task_id") or "").strip() or str(approval.get("task_id") or "").strip() != str(
+        worker.get("task_id") or ""
+    ).strip():
+        return "task_id_mismatch"
+    worker_session = str(worker.get("session_id") or worker.get("resume_token") or "").strip()
+    if not worker_session or str(approval.get("session_id") or "").strip() != worker_session:
+        return "session_id_mismatch"
+    approval_provider = normalize_agent_id(str(approval.get("provider") or ""))
+    worker_provider = normalize_agent_id(str(worker.get("provider") or ""))
+    if not approval_provider or approval_provider != worker_provider:
+        return "provider_mismatch"
+    deferred_id, deferred_name, deferred_input = _deferred_tool_use_fields(worker)
+    if not deferred_id or str(approval.get("tool_use_id") or "").strip() != deferred_id:
+        return "deferred_tool_use_id_mismatch"
+    approval_tool_name = str(approval.get("tool_name") or "").strip()
+    if deferred_name and approval_tool_name != deferred_name:
+        return "deferred_tool_name_mismatch"
+    approval_signature = str(approval.get("tool_input_signature") or "").strip()
+    if not approval_signature:
+        return "tool_input_signature_missing"
+    if deferred_input is None:
+        return "deferred_tool_input_missing"
+    if approval_signature != approval_tool_input_signature(deferred_input):
+        return "tool_input_signature_mismatch"
+    return None
+
+
+def pending_approval_for_worker(
+    worker: dict[str, Any],
+    pending: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Select the approval for the exact deferred tool use, not list order."""
+
+    if not pending:
+        return None
+    deferred_id, _deferred_name, _deferred_input = _deferred_tool_use_fields(worker)
+    if not deferred_id:
+        # Legacy records cannot later pass resume admission, but retaining the
+        # old pending association lets the UI surface/deny them deterministically.
+        return pending[0]
+    deferred_approval_id = str(worker.get("deferred_action") or "").strip()
+    candidates = [
+        approval
+        for approval in pending
+        if not deferred_approval_id
+        or str(approval.get("approval_id") or "").strip() == deferred_approval_id
+    ]
+    for approval in candidates:
+        if approval.get("status") not in {None, "pending"}:
+            continue
+        if _approval_deferred_binding_mismatch(worker, approval) is None:
+            return approval
+    return None
+
+
+def approval_resume_binding_mismatch(
+    worker: dict[str, Any],
+    approval: dict[str, Any] | None,
+) -> str | None:
+    if not isinstance(approval, dict):
+        return "approval_missing"
+    approval_id = str(approval.get("approval_id") or "").strip()
+    if not approval_id:
+        return "approval_id_missing"
+    if approval.get("status") not in {None, "resolved"} or approval.get("decision") != "allow":
+        return "approval_not_resolved_allow"
+    if str(worker.get("deferred_action") or "").strip() != approval_id:
+        return "deferred_approval_id_mismatch"
+    mismatch = _approval_deferred_binding_mismatch(worker, approval)
+    if mismatch:
+        return mismatch
+    consumed_ids = {str(value) for value in (worker.get("approval_resume_consumed_ids") or [])}
+    if approval_id in consumed_ids or worker.get("last_approval_id") == approval_id:
+        return "approval_already_consumed"
+    return None
+
+
+def resolved_approval_for_worker(
+    worker: dict[str, Any],
+    resolved: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    deferred_approval_id = str(worker.get("deferred_action") or "").strip()
+    if not deferred_approval_id:
+        return None
+    for approval in reversed(resolved):
+        if str(approval.get("approval_id") or "").strip() == deferred_approval_id:
+            return approval
+    return None
+
+
+def consume_approval_resume_once(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    approval: dict[str, Any],
+) -> bool:
+    approval_id = str(approval.get("approval_id") or "").strip()
+    consumed_ids = [str(value) for value in (worker.get("approval_resume_consumed_ids") or []) if str(value)]
+    if not approval_id or approval_id in consumed_ids or worker.get("last_approval_id") == approval_id:
+        return False
+    consumed_ids.append(approval_id)
+    worker["approval_resume_consumed_ids"] = list(dict.fromkeys(consumed_ids))[-20:]
+    worker["approval_resume_consumed_at"] = utc_now()
+    worker["last_approval_id"] = approval_id
+    worker["approval_resume_state"] = "consumed_pre_spawn"
+    try:
+        save_runtime_state(config, state)
+    except Exception:
+        worker["approval_resume_state"] = "consume_persist_failed"
+        return False
+    return True
 
 
 def resume_claude_worker(
@@ -8061,6 +8540,89 @@ def resume_claude_worker(
     }
 
 
+def resume_approved_claude_worker(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    approval: dict[str, Any],
+    provider_report: dict[str, Any],
+    *,
+    task_map: dict[str, dict[str, Any]],
+    queued_events_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Consume one exact approval and resume under pre/post canonical CAS."""
+
+    mismatch = approval_resume_binding_mismatch(worker, approval)
+    if mismatch:
+        return {"status": "rejected", "mismatch": mismatch}
+    if pid_is_alive(worker.get("pid")):
+        return {"status": "awaiting_process_exit", "mismatch": None}
+    if not worker_matches_current_assignment(config, worker, task_map):
+        return {"status": "rejected", "mismatch": "assignment_changed"}
+    pre_admission = fresh_execution_dispatch_admission(
+        config,
+        state,
+        worker,
+        queue_events_by_id=queued_events_by_id,
+        audit_failure_kind="approval_resume_pre_spawn",
+    )
+    if not pre_admission.get("applicable") or not pre_admission.get("admitted"):
+        return {
+            "status": "rejected",
+            "mismatch": pre_admission.get("mismatch") or "dispatch_admission_not_applicable",
+        }
+    if not consume_approval_resume_once(config, state, worker, approval):
+        return {"status": "rejected", "mismatch": "approval_consume_failed_or_replayed"}
+
+    try:
+        resumed = resume_claude_worker(
+            config,
+            state,
+            worker,
+            provider_report,
+            approval=approval,
+        )
+    except Exception as exc:
+        resumed = None
+        worker["approval_resume_error"] = f"{type(exc).__name__}: {exc}"
+    if not resumed:
+        worker["approval_resume_state"] = "spawn_failed"
+        worker["last_error"] = "Approved worker resume failed before a process was launched."
+        save_runtime_state(config, state)
+        return {"status": "spawn_failed", "mismatch": worker.get("approval_resume_error")}
+
+    post_admission = fresh_execution_dispatch_admission(
+        config,
+        state,
+        worker,
+        queue_events_by_id=queued_events_by_id,
+        audit_failure_kind="approval_resume_post_spawn",
+    )
+    if not post_admission.get("applicable") or not post_admission.get("admitted"):
+        retire_worker_delivery(
+            config,
+            worker,
+            reason="Approval resume lost canonical admission after process spawn.",
+        )
+        worker["status"] = "superseded"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = (
+            "Approval-resumed worker cancelled because post-spawn canonical admission failed: "
+            f"{post_admission.get('mismatch') or 'not_applicable'}."
+        )
+        worker["approval_resume_state"] = "post_spawn_superseded"
+        finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+        save_runtime_state(config, state)
+        return {"status": "superseded", "mismatch": post_admission.get("mismatch")}
+
+    worker["deferred_action"] = None
+    worker["deferred_tool_use"] = None
+    worker["approval_resume_state"] = "running"
+    worker["approval_resume_started_at"] = utc_now()
+    save_runtime_state(config, state)
+    return {"status": "resumed", "result": resumed, "mismatch": None}
+
+
 def supersede_worker_after_terminal_reducer_resolution(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -8098,10 +8660,11 @@ def reconcile_dead_approval_worker(
         return False
     if pid_is_alive(worker.get("pid")):
         return False
-    if pending and worker_supports_approval_resume(config, worker):
+    matched_pending = pending_approval_for_worker(worker, pending)
+    if matched_pending and worker_supports_approval_resume(config, worker):
         worker["status"] = "suspended_approval"
-        worker["deferred_action"] = pending[0].get("approval_id")
-        worker["last_event_at"] = pending[0].get("created_at") or worker.get("last_event_at") or utc_now()
+        worker["deferred_action"] = matched_pending.get("approval_id")
+        worker["last_event_at"] = matched_pending.get("created_at") or worker.get("last_event_at") or utc_now()
         if worker.get("queue_event_id"):
             queue_status(state, str(worker["queue_event_id"]))["status"] = "manual_pending"
         write_activity_log(
@@ -8110,9 +8673,9 @@ def reconcile_dead_approval_worker(
                 "type": "worker_waiting_approval",
                 "provider": worker.get("provider"),
                 "task_id": worker.get("task_id"),
-                "message": f"Worker suspended for approval {pending[0].get('approval_id')}",
+                "message": f"Worker suspended for approval {matched_pending.get('approval_id')}",
                 "worker_run_id": worker.get("run_id"),
-                "approval_id": pending[0].get("approval_id"),
+                "approval_id": matched_pending.get("approval_id"),
             },
         )
         return True
@@ -8139,19 +8702,26 @@ def reconcile_dead_approval_worker(
             except KeyError:
                 pass
     elif resolved:
-        latest = resolved[-1]
-        approval_id = str(latest.get("approval_id") or "") or None
-        if latest.get("decision") == "allow" and _provider_uses_claude_cli(config, worker.get("provider")):
-            resumed = resume_claude_worker(
+        latest = resolved_approval_for_worker(worker, resolved)
+        approval_id = str((latest or {}).get("approval_id") or "") or None
+        if latest and latest.get("decision") == "allow" and _provider_uses_claude_cli(config, worker.get("provider")):
+            resume_outcome = resume_approved_claude_worker(
                 config,
                 state,
                 worker,
+                latest,
                 provider_report or load_provider_report(config),
-                approval=latest,
+                task_map=task_map,
+                queued_events_by_id=queued_events_by_id,
             )
-            if resumed:
+            if resume_outcome.get("status") in {"resumed", "superseded"}:
                 return True
-        if latest.get("decision") == "deny":
+            failure_kind = "approval_resume_rejected"
+            failure_reason = (
+                "Approved worker resume failed closed: "
+                f"{resume_outcome.get('mismatch') or resume_outcome.get('status')}."
+            )
+        if latest and latest.get("decision") == "deny":
             failure_kind = "approval_denied"
             failure_reason = str(latest.get("note") or "Worker approval denied.")
 
@@ -8269,6 +8839,42 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             changed = True
         update_from_log(config, worker)
         alive = pid_is_alive(worker.get("pid"))
+        origin_reason = str((worker.get("request_snapshot", {}) or {}).get("reason") or "")
+        if worker.get("status") in active_worker_statuses and is_execution_dispatch_reason(origin_reason):
+            admission = fresh_execution_dispatch_admission(
+                config,
+                state,
+                worker,
+                queue_events_by_id=queued_events_by_id,
+                audit_failure_kind="poll_active_worker_recovery",
+            )
+            admitted = bool(admission.get("admitted"))
+            queued_event = queued_events_by_id.get(str(worker.get("queue_event_id") or ""))
+            if admitted and admission.get("reason") == REASON_OWNED_READY:
+                admitted = bool(queued_event and sync_dispatched_task_status(config, queued_event))
+                if admitted:
+                    admitted = refresh_execution_dispatch_baseline_after_status_sync(
+                        config,
+                        state,
+                        queued_event,
+                        worker_run_id=str(worker.get("run_id") or ""),
+                    )
+            if not admitted:
+                if alive:
+                    retire_worker_delivery(
+                        config,
+                        worker,
+                        reason="Poll active-worker canonical admission failed.",
+                    )
+                worker["status"] = "superseded"
+                worker["last_event_at"] = utc_now()
+                worker["last_error"] = (
+                    "Poll recovery cancelled worker because exact canonical dispatch admission failed: "
+                    f"{admission.get('mismatch') or 'post-start-baseline-failed'}."
+                )
+                finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+                changed = True
+                continue
         process_activity_advanced = False
         if alive and config.get("supervisor", {}).get("adaptive_stall_detection", True):
             previous_process_activity = worker.get("process_activity_snapshot")
@@ -8295,7 +8901,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     record["lease_owner"] = worker.get("run_id")
                     record["lease_expires_at"] = queue_lease_expiry(config, now)
         if alive and worker.get("status") in active_worker_statuses and worker_lease_is_expired(config, worker, now):
-            terminate_worker_pid(worker.get("pid"))
+            retire_worker_delivery(config, worker, reason="Worker lease expired.")
             worker["status"] = "failed"
             worker["last_event_at"] = utc_now()
             worker["last_error"] = (
@@ -8349,7 +8955,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             and worker.get("status") in active_worker_statuses
             and chair_review_worker_artifacts_applied(state, worker)
         ):
-            terminate_worker_pid(worker.get("pid"))
+            retire_worker_delivery(config, worker, reason="Chair review artifacts were accepted.")
             worker["status"] = "completed"
             worker["last_event_at"] = utc_now()
             clear_task_failure_streak(state, worker=worker)
@@ -8394,7 +9000,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if worker.get("status") == "superseded":
                 continue
             if alive:
-                terminate_worker_pid(worker.get("pid"))
+                retire_worker_delivery(
+                    config,
+                    worker,
+                    reason="Canonical task responsibility moved to another agent.",
+                )
             worker["status"] = "superseded"
             worker["last_event_at"] = utc_now()
             worker["last_error"] = "Worker superseded after task responsibility moved to another agent."
@@ -8427,7 +9037,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             and higher_priority_ready_task_exists(config, worker, task_map, state)
         ):
             if alive:
-                terminate_worker_pid(worker.get("pid"))
+                retire_worker_delivery(
+                    config,
+                    worker,
+                    reason="Higher-priority work superseded this worker.",
+                )
             worker["status"] = "superseded"
             worker["last_event_at"] = utc_now()
             worker["last_error"] = "Worker superseded to prioritize higher-priority review/finalize work."
@@ -8555,9 +9169,26 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
                 changed = True
                 continue
-            approval = pending[0]
+            approval = pending_approval_for_worker(worker, pending)
+            if approval is None:
+                next_status = "waiting_approval" if alive else "suspended_approval"
+                if (
+                    worker.get("status") != next_status
+                    or worker.get("last_approval_binding_error") != "no_exact_deferred_approval"
+                ):
+                    worker["status"] = next_status
+                    worker["last_approval_binding_error"] = "no_exact_deferred_approval"
+                    worker["last_event_at"] = worker.get("last_event_at") or utc_now()
+                    if worker.get("queue_event_id"):
+                        queue_status(state, worker["queue_event_id"])["status"] = "manual_pending"
+                    changed = True
+                continue
+            worker.pop("last_approval_binding_error", None)
             next_status = "waiting_approval" if pid_is_alive(worker.get("pid")) else "suspended_approval"
-            if worker.get("status") != next_status:
+            if (
+                worker.get("status") != next_status
+                or worker.get("deferred_action") != approval.get("approval_id")
+            ):
                 worker["status"] = next_status
                 worker["deferred_action"] = approval.get("approval_id")
                 worker["last_event_at"] = approval.get("created_at") or worker.get("last_event_at") or utc_now()
@@ -8582,11 +9213,19 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             continue
 
         if worker.get("status") in {"waiting_approval", "suspended_approval"} and resolved:
-            latest = resolved[-1]
-            if latest.get("approval_id") != worker.get("last_approval_id"):
-                worker["last_approval_id"] = latest.get("approval_id")
-                if latest.get("decision") == "allow" and _provider_uses_claude_cli(config, worker.get("provider")):
-                    resumed = resume_claude_worker(config, state, worker, provider_report, approval=latest)
+            latest = resolved_approval_for_worker(worker, resolved)
+            if latest and latest.get("decision") == "allow" and _provider_uses_claude_cli(config, worker.get("provider")):
+                resume_outcome = resume_approved_claude_worker(
+                    config,
+                    state,
+                    worker,
+                    latest,
+                    provider_report,
+                    task_map=task_map,
+                    queued_events_by_id=queued_events_by_id,
+                )
+                resumed = resume_outcome.get("result") if resume_outcome.get("status") == "resumed" else None
+                if resume_outcome.get("status") == "resumed":
                     write_activity_log(
                         config,
                         {
@@ -8602,53 +9241,78 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         },
                     )
                     changed = True
-                    if resumed:
-                        continue
-                if latest.get("decision") == "deny":
-                    worker["status"] = "failed"
-                    worker["last_event_at"] = utc_now()
-                    denial_reason = latest.get("note") or "Worker approval denied."
-                    worker["last_error"] = denial_reason
-                    reduced = reduce_execution_dispatch_terminal_failure(
-                        config,
-                        state,
-                        worker,
-                        task_map,
-                        reason=denial_reason,
-                        failure_kind="approval_denied",
-                        queue_events_by_id=queued_events_by_id,
-                        now=now,
-                    )
-                    if supersede_worker_after_terminal_reducer_resolution(
-                        config,
-                        state,
-                        worker,
-                        reduced,
-                        message="Ignored approval-denied outcome because canonical admission failed.",
-                    ):
-                        changed = True
-                        continue
-                    if reduced.get("reassigned_to"):
-                        worker["status"] = "reassigned"
-                        worker["reassigned_to"] = reduced["reassigned_to"]
-                        finalize_queue_event_record(config, state, worker, "completed")
-                        changed = True
-                        continue
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_failed",
-                            "provider": worker.get("provider"),
-                            "task_id": worker.get("task_id"),
-                            "message": latest.get("note") or "Worker approval denied.",
-                            "worker_run_id": worker["run_id"],
-                            "approval_id": latest.get("approval_id"),
-                        },
-                    )
-                    finalize_queue_event_record(config, state, worker, "failed", latest.get("note") or "Worker approval denied.")
+                    continue
+                if resume_outcome.get("status") == "awaiting_process_exit":
+                    continue
+                if resume_outcome.get("status") == "superseded":
                     changed = True
                     continue
+                failure_reason = (
+                    "Approved worker resume failed closed: "
+                    f"{resume_outcome.get('mismatch') or resume_outcome.get('status')}."
+                )
+                failure_kind = "approval_resume_rejected"
+            elif latest and latest.get("decision") == "deny":
+                binding_mismatch = approval_resume_binding_mismatch(
+                    worker,
+                    {**latest, "decision": "allow"},
+                )
+                failure_reason = (
+                    f"Approval denial binding failed closed: {binding_mismatch}."
+                    if binding_mismatch
+                    else str(latest.get("note") or "Worker approval denied.")
+                )
+                failure_kind = "approval_denied" if not binding_mismatch else "approval_denial_binding_rejected"
+                if not binding_mismatch:
+                    worker["last_approval_id"] = latest.get("approval_id")
+            else:
+                failure_reason = "Approval history did not contain the exact deferred approval for this worker."
+                failure_kind = "approval_resume_binding_missing"
+
+            retire_worker_delivery(config, worker, reason=failure_reason)
+            worker["status"] = "failed"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = failure_reason
+            reduced = reduce_execution_dispatch_terminal_failure(
+                config,
+                state,
+                worker,
+                task_map,
+                reason=failure_reason,
+                failure_kind=failure_kind,
+                queue_events_by_id=queued_events_by_id,
+                now=now,
+            )
+            if supersede_worker_after_terminal_reducer_resolution(
+                config,
+                state,
+                worker,
+                reduced,
+                message="Ignored approval terminal outcome because canonical admission failed.",
+            ):
+                changed = True
+                continue
+            if reduced.get("reassigned_to"):
+                worker["status"] = "reassigned"
+                worker["reassigned_to"] = reduced["reassigned_to"]
+                finalize_queue_event_record(config, state, worker, "completed")
+                changed = True
+                continue
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_failed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": failure_reason,
+                    "worker_run_id": worker.get("run_id"),
+                    "approval_id": (latest or {}).get("approval_id"),
+                    "failure_kind": failure_kind,
+                },
+            )
+            finalize_queue_event_record(config, state, worker, "failed", failure_reason)
             changed = True
+            continue
 
         current_status = worker.get("status")
         if current_status in {"waiting_approval", "suspended_approval"} and not pending:
@@ -8749,7 +9413,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 last_activity_dt = max(activity_timestamps)
                 stalled_for_seconds = (now - last_activity_dt).total_seconds()
                 if worker.get("status") == "stalled" and stalled_for_seconds >= stall_after * 2:
-                    terminate_worker_pid(worker.get("pid"))
+                    retire_worker_delivery(
+                        config,
+                        worker,
+                        reason="Worker exceeded the terminal stall timeout.",
+                    )
                     worker["status"] = "failed"
                     worker["last_event_at"] = utc_now()
                     worker["last_error"] = f"Worker had no output or measurable process activity for {int(stalled_for_seconds)} seconds and was terminated for redispatch."
@@ -9911,6 +10579,43 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             counts["marker_updates"] += 1
             changed = True
         alive = pid_is_alive(worker.get("pid"))
+        origin_reason = str((worker.get("request_snapshot", {}) or {}).get("reason") or "")
+        if is_execution_dispatch_reason(origin_reason):
+            admission = fresh_execution_dispatch_admission(
+                config,
+                state,
+                worker,
+                queue_events_by_id=queued_events_by_id,
+                audit_failure_kind="boot_active_worker_recovery",
+            )
+            admitted = bool(admission.get("admitted"))
+            queued_event = queued_events_by_id.get(str(worker.get("queue_event_id") or ""))
+            if admitted and admission.get("reason") == REASON_OWNED_READY:
+                admitted = bool(queued_event and sync_dispatched_task_status(config, queued_event))
+                if admitted:
+                    admitted = refresh_execution_dispatch_baseline_after_status_sync(
+                        config,
+                        state,
+                        queued_event,
+                        worker_run_id=str(worker.get("run_id") or ""),
+                    )
+            if not admitted:
+                if alive:
+                    retire_worker_delivery(
+                        config,
+                        worker,
+                        reason="Boot active-worker canonical admission failed.",
+                    )
+                worker["status"] = "superseded"
+                worker["last_event_at"] = utc_now()
+                worker["last_error"] = (
+                    "Boot recovery cancelled worker because exact canonical dispatch admission failed: "
+                    f"{admission.get('mismatch') or 'post-start-baseline-failed'}."
+                )
+                finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+                counts["missing_process_workers_failed"] += 1
+                changed = True
+                continue
         if reconcile_dead_approval_worker(
             config,
             state,
@@ -9939,7 +10644,15 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         if not missing_process and not expired_lease:
             continue
         if alive:
-            terminate_worker_pid(worker.get("pid"))
+            retire_worker_delivery(
+                config,
+                worker,
+                reason=(
+                    "Worker lease expired during boot reconciliation."
+                    if expired_lease
+                    else "Worker process was retired during boot reconciliation."
+                ),
+            )
         reason = (
             "Worker lease expired during supervisor boot reconciliation."
             if expired_lease
@@ -10079,18 +10792,6 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             worker["last_error_raw_ref"] = raw_ref
             failure_kind = str(failure.get("kind") or "")
             detected_failure_kind = failure_kind
-            if should_pause_dispatch_for_failure_kind(failure_kind):
-                mark_provider_dispatch_paused(
-                    config,
-                    state,
-                    str(worker.get("provider") or worker.get("agent_id") or ""),
-                    detected_reason,
-                    task_id=str(worker.get("task_id") or ""),
-                    worker_run_id=str(worker.get("run_id") or ""),
-                    failure_kind=failure_kind,
-                    pause_kind=failure_kind,
-                    raw_ref=raw_ref,
-                )
             detected_reduced = reduce_execution_dispatch_terminal_failure(
                 config,
                 state,
@@ -10113,6 +10814,21 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     counts["missing_process_workers_failed"] += 1
                 changed = True
                 continue
+            # Provider-wide state is mutated only after the exact worker/task
+            # admission succeeds.  A stale boot record must not pause a healthy
+            # provider for the current canonical task owner.
+            if should_pause_dispatch_for_failure_kind(failure_kind):
+                mark_provider_dispatch_paused(
+                    config,
+                    state,
+                    str(worker.get("provider") or worker.get("agent_id") or ""),
+                    detected_reason,
+                    task_id=str(worker.get("task_id") or ""),
+                    worker_run_id=str(worker.get("run_id") or ""),
+                    failure_kind=failure_kind,
+                    pause_kind=failure_kind,
+                    raw_ref=raw_ref,
+                )
             failure_count = _safe_int(detected_reduced.get("failure_count"), 0, minimum=0)
             detected_failure_count = failure_count
             if is_terminal_quota_failure_kind(failure_kind):
@@ -11195,6 +11911,12 @@ def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) 
 
 
 def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any], status: str, error: str | None = None) -> None:
+    if status in {"completed", "failed"}:
+        revoke_file_inbox_payload(
+            config,
+            worker,
+            reason=error or f"Queue event finalized as {status}.",
+        )
     queue_event_id = worker.get("queue_event_id")
     if not queue_event_id:
         return
@@ -13347,7 +14069,7 @@ def dispatch_underutilization_sidecars(
     return True
 
 
-def run_once(
+def _run_once_locked(
     config: dict[str, Any],
     *,
     watch: bool,
@@ -13472,6 +14194,26 @@ def run_once(
         raise
 
 
+def run_once(
+    config: dict[str, Any],
+    *,
+    watch: bool,
+    replay: bool = False,
+    quiet: bool = False,
+    verbose: bool = False,
+    once: bool = False,
+) -> bool:
+    with runtime_state_lock(config):
+        return _run_once_locked(
+            config,
+            watch=watch,
+            replay=replay,
+            quiet=quiet,
+            verbose=verbose,
+            once=once,
+        )
+
+
 def run_supervisor_cycle(
     config: dict[str, Any],
     *,
@@ -13490,7 +14232,7 @@ def run_supervisor_cycle(
         return False
 
 
-def claim_next_task_for_agent(
+def _claim_next_task_for_agent_locked(
     config: dict[str, Any],
     *,
     agent_name: str,
@@ -13537,19 +14279,36 @@ def claim_next_task_for_agent(
     return changed
 
 
+def claim_next_task_for_agent(
+    config: dict[str, Any],
+    *,
+    agent_name: str,
+    release_task_id: str | None = None,
+    quiet: bool = False,
+) -> bool:
+    with runtime_state_lock(config):
+        return _claim_next_task_for_agent_locked(
+            config,
+            agent_name=agent_name,
+            release_task_id=release_task_id,
+            quiet=quiet,
+        )
+
+
 def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
     if args.clear_provider_pause:
-        state = load_runtime_state(config)
-        changed = clear_provider_dispatch_pause(config, state, args.clear_provider_pause)
-        if changed:
-            save_runtime_state(config, state)
-            console_log(f"cleared provider dispatch pause: {args.clear_provider_pause}", quiet=args.quiet)
-        else:
-            console_log(f"no provider dispatch pause found for: {args.clear_provider_pause}", quiet=args.quiet)
+        with runtime_state_lock(config):
+            state = load_runtime_state(config)
+            changed = clear_provider_dispatch_pause(config, state, args.clear_provider_pause)
+            if changed:
+                save_runtime_state(config, state)
+                console_log(f"cleared provider dispatch pause: {args.clear_provider_pause}", quiet=args.quiet)
+            else:
+                console_log(f"no provider dispatch pause found for: {args.clear_provider_pause}", quiet=args.quiet)
         return 0
     if args.claim_agent:
         claim_next_task_for_agent(

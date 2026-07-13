@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import contextlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,47 @@ import watch_events
 
 
 class WatcherBookkeepingTests(unittest.TestCase):
+    def test_main_loads_and_scans_inside_shared_runtime_transaction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                "paths": {
+                    "state_file": str(root / "state.json"),
+                    "provider_capabilities": str(root / "provider-capabilities.json"),
+                },
+                "watcher": {"poll_interval_seconds": 2.0},
+            }
+            events: list[str] = []
+
+            @contextlib.contextmanager
+            def observed_lock(_config):
+                events.append("lock_enter")
+                try:
+                    yield
+                finally:
+                    events.append("lock_exit")
+
+            def observed_load(_config):
+                events.append("load")
+                return {}
+
+            def observed_scan(*_args, **_kwargs):
+                events.append("scan")
+                return False
+
+            args = mock.Mock(config="config.json", poll_interval=None, replay=False, once=True)
+            with (
+                mock.patch.object(watch_events, "parse_args", return_value=args),
+                mock.patch.object(watch_events, "load_config", return_value=config),
+                mock.patch.object(watch_events, "load_json", return_value={}),
+                mock.patch.object(watch_events, "runtime_state_lock", side_effect=observed_lock),
+                mock.patch.object(watch_events, "load_runtime_state", side_effect=observed_load),
+                mock.patch.object(watch_events, "run_scan", side_effect=observed_scan),
+            ):
+                self.assertEqual(watch_events.main(), 0)
+
+        self.assertEqual(events, ["lock_enter", "load", "scan", "lock_exit"])
+
     def test_wakeup_message_pins_status_command_to_canonical_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "canonical status"
