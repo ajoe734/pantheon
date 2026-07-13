@@ -88,13 +88,13 @@ def test_publish_delivery_success():
         # Verify evolution proposals API was called
         mock_post.assert_called_once()
         args, kwargs = mock_post.call_args
-        assert args[0] == "http://localhost:8093/api/evolution/proposals"
+        assert args[0] == "http://localhost:8093/api/evolution/proposals/from-postmortem-published"
         
         # Verify payload mapping content
         payload = kwargs["json"]
-        assert payload["linked_postmortem_id"] == "pm-123"
-        assert payload["linked_incident_id"] == "inc-123"
-        assert payload["action_type"] == "flag_for_review"
+        assert payload["postmortem_id"] == "pm-123"
+        assert "decision_id" in payload
+        assert "inc-123" in payload["decision_id"]
 
 def test_publish_delivery_duplicate_success():
     _seed_incident()
