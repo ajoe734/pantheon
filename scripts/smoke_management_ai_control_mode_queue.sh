@@ -2,11 +2,20 @@
 set -euo pipefail
 
 BFF_BASE_URL="${BFF_BASE_URL:-https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io}"
-BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair}"
+BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-}"
 CONTROL_PASSPHRASE="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE:-${CONTROL_MODE_PASSPHRASE:-}}"
 SESSION_ID="${SESSION_ID:-mgmt-ai-control-mode-smoke-$(date -u +%Y%m%dT%H%M%SZ)}"
 TASK_OWNER="${TASK_OWNER:-Codex}"
 TASK_REVIEWER="${TASK_REVIEWER:-Claude}"
+
+if [ -z "${BFF_AUTH_TOKEN}" ]; then
+  echo "ERROR: set BFF_AUTH_TOKEN to an explicit short-lived privileged BFF JWT." >&2
+  exit 2
+fi
+if [ "${BFF_AUTH_TOKEN}" = "pantheon-dev-browser:viewer" ]; then
+  echo "ERROR: the public browser viewer token is read-only and cannot run this smoke." >&2
+  exit 2
+fi
 
 if [ -z "${CONTROL_PASSPHRASE}" ]; then
   echo "ERROR: set PANTHEON_ASSISTANT_CONTROL_PASSPHRASE to the existing control-mode passphrase." >&2

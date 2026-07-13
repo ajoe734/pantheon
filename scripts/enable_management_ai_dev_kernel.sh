@@ -7,8 +7,17 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-pantheon}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 BFF_BASE_URL="${BFF_BASE_URL:-http://127.0.0.1:18001}"
-BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-pantheon-dev-browser:admin,operator:mfa:assistant.kernel.debug,assistant.kernel.repair}"
+BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-}"
 PANTHEON_SUPERVISOR_CONFIG="${PANTHEON_SUPERVISOR_CONFIG:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
+
+if [ -z "${BFF_AUTH_TOKEN}" ]; then
+  echo "ERROR: set BFF_AUTH_TOKEN to an explicit short-lived privileged BFF JWT." >&2
+  exit 2
+fi
+if [ "${BFF_AUTH_TOKEN}" = "pantheon-dev-browser:viewer" ]; then
+  echo "ERROR: the public browser viewer token is read-only and cannot enable kernel mode." >&2
+  exit 2
+fi
 
 resolve_status_root_host() {
   if [ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]; then
@@ -45,9 +54,27 @@ PY
 export PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED:-true}"
 export PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"
 export PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"
-export PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES-assistant.kernel.debug,assistant.kernel.repair}"
+export PANTHEON_BFF_AUTH_STUB="${PANTHEON_BFF_AUTH_STUB:-false}"
+export PANTHEON_BFF_AUTH_MODE="${PANTHEON_BFF_AUTH_MODE:-strict}"
+export PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES-}"
+export PANTHEON_BFF_JWT_SECRET="${PANTHEON_BFF_JWT_SECRET:-}"
+export PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_BFF_OIDC_CLIENT_ID:-}"
+export PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_BFF_OIDC_CLIENT_SECRET:-}"
 export PANTHEON_STATUS_ROOT_HOST="$(resolve_status_root_host)"
 export PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}"
+
+if [ "${PANTHEON_BFF_AUTH_STUB}" != "false" ] \
+  || [ "${PANTHEON_BFF_AUTH_MODE}" != "strict" ] \
+  || [ -n "${PANTHEON_BFF_STUB_CAPABILITIES}" ]; then
+  echo "ERROR: dev kernel mode requires AUTH_STUB=false, AUTH_MODE=strict, and empty stub capabilities." >&2
+  exit 2
+fi
+if [[ ! "${PANTHEON_BFF_JWT_SECRET}" =~ [^[:space:]] \
+  || ! "${PANTHEON_BFF_OIDC_CLIENT_ID}" =~ [^[:space:]] \
+  || ! "${PANTHEON_BFF_OIDC_CLIENT_SECRET}" =~ [^[:space:]] ]]; then
+  echo "ERROR: recreating operator-bff requires governed JWT and dev-login client secrets." >&2
+  exit 2
+fi
 
 cd "${REPO_ROOT}"
 
@@ -55,11 +82,7 @@ echo "Enabling Management AI dev kernel control mode for operator-bff"
 echo "compose_project=${COMPOSE_PROJECT_NAME}"
 echo "compose_file=${COMPOSE_FILE}"
 echo "bff_base_url=${BFF_BASE_URL}"
-if [ -n "${BFF_AUTH_TOKEN}" ]; then
-  echo "bff_auth_token=configured"
-else
-  echo "bff_auth_token=empty"
-fi
+echo "bff_auth_token=configured"
 echo "status_root_host=${PANTHEON_STATUS_ROOT_HOST}"
 echo "status_root_container=${PANTHEON_STATUS_ROOT_CONTAINER}"
 echo "kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED}"
@@ -74,10 +97,7 @@ docker compose -p "${COMPOSE_PROJECT_NAME}" -f "${COMPOSE_FILE}" ps operator-bff
 
 mode_body="$(mktemp)"
 trap 'rm -f "${mode_body}"' EXIT
-auth_args=()
-if [ -n "${BFF_AUTH_TOKEN}" ]; then
-  auth_args=(-H "Authorization: Bearer ${BFF_AUTH_TOKEN}")
-fi
+auth_args=(-H "Authorization: Bearer ${BFF_AUTH_TOKEN}")
 
 for attempt in $(seq 1 20); do
   if curl -fsS --max-time 5 "${auth_args[@]}" "${BFF_BASE_URL}/bff/assistant/mode" >"${mode_body}"; then

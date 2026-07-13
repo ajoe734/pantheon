@@ -17,7 +17,15 @@ DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/code/pantheon}"
 DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
-DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
+DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
+DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
+DEV_BFF_JWT_SECRET="${DEV_BFF_JWT_SECRET:-}"
+DEV_BFF_JWT_ISSUER="${DEV_BFF_JWT_ISSUER:-pantheon-dev}"
+DEV_BFF_JWT_AUDIENCE="${DEV_BFF_JWT_AUDIENCE:-bff-operators}"
+DEV_BFF_OIDC_CLIENT_ID="${DEV_BFF_OIDC_CLIENT_ID:-}"
+DEV_BFF_OIDC_CLIENT_SECRET="${DEV_BFF_OIDC_CLIENT_SECRET:-}"
+DEV_BFF_DEV_LOGIN_TTL_SECONDS="${DEV_BFF_DEV_LOGIN_TTL_SECONDS:-900}"
+DEV_BFF_DEV_LOGIN_ROLES="${DEV_BFF_DEV_LOGIN_ROLES:-operator,reviewer,approver}"
 DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
 DEV_BFF_ALLOWED_TENANTS="${DEV_BFF_ALLOWED_TENANTS:-${DEV_BFF_TENANT_ID},pantheon-dev}"
 DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"
@@ -27,7 +35,7 @@ DEV_ASSISTANT_REPAIR_REPO_URL="${DEV_ASSISTANT_REPAIR_REPO_URL:-/workspace/statu
 DEV_ASSISTANT_REPAIR_REMOTE_URL="${DEV_ASSISTANT_REPAIR_REMOTE_URL:-https://github.com/ajoe734/pantheon.git}"
 DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}"
 DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}"
-DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"
+DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES-}"
 DEV_STATUS_ROOT_HOST="${DEV_STATUS_ROOT_HOST:-}"
 DEV_STATUS_ROOT_CONTAINER="${DEV_STATUS_ROOT_CONTAINER:-/workspace/status-root}"
 DEV_MANAGEMENT_AI_STORE_BACKEND="${DEV_MANAGEMENT_AI_STORE_BACKEND:-postgres}"
@@ -86,7 +94,10 @@ Environment overrides:
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
-  DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB
+  DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
+  DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
+  DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_TTL_SECONDS DEV_BFF_DEV_LOGIN_ROLES
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
   DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS
@@ -177,6 +188,37 @@ configure_management_ai_dev_kernel_env() {
   PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"
 }
 
+validate_dev_bff_auth_boundary() {
+  if [[ "$DEPLOY_ENV" != "dev" ]]; then
+    return
+  fi
+
+  [[ "$DEV_BFF_AUTH_STUB" == "false" ]] \
+    || error "dev deploy requires DEV_BFF_AUTH_STUB=false"
+  [[ "$DEV_BFF_AUTH_MODE" == "strict" ]] \
+    || error "dev deploy requires DEV_BFF_AUTH_MODE=strict"
+  [[ -z "$DEV_BFF_STUB_CAPABILITIES" ]] \
+    || error "dev deploy requires DEV_BFF_STUB_CAPABILITIES to be empty"
+  [[ -z "${PANTHEON_BFF_STUB_CAPABILITIES:-}" ]] \
+    || error "dev deploy requires PANTHEON_BFF_STUB_CAPABILITIES to be empty"
+
+  local credential_name
+  local credential_value
+  for credential_name in DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET; do
+    credential_value="${!credential_name}"
+    if [[ -n "$credential_value" && ! "$credential_value" =~ [^[:space:]] ]]; then
+      error "${credential_name} must not be whitespace-only"
+    fi
+  done
+
+  local configured_credentials=0
+  [[ -n "$DEV_BFF_JWT_SECRET" ]] && configured_credentials=$((configured_credentials + 1))
+  [[ -n "$DEV_BFF_OIDC_CLIENT_ID" ]] && configured_credentials=$((configured_credentials + 1))
+  [[ -n "$DEV_BFF_OIDC_CLIENT_SECRET" ]] && configured_credentials=$((configured_credentials + 1))
+  [[ "$configured_credentials" == 0 || "$configured_credentials" == 3 ]] \
+    || error "dev-login requires JWT secret, client id, and client secret together"
+}
+
 DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_CANONICAL_CORS_ORIGIN")"
 DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_REQUIRED_CORS_ORIGINS")"
 STAGING_BFF_CORS_ORIGINS="$(append_csv_unique "$STAGING_BFF_CORS_ORIGINS" "$STAGING_BFF_CANONICAL_CORS_ORIGIN")"
@@ -247,6 +289,7 @@ esac
 
 configure_management_ai_dev_env
 configure_management_ai_dev_kernel_env
+validate_dev_bff_auth_boundary
 
 if [[ "$DRY_RUN" == "true" ]]; then
   info "dry run"
@@ -258,6 +301,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
   info "dev_bff_cors_origins=${DEV_BFF_CORS_ORIGINS}"
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
+  info "dev_bff_auth_mode=${DEV_BFF_AUTH_MODE}"
+  info "dev_bff_dev_login_configured=$([[ -n "$DEV_BFF_JWT_SECRET" ]] && echo true || echo false)"
   info "dev_assistant_kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
   info "dev_assistant_control_mode_store_path=${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}"
   info "dev_assistant_control_idle_ttl_seconds=${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}"
@@ -321,6 +366,14 @@ ssh_bash() {
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
+  command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
+  command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_JWT_ISSUER=$(shell_quote "$DEV_BFF_JWT_ISSUER")"
+  command_prefix+=" PANTHEON_DEV_BFF_JWT_AUDIENCE=$(shell_quote "$DEV_BFF_JWT_AUDIENCE")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_ID=$(shell_quote "$DEV_BFF_OIDC_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET=$(shell_quote "$DEV_BFF_OIDC_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS=$(shell_quote "$DEV_BFF_DEV_LOGIN_TTL_SECONDS")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_ROLES=$(shell_quote "$DEV_BFF_DEV_LOGIN_ROLES")"
   command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
   command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
@@ -988,6 +1041,14 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
+    PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
+    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS="${PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS}" \
+    PANTHEON_BFF_DEV_LOGIN_ROLES="${PANTHEON_DEV_BFF_DEV_LOGIN_ROLES}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
     PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
@@ -1042,6 +1103,14 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
+    PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
+    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS="${PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS}" \
+    PANTHEON_BFF_DEV_LOGIN_ROLES="${PANTHEON_DEV_BFF_DEV_LOGIN_ROLES}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
     PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \

@@ -1,6 +1,6 @@
 # Management AI Dev Kernel Control Mode
 
-Status date: 2026-06-11
+Status date: 2026-07-13
 
 ## Purpose
 
@@ -10,6 +10,9 @@ mode session. The product default is intentionally fail-closed:
 
 ```env
 PANTHEON_ASSISTANT_KERNEL_ENABLED=false
+PANTHEON_BFF_AUTH_STUB=false
+PANTHEON_BFF_AUTH_MODE=strict
+PANTHEON_BFF_STUB_CAPABILITIES=
 ```
 
 Use this runbook only on an internal dev VM. Do not use it for staging-live,
@@ -20,8 +23,15 @@ canary, live, or production.
 Preferred command from the Pantheon repo root:
 
 ```bash
-scripts/enable_management_ai_dev_kernel.sh
+BFF_AUTH_TOKEN='<short-lived privileged JWT>' \
+  scripts/enable_management_ai_dev_kernel.sh
 ```
+
+`BFF_AUTH_TOKEN` is required and has no tracked fallback. The exact public
+browser credential (`pantheon-dev-browser:viewer`) is capability-free and
+read-only, so the script rejects it before changing the compose service. The
+governed `PANTHEON_BFF_JWT_SECRET` and dev-login client credential variables
+must also be present so recreating `operator-bff` cannot erase its auth config.
 
 The script defaults to the live dev compose project name:
 
@@ -29,11 +39,13 @@ The script defaults to the live dev compose project name:
 COMPOSE_PROJECT_NAME=pantheon
 COMPOSE_FILE=docker-compose.yml
 BFF_BASE_URL=http://127.0.0.1:18001
-BFF_AUTH_TOKEN=pantheon-dev-browser:admin,operator:mfa:assistant.kernel.debug,assistant.kernel.repair
+BFF_AUTH_TOKEN=<required short-lived privileged JWT>
 PANTHEON_STATUS_ROOT_HOST=/home/lupin/code/pantheon
 PANTHEON_STATUS_ROOT_CONTAINER=/workspace/status-root
 PANTHEON_ASSISTANT_KERNEL_ENABLED=true
-PANTHEON_BFF_STUB_CAPABILITIES=assistant.kernel.debug,assistant.kernel.repair
+PANTHEON_BFF_AUTH_STUB=false
+PANTHEON_BFF_AUTH_MODE=strict
+PANTHEON_BFF_STUB_CAPABILITIES=
 ```
 
 When `PANTHEON_STATUS_ROOT_HOST` is not supplied, the script first tries to read
@@ -46,7 +58,9 @@ Manual equivalent:
 ```bash
 PANTHEON_STATUS_ROOT_HOST=/home/lupin/code/pantheon \
 PANTHEON_ASSISTANT_KERNEL_ENABLED=true \
-PANTHEON_BFF_STUB_CAPABILITIES=assistant.kernel.debug,assistant.kernel.repair \
+PANTHEON_BFF_AUTH_STUB=false \
+PANTHEON_BFF_AUTH_MODE=strict \
+PANTHEON_BFF_STUB_CAPABILITIES= \
 docker compose -p pantheon up -d --no-deps --force-recreate operator-bff
 ```
 
@@ -71,13 +85,36 @@ kernel overlay during root stack deployment:
 - `PANTHEON_ASSISTANT_KERNEL_ENABLED=true`
 - `PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=/data/bff/assistant-control-mode.json`
 - `PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS=300`
-- `PANTHEON_BFF_STUB_CAPABILITIES=assistant.kernel.debug,assistant.kernel.repair`
+- `PANTHEON_BFF_AUTH_STUB=false`
+- `PANTHEON_BFF_AUTH_MODE=strict`
+- `PANTHEON_BFF_STUB_CAPABILITIES=`
 - `PANTHEON_STATUS_ROOT_HOST=<dev remote repo root by default>`
 - `PANTHEON_STATUS_ROOT_CONTAINER=/workspace/status-root`
 
 Override `DEV_STATUS_ROOT_HOST` when the supervisor drains from a different
-runtime root than the deploy checkout. The staging-live env file remains
-explicitly kernel-disabled.
+runtime root than the deploy checkout. The deploy script rejects attempts to
+enable auth stub, permissive mode, or stub capabilities before SSH. The
+staging-live env file remains explicitly kernel-disabled.
+
+The BFF and GitHub environment still need independently provisioned dev-login
+client credentials and a JWT signing secret. Those secrets are not created or
+rotated by this repository. The current dev-login issuer creates short-lived
+role-scoped JWTs but does not yet issue `assistant.kernel.*` capabilities;
+governed capability issuance is therefore a separate prerequisite for positive
+kernel repair qualification. Do not restore structured-token or stub-capability
+fallbacks to bypass that prerequisite.
+
+The external GitHub environment must provide `DEV_BFF_JWT_SECRET`,
+`DEV_BFF_OIDC_CLIENT_ID`, and `DEV_BFF_OIDC_CLIENT_SECRET` together. The deploy
+script rejects partial or whitespace-only configuration and propagates the
+complete set to the BFF without printing the values in its plan output. A local
+dry-run may omit all three to inspect the safe configuration, but the governed
+GitHub workflow blocks every dev root/BFF deployment until all three exist.
+
+The non-prod workflow treats missing GitHub dev-login credentials as a hard
+`BLOCKED` outcome before cloud authentication or deployment. When credentials
+exist, it exchanges them through `/bff/auth/dev-login` and uses only the
+returned short-lived JWT for the privileged restart-persistence smoke.
 
 ## Verify
 
@@ -91,7 +128,9 @@ with `409 IDEMPOTENCY_CONFLICT`.
 Kernel flag and control-mode posture:
 
 ```bash
-curl -fsS http://127.0.0.1:18001/bff/assistant/mode | jq .
+curl -fsS \
+  -H "Authorization: Bearer ${BFF_AUTH_TOKEN}" \
+  http://127.0.0.1:18001/bff/assistant/mode | jq .
 ```
 
 Expected:
@@ -103,7 +142,9 @@ Expected:
 Supervisor and dev bridge alignment:
 
 ```bash
-curl -fsS http://127.0.0.1:18001/bff/assistant/orchestrator/status \
+curl -fsS \
+  -H "Authorization: Bearer ${BFF_AUTH_TOKEN}" \
+  http://127.0.0.1:18001/bff/assistant/orchestrator/status \
   | jq '{supervisor:.data.supervisor, assistantDevBridge:.data.assistantDevBridge}'
 ```
 
@@ -117,7 +158,7 @@ Wrong-passphrase probe:
 
 ```bash
 curl -fsS -i \
-  -H 'Authorization: Bearer pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair' \
+  -H "Authorization: Bearer ${BFF_AUTH_TOKEN}" \
   -H 'Content-Type: application/json' \
   --data '{"passphrase":"wrong phrase for precondition probe","mode":"kernel_repair","reason":"probe control-mode preconditions only"}' \
   http://127.0.0.1:18001/bff/assistant/control-mode/activate
@@ -135,7 +176,7 @@ Provider smoke:
 
 ```bash
 curl -fsS \
-  -H 'Authorization: Bearer pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair' \
+  -H "Authorization: Bearer ${BFF_AUTH_TOKEN}" \
   -H 'Idempotency-Key: mgmt-ai-dev-kernel-smoke' \
   -H 'Content-Type: application/json' \
   --data '{"question":"Report Management AI OpenClaw provider readiness only.","conversationId":"mgmt-ai-dev-kernel-smoke","useAssistantProvider":true}' \
@@ -155,6 +196,7 @@ not rotate or print the passphrase for a smoke run.
 
 ```bash
 PANTHEON_ASSISTANT_CONTROL_PASSPHRASE='<existing control-mode passphrase>' \
+BFF_AUTH_TOKEN='<short-lived privileged JWT>' \
 scripts/smoke_management_ai_control_mode_queue.sh
 ```
 
@@ -162,7 +204,7 @@ Optional overrides:
 
 ```env
 BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
-BFF_AUTH_TOKEN=pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair
+BFF_AUTH_TOKEN=<required short-lived privileged JWT>
 SESSION_ID=mgmt-ai-control-mode-smoke-manual
 TASK_OWNER=Codex
 TASK_REVIEWER=Claude
@@ -192,14 +234,16 @@ requires the same existing control-mode passphrase and intentionally writes only
 a sentinel file inside a clean repair task worktree.
 
 ```bash
-PANTHEON_ASSISTANT_CONTROL_PASSPHRASE=<existing-control-mode-passphrase> scripts/smoke_management_ai_openclaw_repair_e2e.sh
+PANTHEON_ASSISTANT_CONTROL_PASSPHRASE=<existing-control-mode-passphrase> \
+BFF_AUTH_TOKEN='<short-lived privileged JWT>' \
+scripts/smoke_management_ai_openclaw_repair_e2e.sh
 ```
 
 Optional overrides:
 
 ```env
 BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
-BFF_AUTH_TOKEN=pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair
+BFF_AUTH_TOKEN=<required short-lived privileged JWT>
 SESSION_ID=mgmt-ai-openclaw-repair-smoke-manual
 REPAIR_REPO_KEY=execute-plans
 REPAIR_MERGE_TARGET=dev

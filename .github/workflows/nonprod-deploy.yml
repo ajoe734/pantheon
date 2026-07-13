@@ -97,6 +97,25 @@ jobs:
               ;;
           esac
 
+      - name: Require dev short-lived auth qualification prerequisites
+        if: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') }}
+        env:
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+        run: |
+          if [[ ! "${DEV_BFF_JWT_SECRET}" =~ [^[:space:]] || ! "${DEV_BFF_OIDC_CLIENT_ID}" =~ [^[:space:]] || ! "${DEV_BFF_OIDC_CLIENT_SECRET}" =~ [^[:space:]] ]]; then
+            echo "::error::Dev deployment is BLOCKED: dev-login GitHub secrets are not provisioned."
+            {
+              echo "## Dev auth qualification"
+              echo "- Outcome: **BLOCKED**"
+              echo "- Reason: DEV_BFF_JWT_SECRET and/or DEV_BFF_OIDC_CLIENT_ID/SECRET are not provisioned"
+              echo "- No deployment was attempted"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "- Dev auth qualification prerequisites: configured" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Authenticate to Google Cloud via Workload Identity Federation
         uses: google-github-actions/auth@v2
         with:
@@ -115,6 +134,9 @@ jobs:
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/code/pantheon' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
@@ -212,13 +234,36 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
         run: |
           set -euo pipefail
+          if [[ -z "${DEV_BFF_OIDC_CLIENT_ID}" || -z "${DEV_BFF_OIDC_CLIENT_SECRET}" ]]; then
+            echo "::error::Privileged Agora restart smoke is BLOCKED: dev-login GitHub secrets are not provisioned."
+            echo "- Agora restart smoke: **BLOCKED** (DEV_BFF_OIDC_CLIENT_ID/SECRET not provisioned)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          login_request="$(mktemp)"
+          login_response="$(mktemp)"
+          trap 'rm -f "${login_request}" "${login_response}"' EXIT
+          jq -n \
+            --arg client_id "${DEV_BFF_OIDC_CLIENT_ID}" \
+            --arg client_secret "${DEV_BFF_OIDC_CLIENT_SECRET}" \
+            '{grant_type:"client_credentials", client_id:$client_id, client_secret:$client_secret}' \
+            > "${login_request}"
+          curl -fsS -X POST "${DEV_BFF_URL}/bff/auth/dev-login" \
+            -H 'Content-Type: application/json' \
+            --data @"${login_request}" \
+            > "${login_response}"
+          bff_auth_token="$(jq -er '.access_token' "${login_response}")"
+          unset DEV_BFF_OIDC_CLIENT_SECRET
+
           idem="agora-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           workshop_id="$(
             curl -fsS -X POST "${DEV_BFF_URL}/bff/agora/workshops" \
-              -H 'Authorization: Bearer agora-deploy-smoke:operator' \
+              -H "Authorization: Bearer ${bff_auth_token}" \
               -H "Idempotency-Key: ${idem}" \
               -H 'Content-Type: application/json' \
               --data '{"initial_message":"Versioned dev restart-persistence smoke"}' \
@@ -233,7 +278,7 @@ jobs:
             if curl -fsS "${DEV_BFF_URL}/readyz" >/dev/null; then break; fi
             sleep 2
           done
-          test "$(curl -fsS "${DEV_BFF_URL}/bff/agora/workshops/${workshop_id}" -H 'Authorization: Bearer agora-deploy-smoke:operator' | jq -er '.data.workshop_id')" = "${workshop_id}"
+          test "$(curl -fsS "${DEV_BFF_URL}/bff/agora/workshops/${workshop_id}" -H "Authorization: Bearer ${bff_auth_token}" | jq -er '.data.workshop_id')" = "${workshop_id}"
           echo "Workshop ${workshop_id} survived operator-bff restart." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize auto-deploy
