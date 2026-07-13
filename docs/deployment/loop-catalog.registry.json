@@ -1,10 +1,11 @@
 {
   "$schema": "./loop-catalog.schema.json",
-  "schema_version": "loop_catalog.v1",
-  "catalog_id": "global-loop-catalog-2026-06-27",
-  "created_at": "2026-06-27T00:00:00Z",
+  "schema_version": "loop_catalog.v2",
+  "catalog_id": "global-loop-catalog-2026-07-13",
+  "created_at": "2026-07-13T00:00:00Z",
   "source_documents": [
     "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+    "Pantheon_總索引版系統分析文件.md",
     "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
     "DELIVERY_CLOSURE_AND_LOOP_STATES.md",
     "EXECUTION_PROOF_AND_MATURITY_LEVELS.md"
@@ -78,6 +79,7 @@
   "loops": [
     {
       "loop_id": "source_ingestion",
+      "classification": "canonical",
       "name": "Source Ingestion",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -201,6 +203,7 @@
     },
     {
       "loop_id": "strategy_distillation",
+      "classification": "canonical",
       "name": "Strategy Distillation",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -304,6 +307,7 @@
     },
     {
       "loop_id": "alpha_replication",
+      "classification": "canonical",
       "name": "Alpha Replication",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -412,6 +416,7 @@
     },
     {
       "loop_id": "persona_teaching",
+      "classification": "canonical",
       "name": "Persona Teaching",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -517,6 +522,7 @@
     },
     {
       "loop_id": "agora_interaction_evidence",
+      "classification": "canonical",
       "name": "Agora Interaction Evidence",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -625,6 +631,7 @@
     },
     {
       "loop_id": "human_imitation_shadow_evaluation",
+      "classification": "canonical",
       "name": "Human Imitation / Shadow Evaluation",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -735,6 +742,7 @@
     },
     {
       "loop_id": "consultation",
+      "classification": "canonical",
       "name": "Consultation",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -842,6 +850,7 @@
     },
     {
       "loop_id": "promotion_deployment",
+      "classification": "canonical",
       "name": "Promotion / Deployment",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -964,6 +973,7 @@
     },
     {
       "loop_id": "capital_pool_execution",
+      "classification": "canonical",
       "name": "Capital Pool Execution",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -1093,6 +1103,7 @@
     },
     {
       "loop_id": "telemetry_reconciliation",
+      "classification": "canonical",
       "name": "Telemetry / Reconciliation",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -1223,6 +1234,7 @@
     },
     {
       "loop_id": "evolution",
+      "classification": "canonical",
       "name": "Evolution",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -1354,6 +1366,7 @@
     },
     {
       "loop_id": "bff_health_monitoring",
+      "classification": "canonical",
       "name": "BFF Health Monitoring",
       "policy_ref": {
         "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
@@ -1474,6 +1487,142 @@
           "task_id": "LOOP-AUTO-BFF-004",
           "role": "evidence"
         }
+      ]
+    }
+  ],
+  "composite_overlays": [
+    {
+      "loop_id": "per_persona_ooda",
+      "classification": "composite_overlay",
+      "composed_of": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "telemetry_reconciliation",
+        "evolution"
+      ],
+      "name": "Per-Persona OODA",
+      "policy_ref": {
+        "document": "Pantheon_總索引版系統分析文件.md",
+        "section": "6.4",
+        "section_title": "Per-Persona OODA 回路"
+      },
+      "owner": {
+        "domain": "persona_control_plane",
+        "service_or_doc": "services/control-plane/cron and services/persona",
+        "authoritative_write_owner": "persona schedule registry, OpenClaw cron run records, and OODA packet store",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "cron/scheduled",
+        "secondary": [
+          "persona lifecycle registration",
+          "operator force-run command"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "OodaLoopPacket",
+          "proposal and evidence references"
+        ],
+        "race_policy": "Schedules and packets converge by persona and run identity; Act remains proposal-only in the pre-LEAN control plane and never calls LEAN or a broker directly."
+      },
+      "desired_state": {
+        "sources": [
+          "Pantheon_總索引版系統分析文件.md#6.4",
+          "eligible persona lifecycle state",
+          "required per-persona OODA schedule policy"
+        ],
+        "query": "planned: list every eligible persona and its required Observe, Orient, Decide, Act-proposal, and Learn schedule",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "OpenClaw persona cron registrations and run records",
+          "OODA packet store",
+          "persona schedule and packet health records"
+        ],
+        "query": "planned: list schedule identity, last terminal cron run, persisted OODA packet, orphan state, and controller health per eligible persona",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "later_goal": "proven-live",
+        "rationale": "Cron registration, run, and packet contracts exist, but archive completion and historical smoke do not prove a current idempotent schedule reconciler, orphan repair, restart recovery, or controller health."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: persona_id + schedule_kind + cadence + policy_version",
+        "duplicate_event_policy": "planned: duplicate registration and cron completion events converge on one schedule and one packet per cron run identity",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-PROD-OODA-001 and LOOP-PROD-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Static personas, synthetic packets, and fixture cron runs are not accepted as OODA liveness proof."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog registers per_persona_ooda as a composite overlay without changing the twelve-loop L1 inventory."
+        },
+        "scheduled_tick": {
+          "status": "historical",
+          "refs": [
+            "ai-task-archive/tasks/OPENCLAW-OODA-PACKET-CLOSURE.json"
+          ],
+          "note": "Archived cron-to-packet task evidence is historical reference only and cannot raise current maturity or liveness."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-PROD-OODA-001",
+            "LOOP-PROD-BFF-001"
+          ],
+          "note": "Current schedule reconciliation, orphan repair, duplicate safety, restart recovery, and controller truth remain product remediation work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-PROD-CLOSE-001"
+          ],
+          "note": "Target-dev current controller evidence and restart/readback proof remain required."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-PROD-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-PROD-OODA-001",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-PROD-BFF-001",
+          "role": "truth_projection"
+        },
+        {
+          "task_id": "LOOP-PROD-CLOSE-001",
+          "role": "evidence"
+        }
+      ],
+      "notes": [
+        "This overlay composes pre-LEAN research, interaction, consultation, governance, telemetry, and learning loops; it excludes capital_pool_execution because persona Act is proposal-only and excludes bff_health_monitoring because platform health is not a persona decision stage.",
+        "Capital Pool Execution remains the only continuously resident execution loop."
       ]
     }
   ]

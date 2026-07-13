@@ -111,20 +111,30 @@ def _error_details(response) -> dict:
 
 
 def _create_human_gate_two_man_signature(client: TestClient, signature_id: str, *, target_id: str) -> None:
-    response = client.post(
-        f"/bff/v5/interventions/{signature_id}/two-man-sign",
-        headers={**HEADERS, "Idempotency-Key": f"sign-{signature_id}"},
-        json={
-            "twoManSignatureId": signature_id,
-            "command": "HumanGateApprove",
-            "target": {"type": "HumanGateItem", "id": target_id},
-            "signerOperatorIds": ["op-b5-human", "op-b5-secondary"],
-            "reason": "second operator signed the high-risk HumanGate action",
-        },
-    )
-    assert response.status_code == 202, response.text
-    command_id = response.json()["data"]["command_id"]
-    bff_main.command_store.update_status(command_id, CommandStatus.EXECUTED)
+    for operator_id, authorization in (
+        ("op-b5-human", HEADERS["Authorization"]),
+        ("op-b5-secondary", "Bearer op-b5-secondary:operator:mfa"),
+    ):
+        response = client.post(
+            f"/bff/v5/interventions/{signature_id}/two-man-sign",
+            headers={
+                **HEADERS,
+                "Authorization": authorization,
+                "Idempotency-Key": f"sign-{signature_id}-{operator_id}",
+            },
+            json={
+                "twoManSignatureId": signature_id,
+                "command": "HumanGateApprove",
+                "target": {"type": "HumanGateItem", "id": target_id},
+                "reason": "operator signed the high-risk HumanGate action",
+            },
+        )
+        assert response.status_code == 202, response.text
+        command_id = response.json()["data"]["command_id"]
+        record = bff_main.command_store.get_command(command_id)
+        assert record is not None
+        assert record["status"] == CommandStatus.EXECUTED.value
+        assert record["params"]["signerOperatorIds"] == [operator_id]
 
 
 def test_human_gate_item_id_params_must_match_target_id() -> None:

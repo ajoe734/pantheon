@@ -104,6 +104,17 @@ class TestPersonaCapitalBindingConstruction:
         b = make_binding(role="live_owner", allowed_deployment_scope="live")
         assert b.permits_deployment_to("paper") is False
 
+    def test_scope_ceiling_can_be_checked_before_activation(self):
+        binding = make_binding(role="live_owner", allowed_deployment_scope="canary")
+        assert binding.permits_scope_ceiling("paper") is True
+        assert binding.permits_scope_ceiling("canary") is True
+        assert binding.permits_scope_ceiling("live") is False
+
+    def test_role_ceiling_is_included_in_scope_check(self):
+        binding = make_binding(role="paper_owner", allowed_deployment_scope="paper")
+        assert binding.permits_scope_ceiling("paper") is True
+        assert binding.permits_scope_ceiling("canary") is False
+
     def test_to_dict_roundtrip(self):
         b = make_active_binding(mandate="grow alpha")
         d = b.to_dict()
@@ -148,6 +159,15 @@ class TestValidateBinding:
         errors = validate_binding(b)
         assert any("effective_to" in e for e in errors)
 
+    @pytest.mark.parametrize("field", ["effective_from", "effective_to"])
+    def test_invalid_single_effective_timestamp_rejected(self, field):
+        errors = validate_binding(make_binding(**{field: "not-a-timestamp"}))
+        assert any(field in error for error in errors)
+
+    def test_blank_capital_sleeve_rejected(self):
+        errors = validate_binding(make_binding(capital_sleeve_id="   "))
+        assert any("capital_sleeve_id" in error for error in errors)
+
 
 # ---------------------------------------------------------------------------
 # PersonaCapitalBindingStore — basic CRUD
@@ -166,6 +186,52 @@ class TestPersonaCapitalBindingStoreCrud:
         store.create(b)
         with pytest.raises(PersonaCapitalBindingError, match="already exists"):
             store.create(b)
+
+    def test_pool_sleeve_identity_cannot_be_rebound(self):
+        store = PersonaCapitalBindingStore()
+        store.create(make_binding(binding_id="b1", capital_sleeve_id="sleeve-1"))
+        with pytest.raises(PersonaCapitalBindingError, match="already bound"):
+            store.create(
+                make_binding(
+                    binding_id="b2",
+                    persona_id="persona-beta",
+                    capital_sleeve_id="sleeve-1",
+                )
+            )
+
+    def test_same_sleeve_id_in_different_pool_is_allowed(self):
+        store = PersonaCapitalBindingStore()
+        store.create(make_binding(binding_id="b1", capital_sleeve_id="sleeve-1"))
+        store.create(
+            make_binding(
+                binding_id="b2",
+                capital_pool_id="pool-002",
+                capital_sleeve_id="sleeve-1",
+            )
+        )
+
+    def test_failed_create_save_rolls_back_in_memory_state(self, monkeypatch):
+        store = PersonaCapitalBindingStore()
+
+        def fail_save():
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr(store, "_save", fail_save)
+        with pytest.raises(OSError, match="disk unavailable"):
+            store.create(make_binding())
+        assert store.get("binding-001") is None
+
+    def test_failed_status_save_rolls_back_in_memory_state(self, monkeypatch):
+        store = PersonaCapitalBindingStore()
+        store.create(make_binding())
+
+        def fail_save():
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr(store, "_save", fail_save)
+        with pytest.raises(OSError, match="disk unavailable"):
+            store.update_status("binding-001", "revoked")
+        assert store.require("binding-001").status == "pending"
 
     def test_require_missing_raises(self):
         store = PersonaCapitalBindingStore()
