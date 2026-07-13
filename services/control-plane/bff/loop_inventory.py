@@ -4,7 +4,9 @@ import json
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -69,6 +71,50 @@ _TRUTH_SOURCE_DESCRIPTIONS = {
     "reconciled_live_proof": "Desired-vs-actual reconciliation evidence from a non-snapshot source.",
     "proven_live_evidence": "Target-environment live evidence with liveness, recovery, and readback.",
 }
+
+
+class LoopInventoryEntry(BaseModel):
+    """Stable OpenAPI core for one catalog row while preserving extensions."""
+
+    model_config = ConfigDict(extra="allow")
+
+    loop_id: str
+    classification: Literal["canonical", "composite_overlay"]
+    current_maturity: str
+    target_maturity: str
+    live_status: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LoopHealthEntry(LoopInventoryEntry):
+    """Stable OpenAPI core for one composed controller-health row."""
+
+    read_model: Literal["loop_health"]
+    controller_health: Dict[str, Any] = Field(default_factory=dict)
+    evidence_packet: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LoopInventoryListEnvelope(BaseModel):
+    data: List[LoopInventoryEntry]
+    items: List[LoopInventoryEntry]
+    page_info: Dict[str, Any]
+    meta: Dict[str, Any]
+
+
+class LoopInventoryDetailEnvelope(BaseModel):
+    data: LoopInventoryEntry
+    meta: Dict[str, Any]
+
+
+class LoopHealthListEnvelope(BaseModel):
+    data: List[LoopHealthEntry]
+    items: List[LoopHealthEntry]
+    page_info: Dict[str, Any]
+    meta: Dict[str, Any]
+
+
+class LoopHealthDetailEnvelope(BaseModel):
+    data: LoopHealthEntry
+    meta: Dict[str, Any]
 
 
 def truth_label_payload() -> Dict[str, Dict[str, Any]]:
@@ -145,15 +191,37 @@ def _health_record_refs(record: Dict[str, Any]) -> List[str]:
     return _dedupe_strings(refs)
 
 
-def _health_record_evidence_basis(record: Dict[str, Any]) -> str:
+def _health_record_evidence_bases(record: Dict[str, Any]) -> List[str]:
     packet = record.get("evidence_packet") if isinstance(record.get("evidence_packet"), dict) else {}
     truth_source = record.get("truth_source") if isinstance(record.get("truth_source"), dict) else {}
+    bases: List[str] = []
     for container in (record, packet, truth_source):
         for key in ("evidence_basis", "truth_basis", "provenance_type"):
             clean = str(container.get(key) or "").strip()
-            if clean:
-                return clean
+            if clean and clean not in bases:
+                bases.append(clean)
+    return bases
+
+
+def _health_record_evidence_basis(record: Dict[str, Any]) -> str:
+    bases = _health_record_evidence_bases(record)
+    if len(bases) > 1:
+        return "conflicting"
+    if bases:
+        return bases[0]
     return "missing"
+
+
+def _is_archived_task_ref(value: Any) -> bool:
+    clean = str(value or "").strip().lower().replace("\\", "/")
+    return bool(
+        clean.startswith("ai-task-archive/")
+        or "/ai-task-archive/" in clean
+    )
+
+
+def _health_record_runtime_refs(record: Dict[str, Any]) -> List[str]:
+    return [ref for ref in _health_record_refs(record) if not _is_archived_task_ref(ref)]
 
 
 def _controller_heartbeat_is_current(value: Any) -> bool:
@@ -177,10 +245,17 @@ def _controller_heartbeat_is_current(value: Any) -> bool:
 def _runtime_controller_record_qualified(
     record: Dict[str, Any],
     health_source: str,
+    expected_controller_name: Any,
 ) -> bool:
     if not record or health_source not in _ACCEPTED_RUNTIME_HEALTH_SOURCES:
         return False
-    if _health_record_evidence_basis(record) not in _ACCEPTED_RUNTIME_EVIDENCE_BASES:
+    evidence_bases = _health_record_evidence_bases(record)
+    if (
+        len(evidence_bases) != 1
+        or evidence_bases[0] not in _ACCEPTED_RUNTIME_EVIDENCE_BASES
+    ):
+        return False
+    if not _health_record_runtime_refs(record):
         return False
     raw_health = _dict_or_empty(
         record.get("controller_health")
@@ -196,6 +271,7 @@ def _runtime_controller_record_qualified(
         or raw_health.get("name")
         or ""
     ).strip()
+    expected_name = str(expected_controller_name or "").strip()
     heartbeat = str(
         raw_health.get("last_heartbeat_at")
         or record.get("last_heartbeat_at")
@@ -203,7 +279,8 @@ def _runtime_controller_record_qualified(
     ).strip()
     return bool(
         reported_status in _ACCEPTED_CONTROLLER_HEALTH_STATUSES
-        and controller_name
+        and expected_name
+        and controller_name == expected_name
         and _controller_heartbeat_is_current(heartbeat)
         and _health_record_refs(record)
     )
@@ -215,6 +292,7 @@ def _truth_source_from_profile(
     health_record: Dict[str, Any],
     health_source: str,
     eligible_live_truth_levels: set[str],
+    expected_controller_name: Any,
 ) -> Dict[str, Any]:
     evidence = evidence_profile.get(level) if isinstance(evidence_profile.get(level), dict) else {}
     health_truth_level = _health_record_truth_level(health_record)
@@ -243,6 +321,7 @@ def _truth_source_from_profile(
     runtime_record_qualified = _runtime_controller_record_qualified(
         health_record,
         health_source,
+        expected_controller_name,
     )
     evidence_basis = _health_record_evidence_basis(health_record)
     accepted_as_live = (
@@ -284,6 +363,7 @@ def _truth_source_from_profile(
         "status": status,
         "source": source,
         "evidence_basis": evidence_basis,
+        "evidence_bases": _health_record_evidence_bases(health_record),
         "runtime_controller_record_qualified": runtime_record_qualified,
         "catalog_claim_eligible": level in eligible_live_truth_levels,
         "refs": refs,
@@ -300,6 +380,7 @@ def _truth_sources(
     health_record: Dict[str, Any],
     health_source: str,
     eligible_live_truth_levels: set[str],
+    expected_controller_name: Any,
 ) -> List[Dict[str, Any]]:
     return [
         _truth_source_from_profile(
@@ -308,6 +389,7 @@ def _truth_sources(
             health_record,
             health_source,
             eligible_live_truth_levels,
+            expected_controller_name,
         )
         for level in _TRUTH_LEVEL_ORDER
     ]
@@ -592,6 +674,7 @@ def _project_controller_health(
     runtime_record_qualified = _runtime_controller_record_qualified(
         health_record,
         health_source,
+        controller.get("controller_name"),
     )
     contract_accepts_runtime_record = contract_status in {"implemented", "proven_live"}
     heartbeat = raw_health.get("last_heartbeat_at") or health_record.get("last_heartbeat_at")
@@ -605,12 +688,39 @@ def _project_controller_health(
         else ("not_implemented" if contract_status == "not_implemented" else "unobserved")
     )
     source = health_source if current_record_accepted else "registry_metadata"
+    evidence_bases = _health_record_evidence_bases(health_record)
+    evidence_refs = _health_record_refs(health_record)
+    runtime_evidence_refs = _health_record_runtime_refs(health_record)
+    reported_controller_name = str(
+        raw_health.get("controller_name")
+        or raw_health.get("name")
+        or ""
+    ).strip()
+    expected_controller_name = str(controller.get("controller_name") or "").strip()
+    if current_record_accepted:
+        rejection_reason = None
+    elif not contract_accepts_runtime_record:
+        rejection_reason = "catalog controller contract is not implemented"
+    elif len(evidence_bases) > 1:
+        rejection_reason = "record declares conflicting evidence provenance"
+    elif evidence_refs and not runtime_evidence_refs:
+        rejection_reason = "task archive completion is reference-only, not runtime evidence"
+    elif (
+        reported_controller_name
+        and expected_controller_name
+        and reported_controller_name != expected_controller_name
+    ):
+        rejection_reason = "runtime controller identity does not match catalog contract"
+    else:
+        rejection_reason = "record lacks accepted current controller-runtime provenance"
     return {
         "status": status,
         "source": source,
         "reported_status": reported_status,
         "reported_source": health_source if health_record else "missing",
         "evidence_basis": _health_record_evidence_basis(health_record),
+        "evidence_bases": evidence_bases,
+        "runtime_evidence_refs": runtime_evidence_refs,
         "runtime_record_qualified": runtime_record_qualified,
         "freshness": {
             "last_heartbeat_at": heartbeat,
@@ -618,15 +728,7 @@ def _project_controller_health(
             "max_age_seconds": _CONTROLLER_RECORD_MAX_AGE_SECONDS,
         },
         "current_record_accepted": current_record_accepted,
-        "rejection_reason": (
-            None
-            if current_record_accepted
-            else (
-                "catalog controller contract is not implemented"
-                if not contract_accepts_runtime_record
-                else "record lacks accepted current controller-runtime provenance"
-            )
-        ),
+        "rejection_reason": rejection_reason,
         "controller_contract_status": contract_status,
         "controller_name": (
             raw_health.get("controller_name")
@@ -690,6 +792,7 @@ def _project_evidence_packet(
         health_record,
         health_source,
         eligible_live_levels,
+        controller.get("controller_name"),
     )
     highest = _highest_present_truth_source(truth_sources)
     operator_truth = _operator_truth_source(truth_sources, highest)
@@ -698,7 +801,16 @@ def _project_evidence_packet(
         if isinstance(evidence, dict) and isinstance(evidence.get("refs"), list):
             profile_refs.extend(evidence["refs"])
     refs = _dedupe_strings(profile_refs + _health_record_refs(health_record))
-    accepted_live_liveness = any(source.get("accepted_as_live") for source in truth_sources)
+    accepted_live_sources = [
+        source
+        for source in truth_sources
+        if source.get("status") == "present" and source.get("accepted_as_live")
+    ]
+    accepted_live_levels = {
+        str(source.get("truth_level") or "")
+        for source in accepted_live_sources
+    }
+    accepted_live_liveness = bool(accepted_live_sources)
     return {
         "id": packet.get("id") or packet.get("packet_id") or f"loop-health-{loop_id}",
         "packet_id": packet.get("packet_id") or packet.get("id") or f"loop-health-{loop_id}",
@@ -709,9 +821,12 @@ def _project_evidence_packet(
         "target_maturity": maturity.get("target"),
         "eligible_live_truth_levels": sorted(eligible_live_levels),
         "runtime_record_evidence_basis": _health_record_evidence_basis(health_record),
+        "runtime_record_evidence_bases": _health_record_evidence_bases(health_record),
+        "runtime_evidence_refs": _health_record_runtime_refs(health_record),
         "runtime_controller_record_qualified": _runtime_controller_record_qualified(
             health_record,
             health_source,
+            controller.get("controller_name"),
         ),
         "archived_task_completion_accepted": False,
         "highest_truth_level": highest.get("truth_level"),
@@ -719,12 +834,14 @@ def _project_evidence_packet(
         "accepted_live_liveness": accepted_live_liveness,
         "operator_truth": operator_truth,
         "can_claim_reconciled": (
-            accepted_live_liveness
-            and int(highest.get("rank") or -1) >= _TRUTH_LEVEL_RANKS["reconciled_live_proof"]
+            any(
+                int(source.get("rank") or -1)
+                >= _TRUTH_LEVEL_RANKS["reconciled_live_proof"]
+                for source in accepted_live_sources
+            )
         ),
         "can_claim_proven_live": (
-            accepted_live_liveness
-            and highest.get("truth_level") == "proven_live_evidence"
+            "proven_live_evidence" in accepted_live_levels
         ),
         "captured_at": packet.get("captured_at") or health_record.get("captured_at") or health_record.get("updated_at"),
         "refs": refs,
@@ -815,14 +932,17 @@ def list_loop_health_entries(
     registry = _load_registry()
     loops = _registry_entries(registry)
     records_by_loop = _normalize_health_records(health_records)
-    return [
-        _project_loop_health(
-            loop,
-            records_by_loop.get(str(loop.get("loop_id") or ""), {}),
-            health_source if str(loop.get("loop_id") or "") in records_by_loop else "missing",
-        )
-        for loop in loops
-    ]
+    projected_list = []
+    for loop in loops:
+        loop_id = str(loop.get("loop_id") or "")
+        if loop_id in records_by_loop:
+            rec = records_by_loop[loop_id]
+            src = rec.get("_health_source") or health_source
+        else:
+            rec = {}
+            src = "missing"
+        projected_list.append(_project_loop_health(loop, rec, src))
+    return projected_list
 
 
 def get_loop_health_entry(

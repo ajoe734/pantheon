@@ -73,6 +73,17 @@ from typing import Any, Dict, List, Optional
 from fastapi import Body, FastAPI, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+import asyncio
+import json
+from services.foundation import (
+    EventEnvelope,
+    OutboxRecord,
+    TraceContext,
+    EnvironmentScope,
+    EnvironmentName,
+)
+from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+from services.foundation.outbox import OutboxRecordStatus
 
 # ---------------------------------------------------------------------------
 # Bootstrap domain layer
@@ -155,6 +166,76 @@ PERSISTENCE_POSTURE = require_persistence_posture("postmortems")
 # referential integrity (postmortem references incident) is enforced in-process.
 # In production, both services connect to the shared Pantheon incidents DB schema.
 store: IncidentStore = build_incident_store(STORE_PATH)
+
+# ---------------------------------------------------------------------------
+# Outbox Primitives & Store
+# ---------------------------------------------------------------------------
+
+class JsonOutboxStoreHelper:
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _read(self) -> dict:
+        if not self.path.exists():
+            return {}
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _write(self, data: dict):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+
+    def put(self, record_id: str, payload: dict) -> None:
+        data = self._read()
+        data[record_id] = payload
+        self._write(data)
+
+    def list_all(self) -> list[dict]:
+        data = self._read()
+        return list(data.values())
+
+class UnifiedOutboxStore:
+    def __init__(self, backend: str, dsn: str | None, table_name: str | None, json_path: Path, owner_service: str):
+        self.backend = backend.strip().lower()
+        if self.backend == "postgres":
+            if not dsn:
+                raise ValueError("DSN required for postgres outbox")
+            self.impl = PostgresJsonOwnerStore(
+                dsn=dsn,
+                table=table_name,
+                owner_service=owner_service,
+                bootstrap=True
+            )
+        else:
+            self.impl = JsonOutboxStoreHelper(json_path)
+
+    def put(self, record: OutboxRecord) -> None:
+        self.impl.put(record.outbox_id, record.to_dict())
+
+    def list_pending_and_failed(self) -> list[OutboxRecord]:
+        records = []
+        for payload in self.impl.list_all():
+            try:
+                rec = OutboxRecord.from_dict(payload)
+                if rec.status in {OutboxRecordStatus.PENDING, OutboxRecordStatus.FAILED}:
+                    records.append(rec)
+            except Exception as exc:
+                log.warning("Failed to parse outbox record: %s", exc)
+        return records
+
+OUTBOX_BACKEND = (os.getenv("POSTMORTEM_STORE_BACKEND") or os.getenv("INCIDENT_STORE_BACKEND", "json")).strip().lower()
+OUTBOX_DSN = os.getenv("POSTMORTEM_STORE_DSN") or os.getenv("INCIDENT_STORE_DSN") or os.getenv("DATABASE_URL")
+outbox_store = UnifiedOutboxStore(
+    backend=OUTBOX_BACKEND,
+    dsn=OUTBOX_DSN,
+    table_name="incident.postmortems_outbox",
+    json_path=Path(DATA_DIR) / "postmortems_outbox.json",
+    owner_service="postmortem-svc",
+)
 reference_validator = CanonicalReferenceValidator()
 
 # ---------------------------------------------------------------------------
@@ -418,6 +499,105 @@ def get_operator_payload(postmortem_id: str) -> OperatorPostmortemPayload:
 # Routes — status transitions
 # ---------------------------------------------------------------------------
 
+def _publish_postmortem_to_evolution_if_needed(postmortem_id: str) -> None:
+    from datetime import datetime, timezone
+    from services.evolution.postmortem_bridge import decision_id_for_published_postmortem
+
+    pm = store.get_postmortem(postmortem_id)
+    if pm is None:
+        log.error("AUDIT: Failed to publish postmortem %s: postmortem not found in store", postmortem_id)
+        return
+
+    incident = store.get_incident(pm.incident_id)
+    if incident is None:
+        log.error("AUDIT: Failed to publish postmortem %s: parent incident %s not found in store", postmortem_id, pm.incident_id)
+        return
+
+    try:
+        det_decision_id = decision_id_for_published_postmortem(pm, incident)
+    except Exception as exc:
+        log.error("AUDIT: Failed to compute decision_id for postmortem %s: %s", postmortem_id, exc)
+        return
+
+    trace = TraceContext.new(
+        environment=EnvironmentScope(name=EnvironmentName.SANDBOX),
+        source_system="postmortem-svc",
+    )
+    event = EventEnvelope.new(
+        event_type="postmortem.published",
+        aggregate_type="postmortem",
+        aggregate_id=postmortem_id,
+        sequence_no=1,
+        trace=trace,
+        payload={
+            "postmortem_id": postmortem_id,
+            "decision_id": det_decision_id,
+        },
+        producer_service="postmortem-svc",
+    )
+    record = OutboxRecord.new(owner_service="postmortem-svc", event=event)
+    outbox_store.put(record)
+    log.info("AUDIT: Enqueued postmortem %s proposal to outbox (decision_id: %s)", postmortem_id, det_decision_id)
+
+
+# background delivery loop for postmortems
+async def process_postmortems_outbox():
+    records = outbox_store.list_pending_and_failed()
+    if not records:
+        return
+
+    import httpx
+    from datetime import datetime, timezone
+    evolution_url = os.getenv("EVOLUTION_URL", "http://localhost:8093").strip()
+    url = f"{evolution_url}/api/evolution/proposals/from-postmortem-published"
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for record in records:
+            postmortem_id = record.event.payload.get("postmortem_id")
+            det_decision_id = record.event.payload.get("decision_id")
+            log.info("AUDIT: Outbox worker attempting delivery of postmortem %s proposal to %s", postmortem_id, url)
+            
+            proposal_payload = {
+                "postmortem_id": postmortem_id,
+                "decision_id": det_decision_id,
+            }
+            
+            try:
+                resp = await client.post(url, json=proposal_payload)
+                if resp.status_code in {200, 201}:
+                    log.info("AUDIT: Successfully delivered proposal for postmortem %s to evolution. Status: %d", postmortem_id, resp.status_code)
+                    outbox_store.put(record.mark_published())
+                elif resp.status_code == 409:
+                    err_msg = f"status_code=409 conflict: {resp.text}"
+                    log.error("AUDIT: Final failure for postmortem %s: %s", postmortem_id, err_msg)
+                    outbox_store.put(record.mark_failed(err_msg, dead_lettered=True))
+                else:
+                    err_msg = f"status_code={resp.status_code} body={resp.text}"
+                    dead_letter = record.delivery_attempts + 1 >= 3 or resp.status_code == 422
+                    log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s returned error: %s", record.delivery_attempts + 1, postmortem_id, err_msg)
+                    outbox_store.put(record.mark_failed(err_msg, dead_lettered=dead_letter))
+            except Exception as exc:
+                err_msg = str(exc)
+                dead_letter = record.delivery_attempts + 1 >= 3
+                log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s failed with exception: %s", record.delivery_attempts + 1, postmortem_id, err_msg)
+                outbox_store.put(record.mark_failed(err_msg, dead_lettered=dead_letter))
+
+async def postmortems_outbox_loop():
+    while True:
+        try:
+            await process_postmortems_outbox()
+        except Exception as exc:
+            log.exception("Error in postmortems outbox delivery loop: %s", exc)
+        await asyncio.sleep(2.0)
+
+@app.on_event("startup")
+def start_postmortems_outbox_worker():
+    import sys
+    if "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    asyncio.create_task(postmortems_outbox_loop())
+
+
 @app.post(
     "/api/postmortems/{postmortem_id}/status",
     response_model=PostmortemResponse,
@@ -433,7 +613,29 @@ def update_status(
 
     published_at is auto-set when transitioning to published.
     """
-    _get_or_404(postmortem_id)
+    pm = _get_or_404(postmortem_id)
+    incident = store.get_incident(pm.incident_id)
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Parent IncidentCase '{pm.incident_id}' not found for postmortem '{postmortem_id}'"
+        )
+
+    # 進行 bridge validation (surface bridge precondition failures instead of returning 200)
+    if body.status == "published":
+        from services.evolution.postmortem_bridge import _validate_postmortem_incident_pair, PostmortemBridgeError
+        try:
+            test_pm_dict = pm.to_dict()
+            test_pm_dict["status"] = "published"
+            if not test_pm_dict.get("published_at"):
+                test_pm_dict["published_at"] = _utc_now()
+            _validate_postmortem_incident_pair(test_pm_dict, incident.to_dict(), require_published=True)
+        except PostmortemBridgeError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Bridge precondition validation failed: {exc}"
+            )
+
     try:
         updated = store.update_postmortem_status(
             postmortem_id,
@@ -444,6 +646,10 @@ def update_status(
         raise HTTPException(status_code=400, detail=str(exc))
 
     log.info("Postmortem %s → status=%s", postmortem_id, body.status)
+
+    if body.status == "published":
+        _publish_postmortem_to_evolution_if_needed(postmortem_id)
+
     return _to_response(updated)
 
 

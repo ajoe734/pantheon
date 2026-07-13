@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 import command_executor
@@ -196,6 +198,12 @@ def test_legacy_command_admission_enforces_containment_confirm_and_two_man(tmp_p
         )
         assert missing_two_man.status_code == 409, missing_two_man.text
         assert "TWO_MAN_SIGNATURE_MISSING" in missing_two_man.text
+        token_state = harness.client.get(
+            "/bff/confirm-tokens/ct-legacy-containment",
+            headers=HEADERS,
+        )
+        assert token_state.status_code == 200, token_state.text
+        assert token_state.json()["data"]["status"] == "created"
 
         forbidden = harness.client.post(
             "/api/v1/operator/commands",
@@ -234,25 +242,28 @@ def test_containment_admissions_execute_authoritative_persona_freeze(
             suffix=f"success-{idempotency_header}",
         )
         assert harness.client is not None
+        command_payload = {
+            "command": "EmergencyContainment",
+            "target": {"type": "Persona", "id": "p-live"},
+            "params": {
+                **_command(),
+                "persona_id": "p-live",
+                "capital_pool_id": "pool-real",
+                "current_weight": 0.10,
+                "target_weight": 0.10,
+                "two_man_signature_id": signature_id,
+            },
+            "audit_context": {"reason": "freeze Persona under hard risk breach"},
+        }
+        idempotency_key = f"containment-success-{idempotency_header}"
+        request_headers = {
+            **security_headers,
+            idempotency_header: idempotency_key,
+        }
         accepted = harness.client.post(
             route,
-            json={
-                "command": "EmergencyContainment",
-                "target": {"type": "Persona", "id": "p-live"},
-                "params": {
-                    **_command(),
-                    "persona_id": "p-live",
-                    "capital_pool_id": "pool-real",
-                    "current_weight": 0.10,
-                    "target_weight": 0.10,
-                    "two_man_signature_id": signature_id,
-                },
-                "audit_context": {"reason": "freeze Persona under hard risk breach"},
-            },
-            headers={
-                **security_headers,
-                idempotency_header: f"containment-success-{idempotency_header}",
-            },
+            json=command_payload,
+            headers=request_headers,
         )
         assert accepted.status_code == 202, accepted.text
         response_body = accepted.json()
@@ -272,6 +283,100 @@ def test_containment_admissions_execute_authoritative_persona_freeze(
         assert result["authoritative_containment_readback"] is True
         assert result["authoritative_capital_readback"] is True
         assert result["authoritative_capital_state_applied"] is True
+
+        token_id = security_headers["X-Confirm-Token"]
+        token_state = harness.client.get(
+            f"/bff/confirm-tokens/{token_id}",
+            headers=HEADERS,
+        )
+        assert token_state.status_code == 200, token_state.text
+        assert token_state.json()["data"]["status"] == "redeemed"
+
+        replay = harness.client.post(
+            route,
+            json=command_payload,
+            headers=request_headers,
+        )
+        assert replay.status_code == 202, replay.text
+        replay_body = replay.json()
+        replay_command_id = (
+            (replay_body.get("data") or {}).get("command_id")
+            or (replay_body.get("receipt") or {}).get("command_id")
+            or replay_body.get("receipt_id")
+        )
+        assert replay_command_id == command_id
+
+        reused = harness.client.post(
+            route,
+            json=command_payload,
+            headers={
+                **security_headers,
+                idempotency_header: f"{idempotency_key}-reused-token",
+            },
+        )
+        assert reused.status_code == 428, reused.text
+        assert reused.json()["error"]["details"]["reason"] == "CONFIRM_TOKEN_INVALID"
+        assert harness.capital_client is not None
+        containments = harness.capital_client.get("/api/containments")
+        assert containments.status_code == 200, containments.text
+        assert len(containments.json()) == 1
+
+
+def test_concurrent_new_keys_cannot_reuse_one_containment_confirm_token(tmp_path):
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        harness.create_persona("p-live")
+        signature_id, security_headers = _containment_security_evidence(
+            harness,
+            suffix="concurrent-reuse",
+        )
+        assert harness.client is not None
+        command_payload = {
+            "command": "EmergencyContainment",
+            "target": {"type": "Persona", "id": "p-live"},
+            "params": {
+                **_command(),
+                "persona_id": "p-live",
+                "capital_pool_id": "pool-real",
+                "current_weight": 0.10,
+                "target_weight": 0.10,
+                "two_man_signature_id": signature_id,
+            },
+            "audit_context": {"reason": "concurrent token consumption regression"},
+        }
+
+        def submit(index: int):
+            assert harness.client is not None
+            return harness.client.post(
+                "/bff/v1/commands",
+                json=command_payload,
+                headers={
+                    **security_headers,
+                    "Idempotency-Key": f"containment-concurrent-{index}",
+                },
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(submit, (1, 2)))
+
+        assert sum(response.status_code == 202 for response in responses) == 1
+        assert all(response.status_code in {202, 409, 428} for response in responses)
+        guarded_records = [
+            record
+            for record in bff_main.command_store._get_all_commands()
+            if record.get("type") == "EmergencyContainment"
+        ]
+        redemption_records = [
+            record
+            for record in bff_main.command_store._get_all_commands()
+            if record.get("type") == bff_main.CommandType.CONFIRM_TOKEN_REDEEM.value
+            and record.get("target", {}).get("id")
+            == security_headers["X-Confirm-Token"]
+        ]
+        assert len(guarded_records) == 1
+        assert len(redemption_records) == 1
+        assert redemption_records[0]["status"] == "executed"
+        assert harness.capital_client is not None
+        assert len(harness.capital_client.get("/api/containments").json()) == 1
 
 
 @pytest.mark.parametrize(
@@ -400,10 +505,12 @@ def test_authority_dispatch_projects_explicit_frozen_containment_after_restart(t
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         harness.create_persona("p-live")
         assert harness.client is not None
+        proposal_payload = rebalance_payload()
+        harness.admit_rebalance_payload(proposal_payload)
         proposal = harness.client.post(
             "/bff/rebalances",
             headers={**HEADERS, "Idempotency-Key": "containment-baseline-proposal"},
-            json=rebalance_payload(),
+            json=proposal_payload,
         )
         assert proposal.status_code == 202, proposal.text
 

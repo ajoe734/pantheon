@@ -75,6 +75,17 @@ from typing import Any, Dict, List, Optional
 from fastapi import Body, FastAPI, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+import asyncio
+import json
+from services.foundation import (
+    EventEnvelope,
+    OutboxRecord,
+    TraceContext,
+    EnvironmentScope,
+    EnvironmentName,
+)
+from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+from services.foundation.outbox import OutboxRecordStatus
 
 # ---------------------------------------------------------------------------
 # Bootstrap domain layer from sibling services/incident/ directory
@@ -153,6 +164,76 @@ PERSISTENCE_POSTURE = require_persistence_posture("incidents")
 
 store: IncidentStore = build_incident_store(STORE_PATH)
 reference_validator = CanonicalReferenceValidator()
+
+# ---------------------------------------------------------------------------
+# Outbox Primitives & Store
+# ---------------------------------------------------------------------------
+
+class JsonOutboxStoreHelper:
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _read(self) -> dict:
+        if not self.path.exists():
+            return {}
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _write(self, data: dict):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+
+    def put(self, record_id: str, payload: dict) -> None:
+        data = self._read()
+        data[record_id] = payload
+        self._write(data)
+
+    def list_all(self) -> list[dict]:
+        data = self._read()
+        return list(data.values())
+
+class UnifiedOutboxStore:
+    def __init__(self, backend: str, dsn: str | None, table_name: str | None, json_path: Path, owner_service: str):
+        self.backend = backend.strip().lower()
+        if self.backend == "postgres":
+            if not dsn:
+                raise ValueError("DSN required for postgres outbox")
+            self.impl = PostgresJsonOwnerStore(
+                dsn=dsn,
+                table=table_name,
+                owner_service=owner_service,
+                bootstrap=True
+            )
+        else:
+            self.impl = JsonOutboxStoreHelper(json_path)
+
+    def put(self, record: OutboxRecord) -> None:
+        self.impl.put(record.outbox_id, record.to_dict())
+
+    def list_pending_and_failed(self) -> list[OutboxRecord]:
+        records = []
+        for payload in self.impl.list_all():
+            try:
+                rec = OutboxRecord.from_dict(payload)
+                if rec.status in {OutboxRecordStatus.PENDING, OutboxRecordStatus.FAILED}:
+                    records.append(rec)
+            except Exception as exc:
+                log.warning("Failed to parse outbox record: %s", exc)
+        return records
+
+OUTBOX_BACKEND = STORE_BACKEND
+OUTBOX_DSN = os.getenv("INCIDENT_STORE_DSN") or os.getenv("DATABASE_URL")
+outbox_store = UnifiedOutboxStore(
+    backend=OUTBOX_BACKEND,
+    dsn=OUTBOX_DSN,
+    table_name="incident.incidents_outbox",
+    json_path=Path(DATA_DIR) / "incidents_outbox.json",
+    owner_service="incident-svc",
+)
 
 # ---------------------------------------------------------------------------
 # FastAPI application
@@ -383,6 +464,74 @@ def get_incident(incident_id: str) -> IncidentResponse:
 # Routes — status transitions
 # ---------------------------------------------------------------------------
 
+def _publish_to_postmortems_if_resolved(incident_id: str) -> None:
+    from datetime import datetime, timezone
+    trace = TraceContext.new(
+        environment=EnvironmentScope(name=EnvironmentName.SANDBOX),
+        source_system="incident-svc",
+    )
+    event = EventEnvelope.new(
+        event_type="incident.resolved",
+        aggregate_type="incident",
+        aggregate_id=incident_id,
+        sequence_no=1,
+        trace=trace,
+        payload={"incident_id": incident_id},
+        producer_service="incident-svc",
+    )
+    record = OutboxRecord.new(owner_service="incident-svc", event=event)
+    outbox_store.put(record)
+    log.info("AUDIT: Enqueued resolved incident %s to outbox", incident_id)
+
+
+# background delivery loop for incidents
+async def process_incidents_outbox():
+    records = outbox_store.list_pending_and_failed()
+    if not records:
+        return
+
+    import httpx
+    from datetime import datetime, timezone
+    postmortems_url = os.getenv("POSTMORTEMS_URL", "http://localhost:8091").strip()
+    url = f"{postmortems_url}/api/postmortems/consume-resolved-incident"
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for record in records:
+            incident_id = record.event.payload.get("incident_id")
+            log.info("AUDIT: Outbox worker attempting delivery of resolved incident %s to %s", incident_id, url)
+            
+            try:
+                resp = await client.post(url, json={"incident_id": incident_id})
+                if resp.status_code in {200, 201}:
+                    log.info("AUDIT: Successfully delivered resolved incident %s to postmortems via outbox. Status: %d", incident_id, resp.status_code)
+                    outbox_store.put(record.mark_published())
+                else:
+                    err_msg = f"status_code={resp.status_code} body={resp.text}"
+                    dead_letter = record.delivery_attempts + 1 >= 3
+                    log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s returned error: %s", record.delivery_attempts + 1, incident_id, err_msg)
+                    outbox_store.put(record.mark_failed(err_msg, dead_lettered=dead_letter))
+            except Exception as exc:
+                err_msg = str(exc)
+                dead_letter = record.delivery_attempts + 1 >= 3
+                log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s failed with exception: %s", record.delivery_attempts + 1, incident_id, err_msg)
+                outbox_store.put(record.mark_failed(err_msg, dead_lettered=dead_letter))
+
+async def incidents_outbox_loop():
+    while True:
+        try:
+            await process_incidents_outbox()
+        except Exception as exc:
+            log.exception("Error in incidents outbox delivery loop: %s", exc)
+        await asyncio.sleep(2.0)
+
+@app.on_event("startup")
+def start_incidents_outbox_worker():
+    import sys
+    if "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    asyncio.create_task(incidents_outbox_loop())
+
+
 @app.post(
     "/api/incidents/{incident_id}/status",
     response_model=IncidentResponse,
@@ -409,6 +558,10 @@ def update_status(
         raise HTTPException(status_code=400, detail=str(exc))
 
     log.info("IncidentCase %s → status=%s", incident_id, body.status)
+
+    if body.status in {"resolved", "closed"}:
+        _publish_to_postmortems_if_resolved(incident_id)
+
     return _to_response(updated)
 
 

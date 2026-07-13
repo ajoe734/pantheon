@@ -9636,6 +9636,14 @@ def higher_priority_ready_task_exists(
 ) -> bool:
     if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
         return False
+    # A replacement supervisor must first reconcile the workers it inherited.
+    # During that first cycle last_successful_loop_at is deliberately reset to
+    # None.  Preempting a fresh, still-live wrapper in this window destroys the
+    # very task the restart is meant to recover and can fan out an entire new
+    # dispatch frontier before the recovered state has settled.
+    supervisor_state = (state or {}).get("supervisor", {})
+    if supervisor_state.get("started_at") and not supervisor_state.get("last_successful_loop_at"):
+        return False
     current_priority = dispatch_reason_priority(worker.get("request_snapshot", {}).get("reason"))
     if current_priority is None:
         return False
@@ -9984,6 +9992,21 @@ def dispatch_ready_tasks(
                 quiet=SUPERVISOR_LOG_QUIET,
             )
             return changed
+        # Reserve room for already-queued task deliveries, then clamp this
+        # wave to the remaining global slots.  Checking the cap only once at
+        # wave entry lets (for example) 4 live workers queue 10 more against a
+        # cap of 10, and process_queue launches the whole wave to 14.
+        pending_only_total = len(pending_task_ids - active_task_ids)
+        reserved_total = live_total + pending_only_total
+        if reserved_total >= max_concurrent:
+            console_log(
+                f"ready dispatch skipped: reserved worker count {reserved_total} >= "
+                f"max_concurrent_workers {max_concurrent} "
+                f"(live={live_total}, pending={pending_only_total})",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+            return changed
+        max_dispatches_per_tick = min(max_dispatches_per_tick, max_concurrent - reserved_total)
     considered_agents = 0
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:

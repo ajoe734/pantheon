@@ -35,3 +35,28 @@ Two state-consistency defects visible on hosted dev (2026-07-13):
 - Performance tab distinguishes $0 from not-reported; Unassigned bucket is
   explained and not the first row.
 - Component tests for the rail/card consistency and the table formatting.
+
+## Delivery record (2026-07-13)
+
+Implementation landed in `ajoe734/execute-plans@dev` through PRs
+[#290](https://github.com/ajoe734/execute-plans/pull/290) and
+[#295](https://github.com/ajoe734/execute-plans/pull/295). The final merge SHA
+is `12b78ef210e535cd4a3d80358f78b44c9396e588`; required post-merge Branch CI
+run [29252591748](https://github.com/ajoe734/execute-plans/actions/runs/29252591748)
+passed. Focused Vitest coverage passed 44/44 along with TypeScript, scoped
+ESLint, and the production build.
+
+Hosted proof against that exact SHA records:
+
+- card `complete / Research ready: Yes` aligned with rail
+  `Complete / 100% / Research ready: Yes` for one exact workshop snapshot;
+- three readiness gates rendered as active Ready states;
+- named strategies sorted above `Unassigned`, whose attribution-only meaning
+  is explained;
+- measured `$0` remained distinct from `not reported` values.
+
+See
+[AG-UIPOL-004 hosted evidence](./evidence/AG-UIPOL-004-hosted-evidence.md)
+for screenshots, machine-readable readback, checksums, deployment identity,
+validation commands, and explicit residual workflow failures. This delivery
+record proves the objective defects only and makes no design-parity claim.

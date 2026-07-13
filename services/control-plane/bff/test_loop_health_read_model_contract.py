@@ -222,6 +222,25 @@ def test_loop_health_local_snapshot_is_labeled_snapshot_not_live(monkeypatch) ->
 
 def test_loop_health_archive_completion_cannot_create_controller_liveness(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    registry = deepcopy(loop_inventory_model._load_registry())
+    source_loop = next(
+        loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
+    )
+    source_loop["maturity"]["current"] = "proven-live"
+    source_loop["controller_contract"].update(
+        {
+            "status": "proven_live",
+            "controller_name": "source-ingestion-controller",
+            "desired_state_query": "configured source requirements",
+            "actual_state_query": "current source schedules",
+            "restart_behavior": "resume from durable cursor",
+            "liveness_metric": "last_heartbeat_at",
+        }
+    )
+    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
+    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
+    monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
+    current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
         "source_ingestion": {
             "loop_id": "source_ingestion",
@@ -230,8 +249,8 @@ def test_loop_health_archive_completion_cannot_create_controller_liveness(monkey
             "evidence_basis": "task_archive_completion",
             "controller_health": {
                 "status": "healthy",
-                "controller_name": "archive-derived-false-controller",
-                "last_heartbeat_at": "2026-07-13T12:49:00Z",
+                "controller_name": "source-ingestion-controller",
+                "last_heartbeat_at": current_heartbeat,
             },
             "evidence_packet": {
                 "packet_id": "archive-loop-auto-bff-004",
@@ -254,13 +273,168 @@ def test_loop_health_archive_completion_cannot_create_controller_liveness(monkey
     assert packet["can_claim_reconciled"] is False
     assert packet["can_claim_proven_live"] is False
     assert data["controller_health"]["reported_status"] == "healthy"
-    assert data["controller_health"]["status"] == "not_implemented"
+    assert data["controller_health"]["status"] == "unobserved"
     assert data["controller_health"]["current_record_accepted"] is False
     assert data["live_status"]["is_reconciled"] is False
     assert data["live_status"]["is_live"] is False
     assert payload["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
     assert payload["meta"]["coverage"]["controller_health_record_count"] == 0
     assert payload["meta"]["coverage"]["raw_health_record_count"] == 1
+
+
+def test_loop_health_rejects_conflicting_or_archive_only_runtime_provenance(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    registry = deepcopy(loop_inventory_model._load_registry())
+    source_loop = next(
+        loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
+    )
+    source_loop["maturity"]["current"] = "proven-live"
+    source_loop["controller_contract"].update(
+        {
+            "status": "proven_live",
+            "controller_name": "source-ingestion-controller",
+            "desired_state_query": "configured source requirements",
+            "actual_state_query": "current source schedules",
+            "restart_behavior": "resume from durable cursor",
+            "liveness_metric": "last_heartbeat_at",
+        }
+    )
+    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
+    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
+    monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
+    current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    archive_ref = "ai-task-archive/tasks/LOOP-AUTO-BFF-004.json"
+    runtime_ref = "docs/deployment/evidence/source-ingestion/current-controller.json"
+    cases = [
+        (
+            "top-runtime-nested-archive",
+            "controller_runtime",
+            "task_archive_completion",
+            [archive_ref],
+            False,
+            "record declares conflicting evidence provenance",
+        ),
+        (
+            "top-archive-nested-runtime",
+            "task_archive_completion",
+            "controller_runtime",
+            [runtime_ref],
+            False,
+            "record declares conflicting evidence provenance",
+        ),
+        (
+            "accepted-basis-archive-only-ref",
+            "controller_runtime",
+            "controller_runtime",
+            [archive_ref],
+            False,
+            "task archive completion is reference-only, not runtime evidence",
+        ),
+        (
+            "accepted-basis-with-runtime-and-archive-refs",
+            "controller_runtime",
+            "controller_runtime",
+            [archive_ref, runtime_ref],
+            True,
+            None,
+        ),
+    ]
+
+    for case_id, top_basis, packet_basis, refs, accepted, rejection_reason in cases:
+        loop_health_store = {
+            "source_ingestion": {
+                "loop_id": "source_ingestion",
+                "truth_level": "proven_live_evidence",
+                "truth_status": "present",
+                "evidence_basis": top_basis,
+                "controller_health": {
+                    "status": "healthy",
+                    "controller_name": "source-ingestion-controller",
+                    "last_heartbeat_at": current_heartbeat,
+                },
+                "evidence_packet": {
+                    "packet_id": case_id,
+                    "provenance_type": packet_basis,
+                    "refs": refs,
+                },
+            }
+        }
+        with _loop_health_client(loop_health_store=loop_health_store) as client:
+            response = client.get(
+                "/bff/v5/loop-health/source_ingestion",
+                headers=HEADERS,
+            )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        packet = data["evidence_packet"]
+        assert packet["runtime_controller_record_qualified"] is accepted, case_id
+        assert packet["accepted_live_liveness"] is accepted, case_id
+        assert packet["can_claim_reconciled"] is accepted, case_id
+        assert packet["can_claim_proven_live"] is accepted, case_id
+        assert data["controller_health"]["current_record_accepted"] is accepted, case_id
+        assert data["controller_health"]["rejection_reason"] == rejection_reason, case_id
+        assert data["live_status"]["is_reconciled"] is accepted, case_id
+        assert data["live_status"]["is_live"] is accepted, case_id
+
+
+def test_loop_health_cannot_combine_lower_live_truth_with_higher_registry_claim(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    registry = deepcopy(loop_inventory_model._load_registry())
+    source_loop = next(
+        loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
+    )
+    source_loop["maturity"]["current"] = "proven-live"
+    source_loop["controller_contract"].update(
+        {
+            "status": "proven_live",
+            "controller_name": "source-ingestion-controller",
+            "desired_state_query": "configured source requirements",
+            "actual_state_query": "current source schedules",
+            "restart_behavior": "resume from durable cursor",
+            "liveness_metric": "last_heartbeat_at",
+        }
+    )
+    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
+    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
+    monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
+    current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    loop_health_store = {
+        "source_ingestion": {
+            "loop_id": "source_ingestion",
+            "truth_level": "reconciled_live_proof",
+            "truth_status": "present",
+            "evidence_basis": "controller_runtime",
+            "controller_health": {
+                "status": "healthy",
+                "controller_name": "source-ingestion-controller",
+                "last_heartbeat_at": current_heartbeat,
+            },
+            "evidence_packet": {
+                "packet_id": "source-ingestion-reconciled-only",
+                "refs": ["docs/deployment/evidence/source-ingestion/reconciled.json"],
+            },
+        }
+    }
+    with _loop_health_client(loop_health_store=loop_health_store) as client:
+        response = client.get("/bff/v5/loop-health/source_ingestion", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    packet = data["evidence_packet"]
+    assert packet["highest_truth_level"] == "proven_live_evidence"
+    assert packet["operator_truth"]["truth_level"] == "reconciled_live_proof"
+    assert packet["operator_truth"]["accepted_as_live"] is True
+    assert packet["accepted_live_liveness"] is True
+    assert packet["can_claim_reconciled"] is True
+    assert packet["can_claim_proven_live"] is False
+    assert data["controller_health"]["current_record_accepted"] is True
+    assert data["live_status"]["is_reconciled"] is True
+    assert data["live_status"]["is_live"] is False
 
 
 def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits_it(
@@ -346,9 +520,185 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
     assert stale_data["live_status"]["is_reconciled"] is False
 
 
+def test_loop_health_rejects_runtime_record_from_wrong_controller_identity(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    registry = deepcopy(loop_inventory_model._load_registry())
+    bff_loop = next(
+        loop for loop in registry["loops"] if loop["loop_id"] == "bff_health_monitoring"
+    )
+    bff_loop["maturity"]["current"] = "reconciled"
+    bff_loop["controller_contract"].update(
+        {
+            "status": "implemented",
+            "controller_name": "expected-bff-health-controller",
+            "desired_state_query": "required downstream probes",
+            "actual_state_query": "current downstream health",
+            "restart_behavior": "resume durable probe schedule",
+            "liveness_metric": "last_heartbeat_at",
+        }
+    )
+    bff_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
+    monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
+    current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    loop_health_store = {
+        "bff_health_monitoring": {
+            "loop_id": "bff_health_monitoring",
+            "truth_level": "reconciled_live_proof",
+            "truth_status": "present",
+            "evidence_basis": "controller_runtime",
+            "controller_health": {
+                "status": "healthy",
+                "controller_name": "unexpected-controller",
+                "last_heartbeat_at": current_heartbeat,
+            },
+            "evidence_packet": {
+                "packet_id": "packet-wrong-controller",
+                "refs": ["docs/deployment/evidence/bff-health/wrong-controller.json"],
+            },
+        }
+    }
+    with _loop_health_client(loop_health_store=loop_health_store) as client:
+        response = client.get("/bff/v5/loop-health/bff_health_monitoring", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    packet = data["evidence_packet"]
+    assert packet["runtime_controller_record_qualified"] is False
+    assert packet["accepted_live_liveness"] is False
+    assert packet["can_claim_reconciled"] is False
+    assert data["controller_health"]["current_record_accepted"] is False
+    assert data["controller_health"]["rejection_reason"] == (
+        "runtime controller identity does not match catalog contract"
+    )
+    assert data["live_status"]["is_reconciled"] is False
+
+
 def test_loop_health_detail_unknown_id_is_404(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     with _loop_health_client() as client:
         response = client.get("/bff/v5/loop-health/not-a-loop", headers=HEADERS)
 
     assert response.status_code == 404, response.text
+
+
+def test_loop_health_db_store_exercise(monkeypatch) -> None:
+    from datetime import timedelta
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://dummy_user:dummy_pass@localhost:5432/dummy_db")
+    
+    # Mock asyncpg to prevent ModuleNotFoundError when importing services.loop-control
+    import sys
+    from unittest.mock import MagicMock
+    mock_asyncpg = MagicMock()
+    monkeypatch.setitem(sys.modules, "asyncpg", mock_asyncpg)
+    
+    # Now import LoopControllerStore and mock its list_records
+    import importlib
+    loop_control = importlib.import_module("services.loop-control")
+    LoopControllerStore = loop_control.LoopControllerStore
+    
+    async def mock_list_records(self, tenant_id, env):
+        now = datetime.now(timezone.utc)
+        return [
+            {
+                "loop_id": "source_ingestion",
+                "tenant_id": tenant_id,
+                "environment": env,
+                "controller_id": "ctrl-1",
+                "controller_name": "SourceIngester",
+                "deployment_sha": "sha-123",
+                "desired_state_query": "SELECT *",
+                "actual_state_query": "SELECT *",
+                "last_heartbeat_at": now,
+                "last_tick_at": now,
+                "last_success_at": now,
+                "truth_level": "reconciled_live_proof",
+                "lease_expires_at": now + timedelta(seconds=60),
+                "evidence_refs": ["ref-1"],
+                "payload": {}
+            }
+        ]
+        
+    monkeypatch.setattr(LoopControllerStore, "list_records", mock_list_records)
+    with _loop_health_client() as client:
+        response = client.get("/bff/v5/loop-health", headers=HEADERS)
+        
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    
+    # Assert that it successfully loaded from database and did not fall back
+    assert payload["meta"]["surfaces"]["loop_health_snapshots"]["source"] == "controller_store"
+
+
+def test_loop_health_db_store_merge_with_file_store(monkeypatch) -> None:
+    from datetime import timedelta
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://dummy_user:dummy_pass@localhost:5432/dummy_db")
+    
+    # Mock asyncpg to prevent ModuleNotFoundError
+    import sys
+    from unittest.mock import MagicMock
+    mock_asyncpg = MagicMock()
+    monkeypatch.setitem(sys.modules, "asyncpg", mock_asyncpg)
+    
+    import importlib
+    loop_control = importlib.import_module("services.loop-control")
+    LoopControllerStore = loop_control.LoopControllerStore
+    
+    async def mock_list_records(self, tenant_id, env):
+        now = datetime.now(timezone.utc)
+        return [
+            {
+                "loop_id": "source_ingestion",
+                "tenant_id": tenant_id,
+                "environment": env,
+                "controller_id": "ctrl-1",
+                "controller_name": "SourceIngester",
+                "deployment_sha": "sha-123",
+                "desired_state_query": "SELECT *",
+                "actual_state_query": "SELECT *",
+                "last_heartbeat_at": now,
+                "last_tick_at": now,
+                "last_success_at": now,
+                "truth_level": "reconciled_live_proof",
+                "lease_expires_at": now + timedelta(seconds=60),
+                "evidence_refs": ["ref-1"],
+                "payload": {}
+            }
+        ]
+        
+    monkeypatch.setattr(LoopControllerStore, "list_records", mock_list_records)
+    
+    loop_health_store = {
+        "bff_health_monitoring": {
+            "loop_id": "bff_health_monitoring",
+            "truth_level": "scheduled_tick",
+            "controller_health": {
+                "status": "healthy",
+                "controller_name": "bff-health-reconciler",
+                "last_heartbeat_at": "2026-06-27T06:00:00Z",
+            },
+            "evidence_packet": {
+                "packet_id": "packet-bff-health-001",
+                "refs": ["ref-file-store"],
+            },
+        }
+    }
+    
+    with _loop_health_client(loop_health_store=loop_health_store) as client:
+        response = client.get("/bff/v5/loop-health", headers=HEADERS)
+        
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    items = payload["items"]
+    
+    source_ingestion = next(item for item in items if item["loop_id"] == "source_ingestion")
+    bff_health = next(item for item in items if item["loop_id"] == "bff_health_monitoring")
+    
+    assert source_ingestion["truth_source"]["source"] == "controller_store"
+    assert bff_health["truth_source"]["source"] == "service_store"
+    assert bff_health["evidence_packet"]["packet_id"] == "packet-bff-health-001"
+
+

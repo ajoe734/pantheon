@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LoopControllerRecord",
+  "type": "object",
+  "required": [
+    "loop_id",
+    "tenant_id",
+    "environment",
+    "controller_id",
+    "controller_name",
+    "deployment_sha",
+    "truth_level"
+  ],
+  "properties": {
+    "loop_id": { "type": "string" },
+    "tenant_id": { "type": "string" },
+    "environment": { "type": "string" },
+    "controller_id": { "type": "string" },
+    "controller_name": { "type": "string" },
+    "deployment_sha": { "type": "string" },
+    "desired_state_query": { "type": ["string", "null"] },
+    "actual_state_query": { "type": ["string", "null"] },
+    "last_heartbeat_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_tick_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_success_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_failure_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_failure_reason": { "type": ["string", "null"] },
+    "last_repair_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_repair_reason": { "type": ["string", "null"] },
+    "backlog": { "type": ["integer", "null"] },
+    "lag": { "type": ["integer", "null"] },
+    "dlq_count": { "type": ["integer", "null"] },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "truth_level": {
+      "type": "string",
+      "enum": [
+        "seed_fixture",
+        "snapshot_fallback",
+        "registry_metadata",
+        "scheduled_tick",
+        "reconciled_live_proof",
+        "proven_live_evidence"
+      ]
+    },
+    "lease_expires_at": { "type": ["string", "null"], "format": "date-time" },
+    "payload": { "type": "object" }
+  }
+}

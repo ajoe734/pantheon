@@ -4,9 +4,10 @@ import json
 import logging
 import os
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from threading import RLock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from models import CommandStatus, CommandType, ObjectType, TargetObject
 
@@ -24,6 +25,12 @@ class CommandStore:
             with open(self.file_path, "w", encoding="utf-8") as f:
                 f.flush()
                 os.fsync(f.fileno())
+
+    @contextmanager
+    def serialized_transaction(self) -> Iterator[None]:
+        """Serialize a multi-step admission check and its durable write."""
+        with self._lock:
+            yield
 
     def _save_command(self, command: Dict[str, Any]):
         with self._lock:
@@ -154,6 +161,91 @@ class CommandStore:
                 audit_context,
                 foundation_context,
             ), None
+
+    def submit_command_with_confirm_token_redeem_if_no_active_target(
+        self,
+        command_id: str,
+        command_type: CommandType,
+        target: TargetObject,
+        submitted_at: str,
+        params: Dict[str, Any],
+        audit_context: Dict[str, Any],
+        foundation_context: Optional[Dict[str, Any]],
+        *,
+        confirm_token_id: str,
+        confirmation_id: str,
+        confirmation_command_id: str,
+        confirmation_idempotency_key: str,
+        confirmation_request_hash: str,
+        operator_id: str,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Atomically persist a guarded command and consume its confirm token.
+
+        The caller must hold ``serialized_transaction`` while revalidating the
+        token immediately before invoking this method.  The re-entrant lock
+        keeps that validation, the active-target check, and this single atomic
+        file replacement in one critical section.
+        """
+        with self._lock:
+            active = self.get_active_commands_for_target(target.type.value, target.id)
+            if active:
+                return None, active[0]
+
+            command_record = {
+                "command_id": command_id,
+                "type": command_type.value,
+                "target": target.model_dump(),
+                "submitted_at": submitted_at,
+                "status": CommandStatus.SUBMITTED.value,
+                "params": params,
+                "audit": audit_context,
+                "foundation": foundation_context,
+                "result": None,
+                "error": None,
+            }
+            confirmation_foundation = {
+                "idempotency_record": {
+                    "idempotency_key": confirmation_idempotency_key,
+                    "request_hash": confirmation_request_hash,
+                    "status": "succeeded",
+                    "result_ref": f"command:{command_id}",
+                }
+            }
+            confirmation_params = {
+                "confirm_token": confirm_token_id,
+                "command_id": command_id,
+                "confirmation_id": confirmation_id,
+                "confirmed_at": submitted_at,
+                "confirmed_by": operator_id,
+            }
+            confirmation_record = {
+                "command_id": confirmation_command_id,
+                "type": CommandType.CONFIRM_TOKEN_REDEEM.value,
+                "target": {
+                    "type": ObjectType.CONFIRM_TOKEN.value,
+                    "id": confirm_token_id,
+                },
+                "submitted_at": submitted_at,
+                "status": CommandStatus.EXECUTED.value,
+                "params": confirmation_params,
+                "audit": {
+                    "actor": operator_id,
+                    "reason": "Confirm token consumed by guarded command admission",
+                    **confirmation_params,
+                    "foundation": confirmation_foundation,
+                },
+                "foundation": confirmation_foundation,
+                "result": {
+                    "status": "redeemed",
+                    **confirmation_params,
+                },
+                "error": None,
+            }
+
+            commands = self._get_all_commands()
+            commands.extend((command_record, confirmation_record))
+            self._update_commands(commands)
+            return command_record, None
 
     def get_command(self, command_id: str) -> Optional[Dict[str, Any]]:
         for cmd in self._get_all_commands():

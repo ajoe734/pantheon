@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict
@@ -27,9 +28,11 @@ def _create_proposal(
     payload: dict | None = None,
 ):
     assert harness.client is not None
+    request_payload = payload or rebalance_payload()
+    harness.admit_rebalance_payload(request_payload)
     response = harness.client.post(
         "/bff/rebalances",
-        json=payload or rebalance_payload(),
+        json=request_payload,
         headers={**HEADERS, "Idempotency-Key": key},
     )
     assert response.status_code == 202, response.text
@@ -100,11 +103,19 @@ def test_complete_proposal_is_durable_and_does_not_apply_capital(tmp_path: Path)
         assert allocation["target_weight"] == 0.10
 
 
+@pytest.mark.parametrize("stage", ["live", "live_candidate", "live_running"])
 def test_live_increase_without_approval_is_409_and_leaves_owner_state_unchanged(
     tmp_path: Path,
+    stage: str,
 ) -> None:
     with CapitalBffAuthorityHarness(tmp_path) as harness:
-        created = _create_proposal(harness, key="rb-proposal-no-approval")
+        payload = rebalance_payload()
+        payload["lines"][0]["stage"] = stage
+        created = _create_proposal(
+            harness,
+            key=f"rb-proposal-no-approval-{stage}",
+            payload=payload,
+        )
         rebalance_id = created.json()["rebalance_id"]
         assert harness.client is not None
 
@@ -115,7 +126,10 @@ def test_live_increase_without_approval_is_409_and_leaves_owner_state_unchanged(
         denied = harness.client.post(
             f"/bff/rebalances/{rebalance_id}/apply",
             json={},
-            headers={**HEADERS, "Idempotency-Key": "rb-apply-without-approval"},
+            headers={
+                **HEADERS,
+                "Idempotency-Key": f"rb-apply-without-approval-{stage}",
+            },
         )
 
         assert denied.status_code == 409, denied.text
@@ -141,29 +155,62 @@ def test_approved_apply_is_terminal_authoritative_and_ignores_body_tampering(
             rebalance_id,
             suffix="approved",
         )
+        apply_payload = {
+            **evidence,
+            "rebalance_id": "rb-attacker",
+            "entity_type": "Persona",
+            "entity_id": "p-attacker",
+            "action_id": "promote_to_live",
+            "actor_id": "attacker",
+            "actor_role": "admin",
+            "capital_pool_id": "pool-attacker",
+            "lines": [
+                {
+                    "persona_id": "p-attacker",
+                    "current_weight": 0,
+                    "target_weight": 1,
+                }
+            ],
+        }
+        apply_request_headers = {
+            **apply_headers,
+            "Idempotency-Key": "rb-apply-approved",
+        }
         accepted = harness.client.post(
             f"/bff/rebalances/{rebalance_id}/apply",
-            json={
-                **evidence,
-                "rebalance_id": "rb-attacker",
-                "entity_type": "Persona",
-                "entity_id": "p-attacker",
-                "action_id": "promote_to_live",
-                "actor_id": "attacker",
-                "actor_role": "admin",
-                "capital_pool_id": "pool-attacker",
-                "lines": [
-                    {
-                        "persona_id": "p-attacker",
-                        "current_weight": 0,
-                        "target_weight": 1,
-                    }
-                ],
-            },
-            headers={**apply_headers, "Idempotency-Key": "rb-apply-approved"},
+            json=apply_payload,
+            headers=apply_request_headers,
         )
         assert accepted.status_code == 202, accepted.text
         command_id = accepted.json()["data"]["command_id"]
+
+        token_id = apply_headers["X-Confirm-Token"]
+        token_state = harness.client.get(
+            f"/bff/confirm-tokens/{token_id}",
+            headers=HEADERS,
+        )
+        assert token_state.status_code == 200, token_state.text
+        assert token_state.json()["data"]["status"] == "redeemed"
+
+        replay = harness.client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            json=apply_payload,
+            headers=apply_request_headers,
+        )
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["data"]["command_id"] == command_id
+        assert replay.json()["meta"]["idempotency"]["replayed"] is True
+
+        reused = harness.client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            json=apply_payload,
+            headers={
+                **apply_headers,
+                "Idempotency-Key": "rb-apply-approved-reused-token",
+            },
+        )
+        assert reused.status_code == 428, reused.text
+        assert reused.json()["error"]["details"]["reason"] == "CONFIRM_TOKEN_INVALID"
 
         receipt = _command_receipt(harness, command_id)
         assert receipt["status"] == "executed"
@@ -240,6 +287,80 @@ def test_bff_apply_bootstraps_zero_weight_owner_allocation(tmp_path: Path) -> No
         allocation = receipt["result"]["allocation_readback"][0]
         assert allocation["current_weight"] == 0.12
         assert allocation["authoritative_capital_readback"] is True
+
+
+def test_pre_auto_redeem_guarded_record_keeps_token_consumed_after_upgrade_restart(
+    tmp_path: Path,
+) -> None:
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        created = _create_proposal(harness, key="rb-proposal-upgrade-consumption")
+        rebalance_id = created.json()["rebalance_id"]
+        assert harness.client is not None
+        apply_body, apply_headers = harness.apply_evidence(
+            rebalance_id,
+            suffix="upgrade-consumption",
+        )
+        request_headers = {
+            **apply_headers,
+            "Idempotency-Key": "rb-apply-upgrade-consumption",
+        }
+        accepted = harness.client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            json=apply_body,
+            headers=request_headers,
+        )
+        assert accepted.status_code == 202, accepted.text
+        command_id = accepted.json()["data"]["command_id"]
+        token_id = apply_headers["X-Confirm-Token"]
+
+        # Simulate a command admitted before automatic redemption was deployed:
+        # its guarded command/audit evidence is durable, but no explicit redeem
+        # record exists yet.
+        records = [
+            record
+            for record in bff_main.command_store._get_all_commands()
+            if not (
+                record.get("type")
+                == bff_main.CommandType.CONFIRM_TOKEN_REDEEM.value
+                and record.get("target", {}).get("id") == token_id
+            )
+        ]
+        bff_main.command_store._update_commands(records)
+        assert (
+            harness.client.get(
+                f"/bff/confirm-tokens/{token_id}",
+                headers=HEADERS,
+            ).json()["data"]["status"]
+            == "redeemed"
+        )
+
+        harness.restart()
+        assert harness.client is not None
+        token_state = harness.client.get(
+            f"/bff/confirm-tokens/{token_id}",
+            headers=HEADERS,
+        )
+        assert token_state.status_code == 200, token_state.text
+        assert token_state.json()["data"]["status"] == "redeemed"
+
+        replay = harness.client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            json=apply_body,
+            headers=request_headers,
+        )
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["data"]["command_id"] == command_id
+
+        reused = harness.client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            json=apply_body,
+            headers={
+                **apply_headers,
+                "Idempotency-Key": "rb-apply-upgrade-reused-token",
+            },
+        )
+        assert reused.status_code == 428, reused.text
+        assert reused.json()["error"]["details"]["reason"] == "CONFIRM_TOKEN_INVALID"
 
 
 @pytest.mark.parametrize(
@@ -998,6 +1119,87 @@ def test_restart_preserves_proposal_receipt_readback_and_same_key_command_replay
         assert _command_receipt(harness, apply_command_id)["result"] == before_result
 
 
+def test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        created = _create_proposal(harness, key="rb-proposal-startup-replay")
+        rebalance_id = created.json()["rebalance_id"]
+        assert harness.client is not None
+        apply_body, apply_headers = harness.apply_evidence(
+            rebalance_id,
+            suffix="startup-replay",
+        )
+
+        original_processor = bff_main._process_command_stub
+
+        async def leave_submitted(_command_id: str) -> None:
+            return None
+
+        monkeypatch.setattr(bff_main, "_process_command_stub", leave_submitted)
+        accepted = harness.client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            json=apply_body,
+            headers={
+                **apply_headers,
+                "Idempotency-Key": "rb-apply-startup-replay",
+            },
+        )
+        assert accepted.status_code == 202, accepted.text
+        command_id = accepted.json()["data"]["command_id"]
+        submitted = bff_main.command_store.get_command(command_id)
+        assert submitted is not None
+        assert submitted["status"] == "submitted"
+        assert (
+            harness.client.get(
+                f"/bff/confirm-tokens/{apply_headers['X-Confirm-Token']}",
+                headers=HEADERS,
+            ).json()["data"]["status"]
+            == "redeemed"
+        )
+
+        monkeypatch.setattr(bff_main, "_process_command_stub", original_processor)
+        harness.restart()
+        assert harness.client is not None
+        harness.client.close()
+
+        with TestClient(bff_main.app) as restarted_client:
+            harness.client = restarted_client
+            deadline = time.monotonic() + 3.0
+            receipt = _command_receipt(harness, command_id)
+            while receipt["status"] in {"submitted", "processing"} and time.monotonic() < deadline:
+                time.sleep(0.02)
+                receipt = _command_receipt(harness, command_id)
+
+            assert receipt["status"] == "executed", receipt
+            assert receipt["result"]["status"] == "applied"
+            assert receipt["result"]["command_id"] == command_id
+            proposal = restarted_client.get(
+                f"/bff/rebalances/{rebalance_id}",
+                headers=HEADERS,
+            )
+            assert proposal.status_code == 200, proposal.text
+            assert proposal.json()["data"]["applied"] is True
+            assert proposal.json()["data"]["apply_command_id"] == command_id
+            token_id = apply_headers["X-Confirm-Token"]
+            token_state = restarted_client.get(
+                f"/bff/confirm-tokens/{token_id}",
+                headers=HEADERS,
+            )
+            assert token_state.status_code == 200, token_state.text
+            assert token_state.json()["data"]["status"] == "redeemed"
+            redemption_records = [
+                record
+                for record in bff_main.command_store._get_all_commands()
+                if record.get("type")
+                == bff_main.CommandType.CONFIRM_TOKEN_REDEEM.value
+                and record.get("target", {}).get("id") == token_id
+            ]
+            assert len(redemption_records) == 1
+        harness.client = None
+
+
 def test_pool_and_binding_creation_are_owner_durable_and_replay_after_restart(
     tmp_path: Path,
 ) -> None:
@@ -1053,9 +1255,11 @@ def test_emergency_proposal_rejects_increase_and_accepts_containment(
 ) -> None:
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         assert harness.client is not None
+        rejected_payload = rebalance_payload(emergency=True)
+        harness.admit_rebalance_payload(rejected_payload)
         rejected = harness.client.post(
             "/bff/rebalances",
-            json=rebalance_payload(emergency=True),
+            json=rejected_payload,
             headers={**HEADERS, "Idempotency-Key": "rb-emergency-increase"},
         )
         assert rejected.status_code == 422, rejected.text
@@ -1091,3 +1295,142 @@ def test_bff_version_reports_configured_source_sha(monkeypatch) -> None:
         "commit": source_sha,
         "source_commit_known": True,
     }
+
+
+def _containment_security_evidence(
+    harness: CapitalBffAuthorityHarness,
+    *,
+    suffix: str,
+    persona_id: str = "p-live",
+) -> tuple[str, dict[str, str]]:
+    assert harness.client is not None
+    signature_id = f"tms-containment-{suffix}"
+    token_id = f"ct-containment-{suffix}"
+    confirm = harness.client.post(
+        "/bff/confirm-tokens",
+        json={
+            "tokenId": token_id,
+            "command": "EmergencyContainment",
+            "target": {"type": "Persona", "id": persona_id},
+            "operator_id": "op-2",
+            "reason": "confirm authoritative Persona containment",
+        },
+        headers={**HEADERS, "Idempotency-Key": f"confirm-containment-{suffix}"},
+    )
+    assert confirm.status_code == 201, confirm.text
+
+    for operator_id, authorization in (
+        ("op-2", HEADERS["Authorization"]),
+        ("op-3", "Bearer op-3:operator"),
+    ):
+        signed = harness.client.post(
+            f"/bff/v5/interventions/{signature_id}/two-man-sign",
+            json={
+                "twoManSignatureId": signature_id,
+                "command": "EmergencyContainment",
+                "target": {"type": "Persona", "id": persona_id},
+                "reason": "authenticated operator approved emergency containment",
+            },
+            headers={
+                "Authorization": authorization,
+                "Idempotency-Key": f"sign-containment-{suffix}-{operator_id}",
+            },
+        )
+        assert signed.status_code == 202, signed.text
+
+    return signature_id, {**HEADERS, "X-Confirm-Token": token_id}
+
+
+def test_action_adapter_rebalance_apply_forwarding(tmp_path: Path) -> None:
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        created = _create_proposal(harness, key="rb-proposal-adapter-apply")
+        rebalance_id = created.json()["rebalance_id"]
+        assert harness.client is not None
+        evidence, apply_headers = harness.apply_evidence(
+            rebalance_id,
+            suffix="adapter-apply",
+        )
+        
+        # Call the action adapter endpoint
+        response = harness.client.post(
+            f"/bff/actions/rebalance/{rebalance_id}/apply",
+            json=evidence,
+            headers={
+                **apply_headers,
+                "Idempotency-Key": "rb-apply-adapter-apply",
+            },
+        )
+        assert response.status_code == 202, response.text
+        command_id = response.json()["data"]["command_id"]
+        
+        receipt = _command_receipt(harness, command_id)
+        assert receipt["status"] == "executed"
+        result = receipt["result"]
+        assert result["status"] == "applied"
+        assert result["dispatch_path"] == "capital_service_rebalance_authority"
+        assert result["entity_id"] == rebalance_id
+        
+        proposal = harness.client.get(
+            f"/bff/rebalances/{rebalance_id}", headers=HEADERS
+        ).json()["data"]
+        assert proposal["status"] == "applied"
+        assert proposal["applied"] is True
+
+
+def test_action_adapter_emergency_containment_forwarding(tmp_path: Path) -> None:
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        persona_id = "p-containment-forward"
+        harness.create_persona(persona_id)
+        assert harness.client is not None
+        
+        sig_id, apply_headers = _containment_security_evidence(
+            harness,
+            suffix="containment-forward",
+            persona_id=persona_id,
+        )
+        
+        # Call the action adapter endpoint for persona emergency containment
+        response = harness.client.post(
+            f"/bff/actions/persona/{persona_id}/EmergencyContainment",
+            json={
+                "action": "freeze",
+                "trigger": "hard_risk_breach",
+                "evidence_refs": ["risk-event:42"],
+                "two_man_signature_id": sig_id,
+            },
+            headers={
+                **apply_headers,
+                "Idempotency-Key": "persona-containment-adapter-apply",
+            },
+        )
+        assert response.status_code == 202, response.text
+        command_id = response.json()["data"]["command_id"]
+        
+        receipt = _command_receipt(harness, command_id)
+        assert receipt["status"] == "executed"
+        result = receipt["result"]
+        assert result["containment"] is True
+        assert result["containment_state"] == "frozen"
+        assert result["dispatch_path"] == "capital_service_containment_authority"
+        
+        persona = harness.client.get(
+            f"/bff/personas/{persona_id}", headers=HEADERS
+        ).json()["data"]
+        assert persona["containment_state"] == "frozen"
+        assert persona["frozen"] is True
+
+
+def test_restart_preserves_pending_proposals_via_write_datasets(tmp_path: Path) -> None:
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        created = _create_proposal(harness, key="rb-proposal-pending-restart")
+        rebalance_id = created.json()["rebalance_id"]
+        
+        harness.restart()
+        assert harness.client is not None
+        
+        proposal = harness.client.get(
+            f"/bff/rebalances/{rebalance_id}", headers=HEADERS
+        )
+        assert proposal.status_code == 200, proposal.text
+        assert proposal.json()["data"]["status"] == "pending"
+        assert proposal.json()["data"]["applied"] is False

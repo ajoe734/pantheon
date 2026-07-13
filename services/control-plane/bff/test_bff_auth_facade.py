@@ -233,6 +233,32 @@ class TestExtractIdentityJwt:
         assert identity.mfa_verified is True
         assert identity.claims["capabilities"] == ["assistant.kernel.debug", "audit.read"]
 
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "Bearer pantheon-dev-browser:viewer",
+            "Bearer Pantheon-dev-browser:viewer",
+            "Bearer pantheon-dev-browser :viewer",
+        ],
+    )
+    def test_permissive_parser_never_admits_public_browser_subject(self, token):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(
+                token,
+                env_overrides={
+                    "PANTHEON_BFF_AUTH_MODE": "permissive",
+                    "PANTHEON_BFF_JWT_SECRET": "",
+                },
+            )
+
+        assert exc_info.value.status_code == 403
+        assert (
+            exc_info.value.detail["error"]["details"]["reason"]
+            == "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"
+        )
+
     def test_permissive_structured_token_merges_dev_stub_capabilities(self):
         identity = self._call(
             "Bearer op-admin:admin,operator:mfa:assistant.kernel.debug",
@@ -287,6 +313,44 @@ class TestExtractIdentityStub:
             "assistant.kernel.debug",
             "assistant.kernel.repair",
         ]
+
+    def test_public_browser_viewer_is_not_admitted_by_stub_parser(self):
+        from fastapi import HTTPException
+
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.debug,assistant.kernel.repair"},
+            clear=False,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                self._call("Bearer pantheon-dev-browser:viewer")
+
+        assert exc_info.value.status_code == 403
+        assert (
+            exc_info.value.detail["error"]["details"]["reason"]
+            == "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"
+        )
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "Bearer pantheon-dev-browser:operator",
+            "Bearer pantheon-dev-browser:viewer,admin",
+            "Bearer pantheon-dev-browser:viewer:mfa",
+            "Bearer pantheon-dev-browser:viewer:tenant-a:assistant.kernel.debug",
+        ],
+    )
+    def test_public_browser_subject_rejects_every_stub_variant(self, token):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(token)
+
+        assert exc_info.value.status_code == 403
+        assert (
+            exc_info.value.detail["error"]["details"]["reason"]
+            == "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"
+        )
 
     def test_colon_format_multiple_roles(self):
         identity = self._call("Bearer op-multi:operator,reviewer")
