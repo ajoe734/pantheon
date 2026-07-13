@@ -42,7 +42,7 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
         "display_name": "execute-plans",
         "repo": "ajoe734/execute-plans",
         "local_path": "../execute-plans",
-        "default_branch": "main",
+        "default_branch": "dev",
         "artifact_prefixes": ["execute-plans/"],
         "coordination_dir": ".coordination",
         "requests_dir": ".coordination/requests",
