@@ -27640,15 +27640,11 @@ def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str
                 or ""
             )
             capital_pool = pools_by_id.get(capital_pool_id, {})
-            persona_id = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "persona_id"),
-                    _management_dict_value(runtime, "persona_id"),
-                    _management_dict_value(plan, "persona_id"),
-                    _management_dict_value(persona_binding, "persona_id"),
-                )
-                or ""
-            )
+            canonical_persona_id = str(persona_binding.get("persona_id") or "").strip()
+            if canonical_persona_id:
+                persona_id = canonical_persona_id
+            else:
+                persona_id = str(runtime.get("persona_id") or "").strip()
             strategy_id = str(
                 _management_first_non_empty(
                     _management_dict_value(position, "strategy_id", "strategy_ref"),

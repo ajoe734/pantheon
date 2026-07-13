@@ -11250,9 +11250,9 @@ class ReadSurfaceStore:
                         ).strip()
                         if declared_pool_id:
                             projected["capital_pool_id"] = declared_pool_id
-                elif len(candidates) > 1:
-                    # Conflicting exact declarations are not evidence of
-                    # ownership.  Do not let an arbitrary legacy owner win.
+                else:
+                    # No declaration or conflicting declarations: do not let
+                    # a stale raw persona_id assign ownership.
                     projected["persona_id"] = None
             bindings.append(projected)
         if deployment_mode:

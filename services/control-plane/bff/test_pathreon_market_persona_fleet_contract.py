@@ -1288,3 +1288,120 @@ def test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector
     assert out_dss["live_source_connector_ids"] == ["crypto-coingecko-spot"]
     assert out_sources[0]["connectorId"] == "crypto-coingecko-spot"
     assert out_sources[0]["sourceHealthAvailable"] is True
+
+
+def test_unassigned_runtime_telemetry_isolation_and_no_seed_leaks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    persona_custom = "persona-custom-empty"
+    runtime_unassigned = "runtime-devloop-unassigned"
+    runtime_binding_unassigned = "rb-devloop-unassigned"
+    
+    def write_store(name: str, payload: object) -> Path:
+        path = tmp_path / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    stores = {
+        "PANTHEON_BFF_PERSONA_REGISTRY_STORE": write_store(
+            "personas.json",
+            {
+                persona_custom: {
+                    "persona_id": persona_custom,
+                    "name": "Custom Empty US",
+                    "lifecycle_state": "deployed",
+                    "status": "deployed",
+                    "created_at": "2026-07-13T00:00:00Z",
+                    "metadata": {
+                        "market_scope": ["US"],
+                        "capital_mode": "paper",
+                        "deployment_stage": "paper",
+                    },
+                },
+            },
+        ),
+        "PANTHEON_BFF_PERSONA_SESSION_STORE": write_store("sessions.json", {}),
+        "PANTHEON_BFF_PERSONA_BINDING_STORE": write_store("persona_capital_bindings.json", {}),
+        "PANTHEON_BFF_RUNTIME_BINDING_STORE": write_store(
+            "runtime_bindings.json",
+            {
+                runtime_binding_unassigned: {
+                    "binding_id": runtime_binding_unassigned,
+                    "runtime_id": runtime_unassigned,
+                    "persona_id": "persona-us-equity",  # stale seed persona_id
+                    "deployment_mode": "paper",
+                    "status": "active",
+                },
+            },
+        ),
+        "PANTHEON_BFF_DEPLOYMENT_PLAN_STORE": write_store("deployment_plans.json", {}),
+        "PANTHEON_BFF_TELEMETRY_SUMMARY_STORE": write_store(
+            "telemetry_summaries.json",
+            {
+                runtime_unassigned: {
+                    "runtime_id": runtime_unassigned,
+                    "projection_source": "telemetry_ingest",
+                    "collected_at": "2026-07-13T00:10:00Z",
+                    "pnl": 0.55,
+                    "drawdown": 0.05,
+                    "fill_rate": 0.95,
+                    "avg_slippage_bps": 2.0,
+                    "sharpe_ratio": 2.0,
+                    "total_trades": 6841,
+                },
+            },
+        ),
+    }
+    for env_name in (
+        "PANTHEON_PERSONA_DATA_DIR",
+        "PANTHEON_GOVERNANCE_DATA_DIR",
+        "PANTHEON_RUNTIME_DATA_DIR",
+        "PANTHEON_PERSONA_SERVICE_URL",
+        "PANTHEON_RUNTIME_MANAGER_URL",
+        "PANTHEON_TELEMETRY_API_URL",
+        "PANTHEON_TELEMETRY_URL",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    for env_name, path in stores.items():
+        monkeypatch.setenv(env_name, str(path))
+
+    store = ReadSurfaceStore(
+        str(tmp_path / "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    runtimes = {runtime["runtime_id"]: runtime for runtime in store.list_runtime_bindings()}
+    # The unassigned devloop runtime has no canonical binding or unique declaration, so it must reconcile to None.
+    assert runtimes[runtime_unassigned]["persona_id"] is None
+
+    with _client_with_store(store) as client:
+        attribution_response = client.get(
+            "/bff/management/performance-attribution/by-persona?page_size=100",
+            headers=HEADERS,
+        )
+        fleet_response = client.get(
+            "/bff/management/persona-fleet?page_size=100",
+            headers=HEADERS,
+        )
+
+    assert attribution_response.status_code == 200, attribution_response.text
+    attribution_rows = {
+        item["dimension_key"]: item
+        for item in attribution_response.json()["data"]["items"]
+    }
+    # Unassigned telemetry remains categorized as unassigned
+    assert attribution_rows["unassigned"]["metrics"]["total_trades"] == 6841
+    # Custom empty persona does not get any telemetry
+    assert persona_custom not in attribution_rows
+
+    assert fleet_response.status_code == 200, fleet_response.text
+    fleet_rows = {
+        item["persona_id"]: item
+        for item in fleet_response.json()["data"]["items"]
+    }
+    # Custom empty persona has no telemetry, so performance fields must be null (not faked from same-market seed)
+    custom_perf = fleet_rows[persona_custom]["performance_summary"]
+    assert custom_perf["source"] == "unavailable"
+    assert custom_perf["pnl"] is None
+    assert custom_perf["max_drawdown"] is None
+    assert custom_perf["total_trades"] is None
