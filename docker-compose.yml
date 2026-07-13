@@ -1322,7 +1322,6 @@ services:
       start_period: 5s
 
   evolution-daily-sweep-scheduler:
-    profiles: ["evolution-daily-sweep-scheduler"]
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
