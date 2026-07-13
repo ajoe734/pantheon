@@ -916,8 +916,9 @@ def _workspace_data_freshness(
             "reason": "workspace generation evidence refs",
         },
     )
-    has_strategy = False
+    has_strategy = True
     if workshop_store is not None and hasattr(workshop_store, "list_sessions"):
+        has_strategy = False
         try:
             sessions, _ = workshop_store.list_sessions(limit=100)
             if any(str(s.get("strategy_id") or "").strip() == strategy_id for s in sessions):
