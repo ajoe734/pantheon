@@ -1,10 +1,10 @@
 # EVOCHAIN-004 — Freeze / Rollback Canonical Store
 
-Status: ready for reviewer handoff
+Status: ready for refreshed reviewer handoff
 
-Owner: Codex  
-Reviewer: Claude  
-Branch: `task/EVOCHAIN-004`  
+Owner: Codex
+Reviewer: Claude
+Branch: `task/EVOCHAIN-004`
 Merge target: `dev`
 
 ## Delivered Contract
@@ -28,9 +28,12 @@ the governance-owned Postgres tables through `PostgresJsonOwnerStore`.
 
 `ServiceBackedReadAdapter` registers canonical datasets `freeze_orders` and
 `all_rollbacks`. Both call the governance HTTP service first, using the
-already-deployed `PANTHEON_GOVERNANCE_APPROVAL_API_URL` as a compatible base
-URL fallback. Direct backend-owned store files are a secondary service-store
-path; the BFF-local snapshot is last-resort fallback only.
+already-deployed `PANTHEON_GOVERNANCE_APPROVAL_API_URL` as the primary explicit
+service-discovery key and `PANTHEON_GOVERNANCE_SERVICE_URL` as an explicit
+compatibility fallback. They intentionally ignore the legacy
+`PANTHEON_GOVERNANCE_API_URL`, which can point at the evolution service. Direct
+backend-owned store files are a secondary service-store path; the BFF-local
+snapshot is last-resort fallback only.
 
 Truth rules:
 
@@ -74,6 +77,16 @@ Anchor commits:
 - `d7ee20512` — governance owner-store/read API layer
 - `f455cbb8f` — BFF service-client/surface-truth layer
 
+## Owner Closeout Recheck
+
+Claude approved implementation commit `e764a0fc1` after the original 50-test
+suite passed. During owner finalization, a branch audit found that the new BFF
+clients could select the legacy `PANTHEON_GOVERNANCE_API_URL` before the
+explicit governance URL. Deployed service-family configuration may point that
+legacy alias at evolution. The closeout correction removes the legacy alias
+from both new datasets and adds conflict regression coverage. The corrected
+branch is routed through a refreshed Claude review before publication.
+
 ## Verification
 
 Executed after composing the task branch with the latest `origin/dev`:
@@ -89,7 +102,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q \
   services/control-plane/bff/test_evolution_center_contract.py
 ```
 
-Result: `50 passed, 12 warnings in 66.43s`. Warnings are the existing FastAPI
+Reviewer-handoff result at `e764a0fc1`: `50 passed, 12 warnings in 66.43s`.
+
+Owner closeout correction result before latest-`dev` composition:
+`51 passed, 12 warnings in 28.43s`. Warnings are the existing FastAPI
 `on_event` deprecation notices from BFF startup/shutdown registration.
 
 Additional checks:

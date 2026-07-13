@@ -3124,18 +3124,16 @@ class ServiceBackedReadAdapter:
         },
         "freeze_orders": {
             "base_env": (
-                "PANTHEON_GOVERNANCE_API_URL",
-                "PANTHEON_GOVERNANCE_SERVICE_URL",
                 "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+                "PANTHEON_GOVERNANCE_SERVICE_URL",
             ),
             "list_path": "/api/governance/freeze-orders",
             "require_list_payload": True,
         },
         "all_rollbacks": {
             "base_env": (
-                "PANTHEON_GOVERNANCE_API_URL",
-                "PANTHEON_GOVERNANCE_SERVICE_URL",
                 "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+                "PANTHEON_GOVERNANCE_SERVICE_URL",
             ),
             "list_path": "/api/governance/rollbacks",
             "require_list_payload": True,

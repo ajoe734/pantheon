@@ -22,7 +22,9 @@ POSTMORTEMS_URL = "http://postmortems:8091"
 
 def _configure_service_urls(monkeypatch) -> None:
     values = {
-        "PANTHEON_GOVERNANCE_API_URL": "",
+        # The legacy alias intentionally points at evolution in deployed
+        # service-family configuration. New governance reads must ignore it.
+        "PANTHEON_GOVERNANCE_API_URL": EVOLUTION_URL,
         "PANTHEON_GOVERNANCE_SERVICE_URL": "",
         "PANTHEON_GOVERNANCE_APPROVAL_API_URL": GOVERNANCE_URL,
         "PANTHEON_PROMOTION_API_URL": "",
@@ -97,6 +99,29 @@ def test_healthy_empty_service_is_ok_and_does_not_mix_local_seed(tmp_path, monke
     assert surfaces["rollbacks"]["source"] == "service_client"
     assert surfaces["mutation_review"]["status"] == "ok"
     assert surfaces["management_evolution_journal"]["status"] == "ok"
+
+
+def test_explicit_governance_url_wins_over_legacy_evolution_alias(tmp_path, monkeypatch) -> None:
+    calls = []
+    delegate = _fake_service_get([], [])
+
+    def recording_get(base_url: str, path: str, *, headers=None):
+        calls.append((base_url, path))
+        return delegate(base_url, path, headers=headers)
+
+    store = _install_store(
+        tmp_path,
+        monkeypatch,
+        allow_fallback=False,
+        fake_get=recording_get,
+    )
+
+    assert store.list_freeze_orders() == []
+    assert store.list_all_rollbacks() == []
+    assert (GOVERNANCE_URL, "/api/governance/freeze-orders") in calls
+    assert (GOVERNANCE_URL, "/api/governance/rollbacks") in calls
+    assert (EVOLUTION_URL, "/api/governance/freeze-orders") not in calls
+    assert (EVOLUTION_URL, "/api/governance/rollbacks") not in calls
 
 
 def test_populated_service_records_are_filtered_sorted_and_projected(tmp_path, monkeypatch) -> None:
