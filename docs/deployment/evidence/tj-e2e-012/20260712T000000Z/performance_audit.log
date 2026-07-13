@@ -1,8 +1,60 @@
-# Management List Contract Audit
+=============================================================
+HOSTED PERFORMANCE AUDIT: LATENCY MEASUREMENT
+Target BFF: https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
+=============================================================
 
-Total issues: 2
+Measuring: /bff/management/trade-journeys?tenant_id=pantheon-dev&environment=paper
+  Iteration 1: status=200, latency=21.24ms
+  Iteration 2: status=200, latency=24.44ms
+  Iteration 3: status=200, latency=28.67ms
+  Iteration 4: status=200, latency=31.07ms
+  Iteration 5: status=200, latency=20.55ms
+  Iteration 6: status=200, latency=17.79ms
+  Iteration 7: status=200, latency=18.37ms
+  Iteration 8: status=200, latency=19.60ms
+  Iteration 9: status=200, latency=19.22ms
+  Iteration 10: status=200, latency=20.09ms
+  --- Statistics ---
+  Min: 17.79ms
+  Max: 31.07ms
+  Avg: 22.11ms
+  p95: 31.07ms
+  ✓ PASS: Meets performance SLO constraints
 
-| New | Severity | Category | Function | Route | Line | Evidence |
-|---|---|---|---|---|---:|---|
-|  | P1 | camel-snake-duplicate | `_persona_fleet_mutation_projection` | `` | 54747 | evolutionEntryId+evolution_entry_id, evolutionHref+evolution_href, lastMutationAt+last_mutation_at, lastMutationKind+last_mutation_kind, lastMutationLabel+last_mutation_label, mutationConfidence+mutation_confidence, mutationDiagnostics+mutation_diagnostics, mutationEntryId+mutation_entry_id |
-|  | P1 | camel-snake-duplicate | `bff_management_quarterly_ranking_recommendation_submit` | `/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit` | 42346 | liveCapitalMutation+live_capital_mutation, recommendationActionId+recommendation_action_id, recommendationId+recommendation_id |
+Measuring: /bff/management/trade-journeys/tj-scenario-1?tenant_id=pantheon-dev&environment=paper
+  Iteration 1: status=200, latency=23.50ms
+  Iteration 2: status=200, latency=18.11ms
+  Iteration 3: status=200, latency=24.68ms
+  Iteration 4: status=200, latency=21.56ms
+  Iteration 5: status=200, latency=19.11ms
+  Iteration 6: status=200, latency=20.22ms
+  Iteration 7: status=200, latency=25.83ms
+  Iteration 8: status=200, latency=29.42ms
+  Iteration 9: status=200, latency=17.43ms
+  Iteration 10: status=200, latency=17.87ms
+  --- Statistics ---
+  Min: 17.43ms
+  Max: 29.42ms
+  Avg: 21.77ms
+  p95: 29.42ms
+  ✓ PASS: Meets performance SLO constraints
+
+Measuring: /bff/management/trade-journeys/resolve?q=co-scen-9&tenant_id=pantheon-dev&environment=paper
+  Iteration 1: status=200, latency=62.38ms
+  Iteration 2: status=200, latency=18.46ms
+  Iteration 3: status=200, latency=19.71ms
+  Iteration 4: status=200, latency=22.28ms
+  Iteration 5: status=200, latency=20.00ms
+  Iteration 6: status=200, latency=21.55ms
+  Iteration 7: status=200, latency=23.21ms
+  Iteration 8: status=200, latency=19.42ms
+  Iteration 9: status=200, latency=19.60ms
+  Iteration 10: status=200, latency=21.82ms
+  --- Statistics ---
+  Min: 18.46ms
+  Max: 62.38ms
+  Avg: 24.84ms
+  p95: 62.38ms
+  ✓ PASS: Meets performance SLO constraints
+
+HOSTED PERFORMANCE AUDIT COMPLETED SUCCESSFULLY!

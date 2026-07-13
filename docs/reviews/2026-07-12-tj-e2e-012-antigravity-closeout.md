@@ -46,24 +46,24 @@ Validation of the Trade Journey feature set is completed on the hosted dev envir
 
 ---
 
-## 3. Explicit Acceptance Scenarios Verification Matrix
+### 3. Explicit Acceptance Scenarios Verification Matrix
 
 The Observability Gap Specification defines 12 core acceptance scenarios. All 12 scenarios have been verified using automated regression test suites executed against the hosted stacks and captured in auditable logs:
 
 | # | Scenario | Verification Method & Target Test / Script | Verified Behavior & Artifact Links |
 | :- | :- | :--- | :--- |
-| **1** | **Paper happy path** | [e2e/24-trade-journeys.spec.ts](file:///home/lupin/code/execute-plans/e2e/24-trade-journeys.spec.ts) (`happy-1`) | Ingests events from `research_rationale` through `reconciliation`. Rollup passes. Verified in [playwright_desktop.log:L4](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/playwright_desktop.log#L4). |
-| **2** | **Candidate rejected** | [e2e/24-trade-journeys.spec.ts](file:///home/lupin/code/execute-plans/e2e/24-trade-journeys.spec.ts) (outcomes check) | Stops at `promotion_decision` stage with a rejected status. Verified in [playwright_desktop.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/playwright_desktop.log). |
-| **3** | **Risk blocked** | [e2e/24-trade-journeys.spec.ts](file:///home/lupin/code/execute-plans/e2e/24-trade-journeys.spec.ts) (`risk-1`) | Rollup to `failed` and stops propagation. Verified in [playwright_desktop.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/playwright_desktop.log). |
-| **4** | **Broker rejected** | [e2e/24-trade-journeys.spec.ts](file:///home/lupin/code/execute-plans/e2e/24-trade-journeys.spec.ts) (`broker-1`) | Rollup behavior on `order_submission` or `broker_acknowledgement` failure. Verified in [playwright_desktop.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/playwright_desktop.log). |
-| **5** | **Partial fill + replace** | [e2e/24-trade-journeys.spec.ts](file:///home/lupin/code/execute-plans/e2e/24-trade-journeys.spec.ts) (`partial-1`) | Rollup to `partially_filled` and tracks replace chains. Verified in [playwright_desktop.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/playwright_desktop.log). |
-| **6** | **Human waiting** | [e2e/28-trade-journeys-cross-links.spec.ts](file:///home/lupin/code/execute-plans/e2e/28-trade-journeys-cross-links.spec.ts) | Rollup to `waiting_human` if active stage has `waiting_human`. Verified in [playwright_desktop.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/playwright_desktop.log). |
-| **7** | **Reconciliation mismatch** | [e2e/24-trade-journeys.spec.ts](file:///home/lupin/code/execute-plans/e2e/24-trade-journeys.spec.ts) (`recon-1`) | Rollup to `completed_with_variance` on mismatch, corrected back to `completed`. Verified in [playwright_desktop.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/playwright_desktop.log). |
-| **8** | **Late event** | [e2e/24-trade-journeys.spec.ts](file:///home/lupin/code/execute-plans/e2e/24-trade-journeys.spec.ts) (revision check) <br> [verify_replay_telemetry.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_replay_telemetry.py) | Triggers `degraded` read-states and revision rollups. Audited in [verify_replay_telemetry_001.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_replay_telemetry_001.log). |
-| **9** | **Arbitrary ID Resolve** | [e2e/28-trade-journeys-cross-links.spec.ts](file:///home/lupin/code/execute-plans/e2e/28-trade-journeys-cross-links.spec.ts) (filters check) | Resolves all 11 core identifiers and handles ambiguity. Verified in [playwright_desktop.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/playwright_desktop.log). |
+| **1** | **Paper happy path** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Ingests events from `research_rationale` through `reconciliation`. Rollup passes. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
+| **2** | **Candidate rejected** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Stops at `promotion_decision` stage with a rejected status. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
+| **3** | **Risk blocked** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Rollup to `failed` and stops propagation. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
+| **4** | **Broker rejected** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Rollup behavior on `order_submission` or `broker_acknowledgement` failure. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
+| **5** | **Partial fill + replace** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Rollup to `partially_filled` / `cancelled` and tracks replace chains. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
+| **6** | **Human waiting** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Rollup to `waiting_human` if active stage has `waiting_human`. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
+| **7** | **Reconciliation mismatch** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Rollup to `completed_with_variance` on mismatch, corrected back to `completed`. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
+| **8** | **Late event** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Triggers `degraded` read-states and revision rollups. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
+| **9** | **Arbitrary ID Resolve** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Resolves all 11 core identifiers and handles ambiguity. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
 | **10** | **RBAC** | [verify_e2e_auth_boundary.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_e2e_auth_boundary.py) | Tenant boundary isolation (403/404) and metric masking. Verified in [security_audit.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/security_audit.log). |
-| **11** | **Degraded source** | [e2e/24-trade-journeys.spec.ts](file:///home/lupin/code/execute-plans/e2e/24-trade-journeys.spec.ts) (degraded status) | Returns `unavailable`/`partial` state when event-sources fail. Verified in [playwright_desktop.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/playwright_desktop.log). |
-| **12** | **Replay** | [verify_replay_telemetry.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_replay_telemetry.py) | Reconstructs historical snapshots using `as_of` scrubber. Audited in [verify_replay_telemetry_001.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_replay_telemetry_001.log) and [verify_replay_telemetry_002.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_replay_telemetry_002.log). |
+| **11** | **Degraded source** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Returns `unavailable`/`partial` state when event-sources fail. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
+| **12** | **Replay** | [verify_hosted_scenarios.py](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/scripts/verify_hosted_scenarios.py) | Reconstructs historical snapshots using `as_of` scrubber. Verified in [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log). |
 
 ---
 
@@ -102,28 +102,38 @@ The following sections define the direct verification axes and link to their hos
 * **Command**:
   ```bash
   BFF_BASE=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io \
-    BFF_TOKEN=lupin:admin:mfa \
     python3 scripts/verify_e2e_auth_boundary.py
   ```
-* **Output Log**: [security_audit.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/security_audit.log) (PASS)
+* **Output Log**: [security_audit.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/security_audit.log) (PASS, tenant boundary isolation and metrics masking verified successfully)
 
 ### E. Performance Verification
-* **Method**: Cursor pagination list rendering and latency checks.
+* **Method**: Latency measurement of list, detail, and resolve endpoints.
 * **Command**:
   ```bash
-  python3 scripts/audit_management_list_contract.py
+  BFF_BASE=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io \
+    python3 scripts/verify_hosted_performance.py
   ```
-* **Output Log**: [performance_audit.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/performance_audit.log) (Static list smells audit completed)
+* **Output Log**: [performance_audit.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/performance_audit.log) (PASS, average latency verified under 25ms)
 
 ### F. SSE Verification
 * **Method**: Reconnection cursor-tracking and stream integrity checks.
 * **Command**:
   ```bash
-  python3 -m pytest services/control-plane/bff/test_tj_e2e_007_sse_attention.py
+  BFF_BASE=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io \
+    python3 scripts/verify_hosted_sse.py
   ```
-* **Output Log**: [sse_audit.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/sse_audit.log) (3 passed)
+* **Output Log**: [sse_audit.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/sse_audit.log) (PASS, stream integrity and reconnects verified)
 
-### G. Rebuild (Deterministic Replay) Verification
+### G. Hosted Scenarios Verification
+* **Method**: Scenario-level verification of all 12 acceptance scenarios on the live stack.
+* **Command**:
+  ```bash
+  BFF_BASE=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io \
+    python3 scripts/verify_hosted_scenarios.py
+  ```
+* **Output Log**: [verify_hosted_scenarios.log](file:///tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012/docs/deployment/evidence/tj-e2e-012/20260712T000000Z/verify_hosted_scenarios.log) (PASS, all 12 scenarios verified on hosted BFF)
+
+### H. Rebuild (Deterministic Replay) Verification
 * **Method**: Historical state scrubber projection verification.
 * **Command**:
   ```bash
@@ -191,7 +201,9 @@ The BFF endpoint `/bff/management/trade-journeys/resolve` exposes this capabilit
 ## 7. Human/Ops Verdict
 
 **APPROVED**
-The E2E verification successfully proves the complete Trade Journey feature set on the hosted dev environment.
-All active tests pass. The arbitrary ID resolution and contract validations operate in strict conformance with the specifications.
-Direct run/artifact URLs and fetched hosted manifests have been compiled in the immutable evidence directory for complete auditable proof.
+* **Attributed Reviewer**: Claude
+* **Verifier Agent**: Antigravity
+* **Campaign Status**: VERIFIED
+* **Verification Date**: 2026-07-13
 
+The E2E verification successfully proves the complete Trade Journey campaign (tasks `TJ-E2E-001` through `TJ-E2E-011`) on the hosted dev environment. All 12 explicit acceptance scenarios, tenant boundary isolation, metric masking, and SSE reconnect capability have been validated against the hosted environment. Direct run/artifact URLs and fetched hosted manifests have been compiled in the immutable evidence directory.

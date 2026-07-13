@@ -1,0 +1,49 @@
+Scenario 10: RBAC Tenant Isolation check...
+  Query own tenant: 200 OK
+  Cross-tenant query: 403 Forbidden (Isolated)
+  Query own metrics: 200 OK
+  Cross-tenant metrics query: 403 Forbidden (Masked)
+Verifying tj-scenario-1...
+  ✓ status = completed
+  ✓ current_stage = reconciliation
+  ✓ read_state = formal
+Verifying tj-scenario-2...
+  ✓ status = open
+  ✓ current_stage = promotion_decision
+  ✓ rejected = True
+Verifying tj-scenario-3...
+  ✓ status = failed
+  ✓ current_stage = risk_evaluation
+  ✓ rejected = True
+Verifying tj-scenario-4...
+  ✓ status = failed
+  ✓ current_stage = broker_acknowledgement
+  ✓ rejected = True
+Verifying tj-scenario-5...
+  ✓ status = cancelled
+  ✓ current_stage = fill_management
+Verifying tj-scenario-6...
+  ✓ status = waiting_human
+  ✓ current_stage = trade_decision
+  ✓ waiting_human = True
+Verifying tj-scenario-7...
+  ✓ status = completed
+  ✓ current_stage = reconciliation
+Verifying tj-scenario-8...
+  ✓ status = incomplete
+  ✓ current_stage = reconciliation
+  ✓ read_state = degraded
+Verifying tj-scenario-11...
+  ✓ status = completed
+  ✓ current_stage = reconciliation
+  ✓ read_state = partial
+Verifying tj-scenario-12...
+  ✓ status = open
+  ✓ current_stage = trade_decision
+Scenario 10: Verified tj-scenario-10 in live env
+Scenario 9: Arbitrary ID Resolution check...
+  ✓ co-scen-9 resolved to tj-scenario-9 successfully
+Scenario 12: Scrubber Replay check...
+  ✓ Replay as-of 12:01:30Z current_stage = 'signal_generation'
+
+ALL 12 SCENARIOS VERIFIED SUCCESSFULLY ON HOSTED BFF!
