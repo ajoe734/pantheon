@@ -609,11 +609,16 @@ services:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
       INCIDENT_DATA_DIR: /data/incidents
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-postgres}
+      POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-postgres}
     volumes:
       - evolution-data:/data/evolution
       - incident-data:/data/incidents
     depends_on:
       incidents:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     ports:
       - "${EVOLUTION_PORT:-38093}:8093"

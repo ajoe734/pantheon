@@ -1153,6 +1153,55 @@ def test_propose_from_postmortem_published_duplicate_event_is_idempotent():
     assert len(evo_main.store.list_all()) == 1
 
 
+def test_propose_from_postmortem_published_unrelated_decision_not_deduped():
+    pm_id = f"pm-unrel-{uuid.uuid4().hex[:8]}"
+    _seed_incident_and_postmortem(
+        pm_id,
+        incident_overrides={
+            "severity": "medium",
+            "artifact_id": "artifact-unrelated-postmortem",
+            "incident_cluster_id": "cluster-unrelated-postmortem",
+        },
+        postmortem_overrides={
+            "status": "published",
+            "published_at": "2026-06-27T15:30:00Z",
+            "incident_cluster_id": "cluster-unrelated-postmortem",
+        },
+    )
+
+    # 1. First proposal succeeds
+    r1 = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id, "publish_event_id": "evt-publish-unrel-a"},
+    )
+    assert r1.status_code == 201, r1.text
+    dec_id = r1.json()["decision_id"]
+
+    # 2. Put an unrelated decision into store with same dec_id
+    unrelated_dec = evo_main.EvolutionDecision.create_proposed(
+        decision_id=dec_id,
+        target_type="candidate_artifact",
+        target_id="different-artifact",
+        target_version="v99",
+        action_type="freeze",
+        target_stage="live",
+        rationale="fake decision occupying the ID",
+        created_by_id="some-other-proposer",
+        created_by_role="operator",
+        linked_postmortem_id="different-pm-id",
+        linked_incident_id="different-inc-id",
+    )
+    evo_main.store.put(unrelated_dec)
+
+    # 3. Requesting it again with the same pm_id should conflict with 409
+    r2 = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id, "publish_event_id": "evt-publish-unrel-b"},
+    )
+    assert r2.status_code == 409
+    assert "already occupied by an unrelated decision" in r2.json()["detail"]
+
+
 def test_propose_from_postmortem_published_replay_retains_reviewed_state():
     pm_id = f"pm-replay-{uuid.uuid4().hex[:8]}"
     _seed_incident_and_postmortem(
