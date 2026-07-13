@@ -1,6 +1,10 @@
 import json
+from pathlib import Path
 
 from scripts.project_market_data_to_bff_agora_surfaces import PROJECTOR, project, write_projection
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _record(source_id: str, symbol: str, date: str, close: float) -> dict:
@@ -37,3 +41,10 @@ def test_ignores_non_market_records_and_preserves_other_projectors(tmp_path) -> 
     write_projection(stores, tmp_path)
     payload = json.loads(path.read_text())
     assert payload == {"consult-sig": {"id": "consult-sig"}}
+
+
+def test_compose_wires_both_projected_agora_stores() -> None:
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "PANTHEON_BFF_AGORA_SIGNAL_STORE: ${PANTHEON_BFF_AGORA_SIGNAL_STORE:-/data/bff/agora_signals.json}" in compose
+    assert "PANTHEON_BFF_AGORA_WATCHLIST_STORE: ${PANTHEON_BFF_AGORA_WATCHLIST_STORE:-/data/bff/agora_watchlist.json}" in compose
