@@ -418,6 +418,19 @@ def get_operator_payload(postmortem_id: str) -> OperatorPostmortemPayload:
 # Routes — status transitions
 # ---------------------------------------------------------------------------
 
+def _publish_postmortem_to_evolution_if_needed(postmortem_id: str) -> None:
+    import httpx
+    evolution_url = os.getenv("EVOLUTION_URL", "http://localhost:8093").strip()
+    url = f"{evolution_url}/api/evolution/proposals/from-postmortem-published"
+    try:
+        log.info("Publishing postmortem %s to evolution service at %s", postmortem_id, url)
+        resp = httpx.post(url, json={"postmortem_id": postmortem_id}, timeout=10.0)
+        resp.raise_for_status()
+        log.info("Successfully published postmortem %s to evolution", postmortem_id)
+    except httpx.HTTPError as exc:
+        log.error("Failed to publish postmortem %s to evolution: %s", postmortem_id, exc)
+
+
 @app.post(
     "/api/postmortems/{postmortem_id}/status",
     response_model=PostmortemResponse,
@@ -444,6 +457,10 @@ def update_status(
         raise HTTPException(status_code=400, detail=str(exc))
 
     log.info("Postmortem %s → status=%s", postmortem_id, body.status)
+
+    if body.status == "published":
+        _publish_postmortem_to_evolution_if_needed(postmortem_id)
+
     return _to_response(updated)
 
 
