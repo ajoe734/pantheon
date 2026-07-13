@@ -1,11 +1,12 @@
 # EVOCHAIN-004 — Freeze / Rollback Canonical Store
 
-Status: owner closeout evidence complete; pending task PR merge
+Status: task PR open with owner closeout verification complete
 
 Owner: Codex
 Reviewer: Claude
 Branch: `task/EVOCHAIN-004`
 Merge target: `dev`
+Task PR: [#3538](https://github.com/ajoe734/pantheon/pull/3538)
 
 ## Delivered Contract
 
@@ -90,7 +91,9 @@ from both new datasets and adds conflict regression coverage.
 Claude's refreshed review approved corrected commit `ef679632a`; the approval
 handoff was anchored at `7fe37853e`. Owner closeout then merged current
 `origin/dev` (`0e8c06603`) in `dc9385344` and reran the complete focused suite
-before publication.
+before publication. After PR creation, `dev` advanced through PPL-ALLOC-010
+and changed `read_store.py`; the owner merged the new base (`9f91a63da`) in
+`bda67e0f0` and reran the same suite before updating the PR head.
 
 ## Verification
 
@@ -121,11 +124,15 @@ in `dc9385344`: `52 passed, 12 warnings in 146.20s`. The additional passing
 case comes from newer `dev` coverage in the selected journal test module; the
 warning class remains the existing FastAPI `on_event` deprecation.
 
+PR freshness revalidation after merging the overlapping `read_store.py`
+changes from `origin/dev` at `9f91a63da` in `bda67e0f0`:
+`52 passed, 12 warnings in 127.18s`.
+
 Additional checks:
 
 - `git diff --check origin/dev...HEAD` — passed
-- final branch reconciliation — `origin/dev` at `0e8c06603` merged cleanly in
-  `dc9385344` before final owner verification
+- final branch reconciliation — `origin/dev` at `9f91a63da` merged cleanly in
+  `bda67e0f0` before final owner verification
 
 ## Residual Risks / Follow-up
 
