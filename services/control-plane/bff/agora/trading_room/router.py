@@ -908,6 +908,14 @@ def _validate_view(
     return errors
 
 
+_WARNING_TEXT_TO_CODE = {
+    "Some branch relationships and migration data use inferred confidence.": "inferred_confidence",
+    "Restricted relationship graph data is shown as evidence-strength context only.": "restricted_relationship_context",
+    "Event lead views state statistical association only.": "statistical_association_only",
+    "Position data is scoped to the current trader and remains decision-support only.": "trader_scoped_decision_support",
+}
+
+
 def _normalize_view(view: Dict[str, Any]) -> Dict[str, Any]:
     normalized = copy.deepcopy(view)
     widgets = normalized.get("widgets") or []
@@ -916,10 +924,14 @@ def _normalize_view(view: Dict[str, Any]) -> Dict[str, Any]:
     normalized.setdefault("titleKey", f"{view_key}.title")
     normalized.setdefault("purposeKey", f"{view_key}.purpose")
     normalized.setdefault("rationaleKey", f"{view_key}.rationale")
-    normalized.setdefault(
-        "warningCodes",
-        [f"{normalized['id']}.warning.{index + 1}" for index, _ in enumerate(normalized.get("warnings") or [])],
-    )
+
+    warning_codes = []
+    for index, warning in enumerate(normalized.get("warnings") or []):
+        code = _WARNING_TEXT_TO_CODE.get(warning)
+        if not code:
+            code = f"{normalized['id']}.warning.{index + 1}"
+        warning_codes.append(code)
+    normalized.setdefault("warningCodes", warning_codes)
     if "dataAvailability" in normalized:
         normalized["dataAvailability"] = _normalize_data_availability_value(normalized["dataAvailability"])
     for widget in widgets:
