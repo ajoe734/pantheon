@@ -1295,3 +1295,142 @@ def test_bff_version_reports_configured_source_sha(monkeypatch) -> None:
         "commit": source_sha,
         "source_commit_known": True,
     }
+
+
+def _containment_security_evidence(
+    harness: CapitalBffAuthorityHarness,
+    *,
+    suffix: str,
+    persona_id: str = "p-live",
+) -> tuple[str, dict[str, str]]:
+    assert harness.client is not None
+    signature_id = f"tms-containment-{suffix}"
+    token_id = f"ct-containment-{suffix}"
+    confirm = harness.client.post(
+        "/bff/confirm-tokens",
+        json={
+            "tokenId": token_id,
+            "command": "EmergencyContainment",
+            "target": {"type": "Persona", "id": persona_id},
+            "operator_id": "op-2",
+            "reason": "confirm authoritative Persona containment",
+        },
+        headers={**HEADERS, "Idempotency-Key": f"confirm-containment-{suffix}"},
+    )
+    assert confirm.status_code == 201, confirm.text
+
+    for operator_id, authorization in (
+        ("op-2", HEADERS["Authorization"]),
+        ("op-3", "Bearer op-3:operator"),
+    ):
+        signed = harness.client.post(
+            f"/bff/v5/interventions/{signature_id}/two-man-sign",
+            json={
+                "twoManSignatureId": signature_id,
+                "command": "EmergencyContainment",
+                "target": {"type": "Persona", "id": persona_id},
+                "reason": "authenticated operator approved emergency containment",
+            },
+            headers={
+                "Authorization": authorization,
+                "Idempotency-Key": f"sign-containment-{suffix}-{operator_id}",
+            },
+        )
+        assert signed.status_code == 202, signed.text
+
+    return signature_id, {**HEADERS, "X-Confirm-Token": token_id}
+
+
+def test_action_adapter_rebalance_apply_forwarding(tmp_path: Path) -> None:
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        created = _create_proposal(harness, key="rb-proposal-adapter-apply")
+        rebalance_id = created.json()["rebalance_id"]
+        assert harness.client is not None
+        evidence, apply_headers = harness.apply_evidence(
+            rebalance_id,
+            suffix="adapter-apply",
+        )
+        
+        # Call the action adapter endpoint
+        response = harness.client.post(
+            f"/bff/actions/rebalance/{rebalance_id}/apply",
+            json=evidence,
+            headers={
+                **apply_headers,
+                "Idempotency-Key": "rb-apply-adapter-apply",
+            },
+        )
+        assert response.status_code == 202, response.text
+        command_id = response.json()["data"]["command_id"]
+        
+        receipt = _command_receipt(harness, command_id)
+        assert receipt["status"] == "executed"
+        result = receipt["result"]
+        assert result["status"] == "applied"
+        assert result["dispatch_path"] == "capital_service_rebalance_authority"
+        assert result["entity_id"] == rebalance_id
+        
+        proposal = harness.client.get(
+            f"/bff/rebalances/{rebalance_id}", headers=HEADERS
+        ).json()["data"]
+        assert proposal["status"] == "applied"
+        assert proposal["applied"] is True
+
+
+def test_action_adapter_emergency_containment_forwarding(tmp_path: Path) -> None:
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        persona_id = "p-containment-forward"
+        harness.create_persona(persona_id)
+        assert harness.client is not None
+        
+        sig_id, apply_headers = _containment_security_evidence(
+            harness,
+            suffix="containment-forward",
+            persona_id=persona_id,
+        )
+        
+        # Call the action adapter endpoint for persona emergency containment
+        response = harness.client.post(
+            f"/bff/actions/persona/{persona_id}/EmergencyContainment",
+            json={
+                "action": "freeze",
+                "trigger": "hard_risk_breach",
+                "evidence_refs": ["risk-event:42"],
+                "two_man_signature_id": sig_id,
+            },
+            headers={
+                **apply_headers,
+                "Idempotency-Key": "persona-containment-adapter-apply",
+            },
+        )
+        assert response.status_code == 202, response.text
+        command_id = response.json()["data"]["command_id"]
+        
+        receipt = _command_receipt(harness, command_id)
+        assert receipt["status"] == "executed"
+        result = receipt["result"]
+        assert result["containment"] is True
+        assert result["containment_state"] == "frozen"
+        assert result["dispatch_path"] == "capital_service_containment_authority"
+        
+        persona = harness.client.get(
+            f"/bff/personas/{persona_id}", headers=HEADERS
+        ).json()["data"]
+        assert persona["containment_state"] == "frozen"
+        assert persona["frozen"] is True
+
+
+def test_restart_preserves_pending_proposals_via_write_datasets(tmp_path: Path) -> None:
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        created = _create_proposal(harness, key="rb-proposal-pending-restart")
+        rebalance_id = created.json()["rebalance_id"]
+        
+        harness.restart()
+        assert harness.client is not None
+        
+        proposal = harness.client.get(
+            f"/bff/rebalances/{rebalance_id}", headers=HEADERS
+        )
+        assert proposal.status_code == 200, proposal.text
+        assert proposal.json()["data"]["status"] == "pending"
+        assert proposal.json()["data"]["applied"] is False
