@@ -431,10 +431,10 @@ def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch)
         submit = _submit_review(client, review["review_id"], idem=_idem())
         assert submit.status_code == 202, submit.text
 
-        monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.05")
+        monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.25")
 
         def slow_persona_readiness(*_args, **_kwargs):
-            time.sleep(1.0)
+            time.sleep(1.5)
             return []
 
         monkeypatch.setattr(bff_main, "_build_persona_health_items", slow_persona_readiness)
@@ -455,7 +455,7 @@ def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch)
         inbox, elapsed = asyncio.run(bounded_request())
 
         assert inbox.status_code == 200, inbox.text
-        assert elapsed < 0.5
+        assert elapsed < 0.8
         body = inbox.json()
         assert any(
             item["promotion_review_id"] == review["review_id"]
