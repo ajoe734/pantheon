@@ -200,11 +200,17 @@ def generate_trading_room_workspace_proposal(
         "generatedAt": input_data.generated_at,
         "status": "preview",
         "views": views,
+        "rationaleKey": "agora.tradingRoom.proposal.rationale",
         "rationale": (
             "Generated from the V11 Winner Branch Trading Room contract: seven strategy-specific "
             "views covering overview, entry, branch intelligence, migration, event lead, positions, and evidence."
         ),
         "dataAvailability": data_availability,
+        "warningCodes": [
+            "decision_support_only",
+            "statistical_association_only",
+            *(["unsafe_personalization_ignored"] if personalization_warnings else []),
+        ],
         "warnings": list(BASE_PROPOSAL_WARNINGS) + validation_warnings,
         "personalizationApplied": {
             "status": "applied" if personalization else "not_applied",
@@ -435,7 +441,12 @@ def _source_availability(
         reason_parts.append("source health not reported; backing surface is not confirmed wired")
     if evidence_refs:
         reason_parts.append("evidenceRefs=" + ",".join(evidence_refs[:5]))
-    return {"dataSource": data_source, "status": status, "reason": "; ".join(reason_parts)}
+    return {
+        "dataSource": data_source,
+        "status": status,
+        "reasonCode": "strategy_projection_freshness",
+        "reason": "; ".join(reason_parts),
+    }
 
 
 def _normalized_string_list(values: Sequence[Any]) -> list[str]:
