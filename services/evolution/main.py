@@ -127,9 +127,12 @@ os.makedirs(INCIDENT_DATA_DIR, exist_ok=True)
 store = EvolutionDecisionStore(
     storage_path=os.path.join(EVOLUTION_DATA_DIR, "decisions.json"),
 )
-incident_store = IncidentStore(
-    path=Path(os.path.join(INCIDENT_DATA_DIR, "incidents.json")),
-)
+try:
+    from services.incident.pg_store import build_incident_store
+except ImportError:
+    from incident.pg_store import build_incident_store
+
+incident_store = build_incident_store(Path(os.path.join(INCIDENT_DATA_DIR, "incidents.json")))
 controller = EvolutionController()
 evaluator = ThresholdEvaluator()
 

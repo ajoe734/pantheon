@@ -421,7 +421,7 @@ def get_operator_payload(postmortem_id: str) -> OperatorPostmortemPayload:
 def _publish_postmortem_to_evolution_if_needed(postmortem_id: str) -> None:
     import httpx
     import time
-    from services.evolution.postmortem_bridge import build_published_postmortem_proposal_request
+    from services.evolution.postmortem_bridge import decision_id_for_published_postmortem
 
     pm = store.get_postmortem(postmortem_id)
     if pm is None:
@@ -434,13 +434,18 @@ def _publish_postmortem_to_evolution_if_needed(postmortem_id: str) -> None:
         return
 
     try:
-        proposal_payload = build_published_postmortem_proposal_request(pm, incident)
+        det_decision_id = decision_id_for_published_postmortem(pm, incident)
     except Exception as exc:
-        log.error("AUDIT: Failed to build proposal request from postmortem %s and incident %s: %s", postmortem_id, pm.incident_id, exc)
+        log.error("AUDIT: Failed to compute decision_id for postmortem %s: %s", postmortem_id, exc)
         return
 
+    proposal_payload = {
+        "postmortem_id": postmortem_id,
+        "decision_id": det_decision_id,
+    }
+
     evolution_url = os.getenv("EVOLUTION_URL", "http://localhost:8093").strip()
-    url = f"{evolution_url}/api/evolution/proposals"
+    url = f"{evolution_url}/api/evolution/proposals/from-postmortem-published"
 
     max_retries = 3
     retry_delay = 1.0

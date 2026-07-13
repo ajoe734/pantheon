@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "trading_room_workspace.schema.json",
+  "$id": "trading_room_workspace_v1_7.schema.json",
   "title": "TradingRoomWorkspaceContract",
   "description": "V11 Trading Room dynamic workspace proposal, workspace, view, widget, and layout operation contract.",
   "oneOf": [
@@ -39,8 +39,13 @@
           "items": {"$ref": "#/definitions/TradingRoomViewSpec"}
         },
         "rationale": {"type": "string", "minLength": 1},
+        "rationaleKey": {"type": "string", "minLength": 1},
         "dataAvailability": {"$ref": "#/definitions/DataAvailabilitySummary"},
         "warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "warningCodes": {
           "type": "array",
           "items": {"type": "string"}
         },
@@ -84,18 +89,26 @@
     },
     "TradingRoomViewSpec": {
       "type": "object",
-      "required": ["id", "title", "purpose", "order", "layoutTemplate", "widgetCount", "dataAvailability", "widgets"],
+      "required": ["id", "title", "purpose", "order", "layoutTemplate", "widgetCount", "widgets"],
       "properties": {
         "id": {"type": "string", "minLength": 1},
+        "viewKind": {"type": "string", "minLength": 1},
         "title": {"type": "string", "minLength": 1},
+        "titleKey": {"type": "string", "minLength": 1},
         "purpose": {"type": "string", "minLength": 1},
+        "purposeKey": {"type": "string", "minLength": 1},
         "order": {"type": "integer", "minimum": 1},
         "layoutTemplate": {"type": "string", "minLength": 1},
         "thumbnailRef": {"type": "string"},
         "widgetCount": {"type": "integer", "minimum": 0},
         "rationale": {"type": "string"},
-        "dataAvailability": {"enum": ["complete", "partial", "unavailable"]},
+        "rationaleKey": {"type": "string", "minLength": 1},
+        "dataAvailability": {"enum": ["full", "partial", "missing"]},
         "warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "warningCodes": {
           "type": "array",
           "items": {"type": "string"}
         },
@@ -115,7 +128,6 @@
         "purpose",
         "whyIncluded",
         "dataSource",
-        "dataAvailability",
         "query",
         "chartSpec",
         "interactions",
@@ -128,13 +140,17 @@
         "id": {"type": "string", "minLength": 1},
         "widgetType": {"type": "string", "minLength": 1},
         "title": {"type": "string", "minLength": 1},
+        "titleKey": {"type": "string", "minLength": 1},
         "purpose": {"type": "string", "minLength": 1},
+        "purposeKey": {"type": "string", "minLength": 1},
         "whyIncluded": {"type": "string", "minLength": 1},
+        "whyIncludedKey": {"type": "string", "minLength": 1},
         "dataSource": {
           "type": "string",
           "minLength": 1,
           "description": "Logical allowlisted data-source ID; arbitrary URLs are forbidden."
         },
+        "dataAvailability": {"enum": ["full", "partial", "missing"]},
         "query": {
           "type": "object",
           "required": ["filters"],
@@ -146,10 +162,10 @@
           },
           "additionalProperties": false
         },
-        "chartSpec": {"$ref": "v2/chart_spec_v1.schema.json"},
+        "chartSpec": {"$ref": "../v2/chart_spec_v1.schema.json"},
         "interactions": {
           "type": "array",
-          "items": {"$ref": "v2/chart_spec_v1.schema.json#/definitions/interaction"}
+          "items": {"$ref": "../v2/chart_spec_v1.schema.json#/definitions/interaction"}
         },
         "placement": {"$ref": "#/definitions/WidgetPlacement"},
         "minSize": {"$ref": "#/definitions/WidgetSize"},
@@ -187,7 +203,7 @@
       "type": "object",
       "required": ["status", "sources"],
       "properties": {
-        "status": {"enum": ["complete", "partial", "unavailable"]},
+        "status": {"enum": ["full", "partial", "missing"]},
         "sources": {
           "type": "array",
           "items": {
@@ -195,7 +211,8 @@
             "required": ["dataSource", "status"],
             "properties": {
               "dataSource": {"type": "string", "minLength": 1},
-              "status": {"enum": ["complete", "partial", "unavailable"]},
+              "status": {"enum": ["full", "partial", "missing"]},
+              "reasonCode": {"type": "string", "minLength": 1},
               "reason": {"type": "string"}
             },
             "additionalProperties": false
@@ -271,7 +288,7 @@
           "type": "array",
           "items": {"type": "string"}
         },
-        "dataAvailability": {"enum": ["complete", "partial", "unavailable"]},
+        "dataAvailability": {"enum": ["full", "partial", "missing"]},
         "status": {"enum": ["preview", "accepted", "rejected", "superseded"]}
       },
       "additionalProperties": false
