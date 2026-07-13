@@ -41,6 +41,9 @@ def test_dev_management_ai_kernel_overlay_is_explicitly_dev_only() -> None:
     assert env["PANTHEON_BFF_AUTH_MODE"] == "strict"
     assert env["PANTHEON_BFF_STUB_CAPABILITIES"] == ""
     assert env["PANTHEON_BFF_JWT_SECRET"] == ""
+    assert env["PANTHEON_BFF_JWT_ISSUER"] == "pantheon-dev"
+    assert env["PANTHEON_BFF_JWT_AUDIENCE"] == "bff-operators"
+    assert env["PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON"] == ""
     assert env["PANTHEON_BFF_OIDC_CLIENT_ID"] == ""
     assert env["PANTHEON_BFF_OIDC_CLIENT_SECRET"] == ""
 
@@ -58,19 +61,22 @@ def test_enable_management_ai_dev_kernel_script_targets_only_operator_bff() -> N
     assert 'BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-}"' in script
     assert "explicit short-lived privileged BFF JWT" in script
     assert "the public browser viewer token is read-only" in script
-    assert 'auth_args=(-H "Authorization: Bearer ${BFF_AUTH_TOKEN}")' in script
+    assert 'printf \'Authorization: Bearer %s\\n\'' in script
+    assert 'chmod 0600 "${auth_header}"' in script
+    assert 'export -n BFF_AUTH_TOKEN' in script
     assert "PANTHEON_SUPERVISOR_CONFIG" in script
     assert "resolve_status_root_host" in script
-    assert 'PANTHEON_STATUS_ROOT_HOST="$(resolve_status_root_host)"' in script
-    assert 'PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}"' in script
-    assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED:-true}"' in script
-    assert 'PANTHEON_BFF_AUTH_STUB="${PANTHEON_BFF_AUTH_STUB:-false}"' in script
-    assert 'PANTHEON_BFF_AUTH_MODE="${PANTHEON_BFF_AUTH_MODE:-strict}"' in script
-    assert 'PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES-}"' in script
-    assert 'PANTHEON_BFF_JWT_SECRET="${PANTHEON_BFF_JWT_SECRET:-}"' in script
-    assert 'PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_BFF_OIDC_CLIENT_ID:-}"' in script
-    assert 'PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_BFF_OIDC_CLIENT_SECRET:-}"' in script
-    assert "recreating operator-bff requires governed JWT and dev-login client secrets" in script
+    assert "docker inspect --format '{{json .Config.Env}}'" in script
+    assert "set_policy_if_unset PANTHEON_BFF_JWT_ISSUER" in script
+    assert "set_policy_if_unset PANTHEON_BFF_JWT_AUDIENCE" in script
+    assert "set_policy_if_unset PANTHEON_BFF_TENANT_ID" in script
+    assert "set_policy_if_unset PANTHEON_BFF_ALLOWED_TENANTS" in script
+    assert "set_policy_if_unset PANTHEON_BFF_ROLE_CLAIMS" in script
+    assert "set_policy_if_unset PANTHEON_BFF_MFA_REQUIRED" in script
+    assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED must be exactly true' in script
+    assert "restore_previous_policy" in script
+    assert 'and .data.control_mode.configured == true' in script
+    assert 'and .data.control_mode.active == false' in script
     assert "--no-deps --force-recreate operator-bff" in script
     assert "/bff/assistant/mode" in script
 
@@ -109,6 +115,7 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
     assert 'DEV_BFF_JWT_SECRET="${DEV_BFF_JWT_SECRET:-}"' in script
     assert 'DEV_BFF_OIDC_CLIENT_ID="${DEV_BFF_OIDC_CLIENT_ID:-}"' in script
     assert 'DEV_BFF_OIDC_CLIENT_SECRET="${DEV_BFF_OIDC_CLIENT_SECRET:-}"' in script
+    assert 'DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON="${DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON:-}"' in script
     assert (
         'DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES-}"'
         in script
@@ -137,21 +144,17 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
         in script
     )
     assert 'PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"' in script
-    assert 'command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=' in script
-    assert 'command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=' in script
-    assert 'command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=' in script
-    assert 'command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_ID=' in script
-    assert 'command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET=' in script
-    assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL=' in script
-    assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL=' in script
-    assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS=' in script
-    assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS=' in script
-    assert 'command_prefix+=" PANTHEON_STATUS_ROOT_HOST=' in script
+    assert 'emit_remote_export PANTHEON_ASSISTANT_KERNEL_ENABLED' in script
+    assert 'emit_remote_export PANTHEON_DEV_BFF_AUTH_MODE' in script
+    assert 'emit_remote_export PANTHEON_DEV_BFF_JWT_SECRET' in script
+    assert 'emit_remote_export PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON' in script
+    assert '--command="bash -s"' in script
     assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \\' in script
     assert script.count('PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \\') == 2
     assert script.count('PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \\') == 2
     assert script.count('PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \\') == 2
     assert script.count('PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \\') == 2
+    assert script.count('PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON="${PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" \\') == 2
     assert 'PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \\' in script
     assert 'PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \\' in script
     assert 'PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \\' in script
@@ -167,7 +170,7 @@ def test_nonprod_dev_deploy_forces_self_hosted_fe_cors_origin() -> None:
 
     assert f'DEV_BFF_CANONICAL_CORS_ORIGIN="${{DEV_BFF_CANONICAL_CORS_ORIGIN:-{canonical_origin}}}"' in script
     assert 'DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_CANONICAL_CORS_ORIGIN")"' in script
-    assert 'command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=' in script
+    assert 'emit_remote_export PANTHEON_DEV_BFF_CORS_ORIGINS' in script
     assert 'PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}"' in script
 
     assert "DEV_BFF_CANONICAL_CORS_ORIGIN:" in workflow

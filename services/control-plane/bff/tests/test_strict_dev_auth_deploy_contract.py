@@ -22,7 +22,9 @@ AUTH_OVERRIDE_KEYS = {
     "DEV_BFF_JWT_SECRET",
     "DEV_BFF_OIDC_CLIENT_ID",
     "DEV_BFF_OIDC_CLIENT_SECRET",
+    "DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON",
     "PANTHEON_BFF_STUB_CAPABILITIES",
+    "PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON",
 }
 
 
@@ -102,6 +104,93 @@ def _non_dry_run(
     )
 
 
+def _install_fake_kernel_runtime(tmp_path: Path) -> tuple[Path, Path]:
+    bin_dir = tmp_path / "kernel-bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker-up.log"
+    docker = bin_dir / "docker"
+    docker.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *" ps -q operator-bff"* ]]; then
+  printf 'fake-container-id\\n'
+elif [[ "$1" == "inspect" ]]; then
+  if [[ -n "${FAKE_INSPECT_ENV_JSON:-}" ]]; then
+    printf '%s\\n' "${FAKE_INSPECT_ENV_JSON}"
+  else
+    printf '%s\\n' '["PANTHEON_ASSISTANT_KERNEL_ENABLED=false","PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=/data/bff/assistant-control-mode.json","PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS=300","PANTHEON_BFF_AUTH_STUB=false","PANTHEON_BFF_AUTH_MODE=strict","PANTHEON_BFF_STUB_CAPABILITIES=","PANTHEON_BFF_JWT_SECRET=old-jwt-secret","PANTHEON_BFF_JWT_ISSUER=old-issuer","PANTHEON_BFF_JWT_AUDIENCE=old-audience","PANTHEON_BFF_OIDC_CLIENT_ID=old-client","PANTHEON_BFF_OIDC_CLIENT_SECRET=old-client-secret","PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS=900","PANTHEON_BFF_DEV_LOGIN_ROLES=operator","PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED=false","PANTHEON_BFF_TENANT_ID=old-tenant","PANTHEON_BFF_ALLOWED_TENANTS=old-tenant","PANTHEON_BFF_ROLE_CLAIMS=roles,role","PANTHEON_BFF_ROLE_MAP_MODE=passthrough","PANTHEON_BFF_DEFAULT_ROLE=operator","PANTHEON_BFF_MFA_REQUIRED=false","PANTHEON_BFF_MFA_CLAIMS=amr,acr,mfa,mfa_verified","PANTHEON_BFF_MFA_VALUES=true,1,yes,mfa,otp,totp,webauthn","PANTHEON_STATUS_ROOT_HOST=/old/status","PANTHEON_STATUS_ROOT_CONTAINER=/workspace/status-root"]'
+  fi
+elif [[ "$*" == *" up "* ]]; then
+  printf '%s|%s|%s|%s\\n' "${PANTHEON_ASSISTANT_KERNEL_ENABLED-unset}" "${PANTHEON_BFF_JWT_ISSUER-unset}" "${PANTHEON_BFF_TENANT_ID-unset}" "${PANTHEON_BFF_MFA_REQUIRED-unset}" >> "${FAKE_DOCKER_LOG}"
+fi
+""",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    curl = bin_dir / "curl"
+    curl.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+url="${!#}"
+if [[ "$url" == */bff/me ]]; then
+  printf '%s\\n' '{"data":{"roles":["admin","operator"],"currentUser":{"mfa_verified":true},"capabilities":["assistant.kernel.repair"]}}'
+elif [[ "$url" == */bff/assistant/mode ]]; then
+  count=0
+  [[ -f "${FAKE_MODE_COUNT}" ]] && count="$(cat "${FAKE_MODE_COUNT}")"
+  count=$((count + 1))
+  printf '%s' "$count" > "${FAKE_MODE_COUNT}"
+  if [[ "$count" -gt 1 && "${FAKE_POST_MODE_GOOD:-false}" == "true" ]]; then
+    printf '%s\\n' '{"data":{"kernel_enabled":true,"control_mode":{"configured":true,"active":false,"state":"inactive"}}}'
+  else
+    printf '%s\\n' '{"data":{"kernel_enabled":false,"control_mode":{"configured":true,"active":false,"state":"inactive"}}}'
+  fi
+else
+  exit 22
+fi
+""",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    sleep = bin_dir / "sleep"
+    sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    sleep.chmod(0o755)
+    return bin_dir, docker_log
+
+
+def _kernel_runtime_env(tmp_path: Path, bin_dir: Path, docker_log: Path, **overrides: str) -> dict[str, str]:
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "FAKE_DOCKER_LOG": str(docker_log),
+        "FAKE_MODE_COUNT": str(tmp_path / "mode-count"),
+        "BFF_AUTH_TOKEN": "signed-kernel-token",
+        "PANTHEON_STATUS_ROOT_HOST": str(tmp_path),
+        "PANTHEON_BFF_AUTH_STUB": "false",
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_STUB_CAPABILITIES": "",
+    }
+    for name in (
+        "PANTHEON_ASSISTANT_KERNEL_ENABLED",
+        "PANTHEON_BFF_JWT_SECRET",
+        "PANTHEON_BFF_JWT_ISSUER",
+        "PANTHEON_BFF_JWT_AUDIENCE",
+        "PANTHEON_BFF_OIDC_CLIENT_ID",
+        "PANTHEON_BFF_OIDC_CLIENT_SECRET",
+        "PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON",
+        "PANTHEON_BFF_TENANT_ID",
+        "PANTHEON_BFF_ALLOWED_TENANTS",
+    ):
+        env.pop(name, None)
+    env["PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON"] = (
+        '{"kernel":{"secret":"kernel-profile-secret-value","subject":"kernel-operator",'
+        '"roles":["admin","operator"],"tenant_id":"old-tenant",'
+        '"allowed_tenants":["old-tenant"],"capabilities":["assistant.kernel.repair"],'
+        '"mfa_verified":true}}'
+    )
+    env.update(overrides)
+    return env
+
+
 def test_dev_compose_defaults_to_strict_capability_free_auth() -> None:
     compose_source = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     compose = yaml.safe_load(compose_source)
@@ -112,6 +201,9 @@ def test_dev_compose_defaults_to_strict_capability_free_auth() -> None:
     assert env["PANTHEON_BFF_AUTH_MODE"] == "${PANTHEON_BFF_AUTH_MODE:-strict}"
     assert env["PANTHEON_BFF_STUB_CAPABILITIES"] == "${PANTHEON_BFF_STUB_CAPABILITIES:-}"
     assert env["PANTHEON_BFF_DEV_LOGIN_ROLES"] == "${PANTHEON_BFF_DEV_LOGIN_ROLES:-operator,reviewer,approver}"
+    assert env["PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON"] == "${PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON:-}"
+    assert env["PANTHEON_BFF_TENANT_ID"] == "${PANTHEON_BFF_TENANT_ID:-tenant-dev}"
+    assert env["PANTHEON_BFF_ALLOWED_TENANTS"] == "${PANTHEON_BFF_ALLOWED_TENANTS:-tenant-dev}"
     operator_bff_lines = compose_source.splitlines()
     operator_bff_start = operator_bff_lines.index("  operator-bff:") + 1
     operator_bff_end = next(
@@ -131,6 +223,7 @@ def test_dev_deploy_dry_run_proves_strict_auth_boundary() -> None:
     assert "dev_bff_auth_stub=false" in result.stdout
     assert "dev_bff_auth_mode=strict" in result.stdout
     assert "dev_bff_dev_login_configured=false" in result.stdout
+    assert "dev_bff_profiled_login_configured=false" in result.stdout
     assert "dev_bff_stub_capabilities_configured=false" in result.stdout
 
 
@@ -151,15 +244,15 @@ def test_dev_deploy_dry_run_proves_strict_auth_boundary() -> None:
         ),
         (
             {"DEV_BFF_JWT_SECRET": "partial-secret"},
-            "dev-login requires JWT secret, client id, and client secret together",
+            "requires governed client profiles",
         ),
         (
             {"DEV_BFF_OIDC_CLIENT_ID": "partial-client"},
-            "dev-login requires JWT secret, client id, and client secret together",
+            "requires governed client profiles",
         ),
         (
             {"DEV_BFF_OIDC_CLIENT_SECRET": "partial-secret"},
-            "dev-login requires JWT secret, client id, and client secret together",
+            "requires governed client profiles",
         ),
         (
             {
@@ -181,7 +274,7 @@ def test_dev_deploy_rejects_insecure_auth_overrides(
     assert "dry run" not in result.stdout
 
 
-def test_dev_deploy_accepts_complete_dev_login_config_without_printing_secrets() -> None:
+def test_dev_deploy_rejects_legacy_shared_dev_login_config_without_printing_secrets() -> None:
     configured = {
         "DEV_BFF_JWT_SECRET": "contract-jwt-secret",
         "DEV_BFF_OIDC_CLIENT_ID": "contract-client-id",
@@ -189,8 +282,22 @@ def test_dev_deploy_accepts_complete_dev_login_config_without_printing_secrets()
     }
     result = _dry_run(**configured)
 
+    assert result.returncode == 1
+    assert "legacy shared dev-login client is not accepted" in result.stderr
+    for secret in configured.values():
+        assert secret not in result.stdout
+        assert secret not in result.stderr
+
+
+def test_dev_deploy_accepts_governed_profile_config_without_printing_secrets() -> None:
+    configured = {
+        "DEV_BFF_JWT_SECRET": "contract-jwt-secret",
+        "DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON": '{"ci-agora":{"secret":"profile-secret-value","subject":"pantheon-dev-ci-agora","roles":["operator"],"tenant_id":"tenant-dev","allowed_tenants":["tenant-dev"],"capabilities":[],"mfa_verified":false}}',
+    }
+    result = _dry_run(**configured)
+
     assert result.returncode == 0, result.stderr
-    assert "dev_bff_dev_login_configured=true" in result.stdout
+    assert "dev_bff_profiled_login_configured=true" in result.stdout
     for secret in configured.values():
         assert secret not in result.stdout
         assert secret not in result.stderr
@@ -221,8 +328,7 @@ def test_dev_credentials_use_ssh_stdin_and_never_gcloud_argv_or_environment(
     bin_dir, outputs = _install_fake_gcloud(tmp_path)
     secrets = {
         "DEV_BFF_JWT_SECRET": "sentinel-jwt-secret",
-        "DEV_BFF_OIDC_CLIENT_ID": "sentinel-client-id",
-        "DEV_BFF_OIDC_CLIENT_SECRET": "sentinel-client-secret",
+        "DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON": '{"ci":{"secret":"sentinel-profile-secret","subject":"sentinel-ci-actor","roles":["operator"],"tenant_id":"tenant-dev","allowed_tenants":["tenant-dev"],"capabilities":[],"mfa_verified":false}}',
         "GITHUB_TOKEN": "sentinel-github-token",
         "DEV_MANAGEMENT_AI_DB_PASSWORD": "sentinel-database-password",
     }
@@ -230,6 +336,7 @@ def test_dev_credentials_use_ssh_stdin_and_never_gcloud_argv_or_environment(
         "PANTHEON_BFF_JWT_SECRET": "sentinel-ambient-jwt",
         "PANTHEON_BFF_OIDC_CLIENT_ID": "sentinel-ambient-client",
         "PANTHEON_BFF_OIDC_CLIENT_SECRET": "sentinel-ambient-client-secret",
+        "PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON": "sentinel-ambient-profile",
         "PANTHEON_MANAGEMENT_AI_DB_PASSWORD": "sentinel-ambient-db-password",
     }
     env = _deploy_env(
@@ -251,7 +358,10 @@ def test_dev_credentials_use_ssh_stdin_and_never_gcloud_argv_or_environment(
     for secret in secrets.values():
         assert secret not in args
         assert secret not in child_env
-        assert secret in stdin
+        if secret.startswith("{"):
+            assert "sentinel-profile-secret" in stdin
+        else:
+            assert secret in stdin
     for secret in ambient_secrets.values():
         assert secret not in args
         assert secret not in child_env
@@ -267,6 +377,7 @@ def test_staging_never_receives_exported_dev_credentials(
         "DEV_BFF_JWT_SECRET": "staging-must-not-see-jwt",
         "DEV_BFF_OIDC_CLIENT_ID": "staging-must-not-see-client",
         "DEV_BFF_OIDC_CLIENT_SECRET": "staging-must-not-see-secret",
+        "DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON": '{"ci":{"secret":"staging-must-not-see-profile"}}',
         "DEV_MANAGEMENT_AI_DB_PASSWORD": "staging-must-not-see-db-password",
         "DEV_MANAGEMENT_AI_DATABASE_URL": "staging-must-not-see-database-url",
         "PANTHEON_BFF_JWT_SECRET": "staging-must-not-see-ambient-jwt",
@@ -323,18 +434,14 @@ def test_privileged_management_scripts_reject_public_viewer(script: Path) -> Non
     assert "public browser viewer token is read-only" in result.stderr
 
 
-def test_kernel_enable_script_refuses_to_drop_runtime_auth_secrets() -> None:
-    env = os.environ.copy()
-    env["BFF_AUTH_TOKEN"] = "signed-token-placeholder"
-    env["PANTHEON_BFF_AUTH_STUB"] = "false"
-    env["PANTHEON_BFF_AUTH_MODE"] = "strict"
-    env["PANTHEON_BFF_STUB_CAPABILITIES"] = ""
-    for key in (
-        "PANTHEON_BFF_JWT_SECRET",
-        "PANTHEON_BFF_OIDC_CLIENT_ID",
-        "PANTHEON_BFF_OIDC_CLIENT_SECRET",
-    ):
-        env.pop(key, None)
+def test_kernel_enable_script_refuses_to_drop_runtime_auth_secrets(tmp_path: Path) -> None:
+    bin_dir, docker_log = _install_fake_kernel_runtime(tmp_path)
+    env = _kernel_runtime_env(
+        tmp_path,
+        bin_dir,
+        docker_log,
+        FAKE_INSPECT_ENV_JSON='["PANTHEON_BFF_AUTH_STUB=false","PANTHEON_BFF_AUTH_MODE=strict","PANTHEON_BFF_STUB_CAPABILITIES="]',
+    )
 
     result = subprocess.run(
         ["bash", str(REPO_ROOT / "scripts" / "enable_management_ai_dev_kernel.sh")],
@@ -346,7 +453,7 @@ def test_kernel_enable_script_refuses_to_drop_runtime_auth_secrets() -> None:
     )
 
     assert result.returncode == 2
-    assert "requires governed JWT and dev-login client secrets" in result.stderr
+    assert "PANTHEON_BFF_JWT_SECRET must remain configured" in result.stderr
 
 
 def test_kernel_enable_validates_privileged_identity_before_container_mutation() -> None:
@@ -360,6 +467,76 @@ def test_kernel_enable_validates_privileged_identity_before_container_mutation()
     assert '-H "Authorization: Bearer ${BFF_AUTH_TOKEN}"' not in source
 
 
+def test_kernel_enable_rejects_explicit_disable_without_mutation(tmp_path: Path) -> None:
+    bin_dir, docker_log = _install_fake_kernel_runtime(tmp_path)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "enable_management_ai_dev_kernel.sh")],
+        cwd=REPO_ROOT,
+        env=_kernel_runtime_env(
+            tmp_path,
+            bin_dir,
+            docker_log,
+            PANTHEON_ASSISTANT_KERNEL_ENABLED="false",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "must be exactly true" in result.stderr
+    assert not docker_log.exists()
+
+
+def test_kernel_enable_rolls_back_captured_policy_when_postcondition_fails(tmp_path: Path) -> None:
+    bin_dir, docker_log = _install_fake_kernel_runtime(tmp_path)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "enable_management_ai_dev_kernel.sh")],
+        cwd=REPO_ROOT,
+        env=_kernel_runtime_env(
+            tmp_path,
+            bin_dir,
+            docker_log,
+            PANTHEON_ASSISTANT_KERNEL_ENABLED="true",
+            FAKE_POST_MODE_GOOD="false",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "rolling operator-bff back" in result.stderr
+    assert "policy rollback completed" in result.stderr
+    mutations = docker_log.read_text(encoding="utf-8").splitlines()
+    assert mutations[0] == "true|old-issuer|old-tenant|false"
+    assert mutations[1] == "false|old-issuer|old-tenant|false"
+
+
+def test_kernel_enable_accepts_only_exact_enabled_configured_inactive_postcondition(tmp_path: Path) -> None:
+    bin_dir, docker_log = _install_fake_kernel_runtime(tmp_path)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "enable_management_ai_dev_kernel.sh")],
+        cwd=REPO_ROOT,
+        env=_kernel_runtime_env(
+            tmp_path,
+            bin_dir,
+            docker_log,
+            PANTHEON_ASSISTANT_KERNEL_ENABLED="true",
+            FAKE_POST_MODE_GOOD="true",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert '"kernel_enabled": true' in result.stdout
+    assert docker_log.read_text(encoding="utf-8").splitlines() == [
+        "true|old-issuer|old-tenant|false"
+    ]
+
+
 def test_kernel_enable_rejects_invalid_identity_before_docker(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -369,7 +546,16 @@ def test_kernel_enable_rejects_invalid_identity_before_docker(tmp_path: Path) ->
     curl.chmod(0o755)
     docker = bin_dir / "docker"
     docker.write_text(
-        "#!/usr/bin/env bash\nprintf called > \"${DOCKER_MARKER}\"\n",
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *" ps -q operator-bff"* ]]; then
+  printf 'fake-container-id\\n'
+elif [[ "$1" == "inspect" ]]; then
+  printf '%s\\n' '["PANTHEON_BFF_JWT_SECRET=old-jwt","PANTHEON_BFF_JWT_ISSUER=pantheon-dev","PANTHEON_BFF_JWT_AUDIENCE=bff-operators","PANTHEON_BFF_OIDC_CLIENT_ID=old-client","PANTHEON_BFF_OIDC_CLIENT_SECRET=old-secret"]'
+elif [[ "$*" == *" up "* ]]; then
+  printf called > "${DOCKER_MARKER}"
+fi
+""",
         encoding="utf-8",
     )
     docker.chmod(0o755)
@@ -384,6 +570,7 @@ def test_kernel_enable_rejects_invalid_identity_before_docker(tmp_path: Path) ->
         "PANTHEON_BFF_JWT_SECRET": "test-jwt-secret",
         "PANTHEON_BFF_OIDC_CLIENT_ID": "test-client-id",
         "PANTHEON_BFF_OIDC_CLIENT_SECRET": "test-client-secret",
+        "PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON": '{"kernel":{"secret":"kernel-profile-secret-value","subject":"kernel-operator","roles":["admin","operator"],"tenant_id":"tenant-dev","allowed_tenants":["tenant-dev"],"capabilities":["assistant.kernel.repair"],"mfa_verified":true}}',
         "PANTHEON_STATUS_ROOT_HOST": str(tmp_path),
     }
 
@@ -417,13 +604,18 @@ def test_nonprod_workflow_uses_dev_login_instead_of_a_tracked_privileged_token()
 
     assert "agora-deploy-smoke:operator" not in workflow
     assert "secrets.DEV_BFF_JWT_SECRET" in workflow
-    assert "secrets.DEV_BFF_OIDC_CLIENT_ID" in workflow
-    assert "secrets.DEV_BFF_OIDC_CLIENT_SECRET" in workflow
+    assert "secrets.DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON" in workflow
+    assert "secrets.DEV_BFF_CI_CLIENT_ID" in workflow
+    assert "secrets.DEV_BFF_CI_CLIENT_SECRET" in workflow
     assert 'POST "${DEV_BFF_URL}/bff/auth/dev-login"' in workflow
-    assert "bff_auth_token=\"$(jq -er '.access_token'" in workflow
+    assert "bff_auth_token=\"$(jq -er '.access_token | select" in workflow
     assert "printf 'Authorization: Bearer %s\\n' \"${bff_auth_token}\"" in workflow
     assert '-H "@${auth_header}"' in workflow
-    assert '--arg client_secret "${DEV_BFF_OIDC_CLIENT_SECRET}"' not in workflow
+    assert '--arg client_secret "${DEV_BFF_CI_CLIENT_SECRET}"' not in workflow
+    assert '"${token_type,,}" == "bearer"' in workflow
+    assert "malformed compact JWT" in workflow
+    assert "invalid workshop id" in workflow
+    assert "pantheon-dev-ci-agora" in workflow
     assert "env.TARGET_ENV == 'dev'" in workflow
     parsed = yaml.safe_load(workflow)
     deploy_step = next(
@@ -433,8 +625,7 @@ def test_nonprod_workflow_uses_dev_login_instead_of_a_tracked_privileged_token()
     )
     for name in (
         "DEV_BFF_JWT_SECRET",
-        "DEV_BFF_OIDC_CLIENT_ID",
-        "DEV_BFF_OIDC_CLIENT_SECRET",
+        "DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON",
         "DEV_MANAGEMENT_AI_DB_PASSWORD",
         "DEV_MANAGEMENT_AI_DATABASE_URL",
     ):
@@ -442,7 +633,7 @@ def test_nonprod_workflow_uses_dev_login_instead_of_a_tracked_privileged_token()
     assert "Require dev short-lived auth qualification prerequisites" in workflow
     assert "Dev deployment is BLOCKED" in workflow
     assert "No deployment was attempted" in workflow
-    assert "Privileged Agora restart smoke is BLOCKED" in workflow
+    assert "Agora restart smoke is BLOCKED" in workflow
     assert "Skipping privileged Agora restart smoke" not in workflow
     assert workflow.index("Require dev short-lived auth qualification prerequisites") < workflow.index(
         "Authenticate to Google Cloud via Workload Identity Federation"
@@ -464,8 +655,9 @@ def test_nonprod_workflow_missing_dev_login_is_a_hard_block(tmp_path: Path) -> N
     env = {
         **os.environ,
         "DEV_BFF_JWT_SECRET": "",
-        "DEV_BFF_OIDC_CLIENT_ID": " ",
-        "DEV_BFF_OIDC_CLIENT_SECRET": "",
+        "DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON": " ",
+        "DEV_BFF_CI_CLIENT_ID": " ",
+        "DEV_BFF_CI_CLIENT_SECRET": "",
         "GITHUB_STEP_SUMMARY": str(summary),
     }
 
@@ -485,6 +677,68 @@ def test_nonprod_workflow_missing_dev_login_is_a_hard_block(tmp_path: Path) -> N
     assert "No deployment was attempted" in summary_text
 
 
+def test_nonprod_workflow_rejects_control_character_token_before_remote_restart(
+    tmp_path: Path,
+) -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    smoke = next(
+        step
+        for step in workflow["jobs"]["deploy-manual"]["steps"]
+        if step.get("name") == "Dev Agora workshop restart persistence smoke"
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gcloud_marker = tmp_path / "gcloud-called"
+    curl = bin_dir / "curl"
+    curl.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"/bff/auth/dev-login"* ]]; then
+  printf '%s\\n' '{"token_type":"bearer","access_token":"abc.def.ghi\\n::set-env name=PWNED::yes"}'
+else
+  printf '%s\\n' '{}'
+fi
+""",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    gcloud = bin_dir / "gcloud"
+    gcloud.write_text(
+        "#!/usr/bin/env bash\nprintf called > \"${GCLOUD_MARKER}\"\n",
+        encoding="utf-8",
+    )
+    gcloud.chmod(0o755)
+    summary = tmp_path / "summary.md"
+    result = subprocess.run(
+        ["bash", "-c", smoke["run"]],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "DEV_BFF_URL": "https://bff.invalid",
+            "DEV_BFF_CI_CLIENT_ID": "ci-agora",
+            "DEV_BFF_CI_CLIENT_SECRET": "ci-secret-value",
+            "GITHUB_RUN_ID": "1",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "GCLOUD_MARKER": str(gcloud_marker),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "malformed compact JWT" in result.stdout
+    assert "::set-env name=PWNED" not in result.stdout
+    assert "::set-env name=PWNED" not in result.stderr
+    assert not gcloud_marker.exists()
+
+
 def test_kernel_runbook_manual_equivalent_preserves_strict_auth_secrets() -> None:
     runbook = (
         REPO_ROOT / "docs" / "deployment" / "management-ai-dev-kernel-control-mode.md"
@@ -494,10 +748,10 @@ def test_kernel_runbook_manual_equivalent_preserves_strict_auth_secrets() -> Non
     )[0]
 
     assert "export PANTHEON_BFF_JWT_SECRET=" in manual
-    assert "export PANTHEON_BFF_OIDC_CLIENT_ID=" in manual
-    assert "export PANTHEON_BFF_OIDC_CLIENT_SECRET=" in manual
+    assert "PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON" in runbook
     assert "calls `/bff/me` before any container mutation" in runbook
-    assert "EXIT cleanup deactivates the control-mode session" in runbook
+    assert "EXIT cleanup requires HTTP `202`" in runbook
+    assert "authoritative inactive" in runbook
 
 
 def test_strict_dev_still_exposes_only_the_exact_read_only_public_viewer() -> None:

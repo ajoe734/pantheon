@@ -101,17 +101,33 @@ jobs:
         if: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') }}
         env:
           DEV_BFF_JWT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_JWT_SECRET || '' }}
-          DEV_BFF_OIDC_CLIENT_ID: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_OIDC_CLIENT_ID || '' }}
-          DEV_BFF_OIDC_CLIENT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_OIDC_CLIENT_SECRET || '' }}
+          DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON || '' }}
+          DEV_BFF_CI_CLIENT_ID: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_CI_CLIENT_ID || '' }}
+          DEV_BFF_CI_CLIENT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_CI_CLIENT_SECRET || '' }}
         run: |
-          if [[ ! "${DEV_BFF_JWT_SECRET}" =~ [^[:space:]] || ! "${DEV_BFF_OIDC_CLIENT_ID}" =~ [^[:space:]] || ! "${DEV_BFF_OIDC_CLIENT_SECRET}" =~ [^[:space:]] ]]; then
-            echo "::error::Dev deployment is BLOCKED: dev-login GitHub secrets are not provisioned."
+          if [[ ! "${DEV_BFF_JWT_SECRET}" =~ [^[:space:]] || ! "${DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" =~ [^[:space:]] || ! "${DEV_BFF_CI_CLIENT_ID}" =~ [^[:space:]] || ! "${DEV_BFF_CI_CLIENT_SECRET}" =~ [^[:space:]] ]]; then
+            echo "::error::Dev deployment is BLOCKED: governed dev-login profile and CI credential secrets are not provisioned."
             {
               echo "## Dev auth qualification"
               echo "- Outcome: **BLOCKED**"
-              echo "- Reason: DEV_BFF_JWT_SECRET and/or DEV_BFF_OIDC_CLIENT_ID/SECRET are not provisioned"
+              echo "- Reason: JWT/profile configuration and/or the least-role CI client credential are not provisioned"
               echo "- No deployment was attempted"
             } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if ! jq -e '
+            .[$ENV.DEV_BFF_CI_CLIENT_ID] as $profile
+            | ($profile | type == "object")
+            and $profile.secret == $ENV.DEV_BFF_CI_CLIENT_SECRET
+            and $profile.subject == "pantheon-dev-ci-agora"
+            and ($profile.roles | sort == ["operator"])
+            and $profile.tenant_id == "tenant-dev"
+            and $profile.allowed_tenants == ["tenant-dev"]
+            and (($profile.capabilities // []) | all(startswith("assistant.kernel.") | not))
+            and ($profile.mfa_verified == false)
+          ' <<<"${DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" >/dev/null; then
+            echo "::error::Dev deployment is BLOCKED: CI client is not a distinct least-role governed profile."
+            echo "- Dev auth qualification profile: **BLOCKED** (invalid CI actor/role/tenant/capability policy)" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           echo "- Dev auth qualification prerequisites: configured" >> "$GITHUB_STEP_SUMMARY"
@@ -135,8 +151,7 @@ jobs:
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           DEV_BFF_JWT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_JWT_SECRET || '' }}
-          DEV_BFF_OIDC_CLIENT_ID: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_OIDC_CLIENT_ID || '' }}
-          DEV_BFF_OIDC_CLIENT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_OIDC_CLIENT_SECRET || '' }}
+          DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON || '' }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
@@ -234,33 +249,57 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
-          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
-          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_BFF_CI_CLIENT_ID: ${{ secrets.DEV_BFF_CI_CLIENT_ID }}
+          DEV_BFF_CI_CLIENT_SECRET: ${{ secrets.DEV_BFF_CI_CLIENT_SECRET }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
         run: |
           set -euo pipefail
-          if [[ -z "${DEV_BFF_OIDC_CLIENT_ID}" || -z "${DEV_BFF_OIDC_CLIENT_SECRET}" ]]; then
-            echo "::error::Privileged Agora restart smoke is BLOCKED: dev-login GitHub secrets are not provisioned."
-            echo "- Agora restart smoke: **BLOCKED** (DEV_BFF_OIDC_CLIENT_ID/SECRET not provisioned)" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -z "${DEV_BFF_CI_CLIENT_ID}" || -z "${DEV_BFF_CI_CLIENT_SECRET}" ]]; then
+            echo "::error::Agora restart smoke is BLOCKED: least-role CI dev-login secrets are not provisioned."
+            echo "- Agora restart smoke: **BLOCKED** (DEV_BFF_CI_CLIENT_ID/SECRET not provisioned)" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 
           login_request="$(mktemp)"
           login_response="$(mktemp)"
           trap 'rm -f "${login_request}" "${login_response}"' EXIT
+          chmod 0600 "${login_request}" "${login_response}"
           jq -n \
-            '{grant_type:"client_credentials", client_id:$ENV.DEV_BFF_OIDC_CLIENT_ID, client_secret:$ENV.DEV_BFF_OIDC_CLIENT_SECRET}' \
+            '{grant_type:"client_credentials", client_id:$ENV.DEV_BFF_CI_CLIENT_ID, client_secret:$ENV.DEV_BFF_CI_CLIENT_SECRET}' \
             > "${login_request}"
+          export -n DEV_BFF_CI_CLIENT_SECRET
+          DEV_BFF_CI_CLIENT_SECRET=""
           curl -fsS -X POST "${DEV_BFF_URL}/bff/auth/dev-login" \
             -H 'Content-Type: application/json' \
             --data @"${login_request}" \
             > "${login_response}"
-          bff_auth_token="$(jq -er '.access_token' "${login_response}")"
-          unset DEV_BFF_OIDC_CLIENT_SECRET
+          token_type="$(jq -er '.token_type | select(type == "string")' "${login_response}")"
+          [[ "${token_type,,}" == "bearer" ]] || { echo "::error::Dev login returned a non-bearer token type."; exit 1; }
+          bff_auth_token="$(jq -er '.access_token | select(type == "string")' "${login_response}")"
+          if (( ${#bff_auth_token} < 32 || ${#bff_auth_token} > 8192 )) \
+            || [[ ! "${bff_auth_token}" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::Dev login returned a malformed compact JWT."
+            exit 1
+          fi
           auth_header="$(mktemp)"
           chmod 0600 "${auth_header}"
           printf 'Authorization: Bearer %s\n' "${bff_auth_token}" > "${auth_header}"
           trap 'rm -f "${login_request}" "${login_response}" "${auth_header}"' EXIT
+
+          ci_identity="$(mktemp)"
+          chmod 0600 "${ci_identity}"
+          trap 'rm -f "${login_request}" "${login_response}" "${auth_header}" "${ci_identity}"' EXIT
+          curl -fsS "${DEV_BFF_URL}/bff/me" -H "@${auth_header}" > "${ci_identity}"
+          jq -e '
+            .data.currentUser.id == "pantheon-dev-ci-agora"
+            and ((.data.roles // []) | sort == ["operator"])
+            and ((.data.capabilities // []) | all(startswith("assistant.kernel.") | not))
+            and .data.tenant.id == "tenant-dev"
+            and .data.tenant.allowed_ids == ["tenant-dev"]
+          ' "${ci_identity}" >/dev/null || {
+            echo "::error::CI dev-login profile is not the expected distinct least-role, single-tenant identity."
+            exit 1
+          }
 
           idem="agora-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           workshop_id="$(
@@ -271,6 +310,10 @@ jobs:
               --data '{"initial_message":"Versioned dev restart-persistence smoke"}' \
               | jq -er '.data.workshop_id'
           )"
+          if [[ ! "${workshop_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+            echo "::error::Agora smoke returned an invalid workshop id."
+            exit 1
+          fi
           gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
             --zone "${DEV_ZONE}" \
             --project "${GCP_DEPLOY_PROJECT_ID}" \

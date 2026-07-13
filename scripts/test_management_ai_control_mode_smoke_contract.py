@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 
@@ -7,6 +9,55 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "smoke_management_ai_control_mode_queue.sh"
 REPAIR_SCRIPT = ROOT / "scripts" / "smoke_management_ai_openclaw_repair_e2e.sh"
 RUNBOOK = ROOT / "docs" / "deployment" / "management-ai-dev-kernel-control-mode.md"
+
+
+def _install_fake_control_smoke_curl(tmp_path: Path) -> tuple[Path, Path]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    capture = tmp_path / "curl-capture"
+    fake = bin_dir / "curl"
+    fake.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf 'argv=%s\\n' "$*" >> "${FAKE_CURL_CAPTURE}"
+env | grep -E '^(BFF_AUTH_TOKEN|PANTHEON_ASSISTANT_CONTROL_PASSPHRASE|CONTROL_MODE_PASSPHRASE)=' >> "${FAKE_CURL_CAPTURE}" || true
+out=""
+previous=""
+for argument in "$@"; do
+  if [[ "$previous" == "-o" ]]; then out="$argument"; fi
+  previous="$argument"
+done
+url="${!#}"
+code=200
+payload='{}'
+case "$url" in
+  */health) payload='{"status":"ok"}' ;;
+  */bff/assistant/mode)
+    payload='{"data":{"kernel_enabled":true,"control_mode":{"configured":true,"active":false,"state":"inactive"}}}'
+    ;;
+  */bff/assistant/control-mode/activate)
+    code=202
+    payload='{"data":{"mode":"kernel_repair","active":true}}'
+    ;;
+  */bff/assistant/control-mode/deactivate)
+    code="${FAKE_DEACTIVATE_CODE:-202}"
+    payload='{"data":{"active":false,"state":"inactive"}}'
+    ;;
+  */bff/assistant/dev-docs/generate)
+    code=201
+    payload='{"data":{"packetId":"packet-test"},"meta":{"taskPacketQueued":true,"taskPacketQueueReceipt":{"path":"pending/test.json"}}}'
+    ;;
+  */bff/assistant/orchestrator/status)
+    payload='{"data":{"supervisor":{"lifecycle":"running"},"providerReadiness":{"status":"ready"},"assistantDevBridge":{"inbox":{"pendingCount":0}}}}'
+    ;;
+esac
+if [[ -n "$out" ]]; then printf '%s\\n' "$payload" > "$out"; else printf '%s\\n' "$payload"; fi
+printf '%s' "$code"
+""",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    return bin_dir, capture
 
 
 def test_control_mode_queue_smoke_requires_operator_passphrase_without_literal_secret() -> None:
@@ -37,6 +88,52 @@ def test_control_mode_queue_smoke_hits_closed_loop_endpoints() -> None:
     assert 'TASK_REVIEWER="${TASK_REVIEWER:-Claude}"' in source
     assert "proposedReviewer: $reviewer" in source
     assert "taskPacketQueued" in source
+    assert 'chmod 0600 "${request_tmp}" "${response_tmp}" "${auth_header}"' in source
+    assert 'export -n BFF_AUTH_TOKEN' in source
+    assert '-H "@${auth_header}"' in source
+    assert 'deactivate_code="$(curl_json POST' in source
+    assert '[ "${deactivate_code}" != "202" ]' in source
+    assert '.data.control_mode.active == false' in source
+
+
+def test_control_mode_queue_smoke_cleanup_is_authoritative_and_credentials_are_not_exported(
+    tmp_path: Path,
+) -> None:
+    bin_dir, capture = _install_fake_control_smoke_curl(tmp_path)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "FAKE_CURL_CAPTURE": str(capture),
+        "BFF_BASE_URL": "https://bff.invalid",
+        "BFF_AUTH_TOKEN": "header-only-jwt-secret",
+        "PANTHEON_ASSISTANT_CONTROL_PASSPHRASE": "control-passphrase-secret",
+    }
+
+    success = subprocess.run(
+        ["bash", str(SCRIPT)],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert success.returncode == 0, success.stderr
+    captured = capture.read_text(encoding="utf-8")
+    assert "header-only-jwt-secret" not in captured
+    assert "control-passphrase-secret" not in captured
+    assert "/bff/assistant/control-mode/deactivate" in captured
+
+    capture.unlink()
+    cleanup_failure = subprocess.run(
+        ["bash", str(SCRIPT)],
+        cwd=ROOT,
+        env={**env, "FAKE_DEACTIVATE_CODE": "500"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert cleanup_failure.returncode == 1
+    assert "cleanup returned HTTP 500" in cleanup_failure.stderr
 
 
 def test_runbook_documents_positive_queue_smoke() -> None:
@@ -77,6 +174,12 @@ def test_openclaw_repair_smoke_hits_write_and_bridge_endpoints() -> None:
     assert "pantheon-openclaw-gateway-adapter-1" in source
     assert "receipt_status" in source
     assert "processed" in source
+    assert 'chmod 0600 "${request_tmp}" "${response_tmp}" "${status_tmp}" "${auth_header}"' in source
+    assert 'export -n BFF_AUTH_TOKEN' in source
+    assert 'local headers=(-H "@${auth_header}")' in source
+    assert 'deactivate_code="$(curl_json POST' in source
+    assert '[ "${deactivate_code}" != "202" ]' in source
+    assert '.data.control_mode.active == false' in source
 
 
 def test_runbook_documents_positive_openclaw_repair_smoke() -> None:

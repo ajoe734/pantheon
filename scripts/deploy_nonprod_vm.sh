@@ -24,6 +24,7 @@ DEV_BFF_JWT_ISSUER="${DEV_BFF_JWT_ISSUER:-pantheon-dev}"
 DEV_BFF_JWT_AUDIENCE="${DEV_BFF_JWT_AUDIENCE:-bff-operators}"
 DEV_BFF_OIDC_CLIENT_ID="${DEV_BFF_OIDC_CLIENT_ID:-}"
 DEV_BFF_OIDC_CLIENT_SECRET="${DEV_BFF_OIDC_CLIENT_SECRET:-}"
+DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON="${DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON:-}"
 DEV_BFF_DEV_LOGIN_TTL_SECONDS="${DEV_BFF_DEV_LOGIN_TTL_SECONDS:-900}"
 DEV_BFF_DEV_LOGIN_ROLES="${DEV_BFF_DEV_LOGIN_ROLES:-operator,reviewer,approver}"
 DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
@@ -97,6 +98,7 @@ Environment overrides:
   DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
   DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON
   DEV_BFF_DEV_LOGIN_TTL_SECONDS DEV_BFF_DEV_LOGIN_ROLES
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
@@ -207,19 +209,44 @@ validate_dev_bff_auth_boundary() {
 
   local credential_name
   local credential_value
-  for credential_name in DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET; do
+  for credential_name in DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON; do
     credential_value="${!credential_name}"
     if [[ -n "$credential_value" && ! "$credential_value" =~ [^[:space:]] ]]; then
       error "${credential_name} must not be whitespace-only"
     fi
   done
 
-  local configured_credentials=0
-  [[ -n "$DEV_BFF_JWT_SECRET" ]] && configured_credentials=$((configured_credentials + 1))
-  [[ -n "$DEV_BFF_OIDC_CLIENT_ID" ]] && configured_credentials=$((configured_credentials + 1))
-  [[ -n "$DEV_BFF_OIDC_CLIENT_SECRET" ]] && configured_credentials=$((configured_credentials + 1))
-  [[ "$configured_credentials" == 0 || "$configured_credentials" == 3 ]] \
-    || error "dev-login requires JWT secret, client id, and client secret together"
+  if [[ -n "$DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON" ]]; then
+    [[ -n "$DEV_BFF_JWT_SECRET" ]] \
+      || error "profiled dev-login requires DEV_BFF_JWT_SECRET"
+    [[ -z "$DEV_BFF_OIDC_CLIENT_ID" && -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]] \
+      || error "profiled dev-login must not include the legacy shared OIDC client credential"
+    python3 -c '
+import json
+import sys
+
+profiles = json.load(sys.stdin)
+assert isinstance(profiles, dict) and 0 < len(profiles) <= 32
+subjects = []
+for client_id, profile in profiles.items():
+    assert isinstance(client_id, str) and client_id.strip()
+    assert isinstance(profile, dict)
+    assert isinstance(profile.get("secret"), str) and len(profile["secret"].encode()) >= 16
+    assert isinstance(profile.get("subject"), str) and profile["subject"].strip()
+    assert isinstance(profile.get("roles"), list) and profile["roles"]
+    assert isinstance(profile.get("tenant_id"), str) and profile["tenant_id"].strip()
+    assert isinstance(profile.get("allowed_tenants"), list)
+    assert profile["tenant_id"] in profile["allowed_tenants"]
+    assert isinstance(profile.get("capabilities", []), list)
+    assert isinstance(profile.get("mfa_verified", False), bool)
+    subjects.append(profile["subject"].casefold())
+assert len(subjects) == len(set(subjects))
+' \
+      <<<"$DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON" >/dev/null 2>&1 \
+      || error "DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON must contain valid unique governed client profiles"
+  elif [[ -n "$DEV_BFF_JWT_SECRET" || -n "$DEV_BFF_OIDC_CLIENT_ID" || -n "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
+    error "dev deploy requires governed client profiles; the legacy shared dev-login client is not accepted"
+  fi
 }
 
 DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_CANONICAL_CORS_ORIGIN")"
@@ -286,11 +313,12 @@ case "$DEPLOY_ENV" in
     esac
     # Dev-only credentials must not be inherited by staging subprocesses or
     # forwarded to a staging host, even when the caller exported them.
-    unset DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
+    unset DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON
     unset DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DATABASE_URL
     DEV_BFF_JWT_SECRET=""
     DEV_BFF_OIDC_CLIENT_ID=""
     DEV_BFF_OIDC_CLIENT_SECRET=""
+    DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON=""
     DEV_MANAGEMENT_AI_DB_PASSWORD=""
     DEV_MANAGEMENT_AI_DATABASE_URL=""
     ;;
@@ -315,6 +343,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
   info "dev_bff_auth_mode=${DEV_BFF_AUTH_MODE}"
   info "dev_bff_dev_login_configured=$([[ -n "$DEV_BFF_JWT_SECRET" ]] && echo true || echo false)"
+  info "dev_bff_profiled_login_configured=$([[ -n "$DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON" ]] && echo true || echo false)"
   info "dev_assistant_kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
   info "dev_assistant_control_mode_store_path=${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}"
   info "dev_assistant_control_idle_ttl_seconds=${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}"
@@ -338,14 +367,14 @@ if [[ "$DRY_RUN" == "true" ]]; then
 fi
 
 if [[ "$DEPLOY_ENV" == "dev" ]]; then
-  [[ -n "$DEV_BFF_JWT_SECRET" && -n "$DEV_BFF_OIDC_CLIENT_ID" && -n "$DEV_BFF_OIDC_CLIENT_SECRET" ]] \
-    || error "dev deployment is blocked until JWT secret, client id, and client secret are configured"
+  [[ -n "$DEV_BFF_JWT_SECRET" && -n "$DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON" ]] \
+    || error "dev deployment is blocked until JWT secret and governed login profiles are configured"
 fi
 
 # Keep deploy credentials in this shell only. Remote delivery uses the SSH
 # stdin stream below; gcloud never receives them in argv or its environment.
-export -n GITHUB_TOKEN DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET 2>/dev/null || true
-export -n PANTHEON_BFF_JWT_SECRET PANTHEON_BFF_OIDC_CLIENT_ID PANTHEON_BFF_OIDC_CLIENT_SECRET 2>/dev/null || true
+export -n GITHUB_TOKEN DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON 2>/dev/null || true
+export -n PANTHEON_BFF_JWT_SECRET PANTHEON_BFF_OIDC_CLIENT_ID PANTHEON_BFF_OIDC_CLIENT_SECRET PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON 2>/dev/null || true
 export -n DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DATABASE_URL 2>/dev/null || true
 export -n PANTHEON_MANAGEMENT_AI_DB_PASSWORD 2>/dev/null || true
 export -n MANAGEMENT_AI_STORE_DSN MANAGEMENT_AI_DATABASE_URL 2>/dev/null || true
@@ -397,6 +426,7 @@ ssh_bash() {
     emit_remote_export PANTHEON_DEV_BFF_JWT_AUDIENCE "$DEV_BFF_JWT_AUDIENCE"
     emit_remote_export PANTHEON_DEV_BFF_OIDC_CLIENT_ID "$DEV_BFF_OIDC_CLIENT_ID"
     emit_remote_export PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET "$DEV_BFF_OIDC_CLIENT_SECRET"
+    emit_remote_export PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON "$DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON"
     emit_remote_export PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS "$DEV_BFF_DEV_LOGIN_TTL_SECONDS"
     emit_remote_export PANTHEON_DEV_BFF_DEV_LOGIN_ROLES "$DEV_BFF_DEV_LOGIN_ROLES"
     emit_remote_export PANTHEON_DEV_BFF_TENANT_ID "$DEV_BFF_TENANT_ID"
@@ -1065,6 +1095,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
     PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
     PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON="${PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" \
     PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS="${PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS}" \
     PANTHEON_BFF_DEV_LOGIN_ROLES="${PANTHEON_DEV_BFF_DEV_LOGIN_ROLES}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
@@ -1127,6 +1158,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
     PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
     PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON="${PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" \
     PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS="${PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS}" \
     PANTHEON_BFF_DEV_LOGIN_ROLES="${PANTHEON_DEV_BFF_DEV_LOGIN_ROLES}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \

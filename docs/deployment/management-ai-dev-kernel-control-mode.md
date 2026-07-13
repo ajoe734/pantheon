@@ -30,12 +30,19 @@ BFF_AUTH_TOKEN='<short-lived privileged JWT>' \
 `BFF_AUTH_TOKEN` is required and has no tracked fallback. The exact public
 browser credential (`pantheon-dev-browser:viewer`) is capability-free and
 read-only, so the script rejects it before changing the compose service. The
-script also calls `/bff/me` before any container mutation and requires the
-supplied identity to carry `assistant.kernel.debug` or
-`assistant.kernel.repair`; an unreachable BFF or invalid/under-scoped token is
-a hard block. The governed `PANTHEON_BFF_JWT_SECRET` and dev-login client
-credential variables must also be present so recreating `operator-bff` cannot
-erase its auth config.
+script also calls `/bff/me` before any container mutation and requires an
+operator/admin identity with MFA plus `assistant.kernel.debug` or
+`assistant.kernel.repair`. It then reads `/bff/assistant/mode` and refuses to
+restart while that actor has an active or session-bound control mode. An
+unreachable BFF or invalid/under-scoped token is a hard block.
+
+Before recreation, the script captures the running container's auth and policy
+environment in a mode-0600 temporary file. Unspecified issuer, audience,
+tenant/allowed-tenant, role mapping, MFA policy, login profile, and signing
+settings are preserved from that snapshot. A failed recreate or failed exact
+postcondition automatically recreates `operator-bff` with the captured policy.
+The success postcondition is exactly kernel enabled, passphrase configured, and
+control mode inactive with no management session.
 
 The script defaults to the live dev compose project name:
 
@@ -57,14 +64,17 @@ the supervisor status root from
 `/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json`.
 If that file is absent, it falls back to the repo root where the script is run.
 
-Manual equivalent:
+Manual equivalent: policy inputs shown for diagnostic reference only.
 
 ```bash
 # Obtain these existing values from the governed dev environment. Do not put
 # their literal values in shell history, source, logs, or this runbook.
 export PANTHEON_BFF_JWT_SECRET='<governed dev signing secret>'
-export PANTHEON_BFF_OIDC_CLIENT_ID='<governed dev-login client id>'
-export PANTHEON_BFF_OIDC_CLIENT_SECRET='<governed dev-login client secret>'
+export PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON='<governed profile JSON>'
+export PANTHEON_BFF_JWT_ISSUER='pantheon-dev'
+export PANTHEON_BFF_JWT_AUDIENCE='bff-operators'
+export PANTHEON_BFF_TENANT_ID='tenant-dev'
+export PANTHEON_BFF_ALLOWED_TENANTS='tenant-dev'
 
 PANTHEON_STATUS_ROOT_HOST=/home/lupin/code/pantheon \
 PANTHEON_ASSISTANT_KERNEL_ENABLED=true \
@@ -73,6 +83,13 @@ PANTHEON_BFF_AUTH_MODE=strict \
 PANTHEON_BFF_STUB_CAPABILITIES= \
 docker compose -p pantheon up -d --no-deps --force-recreate operator-bff
 ```
+
+Do not use the direct Compose command as the normal enable procedure: it has no
+preflight, inactive-session guard, exact postcondition, or rollback. Use
+`scripts/enable_management_ai_dev_kernel.sh`. If an emergency manual operation
+is unavoidable, first capture the existing container environment, preserve all
+listed auth/policy keys, and restore that snapshot if either recreation or
+authenticated mode readback fails.
 
 The `-p pantheon` flag matters on the shared dev VM. Running compose without the
 project name can create a second empty project and fail on the already-bound BFF
@@ -107,24 +124,35 @@ enable auth stub, permissive mode, or stub capabilities before SSH. The
 staging-live env file remains explicitly kernel-disabled.
 
 The BFF and GitHub environment still need independently provisioned dev-login
-client credentials and a JWT signing secret. Those secrets are not created or
-rotated by this repository. The current dev-login issuer creates short-lived
-role-scoped JWTs but does not yet issue `assistant.kernel.*` capabilities;
-governed capability issuance is therefore a separate prerequisite for positive
-kernel repair qualification. Do not restore structured-token or stub-capability
-fallbacks to bypass that prerequisite.
+client profiles and a JWT signing secret. Those secrets are not created or
+rotated by this repository. `PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON` is a
+server-side map: each client fixes a unique subject, roles, tenant and allowed
+tenants, capabilities, and MFA state. The login request cannot request or
+override those claims. Duplicate subjects and invalid/cross-tenant profiles
+fail closed. Kernel operator profiles may carry `assistant.kernel.*`; the Agora
+deploy CI profile must be the distinct subject `pantheon-dev-ci-agora`, role
+`operator` only, tenant `tenant-dev` only, no kernel capability, and no MFA
+assertion. Do not restore structured-token or stub-capability fallbacks.
 
 The external GitHub environment must provide `DEV_BFF_JWT_SECRET`,
-`DEV_BFF_OIDC_CLIENT_ID`, and `DEV_BFF_OIDC_CLIENT_SECRET` together. The deploy
-script rejects partial or whitespace-only configuration and propagates the
-complete set to the BFF without printing the values in its plan output. A local
-dry-run may omit all three to inspect the safe configuration, but the governed
-GitHub workflow blocks every dev root/BFF deployment until all three exist.
+`DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON`, `DEV_BFF_CI_CLIENT_ID`, and
+`DEV_BFF_CI_CLIENT_SECRET`. The deploy script rejects partial, whitespace-only,
+or malformed profile configuration and streams secrets through SSH stdin; they
+are absent from gcloud argv and its environment. A local dry-run may omit them
+to inspect the safe configuration, but the governed GitHub workflow blocks
+every dev root/BFF deployment until all four exist.
 
 The non-prod workflow treats missing GitHub dev-login credentials as a hard
 `BLOCKED` outcome before cloud authentication or deployment. When credentials
-exist, it exchanges them through `/bff/auth/dev-login` and uses only the
-returned short-lived JWT for the privileged restart-persistence smoke.
+exist, it exchanges the CI credential through `/bff/auth/dev-login`, validates
+the response as a bounded compact bearer JWT, verifies `/bff/me` is the exact
+least-role/single-tenant CI identity, and uses only that short-lived JWT for the
+restart-persistence smoke.
+
+Repository support is not the live completion claim. Until the governed profile
+JSON, distinct CI credential, JWT signing secret, and a separate MFA-backed
+kernel-operator credential are provisioned and the authenticated hosted smokes
+pass, dev auth/kernel qualification remains `BLOCKED`, not done.
 
 ## Verify
 
@@ -230,8 +258,10 @@ The smoke verifies:
 - a signed DevTaskPacket is queued into the supervisor inbox.
 - `/bff/assistant/orchestrator/status` reports supervisor/provider/dev-bridge
   readback after queueing.
-- the EXIT cleanup deactivates the control-mode session after success or any
-  post-activation failure.
+- the EXIT cleanup requires HTTP `202` from deactivation and authoritative
+  inactive mode readback after success or any post-activation failure. An
+  original test error remains the reported failure; cleanup failure converts an
+  otherwise successful run to failure.
 
 If the script fails with `invalid_passphrase`, the runtime is healthy but the
 operator did not provide the current passphrase. If it fails with
@@ -284,6 +314,8 @@ The smoke verifies:
   such as `Codex` and `Claude`, not `assistant-supervisor` or `Supervisor`;
 - the supervisor drains the queued DevTaskPacket and reports a processed
   receipt through `/bff/assistant/orchestrator/status`.
+- EXIT cleanup requires HTTP `202` deactivation and authoritative inactive
+  readback, including after a provider, sentinel, or queue failure.
 
 The dev supervisor default poll interval is 300 seconds, so E2E smoke polling
 must cover at least one full supervisor tick after `queueTaskPacket=true`.
@@ -302,9 +334,14 @@ The passphrase is only one activation factor. Control mode also requires:
 - a capability beginning with `assistant.kernel`
 - a configured control-mode passphrase
 
-For dev stub auth, `env/dev-management-ai-kernel.env.example` and the enable
-script add `assistant.kernel.debug` and `assistant.kernel.repair` to stub
-tokens. A browser operator still needs an admin/operator identity with MFA.
+Dev kernel mode never enables stub auth or global stub capabilities. A governed
+server-side kernel-operator profile must issue a signed short-lived JWT with a
+unique subject, admin/operator role, MFA assertion, a single allowed tenant,
+and the required kernel capability. The public browser viewer and the
+least-role CI profile cannot activate control mode.
+
+The enable and smoke scripts write Authorization headers to mode-0600 temporary
+files and remove the exported JWT from unrelated child-process environments.
 
 Never put the control-mode passphrase, broker credentials, API tokens, private
 keys, or other secrets in Lovable frontend environment variables.

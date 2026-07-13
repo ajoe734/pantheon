@@ -27,25 +27,46 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 2
 fi
 
+# Retain values in shell variables but remove inherited export attributes before
+# even temporary-file helpers run.
+export -n BFF_AUTH_TOKEN PANTHEON_ASSISTANT_CONTROL_PASSPHRASE CONTROL_MODE_PASSPHRASE 2>/dev/null || true
 request_tmp="$(mktemp)"
 response_tmp="$(mktemp)"
+auth_header="$(mktemp)"
+chmod 0600 "${request_tmp}" "${response_tmp}" "${auth_header}"
+printf 'Authorization: Bearer %s\n' "${BFF_AUTH_TOKEN}" >"${auth_header}"
+# Keep the JWT and passphrase out of unrelated child-process environments.
+BFF_AUTH_TOKEN=""
 activated="false"
 
 deactivate_control_mode() {
+  local deactivate_code mode_code
   if [ "${activated}" = "true" ]; then
     jq -n '{reason: "management_ai_control_mode_queue_smoke_cleanup"}' >"${request_tmp}"
-    curl -sS -o /dev/null --max-time 30 \
-      -X POST \
-      -H "Authorization: Bearer ${BFF_AUTH_TOKEN}" \
-      -H "Content-Type: application/json" \
-      --data @"${request_tmp}" \
-      "${BFF_BASE_URL}/bff/assistant/control-mode/deactivate" || true
+    deactivate_code="$(curl_json POST /bff/assistant/control-mode/deactivate "${request_tmp}")"
+    if [ "${deactivate_code}" != "202" ]; then
+      echo "ERROR: control-mode cleanup returned HTTP ${deactivate_code}." >&2
+      return 1
+    fi
+    mode_code="$(curl_json GET /bff/assistant/mode)"
+    if [ "${mode_code}" != "200" ] \
+      || ! jq -e '.data.control_mode.active == false and .data.control_mode.state == "inactive"' "${response_tmp}" >/dev/null; then
+      echo "ERROR: control-mode cleanup did not produce authoritative inactive readback." >&2
+      return 1
+    fi
   fi
 }
 
 cleanup() {
-  deactivate_control_mode
-  rm -f "${request_tmp}" "${response_tmp}"
+  local original_status="$?"
+  local final_status="${original_status}"
+  trap - EXIT
+  set +e
+  if ! deactivate_control_mode && [ "${original_status}" -eq 0 ]; then
+    final_status=1
+  fi
+  rm -f "${request_tmp}" "${response_tmp}" "${auth_header}"
+  exit "${final_status}"
 }
 trap cleanup EXIT
 
@@ -59,7 +80,7 @@ curl_json() {
     http_code="$(
       curl -sS -o "${response_tmp}" -w '%{http_code}' --max-time 90 \
         -X "${method}" \
-        -H "Authorization: Bearer ${BFF_AUTH_TOKEN}" \
+        -H "@${auth_header}" \
         -H "Content-Type: application/json" \
         --data @"${body_file}" \
         "${BFF_BASE_URL}${path}"
@@ -68,7 +89,7 @@ curl_json() {
     http_code="$(
       curl -sS -o "${response_tmp}" -w '%{http_code}' --max-time 30 \
         -X "${method}" \
-        -H "Authorization: Bearer ${BFF_AUTH_TOKEN}" \
+        -H "@${auth_header}" \
         "${BFF_BASE_URL}${path}"
     )"
   fi
@@ -98,18 +119,18 @@ if [ "${mode_code}" != "200" ]; then
 fi
 kernel_enabled="$(jq -r '.data.kernel_enabled // false' "${response_tmp}")"
 configured="$(jq -r '(.data.control_mode.configured // .data.control_mode.active // false)' "${response_tmp}")"
+active="$(jq -r '(.data.control_mode.active // false)' "${response_tmp}")"
 echo "kernel_enabled=${kernel_enabled}"
 echo "control_passphrase_configured=${configured}"
-if [ "${kernel_enabled}" != "true" ] || [ "${configured}" != "true" ]; then
-  echo "ERROR: kernel mode or control passphrase is not configured." >&2
+if [ "${kernel_enabled}" != "true" ] || [ "${configured}" != "true" ] || [ "${active}" != "false" ]; then
+  echo "ERROR: kernel/passphrase is not ready or this actor already has active control mode." >&2
   exit 1
 fi
 
-jq -n \
-  --arg passphrase "${CONTROL_PASSPHRASE}" \
+CONTROL_PASSPHRASE_VALUE="${CONTROL_PASSPHRASE}" jq -n \
   --arg session "${SESSION_ID}" \
   '{
-    passphrase: $passphrase,
+    passphrase: $ENV.CONTROL_PASSPHRASE_VALUE,
     mode: "kernel_repair",
     reason: "Management AI SA/SD queue smoke",
     ttlSeconds: 900,

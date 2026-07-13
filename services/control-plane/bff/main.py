@@ -1084,6 +1084,9 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   PANTHEON_BFF_ROLE_MAP_MODE - passthrough (default) or strict
 #   PANTHEON_BFF_MFA_CLAIMS    - comma-separated MFA claim paths (e.g. amr,acr)
 #   PANTHEON_BFF_MFA_VALUES    - accepted MFA proof values (e.g. mfa,totp,webauthn)
+#   PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON - governed dev-only client to
+#       unique subject/roles/tenant/capabilities/MFA profiles; when configured,
+#       the legacy single OIDC client credential is not accepted.
 #   When JWKS_URI is set, RS256/ES256 JWKS path is used instead of HS256.
 #   Strict default still applies: stub tokens are not accepted in strict mode.
 
@@ -1102,6 +1105,131 @@ def _dev_login_client_secret() -> str:
     )
 
 
+_DEV_LOGIN_CLIENT_PROFILES_ENV = "PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON"
+_DEV_LOGIN_CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,128}$")
+_DEV_LOGIN_TENANT_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _dev_login_client_profiles() -> Dict[str, Dict[str, Any]]:
+    """Load governed dev-login identities from one server-side JSON secret.
+
+    The map is intentionally server-authored: callers select a client id but
+    cannot request roles, tenants, MFA state, or capabilities in the login
+    payload.  Duplicate subjects are rejected so two credentials cannot be
+    mistaken for independent actors during approvals or review workflows.
+    """
+
+    raw = os.getenv(_DEV_LOGIN_CLIENT_PROFILES_ENV, "").strip()
+    if not raw:
+        return {}
+    if len(raw.encode("utf-8")) > 65536:
+        raise ValueError("dev-login client profile configuration is too large")
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("dev-login client profile configuration is invalid JSON") from exc
+    if not isinstance(decoded, dict) or not decoded or len(decoded) > 32:
+        raise ValueError("dev-login client profiles must be a non-empty object with at most 32 clients")
+
+    profiles: Dict[str, Dict[str, Any]] = {}
+    subjects: Set[str] = set()
+    allowed_roles = _READ_ROLES | _WRITE_ROLES
+    for raw_client_id, raw_profile in decoded.items():
+        client_id = str(raw_client_id or "").strip()
+        if not _DEV_LOGIN_CLIENT_ID_PATTERN.fullmatch(client_id):
+            raise ValueError("dev-login client id is invalid")
+        if not isinstance(raw_profile, dict):
+            raise ValueError("dev-login client profile must be an object")
+
+        secret = raw_profile.get("secret")
+        if not isinstance(secret, str) or len(secret.encode("utf-8")) < 16:
+            raise ValueError("dev-login client profile secret must be at least 16 UTF-8 bytes")
+        if len(secret.encode("utf-8")) > 4096 or any(ord(char) < 32 or ord(char) == 127 for char in secret):
+            raise ValueError("dev-login client profile secret contains invalid characters")
+
+        subject = str(raw_profile.get("subject") or "").strip()
+        if not subject or len(subject) > 128 or any(ord(char) < 33 or ord(char) == 127 for char in subject):
+            raise ValueError("dev-login client profile subject is invalid")
+        subject_key = subject.casefold()
+        if subject_key in subjects:
+            raise ValueError("dev-login client profile subjects must be unique")
+        subjects.add(subject_key)
+
+        raw_roles = raw_profile.get("roles")
+        if not isinstance(raw_roles, list):
+            raise ValueError("dev-login client profile roles must be a list")
+        roles = sorted({str(role).strip() for role in raw_roles if str(role).strip()})
+        if not roles or any(role not in allowed_roles for role in roles):
+            raise ValueError("dev-login client profile contains an invalid or empty role set")
+
+        tenant_id = str(raw_profile.get("tenant_id") or "").strip()
+        if not _DEV_LOGIN_TENANT_PATTERN.fullmatch(tenant_id):
+            raise ValueError("dev-login client profile tenant_id is invalid")
+        raw_allowed_tenants = raw_profile.get("allowed_tenants")
+        if not isinstance(raw_allowed_tenants, list):
+            raise ValueError("dev-login client profile allowed_tenants must be a list")
+        allowed_tenants = list(
+            dict.fromkeys(str(tenant).strip() for tenant in raw_allowed_tenants if str(tenant).strip())
+        )
+        if (
+            not allowed_tenants
+            or tenant_id not in allowed_tenants
+            or any(not _DEV_LOGIN_TENANT_PATTERN.fullmatch(tenant) for tenant in allowed_tenants)
+        ):
+            raise ValueError("dev-login client profile allowed_tenants is invalid")
+
+        raw_capabilities = raw_profile.get("capabilities", [])
+        if not isinstance(raw_capabilities, list):
+            raise ValueError("dev-login client profile capabilities must be a list")
+        capabilities = list(
+            dict.fromkeys(str(capability).strip() for capability in raw_capabilities if str(capability).strip())
+        )
+        if len(capabilities) > 64 or any(
+            len(capability) > 128
+            or not re.fullmatch(r"[A-Za-z0-9._:-]+", capability)
+            for capability in capabilities
+        ):
+            raise ValueError("dev-login client profile capabilities are invalid")
+
+        mfa_verified = raw_profile.get("mfa_verified", False)
+        if not isinstance(mfa_verified, bool):
+            raise ValueError("dev-login client profile mfa_verified must be boolean")
+
+        profiles[client_id] = {
+            "secret": secret,
+            "subject": subject,
+            "roles": roles,
+            "tenant_id": tenant_id,
+            "allowed_tenants": allowed_tenants,
+            "capabilities": capabilities,
+            "mfa_verified": mfa_verified,
+        }
+    return profiles
+
+
+def _dev_login_profile_for_credentials(client_id: str, client_secret: str) -> Optional[Dict[str, Any]]:
+    profiles = _dev_login_client_profiles()
+    if profiles:
+        match: Optional[Dict[str, Any]] = None
+        for configured_id, profile in profiles.items():
+            id_matches = hmac.compare_digest(client_id, configured_id)
+            secret_matches = hmac.compare_digest(client_secret, str(profile["secret"]))
+            if id_matches and secret_matches:
+                match = profile
+        return match
+
+    expected_id = _dev_login_client_id()
+    expected_secret = _dev_login_client_secret()
+    if (
+        expected_id
+        and expected_secret
+        and hmac.compare_digest(client_id, expected_id)
+        and hmac.compare_digest(client_secret, expected_secret)
+    ):
+        return {}
+    return None
+
+
 def _dev_login_forbidden_environment() -> bool:
     env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
     deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
@@ -1111,7 +1239,10 @@ def _dev_login_forbidden_environment() -> bool:
 def _dev_login_enabled() -> bool:
     if _dev_login_forbidden_environment():
         return False
-    return bool(_dev_login_client_id() and _dev_login_client_secret())
+    return bool(
+        os.getenv(_DEV_LOGIN_CLIENT_PROFILES_ENV, "").strip()
+        or (_dev_login_client_id() and _dev_login_client_secret())
+    )
 
 
 def _dev_login_ttl_seconds() -> int:
@@ -1132,7 +1263,11 @@ def _dev_login_bool_env(name: str, *, default: bool) -> bool:
     return _bool_from_env(name, default=default)
 
 
-def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
+def _issue_dev_login_jwt(
+    client_id: str,
+    *,
+    profile: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     try:
         from services.runtime_auth_inbound import encode_jwt_hs256
     except ImportError:
@@ -1152,10 +1287,14 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
     now = int(time.time())
     ttl = _dev_login_ttl_seconds()
     expires_at = now + ttl
-    roles = _dev_login_roles() or ["operator", "reviewer"]
-    subject = _first_nonblank(
-        os.getenv("PANTHEON_BFF_DEV_LOGIN_SUBJECT"),
-        f"pantheon-dev-{client_id}",
+    governed_profile = profile or {}
+    roles = list(governed_profile.get("roles") or _dev_login_roles() or ["operator", "reviewer"])
+    subject = str(
+        governed_profile.get("subject")
+        or _first_nonblank(
+            os.getenv("PANTHEON_BFF_DEV_LOGIN_SUBJECT"),
+            f"pantheon-dev-{client_id}",
+        )
     )
     issuer = _first_nonblank(
         os.getenv("PANTHEON_BFF_JWT_ISSUER"),
@@ -1165,14 +1304,26 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
         os.getenv("PANTHEON_BFF_JWT_AUDIENCE"),
         "bff-operators",
     )
-    tenant_id = _first_nonblank(
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-        "tenant-dev",
+    tenant_id = str(
+        governed_profile.get("tenant_id")
+        or _first_nonblank(
+            os.getenv("PANTHEON_BFF_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+            os.getenv("PANTHEON_TENANT_ID"),
+            "tenant-dev",
+        )
     )
-    allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
-    mfa_verified = _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
+    allowed_tenants = list(
+        governed_profile.get("allowed_tenants")
+        or _env_csv("PANTHEON_BFF_ALLOWED_TENANTS")
+        or [tenant_id]
+    )
+    capabilities = list(governed_profile.get("capabilities") or [])
+    mfa_verified = (
+        bool(governed_profile.get("mfa_verified"))
+        if profile
+        else _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
+    )
     claims: Dict[str, Any] = {
         "sub": subject,
         "roles": roles,
@@ -1186,6 +1337,7 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
         "token_use": "pantheon-bff-dev-login",
         "tenant_id": tenant_id,
         "allowed_tenants": allowed_tenants,
+        "capabilities": capabilities,
     }
     if mfa_verified:
         claims["mfa_verified"] = True
@@ -1197,7 +1349,7 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
         "expires_in": ttl,
         "issued_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
         "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
-        "scope": " ".join(roles),
+        "scope": " ".join([*roles, *capabilities]),
     }
 
 
@@ -1224,12 +1376,18 @@ async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict
 
     client_id = str(payload.get("client_id") or payload.get("clientId") or "").strip()
     client_secret = str(payload.get("client_secret") or payload.get("clientSecret") or "").strip()
-    expected_id = _dev_login_client_id()
-    expected_secret = _dev_login_client_secret()
-    if not (
-        hmac.compare_digest(client_id, expected_id)
-        and hmac.compare_digest(client_secret, expected_secret)
-    ):
+    try:
+        profile = _dev_login_profile_for_credentials(client_id, client_secret)
+    except ValueError:
+        raise _bff_error(
+            503,
+            ErrorCode.PRECONDITION_FAILED,
+            "Dev login identity profiles are not safely configured",
+            "AUTH_DEV_LOGIN_PROFILE_CONFIGURATION",
+            precondition_failed="dev_login_profiles",
+            suggestion="Repair the governed server-side dev-login client profile secret",
+        )
+    if profile is None:
         raise _bff_error(
             401,
             ErrorCode.AUTH_REQUIRED,
@@ -1238,13 +1396,14 @@ async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict
             suggestion="Use the configured PANTHEON_BFF_OIDC_CLIENT_ID and CLIENT_SECRET",
         )
 
-    token_payload = _issue_dev_login_jwt(client_id)
+    token_payload = _issue_dev_login_jwt(client_id, profile=profile or None)
     return {
         **token_payload,
         "meta": {
             "route": "POST /bff/auth/dev-login",
             "contract": "FE-INT-GATE-OIDC-DEV-LOGIN",
             "ttl_seconds": token_payload["expires_in"],
+            "identity_profile": "governed" if profile else "legacy_single_client",
         },
     }
 

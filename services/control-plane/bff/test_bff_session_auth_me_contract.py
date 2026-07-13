@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sys
 import time
 
@@ -947,6 +948,140 @@ def test_bff_dev_login_defaults_match_frontend_dev_gate_session(monkeypatch) -> 
     assert data["tenant"]["id"] == "tenant-dev"
     assert data["tenant"]["allowed_ids"] == ["tenant-dev"]
     assert set(data["roles"]) == {"operator", "reviewer", "approver"}
+
+
+def _governed_dev_login_profiles() -> dict[str, dict]:
+    return {
+        "ci-agora": {
+            "secret": "ci-agora-secret-value-2026",
+            "subject": "pantheon-dev-ci-agora",
+            "roles": ["operator"],
+            "tenant_id": "tenant-dev",
+            "allowed_tenants": ["tenant-dev"],
+            "capabilities": [],
+            "mfa_verified": False,
+        },
+        "kernel-operator": {
+            "secret": "kernel-operator-secret-value-2026",
+            "subject": "pantheon-dev-kernel-operator",
+            "roles": ["admin", "operator"],
+            "tenant_id": "tenant-kernel",
+            "allowed_tenants": ["tenant-kernel"],
+            "capabilities": ["assistant.kernel.debug", "assistant.kernel.repair"],
+            "mfa_verified": True,
+        },
+    }
+
+
+def test_bff_profiled_dev_login_issues_distinct_least_role_and_kernel_identities(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv(
+        "PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON",
+        json.dumps(_governed_dev_login_profiles()),
+    )
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "legacy-shared-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "legacy-shared-secret")
+    client = TestClient(bff_main.app)
+
+    ci_login = client.post(
+        "/bff/auth/dev-login",
+        json={"client_id": "ci-agora", "client_secret": "ci-agora-secret-value-2026"},
+    )
+    kernel_login = client.post(
+        "/bff/auth/dev-login",
+        json={"client_id": "kernel-operator", "client_secret": "kernel-operator-secret-value-2026"},
+    )
+    legacy_login = client.post(
+        "/bff/auth/dev-login",
+        json={"client_id": "legacy-shared-client", "client_secret": "legacy-shared-secret"},
+    )
+
+    assert ci_login.status_code == 200, ci_login.text
+    assert kernel_login.status_code == 200, kernel_login.text
+    assert legacy_login.status_code == 401, legacy_login.text
+    assert ci_login.json()["meta"]["identity_profile"] == "governed"
+    ci_me = client.get(
+        "/bff/me",
+        headers={"Authorization": f"Bearer {ci_login.json()['access_token']}"},
+    )
+    kernel_me = client.get(
+        "/bff/me",
+        headers={"Authorization": f"Bearer {kernel_login.json()['access_token']}"},
+    )
+    assert ci_me.status_code == 200, ci_me.text
+    assert kernel_me.status_code == 200, kernel_me.text
+    ci_data = ci_me.json()["data"]
+    kernel_data = kernel_me.json()["data"]
+    assert ci_data["currentUser"]["id"] == "pantheon-dev-ci-agora"
+    assert ci_data["roles"] == ["operator"]
+    assert ci_data["tenant"]["id"] == "tenant-dev"
+    assert ci_data["tenant"]["allowed_ids"] == ["tenant-dev"]
+    assert not any(cap.startswith("assistant.kernel.") for cap in ci_data["capabilities"])
+    assert kernel_data["currentUser"]["id"] == "pantheon-dev-kernel-operator"
+    assert set(kernel_data["roles"]) == {"admin", "operator"}
+    assert kernel_data["tenant"]["id"] == "tenant-kernel"
+    assert kernel_data["session"]["mfa_verified"] is True
+    assert {"assistant.kernel.debug", "assistant.kernel.repair"}.issubset(
+        kernel_data["capabilities"]
+    )
+
+
+def test_bff_profiled_dev_login_rejects_duplicate_actor_subjects(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    profiles = _governed_dev_login_profiles()
+    profiles["kernel-operator"]["subject"] = profiles["ci-agora"]["subject"]
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON", json.dumps(profiles))
+
+    response = TestClient(bff_main.app).post(
+        "/bff/auth/dev-login",
+        json={"client_id": "ci-agora", "client_secret": "ci-agora-secret-value-2026"},
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["details"]["reason"] == "AUTH_DEV_LOGIN_PROFILE_CONFIGURATION"
+
+
+def test_bff_profiled_dev_login_rejects_cross_tenant_use(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv(
+        "PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON",
+        json.dumps(_governed_dev_login_profiles()),
+    )
+    client = TestClient(bff_main.app)
+    login = client.post(
+        "/bff/auth/dev-login",
+        json={"client_id": "ci-agora", "client_secret": "ci-agora-secret-value-2026"},
+    )
+
+    response = client.get(
+        "/bff/me",
+        headers={
+            "Authorization": f"Bearer {login.json()['access_token']}",
+            "X-Tenant-Id": "tenant-kernel",
+        },
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["details"]["precondition_failed"] == "tenant_scope"
+
+
+@pytest.mark.parametrize("environment", ["staging-live", "production"])
+def test_bff_profiled_dev_login_is_disabled_outside_dev(monkeypatch, environment) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", environment)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", environment)
+    monkeypatch.setenv(
+        "PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON",
+        json.dumps(_governed_dev_login_profiles()),
+    )
+
+    response = TestClient(bff_main.app).post(
+        "/bff/auth/dev-login",
+        json={"client_id": "ci-agora", "client_secret": "ci-agora-secret-value-2026"},
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["details"]["precondition_failed"] == "dev_login"
 
 
 def test_dev_gate_session_allows_me_and_management_reads(monkeypatch) -> None:
