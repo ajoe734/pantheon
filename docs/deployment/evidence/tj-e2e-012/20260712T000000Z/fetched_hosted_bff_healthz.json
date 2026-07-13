@@ -1,1 +1,6 @@
-{"status":"ok","service":"operator-bff","version":"0.2.0"}
+{
+  "status": "ok",
+  "service": "operator-bff",
+  "version": "0.2.0",
+  "commit": "f7507e4fd5dba28b8d6eb3c9d99c97f542d40b54"
+}

@@ -29,6 +29,7 @@ PROTECTED = [
     "/bff/runtimes", "/bff/strategies", "/bff/personas", "/bff/capital-pools",
     "/bff/deployments", "/bff/approvals", "/bff/incidents", "/bff/v5/loop-runs",
     "/bff/v5/sentinel/findings", "/api/v1/operator/runtime-state", "/bff/artifacts",
+    "/bff/management/trade-journeys", "/bff/management/trade-journeys/metrics",
 ]
 AUTH_REJECT = {401, 403}
 
@@ -62,9 +63,13 @@ def main() -> int:
 
     bypass = []
     for path in PROTECTED:
-        no_auth = _status(base, ctx, path, {})
-        empty = _status(base, ctx, path, {"Authorization": "Bearer "})
-        with_auth = _status(base, ctx, path, {"Authorization": f"Bearer {token}"})
+        # Add query parameters for Trade Journey endpoints to prevent 400/422 Bad Request
+        check_path = path
+        if "trade-journeys" in path:
+            check_path = f"{path}?tenant_id=pantheon-dev&environment=paper"
+        no_auth = _status(base, ctx, check_path, {})
+        empty = _status(base, ctx, check_path, {"Authorization": "Bearer "})
+        with_auth = _status(base, ctx, check_path, {"Authorization": f"Bearer {token}"})
         ok_noauth = no_auth in AUTH_REJECT
         ok_empty = empty in AUTH_REJECT
         if not ok_noauth:
@@ -81,6 +86,38 @@ def main() -> int:
             print(f"   {b}")
         return 1
     print("OK: every protected endpoint rejects missing/empty credentials")
+
+    # Tenant Isolation and Metric Masking verification
+    print("\n== verifying tenant isolation and metric masking ==")
+    ok_token = "user-ok:viewer:pantheon-dev"
+    ok_headers = {"Authorization": f"Bearer {ok_token}"}
+    ok_status = _status(base, ctx, "/bff/management/trade-journeys?tenant_id=pantheon-dev&environment=paper", ok_headers)
+    print(f"  Query own tenant (pantheon-dev) with scoped token: status={ok_status}")
+    if ok_status != 200:
+        print(f"FAIL: Scoped token failed to access own tenant (expected 200, got {ok_status})")
+        return 1
+
+    isolate_token = "user-isolated:viewer:tenant-a"
+    isolate_headers = {"Authorization": f"Bearer {isolate_token}"}
+    isolate_status = _status(base, ctx, "/bff/management/trade-journeys?tenant_id=pantheon-dev&environment=paper", isolate_headers)
+    print(f"  Cross-tenant query (tenant_id=pantheon-dev) with token scoped to tenant-a: status={isolate_status}")
+    if isolate_status != 403:
+        print(f"FAIL: Cross-tenant access was NOT forbidden (expected 403, got {isolate_status})")
+        return 1
+
+    metrics_status = _status(base, ctx, "/bff/management/trade-journeys/metrics?tenant_id=pantheon-dev&environment=paper", isolate_headers)
+    print(f"  Cross-tenant metrics query (tenant_id=pantheon-dev) with token scoped to tenant-a: status={metrics_status}")
+    if metrics_status != 403:
+        print(f"FAIL: Cross-tenant metrics access was NOT forbidden (expected 403, got {metrics_status})")
+        return 1
+
+    ok_metrics_status = _status(base, ctx, "/bff/management/trade-journeys/metrics?tenant_id=pantheon-dev&environment=paper", ok_headers)
+    print(f"  Query own metrics (pantheon-dev) with scoped token: status={ok_metrics_status}")
+    if ok_metrics_status != 200:
+        print(f"FAIL: Scoped token failed to access own metrics (expected 200, got {ok_metrics_status})")
+        return 1
+
+    print("OK: tenant isolation and metric masking successfully verified")
     return 0
 
 
