@@ -40,6 +40,20 @@ def _fresh_client(td: str):
     return TestClient(bff_main.app)
 
 
+def _owner_pool_create(payload):
+    """Contract-test owner stub; real owner integration lives in focused tests."""
+    return {
+        "id": payload["pool_id"],
+        "pool_id": payload["pool_id"],
+        "name": payload["name"],
+        "owner_id": payload["owner_id"],
+        "owner_type": payload["owner_type"],
+        "status": payload["status"],
+        "risk_policy_ref": payload.get("risk_policy_ref"),
+        "idempotent_replay": False,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Capital pools
 # ---------------------------------------------------------------------------
@@ -118,7 +132,8 @@ def test_bff_capital_pools_create_requires_idempotency_key() -> None:
             bff_main.read_store = original
 
 
-def test_bff_capital_pools_create_returns_201() -> None:
+def test_bff_capital_pools_create_returns_201(monkeypatch) -> None:
+    monkeypatch.setattr(bff_main, "create_capital_pool", _owner_pool_create)
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
         try:
@@ -136,7 +151,8 @@ def test_bff_capital_pools_create_returns_201() -> None:
             bff_main.read_store = original
 
 
-def test_bff_capital_pools_create_idempotency_replay() -> None:
+def test_bff_capital_pools_create_idempotency_replay(monkeypatch) -> None:
+    monkeypatch.setattr(bff_main, "create_capital_pool", _owner_pool_create)
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
         try:
