@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "program_id": "loop-product-level-remediation-2026-07-13",
+  "audit_window": {
+    "started_at": "2026-07-13T12:49:00Z",
+    "last_public_recheck_at": "2026-07-13T13:35:01Z"
+  },
+  "repository": {
+    "name": "ajoe734/pantheon",
+    "planning_worktree_base": "349249e8f5ab1a89f82afd71925eb99342d66ed1",
+    "origin_dev_during_final_authoring": "2e6c169a7867fd161cebdfe1baa13f932ebd312e",
+    "merge_target": "dev"
+  },
+  "loop_health_snapshot": {
+    "captured_at": "2026-07-13T12:49:00Z",
+    "capture_mode": "authenticated redacted read; no token archived",
+    "total_rows": 12,
+    "surface_status": "degraded",
+    "source": "registry_metadata",
+    "controller_records": 0,
+    "live_rows": 0,
+    "reconciled_rows": 0,
+    "current_maturity_counts": {
+      "api-only": 11,
+      "manual": 1
+    },
+    "accepted_as_product_evidence": false
+  },
+  "archived_loop_auto_tasks": {
+    "matching_files_at_recheck": 58,
+    "primary_tasks": 37,
+    "sidecar_or_followup_tasks": 21,
+    "terminal_status": "done",
+    "interpretation": "task closure is component substrate only and does not prove loop liveness"
+  },
+  "hosted_frontend": {
+    "observed_at": "2026-07-13T13:35:01Z",
+    "app": "execute-plans",
+    "source_branch": "dev",
+    "source_ref": "12b78ef210e535cd4a3d80358f78b44c9396e588",
+    "matched_remote_dev_at_observation": true,
+    "build_mode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "true",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "true"
+    },
+    "release_design_findings": [
+      "integration gate and deploy were independent push workflows",
+      "live symlink could switch before hosted probes",
+      "failed post-switch probes had no automatic prior-release restore",
+      "out-of-order deployment rejection was absent",
+      "browser bearer fallback was build-time configurable"
+    ],
+    "accepted_safe_baseline": false
+  },
+  "hosted_bff": {
+    "observed_at": "2026-07-13T13:35:01Z",
+    "health": {
+      "status": "ok",
+      "service": "operator-bff",
+      "version": "0.2.0"
+    },
+    "missing_identity": [
+      "git_sha",
+      "image_digest",
+      "build_time",
+      "config_fingerprint"
+    ],
+    "accepted_exact_build_identity": false
+  },
+  "live_external_task_snapshot": {
+    "captured_at": "2026-07-13T13:35:00Z",
+    "tasks": {
+      "PPL-ALLOC-009": "blocked",
+      "PPL-ALLOC-010": "in_progress",
+      "PPL-ALLOC-011": "in_progress",
+      "PPL-ALLOC-012": "todo",
+      "PPL-ALLOC-013": "todo",
+      "TJ-E2E-014": "in_progress",
+      "OPS-EP-DEV-MAIN-RECONCILE-001": "in_progress",
+      "PINT-010-R2": "blocked",
+      "MGMT-SSE-001": "in_progress",
+      "EVOCHAIN-001": "in_progress",
+      "EVOCHAIN-011": "todo",
+      "AG-GAP-014": "done"
+    }
+  },
+  "gap_findings": [
+    {
+      "scope": "source_ingestion",
+      "finding": "requirement-to-connector/schedule reconciliation and default scheduler ownership are not proven"
+    },
+    {
+      "scope": "strategy_distillation",
+      "finding": "no default durable SourceRecord event consumer owns mutable StrategySpec draft writeback"
+    },
+    {
+      "scope": "alpha_replication",
+      "finding": "no default durable replication/revalidation queue with real ExperimentRun writeback"
+    },
+    {
+      "scope": "persona_teaching",
+      "finding": "stub OHLCV/dataset references and manufactured passing proof remain possible"
+    },
+    {
+      "scope": "agora_interaction_evidence",
+      "finding": "durable interaction-to-dataset/handoff background ownership is incomplete"
+    },
+    {
+      "scope": "human_imitation_shadow_evaluation",
+      "finding": "trace-to-dataset-to-real-evaluation-to-candidate chain is not a default reconciled process"
+    },
+    {
+      "scope": "consultation",
+      "finding": "workflow can manufacture committee, memo, recommendation, and handoff without real authorship"
+    },
+    {
+      "scope": "promotion_deployment",
+      "finding": "deployment consumer is receipt-oriented and lacks canonical runtime apply/readback"
+    },
+    {
+      "scope": "capital_pool_execution",
+      "finding": "paper runtime lacks a first-class binding-discovering signal producer"
+    },
+    {
+      "scope": "telemetry_reconciliation",
+      "finding": "default real telemetry-to-drift-to-incident ownership and recovery are incomplete"
+    },
+    {
+      "scope": "evolution",
+      "finding": "target-plane delivery can be represented as synthetic SUBMITTED without real post-state"
+    },
+    {
+      "scope": "bff_health_monitoring",
+      "finding": "loop-health serves registry metadata and no durable controller records"
+    },
+    {
+      "scope": "per_persona_ooda",
+      "finding": "implemented cron-to-packet substrate is not registered as an overlay with target-host restart/orphan/controller proof"
+    },
+    {
+      "scope": "strategy_workshop",
+      "finding": "six v1.5 operations remain intentionally fail-closed with 501 and require canonical implementation"
+    },
+    {
+      "scope": "trade_journey",
+      "finding": "default actions are unavailable and lifecycle truth lacks a first-class canonical projector"
+    },
+    {
+      "scope": "management_ai",
+      "finding": "hosted scoped sentinel-to-SA/SD-to-supervisor processing proof is absent"
+    }
+  ],
+  "baseline_validation": {
+    "focused_tests": 117,
+    "focused_test_result": "passed",
+    "warnings": 12,
+    "docker_compose_config": "valid",
+    "interpretation": "component validation passed; it is not target-host product closure"
+  },
+  "safety_boundary": {
+    "target": "target-dev governed paper",
+    "real_order_allowed": false,
+    "real_capital_allowed": false,
+    "credentials_archived": false
+  }
+}

@@ -131,6 +131,8 @@ from models import (
     SOURCE_TYPE_TO_EVIDENCE_KIND,
     RecordSponsorDecisionCommandPayload,
     RejectMutationCommandPayload,
+    ReviewMutationCommandPayload,
+    ExecuteMutationCommandPayload,
     StalenessWarning,
     TargetObject,
     utc_now,
@@ -2140,6 +2142,8 @@ _APPROVE_EVO_REQUIRED = {"evolution_decision_id", "approval_action"}
 _VALID_EVO_APPROVAL_ACTIONS = {"approve", "reject"}
 _APPROVE_MUTATION_REQUIRED = {"decision_id"}
 _REJECT_MUTATION_REQUIRED = {"decision_id"}
+_REVIEW_MUTATION_REQUIRED = {"decision_id", "approval_decision_id"}
+_EXECUTE_MUTATION_REQUIRED = {"decision_id"}
 _RECORD_SPONSOR_DECISION_REQUIRED = {"committee_id", "sponsor_decision", "rationale_ref"}
 _VALID_SPONSOR_DECISIONS = {"approved", "rejected", "conditional"}
 
@@ -2254,6 +2258,14 @@ _MUTATION_REJECTION_ROLES = {
     "medium": {"reviewer", "operator", "approver", "admin"},
     "high": {"approver", "admin"},
 }
+
+_MUTATION_REVIEW_ROLES = {
+    "low": {"reviewer", "approver", "admin"},
+    "medium": {"reviewer", "approver", "admin"},
+    "high": {"approver", "admin"},
+}
+
+_MUTATION_EXECUTION_ROLES = {"operator", "admin"}
 
 
 def _env_token(value: Any) -> str:
@@ -3631,6 +3643,48 @@ def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComm
                     params=params,
                     audit_context=AuditContext(reason=note or mutation.command_type),
                 )
+            if command_type == CommandType.REVIEW_MUTATION.value:
+                mutation = ReviewMutationCommandPayload.model_validate(payload)
+                note = str(mutation.note or "").strip() or None
+                params = {
+                    "decision_id": mutation.decision_id,
+                    "approval_decision_id": mutation.approval_decision_id,
+                }
+                if note:
+                    params["note"] = note
+                return OperatorCommand(
+                    command=CommandType.REVIEW_MUTATION,
+                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
+                    action="review_mutation",
+                    params=params,
+                    audit_context=AuditContext(reason=note or mutation.command_type),
+                )
+            if command_type == CommandType.EXECUTE_MUTATION.value:
+                mutation = ExecuteMutationCommandPayload.model_validate(payload)
+                note = str(mutation.note or "").strip() or None
+                params = {
+                    "decision_id": mutation.decision_id,
+                    "has_active_runtime": mutation.has_active_runtime,
+                    "freeze_mode": mutation.freeze_mode,
+                    "force_stage_freeze": mutation.force_stage_freeze,
+                }
+                if mutation.active_binding_id:
+                    params["active_binding_id"] = mutation.active_binding_id
+                if mutation.rollback_action_type:
+                    params["rollback_action_type"] = mutation.rollback_action_type
+                if mutation.fallback_artifact_id:
+                    params["fallback_artifact_id"] = mutation.fallback_artifact_id
+                if mutation.fallback_artifact_version:
+                    params["fallback_artifact_version"] = mutation.fallback_artifact_version
+                if note:
+                    params["note"] = note
+                return OperatorCommand(
+                    command=CommandType.EXECUTE_MUTATION,
+                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
+                    action="execute_mutation",
+                    params=params,
+                    audit_context=AuditContext(reason=note or mutation.command_type),
+                )
             if command_type == CommandType.RECORD_SPONSOR_DECISION.value:
                 decision = RecordSponsorDecisionCommandPayload.model_validate(payload)
                 note = str(decision.note or "").strip() or None
@@ -4242,6 +4296,8 @@ def _mutation_review_roles_for(
     normalized_risk = str(risk_level or "").lower()
     if action == "approve":
         return _MUTATION_APPROVAL_ROLES.get(normalized_risk, {"admin"})
+    if action == "review":
+        return _MUTATION_REVIEW_ROLES.get(normalized_risk, {"admin"})
     return _MUTATION_REJECTION_ROLES.get(normalized_risk, {"admin"})
 
 
@@ -4252,14 +4308,20 @@ def _mutation_review_allowed_actions(
 ) -> Dict[str, bool]:
     if surface_state == "unavailable":
         return {
+            "canReviewMutation": False,
             "canApproveMutation": False,
             "canRejectMutation": False,
+            "canExecuteMutation": False,
         }
 
     decision_state = str(decision.get("decision_state") or decision.get("status") or "").lower()
     risk_level = str(decision.get("risk_level") or "").lower()
     identity_roles = set(identity.roles)
 
+    can_review = (
+        decision_state == "proposed"
+        and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="review")))
+    )
     can_approve = (
         decision_state == "reviewed"
         and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="approve")))
@@ -4268,9 +4330,15 @@ def _mutation_review_allowed_actions(
         decision_state in {"proposed", "reviewed"}
         and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="reject")))
     )
+    can_execute = (
+        decision_state == "approved"
+        and bool(identity_roles.intersection(_MUTATION_EXECUTION_ROLES))
+    )
     return {
+        "canReviewMutation": can_review,
         "canApproveMutation": can_approve,
         "canRejectMutation": can_reject,
+        "canExecuteMutation": can_execute,
     }
 
 
@@ -4876,6 +4944,94 @@ def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity
         )
 
 
+def _validate_review_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _REVIEW_MUTATION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ReviewMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
+    if decision is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Mutation review decision not found",
+            f"Evolution decision {decision_id} does not exist",
+        )
+    projection = _mutation_review_projection(
+        decision,
+        approval_decision=approval_decision,
+        linked_incident=linked_incident,
+        linked_postmortem=linked_postmortem,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        raise _bff_error(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "ReviewMutation is blocked while the mutation-review surface is unavailable",
+            "Mutation-review evidence cannot be composed reliably",
+            precondition_failed="mutation_review_surface",
+        )
+    if not projection["allowedActions"]["canReviewMutation"]:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ReviewMutation is not allowed for this operator and decision state",
+            "allowedActions.canReviewMutation is false for the current read projection",
+            precondition_failed="allowedActions.canReviewMutation",
+        )
+
+
+def _validate_execute_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _EXECUTE_MUTATION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ExecuteMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
+    if decision is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Mutation review decision not found",
+            f"Evolution decision {decision_id} does not exist",
+        )
+    projection = _mutation_review_projection(
+        decision,
+        approval_decision=approval_decision,
+        linked_incident=linked_incident,
+        linked_postmortem=linked_postmortem,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        raise _bff_error(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "ExecuteMutation is blocked while the mutation-review surface is unavailable",
+            "Mutation-review evidence cannot be composed reliably",
+            precondition_failed="mutation_review_surface",
+        )
+    if not projection["allowedActions"]["canExecuteMutation"]:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ExecuteMutation is not allowed for this operator and decision state",
+            "allowedActions.canExecuteMutation is false for the current read projection",
+            precondition_failed="allowedActions.canExecuteMutation",
+        )
+
+
 def _validate_remediate_sentinel_intervention(params: Dict[str, Any], identity: OperatorIdentity) -> None:
     missing = _REMEDIATE_SENTINEL_REQUIRED - params.keys()
     if missing:
@@ -5342,6 +5498,8 @@ _VALIDATORS = {
     CommandType.EXECUTE_EVOLUTION_ACTION: _validate_execute_evolution_action,
     CommandType.APPROVE_MUTATION: _validate_approve_mutation,
     CommandType.REJECT_MUTATION: _validate_reject_mutation,
+    CommandType.REVIEW_MUTATION: _validate_review_mutation,
+    CommandType.EXECUTE_MUTATION: _validate_execute_mutation,
     CommandType.RECORD_SPONSOR_DECISION: _validate_record_sponsor_decision,
     CommandType.REMEDIATE_SENTINEL_INTERVENTION: _validate_remediate_sentinel_intervention,
     CommandType.DECIDE_V5_INTERVENTION: _validate_decide_v5_intervention,
@@ -39964,6 +40122,37 @@ async def bff_create_paper_persona_bundle(
     )
 
 
+def _persona_catalog_fallback_record(persona_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve a Fleet-visible persona when the direct detail store misses it."""
+    clean_id = str(persona_id or "").strip()
+    if not clean_id:
+        return None
+    for candidate in read_store.list_personas(include_market_persona_defaults=True):
+        candidate_id = str(candidate.get("persona_id") or candidate.get("id") or "").strip()
+        if candidate_id == clean_id:
+            return dict(candidate)
+    return None
+
+
+def _persona_catalog_fallback_surface(snapshot_at: str) -> Dict[str, Any]:
+    return {
+        "status": "degraded",
+        "source": "persona_catalog_list_fallback",
+        "note": (
+            "Resolved from the governed Persona catalog used by Persona Fleet because "
+            "the direct detail store did not return this list-visible identity."
+        ),
+        "staleness": {
+            "served_from": "persona_catalog_list_fallback",
+            "last_known_at": snapshot_at,
+        },
+        "observed_time": snapshot_at,
+        "freshness": "persona_catalog_list_fallback",
+        "coverage": 1.0,
+        "missing_bindings": False,
+    }
+
+
 @app.get("/bff/personas/{persona_id}")
 async def bff_get_persona(
     persona_id: str,
@@ -39975,6 +40164,11 @@ async def bff_get_persona(
     snapshot_at = utc_now()
     overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
     raw = read_store.get_persona(persona_id)
+    detail_surface = None
+    if not raw and not overlay:
+        raw = _persona_catalog_fallback_record(persona_id)
+        if raw:
+            detail_surface = _persona_catalog_fallback_surface(snapshot_at)
     if not raw and not overlay:
         raise _bff_error(
             404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -39989,6 +40183,7 @@ async def bff_get_persona(
         "meta": _read_surface_meta(
             "personas", "persona_detail",
             snapshot_at=snapshot_at,
+            surface=detail_surface,
         ),
     }
 
@@ -40087,7 +40282,11 @@ async def bff_patch_persona(
 
 
 def _ensure_persona_exists(persona_id: str) -> None:
-    if read_store.get_persona(persona_id) or persona_id in _PERSONA_BFF_OVERLAY:
+    if (
+        read_store.get_persona(persona_id)
+        or persona_id in _PERSONA_BFF_OVERLAY
+        or _persona_catalog_fallback_record(persona_id)
+    ):
         return
     raise _bff_error(
         404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -55753,15 +55952,17 @@ def _project_persona_fleet_list_row(
     )
     metrics = {**performance, **league_metrics}
     pool_id = (
-        league_entry.get("capital_pool_id")
-        or raw_metadata.get("capital_pool_id")
-        or context_metadata.get("capital_pool_id")
+        raw_metadata.get("capital_pool_id")
+        or raw_metadata.get("legacy_paper_capital_pool_id")
         or binding.get("capital_pool_id")
+        or league_entry.get("capital_pool_id")
+        or context_metadata.get("capital_pool_id")
     )
     runtime_id = (
-        league_entry.get("runtime_id")
+        raw_metadata.get("runtime_id")
         or runtime.get("runtime_id")
         or runtime.get("id")
+        or league_entry.get("runtime_id")
         or context_metadata.get("runtime_id")
         or context_metadata.get("runtime_binding_id")
         or raw_metadata.get("runtime_binding_id")
@@ -56133,12 +56334,18 @@ def _persona_fleet_slim_list_payload(
         for runtime in runtimes
         if str(runtime.get("persona_id") or "").strip()
     }
+    runtime_by_runtime_id = {
+        str(runtime.get("runtime_id") or "").strip(): runtime
+        for runtime in runtimes
+        if str(runtime.get("runtime_id") or "").strip()
+    }
     runtime_by_binding = {
         candidate: runtime
         for runtime in runtimes
         for candidate in (
             str(runtime.get("binding_id") or "").strip(),
             str(runtime.get("runtime_binding_id") or "").strip(),
+            str(runtime.get("persona_capital_binding_id") or "").strip(),
             str(runtime.get("id") or "").strip(),
         )
         if candidate
@@ -56158,12 +56365,17 @@ def _persona_fleet_slim_list_payload(
         league_entry = league_by_persona.get(persona_id, {})
         binding = _persona_fleet_first_binding_from_index(persona_id, bindings_by_persona)
         pool_id = (
-            league_entry.get("capital_pool_id")
-            or raw_metadata.get("capital_pool_id")
-            or context_metadata.get("capital_pool_id")
+            raw_metadata.get("capital_pool_id")
+            or raw_metadata.get("legacy_paper_capital_pool_id")
             or binding.get("capital_pool_id")
+            or league_entry.get("capital_pool_id")
+            or context_metadata.get("capital_pool_id")
         )
-        runtime = runtime_by_pool.get(str(pool_id or ""), {})
+        declared_runtime_id = str(raw_metadata.get("runtime_id") or "").strip()
+        declared_runtime_binding_id = str(raw_metadata.get("runtime_binding_id") or "").strip()
+        runtime = runtime_by_runtime_id.get(declared_runtime_id, {})
+        if not runtime:
+            runtime = runtime_by_binding.get(declared_runtime_binding_id, {})
         if not runtime:
             runtime = runtime_by_persona.get(persona_id, {})
         if not runtime and binding:
@@ -56171,6 +56383,8 @@ def _persona_fleet_slim_list_payload(
                 str(binding.get("binding_id") or binding.get("id") or "").strip(),
                 {},
             )
+        if not runtime:
+            runtime = runtime_by_pool.get(str(pool_id or ""), {})
         binding_ids = {
             str(binding.get("id") or binding.get("binding_id") or "").strip()
         }

@@ -500,6 +500,108 @@ def test_submit_command_accepts_reject_mutation_published_payload() -> None:
             bff_main._process_command_stub = original_worker
 
 
+def test_submit_command_accepts_review_mutation_published_payload() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_read_store = bff_main.read_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        bff_main.read_store._data["evolution_decisions"]["evo-dec-review-001"] = {
+            "id": "evo-dec-review-001",
+            "decision_id": "evo-dec-review-001",
+            "target_type": "candidate_artifact",
+            "target_id": "artifact-review-001",
+            "target_version": "v1.0.0",
+            "action_type": "freeze_canary",
+            "risk_level": "medium",
+            "status": "proposed",
+            "decision_state": "proposed",
+            "created_at": "2026-07-01T00:00:00Z",
+            "rationale": "Initial threshold breach triage.",
+        }
+        bff_main.read_store._save()
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.post(
+                "/api/v1/operator/commands",
+                headers=_command_headers(APPROVER_TOKEN, "idmp-review-mutation-001"),
+                json={
+                    "command_type": "ReviewMutation",
+                    "decision_id": "evo-dec-review-001",
+                    "approval_decision_id": "appr-automated-gate-001",
+                    "note": "Automated gate triage complete",
+                },
+            )
+            assert response.status_code == 202, response.text
+            payload = response.json()
+            assert payload["command"] == "ReviewMutation"
+            assert payload["status"] == "accepted"
+        finally:
+            bff_main.command_store = original_store
+            bff_main.read_store = original_read_store
+            bff_main._process_command_stub = original_worker
+
+
+def test_submit_command_accepts_execute_mutation_published_payload() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_read_store = bff_main.read_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        bff_main.read_store._data["approval_decisions"]["appr-dec-exec-001"] = {
+            "id": "appr-dec-exec-001",
+            "decision_id": "appr-dec-exec-001",
+            "outcome": "approved",
+            "state": "approved",
+        }
+        bff_main.read_store._data["evolution_decisions"]["evo-dec-exec-001"] = {
+            "id": "evo-dec-exec-001",
+            "decision_id": "evo-dec-exec-001",
+            "target_type": "candidate_artifact",
+            "target_id": "artifact-exec-001",
+            "target_version": "v1.0.0",
+            "action_type": "freeze_canary",
+            "risk_level": "medium",
+            "status": "approved",
+            "decision_state": "approved",
+            "approval_decision_id": "appr-dec-exec-001",
+            "created_at": "2026-07-01T00:00:00Z",
+            "rationale": "Ready for execution.",
+        }
+        bff_main.read_store._save()
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.post(
+                "/api/v1/operator/commands",
+                headers=_command_headers(OPERATOR_TOKEN, "idmp-execute-mutation-001"),
+                json={
+                    "command_type": "ExecuteMutation",
+                    "decision_id": "evo-dec-exec-001",
+                    "note": "Executing approved freeze",
+                },
+            )
+            assert response.status_code == 202, response.text
+            payload = response.json()
+            assert payload["command"] == "ExecuteMutation"
+            assert payload["status"] == "accepted"
+        finally:
+            bff_main.command_store = original_store
+            bff_main.read_store = original_read_store
+            bff_main._process_command_stub = original_worker
+
+
 def test_submit_command_accepts_record_sponsor_decision_published_payload() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.command_store
