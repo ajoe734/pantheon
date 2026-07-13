@@ -410,6 +410,32 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         required_roles=["approver"],
         description="Reject a pending mutation decision.",
     ),
+    BffActionCatalogEntry(
+        action_id="ReviewMutation",
+        entity_type="ApprovalDecision",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.LOW,
+        requires_approval=True,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["reviewer", "approver"],
+        description="Mark a proposed mutation decision as reviewed.",
+    ),
+    BffActionCatalogEntry(
+        action_id="ExecuteMutation",
+        entity_type="ApprovalDecision",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.MEDIUM,
+        requires_approval=True,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=60,
+        idempotency_required=True,
+        required_roles=["operator", "approver"],
+        description="Execute a previously approved mutation decision.",
+    ),
     # ------------------------------------------------------------------ #
     # Sponsor / committee governance
     # ------------------------------------------------------------------ #

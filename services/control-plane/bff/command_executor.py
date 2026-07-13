@@ -578,6 +578,90 @@ def _execute_reject_mutation(
     }
 
 
+def _execute_review_mutation(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dispatch ReviewMutation to the governance-owned evolution API."""
+    decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
+    if not decision_id:
+        raise ValueError("ReviewMutation requires decision_id.")
+    approval_decision_id = str(params.get("approval_decision_id") or "").strip()
+    if not approval_decision_id:
+        raise ValueError("ReviewMutation requires approval_decision_id.")
+
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    payload: Dict[str, Any] = {
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+        "approval_decision_id": approval_decision_id,
+    }
+    note = params.get("note") or params.get("rationale")
+    if note:
+        payload["note"] = note
+
+    url = _governance_url(f"/api/evolution/proposals/{decision_id}/review")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
+    return {
+        "command_id": command_id,
+        "command_accepted": True,
+        "decision_id": body.get("decision_id", decision_id),
+        "new_state": body.get("decision_state", "reviewed"),
+        "decision_state": body.get("decision_state", "reviewed"),
+        "approval_decision_id": body.get("approval_decision_id", approval_decision_id),
+        "risk_level": body.get("risk_level"),
+        "committed_at": committed_at,
+    }
+
+
+def _execute_execute_mutation(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dispatch ExecuteMutation to the governance-owned evolution API."""
+    decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
+    if not decision_id:
+        raise ValueError("ExecuteMutation requires decision_id.")
+
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    payload: Dict[str, Any] = {
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+    }
+    for optional_key in (
+        "has_active_runtime",
+        "active_binding_id",
+        "freeze_mode",
+        "rollback_action_type",
+        "fallback_artifact_id",
+        "fallback_artifact_version",
+        "force_stage_freeze",
+    ):
+        if optional_key in params:
+            payload[optional_key] = params.get(optional_key)
+    note = params.get("note") or params.get("rationale")
+    if note:
+        payload["note"] = note
+
+    url = _governance_url(f"/api/evolution/proposals/{decision_id}/execute")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    execution_result = body.get("execution_result") or {}
+    committed_at = body.get("updated_at") or execution_result.get("executed_at") or _utc_now()
+    return {
+        "command_id": command_id,
+        "command_accepted": True,
+        "decision_id": body.get("decision_id", decision_id),
+        "new_state": body.get("decision_state", "executed"),
+        "decision_state": body.get("decision_state", "executed"),
+        "execution_result": execution_result,
+        "execution_ref_id": execution_result.get("execution_ref_id"),
+        "cooldown_ends_at": body.get("cooldown_ends_at"),
+        "observation_window_ends_at": body.get("observation_window_ends_at"),
+        "committed_at": committed_at,
+    }
+
+
 def _execute_remediate_sentinel_intervention(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
@@ -1029,6 +1113,8 @@ _EXECUTORS = {
     CommandType.EXECUTE_EVOLUTION_ACTION: _execute_evolution_action,
     CommandType.APPROVE_MUTATION: _execute_approve_mutation,
     CommandType.REJECT_MUTATION: _execute_reject_mutation,
+    CommandType.REVIEW_MUTATION: _execute_review_mutation,
+    CommandType.EXECUTE_MUTATION: _execute_execute_mutation,
     CommandType.REMEDIATE_SENTINEL_INTERVENTION: _execute_remediate_sentinel_intervention,
     CommandType.CAPITAL_POOL_ACTION: _execute_bff_action_adapter,
     CommandType.RANKING_FORMULA_ACTION: _execute_bff_action_adapter,
