@@ -280,3 +280,86 @@ fixes incomplete in five ways. Pantheon-side, all five are addressed:
    round-2 note but now against a substantially wider commit gap.
 
 Re-verified after reconciling with `origin/dev`'s frozen-v1.5/live-v1.7 split: `python3 -m pytest integrations/openclaw/skills/agora/trading_room_workspace/test_skill.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_locale_contract.py -q` -> 70 passed (was 63; +7 new regression tests); `python3 -m pytest scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py scripts/test_agora_v1_6_bundle.py scripts/test_agora_v1_7_bundle.py scripts/test_agora_compat_manifest.py -q` -> 41 passed; grep confirms no unconditional `"partial"` default remains.
+
+## Round 4: review-requested changes addressed (2026-07-13)
+
+Reviewer Codex reopened the task again after round 3 (findings recorded at
+19:02), rejecting the round-3 code as unchanged against two items. Both are
+now fixed pantheon-side; the third is the same standing deploy gap.
+
+1. **Source health still forgeable for nine known families; no-store path
+   still forged `full`.** `_workspace_data_freshness` used
+   `resolved.setdefault(source, {...})` for the nine known-but-unwired
+   source families (`agora.candidate.members`, `winner_branch.*`,
+   `agora.positions.summary`, `agora.shadow.outcomes`) -- `setdefault` only
+   fills in a key when the caller's `dataFreshness` did not already supply
+   it, so a caller sending e.g. `{"winner_branch.score_breakdown": {"wired":
+   true, "rowCount": 999}}` had that forged value pass straight through
+   unchecked, since the BFF has no local query path for any of the nine.
+   Separately, `has_ready_strategy` defaulted to `True` whenever no
+   `workshop_store` was wired at all, so `agora.strategy.summary` reported
+   `rowCount: 1` (and, via `_source_availability`, `full`) from a plain POST
+   with no verification of any kind; `agora.research.evidence_refs` in the
+   same no-store branch trusted the caller-supplied `evidenceRefs` list
+   length verbatim as `rowCount`. Reproduced exactly as the reviewer
+   described: a normal POST with no `workshop_store` wired returned
+   `agora.trading.events`, `agora.strategy.summary`, and
+   `agora.research.evidence_refs` all effectively full/present.
+
+   Fixed: the nine known-unwired sources are now assigned unconditionally
+   (`resolved[source] = {...}`, not `setdefault`) to `wired: false,
+   rowCount: 0`, so no caller-supplied value for them ever survives, wired
+   or not. `has_ready_strategy` now defaults to `False`, and
+   `agora.strategy.summary["wired"]` is `workshop_store is not None` --
+   without a workshop store this source is `missing`, not a caller-trusted
+   `partial`/`full`. `agora.research.evidence_refs` in the no-store branch
+   is now `wired: false, rowCount: 0` instead of echoing the caller's claimed
+   ref count. New tests:
+   `test_workspace_proposal_forces_missing_for_unverified_known_sources_regardless_of_caller_claim`
+   (anti-forgery: all nine known-unwired sources report `missing` even when
+   the caller claims `full`/`rowCount: 999` for every one of them) and
+   `test_workspace_proposal_no_workshop_store_reports_strategy_and_evidence_missing`
+   (no-store regression: a plain POST with no `workshop_store` wired at all
+   never reports `agora.strategy.summary` or `agora.research.evidence_refs`
+   as `full`). Two pre-existing tests
+   (`test_workspace_proposal_derives_widget_availability_from_scoped_sources`,
+   `test_workspace_proposal_preserves_generator_metadata_on_create_and_get`)
+   had encoded the old vulnerable behavior as their expected assertions
+   (asserting a caller-forged `dataFreshness` for one of the nine sources
+   produced `full`/`partial`); both are corrected to assert the honest
+   `missing` outcome instead.
+
+2. **Session scan still stopped at the first matching session, not the
+   first ready one.** Round 3 fixed `list_sessions()` to follow
+   `next_cursor` across pages, but within that corrected pagination the loop
+   still picked the first session matching `strategy_id` it encountered
+   (`next(... , None)` then `break`) and only checked *that one* session's
+   readiness. An operator with an older, non-ready workshop session for a
+   strategy_id and a separate newer, ready session for the same
+   `strategy_id` (a real scenario: re-running a workshop after an earlier
+   attempt) had the older non-ready session found first (sessions are
+   listed oldest-first), so the ready session was never inspected and
+   `agora.strategy.summary` incorrectly reported `rowCount: 0` (`missing`)
+   despite a real ready strategy existing in scope.
+
+   Fixed: the scan now collects every session matching `strategy_id` across
+   all pages first, then iterates that full list checking readiness on each
+   one, stopping only once a session whose `trading_room` gate is `ready` is
+   found (or the list is exhausted). New test:
+   `test_workspace_proposal_strategy_summary_finds_ready_session_behind_non_ready_one`
+   (an older non-ready session and a newer ready session share the same
+   `strategy_id`; the ready one's evidence refs and readiness are still
+   found and reported).
+
+3. **Hosted FE deploy gap -- unchanged.** Pantheon-side BFF work for this
+   fix has not been deployed yet (it is not merged to `dev`). The
+   standing gap from rounds 2/3 is unchanged in kind: the hosted dev FE
+   manifest was still pinned at `3e5177c` (pre-execute-plans-PR-#302) as of
+   the last check, and `Pantheon Dev FE Deploy` does not auto-fire on a
+   plain `dev` push -- only a `publish/v*` cut or a human/chair-authorized
+   `workflow_dispatch` redeploys it. Once this round-4 fix merges to `dev`
+   (BFF deploys automatically on merge, per rounds 2/3) and the FE redeploy
+   gap above is separately resolved by a human, capture a fresh hosted
+   curl/screenshot pair against the exact deployed SHAs for both.
+
+Re-verified: `python3 -m pytest integrations/openclaw/skills/agora/trading_room_workspace/test_skill.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_locale_contract.py -q` -> 73 passed (was 70; +3 new regression tests); `python3 -m pytest scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py scripts/test_agora_v1_6_bundle.py scripts/test_agora_v1_7_bundle.py scripts/test_agora_compat_manifest.py -q` -> 41 passed (no schema/bundle drift); grep confirms no unconditional `"partial"` default remains.
