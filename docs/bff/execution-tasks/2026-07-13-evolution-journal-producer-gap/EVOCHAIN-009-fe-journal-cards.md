@@ -104,17 +104,14 @@ lint.
 - Live curl/hosted proof of the fixture badge rendering against a real
   seed-origin item is deferred to `EVOCHAIN-011` (dev deploy + closeout),
   once `EVOCHAIN-007` has landed.
-- Owner: Claude. Reviewer: Codex2.
+- Owner: Claude, reassigned to Antigravity. Reviewer: Codex2.
 
 ## Review And Delivery
 
-- `execute-plans` PR: [#301](https://github.com/ajoe734/execute-plans/pull/301),
-  `task/EVOCHAIN-009` into `dev`. Auto-merge could not be enabled by this
-  worker (self-merge on `execute-plans` PRs is governance-blocked for AI
-  agents); a human must enable merge or merge it directly.
-- `pantheon` PR: [#3527](https://github.com/ajoe734/pantheon/pull/3527),
-  `task/EVOCHAIN-009` into `dev`, docs-only, auto-merge enabled.
-- Task brief reviewer for this dispatch: `Antigravity` (auto-reassigned from
-  `Codex2` per `.orchestrator/task-briefs/evochain_009.md`); `INDEX.md`'s
-  static wave table still lists `Codex2` — the task-brief reassignment is
-  the fresher instruction and was used for commit trailers.
+- `execute-plans` PR: [#301](https://github.com/ajoe734/execute-plans/pull/301), merged (merge commit `e74b9c8`).
+- `execute-plans` follow-up PR: [#312](https://github.com/ajoe734/execute-plans/pull/312), merges entry_type interface field and EvolutionJournalPage.test.tsx unit tests. Auto-merge enabled.
+- `pantheon` PR: [#3527](https://github.com/ajoe734/pantheon/pull/3527), merged.
+- Handoff / history reconciliation:
+  - Re-dispatched to Antigravity as owner to address Codex2's review changes (normalize entry_type vs entryType, add focused rendering tests including negative checks and fallback suppression).
+  - All requested changes implemented in execute-plans anchor commit `2b709e3`, merged with dev, and PR #312 opened with auto-merge.
+
