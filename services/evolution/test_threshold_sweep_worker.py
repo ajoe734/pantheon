@@ -518,7 +518,7 @@ def test_derived_telemetry_event_is_schema_valid_and_ingest_admissible():
     ingest = TelemetryIngestService(schema_path=_SCHEMA_PATH)
     schema_ok, schema_err = ingest._validate_event(drawdown_event)
     assert schema_ok, schema_err
-    evidence_ok, evidence_err = ingest._validate_evidence_contract(drawdown_event)
+    evidence_ok, evidence_err, _ = ingest._validate_evidence_contract(drawdown_event)
     assert evidence_ok, evidence_err
 
     # uuid5-derived event_id must be a real RFC4122 UUID string, not a
