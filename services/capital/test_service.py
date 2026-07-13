@@ -3,10 +3,14 @@ Unit tests for the deployable capital service boundary.
 """
 from __future__ import annotations
 
+import json
 import importlib
 import os
 import sys
 import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -62,6 +66,7 @@ def _binding_payload(**overrides):
         "binding_id": "binding-001",
         "persona_id": "persona-alpha",
         "capital_pool_id": "pool-001",
+        "capital_sleeve_id": "sleeve-alpha",
         "role": "live_owner",
         "allowed_deployment_scope": "canary",
     }
@@ -87,9 +92,9 @@ def _rebalance_payload(*, rebalance_id="rb-001", lines=None, **overrides):
                 "capital_scope": "pool",
                 "capital_pool_id": "pool-001",
                 "capital_sleeve_id": "sleeve-alpha",
-                "current_weight": 0.10,
+                "current_weight": 0.0,
                 "target_weight": 0.12,
-                "delta": 0.02,
+                "delta": 0.12,
                 "cap_reasons": ["quarterly_increase_cap_25pct"],
                 "evidence_refs": ["evidence:ranking-q3"],
             }
@@ -119,6 +124,12 @@ def _apply_payload(*, rebalance_id="rb-001", command_id="cmd-apply-001", **overr
 def _reload_capital_module():
     module = importlib.import_module("services.capital.main")
     return importlib.reload(module)
+
+
+def _create_default_pool_and_binding(test_client):
+    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    response = test_client.post("/api/bindings", json=_binding_payload())
+    assert response.status_code == 201, response.text
 
 
 def test_health(client):
@@ -166,6 +177,216 @@ def test_create_pool_and_list(client):
 
     persisted = (data_dir / "capital_pools.json").read_text(encoding="utf-8")
     assert "pool-001" in persisted
+
+
+def test_pool_and_binding_create_idempotency_survive_restart(client):
+    test_client, _ = client
+    pool_payload = _pool_payload(
+        actor_id="operator-1",
+        actor_role="operator",
+        idempotency_key="pool-create-1",
+        request_hash="pool-request-1",
+    )
+    created_pool = test_client.post("/api/capital-pools", json=pool_payload)
+    assert created_pool.status_code == 201, created_pool.text
+    assert created_pool.json()["idempotent_replay"] is False
+    binding_payload = _binding_payload(
+        actor_id="approver-1",
+        actor_role="approver",
+        idempotency_key="binding-create-1",
+        request_hash="binding-request-1",
+    )
+    created_binding = test_client.post("/api/bindings", json=binding_payload)
+    assert created_binding.status_code == 201, created_binding.text
+    assert created_binding.json()["capital_sleeve_id"] == "sleeve-alpha"
+
+    restarted = TestClient(_reload_capital_module().app)
+    pool_replay = restarted.post("/api/capital-pools", json=pool_payload)
+    binding_replay = restarted.post("/api/bindings", json=binding_payload)
+    assert pool_replay.status_code == 201, pool_replay.text
+    assert binding_replay.status_code == 201, binding_replay.text
+    assert pool_replay.json()["idempotent_replay"] is True
+    assert binding_replay.json()["idempotent_replay"] is True
+    assert binding_replay.json()["capital_sleeve_id"] == "sleeve-alpha"
+
+    conflict = restarted.post(
+        "/api/capital-pools",
+        json={**pool_payload, "name": "Different semantic body"},
+    )
+    assert conflict.status_code == 409
+
+
+def test_pool_create_idempotency_is_actor_scoped(client):
+    test_client, _ = client
+    shared = _pool_payload(
+        pool_id=None,
+        actor_id="operator-a",
+        actor_role="operator",
+        idempotency_key="shared-owner-create-key",
+        request_hash="shared-owner-create-request",
+    )
+    first = test_client.post("/api/capital-pools", json=shared)
+    second = test_client.post(
+        "/api/capital-pools",
+        json={**shared, "actor_id": "operator-b"},
+    )
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert first.json()["pool_id"] != second.json()["pool_id"]
+    assert first.json()["idempotent_replay"] is False
+    assert second.json()["idempotent_replay"] is False
+
+
+def test_owner_create_legacy_idempotency_entry_replays_and_migrates_schema(tmp_path):
+    from services.capital.allocation_store import AllocationAuthorityStore
+
+    path = tmp_path / "allocation-authority.json"
+    legacy_entry = {
+        "operation": "capital_pool.create",
+        "request_hash": "legacy-request",
+        "payload_hash": "legacy-payload",
+        "resource_id": "pool-legacy",
+        "status": "succeeded",
+        "created_at": "2026-07-13T00:00:00Z",
+        "updated_at": "2026-07-13T00:00:00Z",
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "owner_create_idempotency": {
+                    "capital_pool.create:legacy-key": legacy_entry,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = AllocationAuthorityStore(path=path)
+    replay, replayed = store.reserve_owner_create(
+        scope="capital_pool.create",
+        actor_scope="operator-legacy",
+        key="legacy-key",
+        request_hash="legacy-request",
+        payload_hash="legacy-payload",
+        resource_id="pool-legacy",
+    )
+    assert replayed is True
+    assert replay["resource_id"] == "pool-legacy"
+    store.complete_owner_create(
+        scope="capital_pool.create",
+        actor_scope="operator-legacy",
+        key="legacy-key",
+    )
+    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 2
+
+
+def test_postgres_pool_and_binding_refreshes_are_serialized():
+    from services.capital import pg_store
+
+    class ConcurrentProbeRecords:
+        def __init__(self):
+            self.active = 0
+            self.peak = 0
+            self.lock = threading.Lock()
+
+        def list_all(self):
+            with self.lock:
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+            time.sleep(0.05)
+            with self.lock:
+                self.active -= 1
+            return []
+
+    cases = (
+        (
+            pg_store.PostgresCapitalPoolStore,
+            pg_store.CapitalPoolStore,
+            "pool-missing",
+        ),
+        (
+            pg_store.PostgresPersonaCapitalBindingStore,
+            pg_store.PersonaCapitalBindingStore,
+            "binding-missing",
+        ),
+    )
+    for postgres_type, base_type, missing_id in cases:
+        store = postgres_type.__new__(postgres_type)
+        base_type.__init__(store, path=None)
+        records = ConcurrentProbeRecords()
+        store._records = records
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(store.get, missing_id) for _ in range(2)]
+            assert [future.result(timeout=2) for future in futures] == [None, None]
+        assert records.peak == 1
+
+
+def test_concurrent_pool_create_replay_returns_one_resource(client, monkeypatch):
+    test_client, _ = client
+    module = importlib.import_module("services.capital.main")
+    original_create = module.pool_store.create
+    first_create_entered = threading.Event()
+    release_first_create = threading.Event()
+    call_count = 0
+    count_lock = threading.Lock()
+
+    def delayed_create(pool):
+        nonlocal call_count
+        with count_lock:
+            call_count += 1
+            ordinal = call_count
+        if ordinal == 1:
+            first_create_entered.set()
+            assert release_first_create.wait(timeout=5)
+        return original_create(pool)
+
+    monkeypatch.setattr(module.pool_store, "create", delayed_create)
+    payload = _pool_payload(
+        actor_id="operator-concurrent",
+        actor_role="operator",
+        idempotency_key="pool-create-concurrent",
+        request_hash="pool-request-concurrent",
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(
+            test_client.post,
+            "/api/capital-pools",
+            json=payload,
+        )
+        assert first_create_entered.wait(timeout=5)
+        second_future = executor.submit(
+            test_client.post,
+            "/api/capital-pools",
+            json=payload,
+        )
+        time.sleep(0.1)
+        release_first_create.set()
+        first = first_future.result(timeout=5)
+        second = second_future.result(timeout=5)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert first.json()["pool_id"] == second.json()["pool_id"]
+    assert {first.json()["idempotent_replay"], second.json()["idempotent_replay"]} == {
+        False,
+        True,
+    }
+    assert call_count == 1
+
+
+def test_pool_sleeve_binding_identity_is_unique(client):
+    test_client, _ = client
+    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert test_client.post("/api/bindings", json=_binding_payload()).status_code == 201
+    duplicate = test_client.post(
+        "/api/bindings",
+        json=_binding_payload(
+            binding_id="binding-duplicate-sleeve",
+            persona_id="persona-beta",
+        ),
+    )
+    assert duplicate.status_code == 400
+    assert "already bound" in duplicate.json()["detail"]
 
 
 def test_create_pool_rejects_unauthorized_writer(client):
@@ -260,7 +481,11 @@ def test_second_live_owner_same_pool_rejected(client):
 
     second = test_client.post(
         "/api/bindings",
-        json=_binding_payload(binding_id="binding-002", persona_id="persona-beta"),
+        json=_binding_payload(
+            binding_id="binding-002",
+            persona_id="persona-beta",
+            capital_sleeve_id="sleeve-beta",
+        ),
     )
     assert second.status_code == 201
 
@@ -328,13 +553,14 @@ def test_audit_log_records_mutations(client):
 
 def test_rebalance_apply_updates_authoritative_allocations_and_replays_once(client):
     test_client, _ = client
-    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    _create_default_pool_and_binding(test_client)
 
     proposal_payload = _rebalance_payload()
     created = test_client.post("/api/rebalances", json=proposal_payload)
     assert created.status_code == 201, created.text
     assert created.json()["status"] == "pending"
     assert created.json()["applied"] is False
+    assert test_client.get("/api/allocations").json()["count"] == 0
 
     denied_payload = _apply_payload(approval_ref=None)
     denied = test_client.post("/api/rebalances/rb-001/apply", json=denied_payload)
@@ -358,6 +584,12 @@ def test_rebalance_apply_updates_authoritative_allocations_and_replays_once(clie
     assert receipt["allocation_readback"][0]["target_weight"] == 0.12
     assert receipt["allocation_readback"][0]["allocation_version"] == 1
     assert receipt["allocation_readback"][0]["authoritative_capital_readback"] is True
+    receipt_lookup = test_client.get(
+        "/api/rebalances/receipts/cmd-apply-001"
+    )
+    assert receipt_lookup.status_code == 200, receipt_lookup.text
+    assert receipt_lookup.json()["receipt_ref"] == receipt["receipt_ref"]
+    assert receipt_lookup.json()["audit_delivery_status"] == "delivered"
 
     detail = test_client.get("/api/rebalances/rb-001")
     assert detail.status_code == 200
@@ -402,7 +634,7 @@ def test_rebalance_apply_updates_authoritative_allocations_and_replays_once(clie
 
 def test_rebalance_proposal_receipt_and_allocations_survive_store_restart(client):
     test_client, data_dir = client
-    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    _create_default_pool_and_binding(test_client)
     assert test_client.post("/api/rebalances", json=_rebalance_payload()).status_code == 201
     applied = test_client.post(
         "/api/rebalances/rb-001/apply",
@@ -437,6 +669,169 @@ def test_rebalance_proposal_receipt_and_allocations_survive_store_restart(client
     assert restarted.get("/api/allocations").json()["items"][0]["allocation_version"] == 1
 
 
+@pytest.mark.parametrize("nonzero_baseline", [1e-13, 0.10])
+def test_nonzero_missing_allocation_baseline_fails_terminal(client, nonzero_baseline):
+    test_client, _ = client
+    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    line = [
+        {
+            "persona_id": "persona-missing",
+            "stage": "live_running",
+            "capital_scope": "pool",
+            "capital_pool_id": "pool-001",
+            "current_weight": nonzero_baseline,
+            "target_weight": 0.20,
+            "delta": 0.20 - nonzero_baseline,
+        }
+    ]
+    created = test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-missing", lines=line),
+    )
+    assert created.status_code == 201, created.text
+    assert test_client.get("/api/allocations").json()["count"] == 0
+    applied = test_client.post(
+        "/api/rebalances/rb-missing/apply",
+        json=_apply_payload(rebalance_id="rb-missing", command_id="cmd-missing"),
+    )
+    assert applied.status_code == 409
+    failed = test_client.get("/api/rebalances/rb-missing").json()
+    assert failed["status"] == "failed"
+    assert failed["failure"]["details"][0]["reason"] == "allocation_missing"
+    assert test_client.get("/api/allocations").json()["count"] == 0
+
+
+def test_apply_rejects_mismatched_authoritative_allocation_identity(client):
+    test_client, data_dir = client
+    _create_default_pool_and_binding(test_client)
+    assert test_client.post("/api/rebalances", json=_rebalance_payload()).status_code == 201
+    assert test_client.post(
+        "/api/rebalances/rb-001/apply",
+        json=_apply_payload(),
+    ).status_code == 200
+
+    follow_up_line = [
+        {
+            "persona_id": "persona-alpha",
+            "stage": "live_running",
+            "capital_scope": "pool",
+            "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-alpha",
+            "current_weight": 0.12,
+            "target_weight": 0.20,
+            "delta": 0.08,
+        }
+    ]
+    assert test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-identity", lines=follow_up_line),
+    ).status_code == 201
+
+    store_path = data_dir / "capital_allocation_authority.json"
+    aggregate = json.loads(store_path.read_text(encoding="utf-8"))
+    allocation = next(iter(aggregate["allocations"].values()))
+    allocation["persona_id"] = "persona-tampered"
+    store_path.write_text(json.dumps(aggregate), encoding="utf-8")
+
+    rejected = test_client.post(
+        "/api/rebalances/rb-identity/apply",
+        json=_apply_payload(
+            rebalance_id="rb-identity",
+            command_id="cmd-identity",
+        ),
+    )
+    assert rejected.status_code == 409, rejected.text
+    failure = test_client.get("/api/rebalances/rb-identity").json()["failure"]
+    assert failure["details"][0]["reason"] == "allocation_identity_mismatch"
+
+
+def test_rebalance_binding_must_be_in_effective_window(client):
+    test_client, _ = client
+    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    binding = test_client.post(
+        "/api/bindings",
+        json=_binding_payload(effective_to="2020-01-01T00:00:00Z"),
+    )
+    assert binding.status_code == 201, binding.text
+    proposal = test_client.post("/api/rebalances", json=_rebalance_payload())
+    assert proposal.status_code == 400
+    assert "eligible PersonaCapitalBinding" in proposal.json()["detail"]
+
+
+def test_first_apply_revalidates_binding_but_successful_replay_survives_revoke(client):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    assert test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-revoked-before"),
+    ).status_code == 201
+    revoked = test_client.patch(
+        "/api/bindings/binding-001/status",
+        json={
+            "actor_id": "persona-admin-1",
+            "actor_role": "persona.admin",
+            "status": "revoked",
+        },
+    )
+    assert revoked.status_code == 200, revoked.text
+    blocked = test_client.post(
+        "/api/rebalances/rb-revoked-before/apply",
+        json=_apply_payload(
+            rebalance_id="rb-revoked-before",
+            command_id="cmd-revoked-before",
+        ),
+    )
+    assert blocked.status_code == 409, blocked.text
+
+    second_binding = test_client.post(
+        "/api/bindings",
+        json=_binding_payload(
+            binding_id="binding-replay",
+            capital_sleeve_id="sleeve-replay",
+        ),
+    )
+    assert second_binding.status_code == 201, second_binding.text
+    replay_line = [
+        {
+            "persona_id": "persona-alpha",
+            "stage": "live_running",
+            "capital_scope": "pool",
+            "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-replay",
+            "current_weight": 0.0,
+            "target_weight": 0.10,
+            "delta": 0.10,
+        }
+    ]
+    assert test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-replay-after-revoke", lines=replay_line),
+    ).status_code == 201
+    apply_payload = _apply_payload(
+        rebalance_id="rb-replay-after-revoke",
+        command_id="cmd-replay-after-revoke",
+    )
+    applied = test_client.post(
+        "/api/rebalances/rb-replay-after-revoke/apply",
+        json=apply_payload,
+    )
+    assert applied.status_code == 200, applied.text
+    assert test_client.patch(
+        "/api/bindings/binding-replay/status",
+        json={
+            "actor_id": "persona-admin-1",
+            "actor_role": "persona.admin",
+            "status": "revoked",
+        },
+    ).status_code == 200
+    replay = test_client.post(
+        "/api/rebalances/rb-replay-after-revoke/apply",
+        json=apply_payload,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["idempotent_replay"] is True
+
+
 def test_stale_rebalance_fails_terminal_without_partial_allocation_update(client):
     test_client, _ = client
     assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
@@ -446,18 +841,18 @@ def test_stale_rebalance_fails_terminal_without_partial_allocation_update(client
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
-            "current_weight": 0.10,
+            "current_weight": 0.0,
             "target_weight": 0.15,
-            "delta": 0.05,
+            "delta": 0.15,
         },
         {
             "persona_id": "persona-beta",
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
-            "current_weight": 0.20,
+            "current_weight": 0.0,
             "target_weight": 0.25,
-            "delta": 0.05,
+            "delta": 0.25,
         },
     ]
     assert test_client.post(
@@ -518,6 +913,28 @@ def test_stale_rebalance_fails_terminal_without_partial_allocation_update(client
 def test_risk_decreasing_rebalance_does_not_require_approval(client):
     test_client, _ = client
     assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    bootstrap_line = [
+        {
+            "persona_id": "persona-alpha",
+            "stage": "live_running",
+            "capital_scope": "pool",
+            "capital_pool_id": "pool-001",
+            "current_weight": 0.0,
+            "target_weight": 0.10,
+            "delta": 0.10,
+        }
+    ]
+    assert test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-decrease-bootstrap", lines=bootstrap_line),
+    ).status_code == 201
+    assert test_client.post(
+        "/api/rebalances/rb-decrease-bootstrap/apply",
+        json=_apply_payload(
+            rebalance_id="rb-decrease-bootstrap",
+            command_id="cmd-decrease-bootstrap",
+        ),
+    ).status_code == 200
     decrease_line = [
         {
             "persona_id": "persona-alpha",
@@ -555,9 +972,9 @@ def test_containment_is_durable_frozen_and_cannot_promote_or_increase(client):
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
-            "current_weight": 0.10,
+            "current_weight": 0.0,
             "target_weight": 0.10,
-            "delta": 0.0,
+            "delta": 0.10,
         }
     ]
     assert test_client.post(
@@ -569,7 +986,6 @@ def test_containment_is_durable_frozen_and_cannot_promote_or_increase(client):
         json=_apply_payload(
             rebalance_id="rb-baseline",
             command_id="cmd-baseline",
-            approval_ref=None,
         ),
     ).status_code == 200
 
@@ -597,6 +1013,11 @@ def test_containment_is_durable_frozen_and_cannot_promote_or_increase(client):
     assert frozen.json()["authoritative_containment_readback"] is True
     assert frozen.json()["authoritative_capital_state_applied"] is True
     assert frozen.json()["live_capital_side_effects"] is False
+    containment_lookup = test_client.get(
+        "/api/containments/receipts/cmd-containment-1"
+    )
+    assert containment_lookup.status_code == 200, containment_lookup.text
+    assert containment_lookup.json()["containment_id"] == "containment-freeze-1"
 
     listed = test_client.get(
         "/api/containments",
@@ -646,3 +1067,49 @@ def test_containment_is_durable_frozen_and_cannot_promote_or_increase(client):
 
     restarted = TestClient(_reload_capital_module().app)
     assert restarted.get("/api/containments").json()[0]["state"] == "frozen"
+
+
+def test_rebalance_audit_failure_is_nonfatal_and_reconciles_on_replay(client):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    assert test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-audit-retry"),
+    ).status_code == 201
+
+    module = importlib.import_module("services.capital.main")
+    original_audit_store = module.audit_store
+
+    class FailingAuditStore:
+        def append_event(self, **kwargs):
+            raise RuntimeError("audit sink unavailable")
+
+        def list_events(self, **kwargs):
+            return []
+
+    module.audit_store = FailingAuditStore()
+    apply_payload = _apply_payload(
+        rebalance_id="rb-audit-retry",
+        command_id="cmd-audit-retry",
+    )
+    applied = test_client.post(
+        "/api/rebalances/rb-audit-retry/apply",
+        json=apply_payload,
+    )
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["audit_delivery_status"] == "pending"
+    assert applied.json()["audit_delivery_attempts"] == 1
+    assert "audit sink unavailable" in applied.json()["audit_delivery_error"]
+
+    module.audit_store = original_audit_store
+    replay = test_client.post(
+        "/api/rebalances/rb-audit-retry/apply",
+        json=apply_payload,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["idempotent_replay"] is True
+    assert replay.json()["audit_delivery_status"] == "delivered"
+    assert replay.json()["audit_delivery_attempts"] == 2
+    lookup = test_client.get("/api/rebalances/receipts/cmd-audit-retry")
+    assert lookup.status_code == 200
+    assert lookup.json()["audit_delivery_status"] == "delivered"

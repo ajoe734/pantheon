@@ -26,6 +26,7 @@ class CapitalPoolBody(BaseModel):
     single_runtime_enforced: bool = True
     updated_at: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    idempotent_replay: bool = False
 
 
 class RiskPolicyBody(BaseModel):
@@ -108,6 +109,7 @@ class PersonaCapitalBindingBody(BaseModel):
     binding_id: str
     persona_id: str
     capital_pool_id: str
+    capital_sleeve_id: Optional[str] = None
     role: str
     allowed_deployment_scope: str
     status: str
@@ -120,11 +122,14 @@ class PersonaCapitalBindingBody(BaseModel):
     updated_at: Optional[str] = None
     created_by: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    idempotent_replay: bool = False
 
 
 class CreateCapitalPoolRequest(BaseModel):
     actor_id: str
     actor_role: str
+    idempotency_key: Optional[str] = None
+    request_hash: Optional[str] = None
     pool_id: Optional[str] = None
     name: str
     owner_id: str
@@ -147,9 +152,12 @@ class UpdateCapitalPoolStatusRequest(BaseModel):
 class CreateBindingRequest(BaseModel):
     actor_id: str
     actor_role: str
+    idempotency_key: Optional[str] = None
+    request_hash: Optional[str] = None
     binding_id: Optional[str] = None
     persona_id: str
     capital_pool_id: str
+    capital_sleeve_id: Optional[str] = None
     role: str
     allowed_deployment_scope: str
     mandate: Optional[str] = None
@@ -243,6 +251,7 @@ class AllocationBody(BaseModel):
     capital_pool_id: str
     persona_id: str
     capital_scope: str
+    binding_id: Optional[str] = None
     current_weight: float
     target_weight: float
     allocation_version: int
@@ -308,6 +317,11 @@ class RebalanceApplyReceipt(BaseModel):
     authoritative_capital_state_applied: bool
     live_capital_side_effects: bool
     canonical_write_authority: str
+    audit_delivery_status: str = "pending"
+    audit_delivery_attempts: int = 0
+    audit_delivery_error: Optional[str] = None
+    audit_event_id: Optional[str] = None
+    audit_delivered_at: Optional[str] = None
     idempotent_replay: bool = False
 
 
@@ -359,4 +373,9 @@ class ContainmentBody(BaseModel):
     authoritative_capital_state_applied: bool
     live_capital_side_effects: bool
     canonical_write_authority: str
+    audit_delivery_status: str = "pending"
+    audit_delivery_attempts: int = 0
+    audit_delivery_error: Optional[str] = None
+    audit_event_id: Optional[str] = None
+    audit_delivered_at: Optional[str] = None
     idempotent_replay: bool = False

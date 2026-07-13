@@ -78,7 +78,7 @@ class AllocationAuthorityStore:
     """Single-writer aggregate for rebalance and containment state."""
 
     _POSTGRES_RECORD_ID = "capital-allocation-authority"
-    _SCHEMA_VERSION = 1
+    _SCHEMA_VERSION = 2
     _WEIGHT_TOLERANCE = 1e-12
 
     def __init__(
@@ -106,6 +106,7 @@ class AllocationAuthorityStore:
             "idempotency": {},
             "command_receipts": {},
             "containment_commands": {},
+            "owner_create_idempotency": {},
         }
 
     def _reload_locked(self) -> None:
@@ -122,6 +123,11 @@ class AllocationAuthorityStore:
             raise AllocationAuthorityError("Allocation authority payload must be a JSON object")
         data = self._empty_data()
         data.update(_deepcopy(payload))
+        # Loading an older aggregate is an in-memory schema migration.  Keep
+        # backward-compatible fields, but ensure the next owner write records
+        # the schema understood by this process instead of perpetuating the
+        # stale version from disk/Postgres.
+        data["schema_version"] = self._SCHEMA_VERSION
         for key in (
             "rebalances",
             "allocations",
@@ -129,6 +135,7 @@ class AllocationAuthorityStore:
             "idempotency",
             "command_receipts",
             "containment_commands",
+            "owner_create_idempotency",
         ):
             if not isinstance(data.get(key), dict):
                 raise AllocationAuthorityError(f"Allocation authority field {key!r} must be an object")
@@ -256,6 +263,80 @@ class AllocationAuthorityStore:
             )
         return entry
 
+    def reserve_owner_create(
+        self,
+        *,
+        scope: str,
+        actor_scope: str,
+        key: str,
+        request_hash: str,
+        payload_hash: str,
+        resource_id: str,
+    ) -> tuple[Dict[str, Any], bool]:
+        """Durably reserve an idempotent pool/binding create before its store write."""
+        with self._lock:
+            self._reload_locked()
+            actor_scope = self._require_text({"actor_scope": actor_scope}, "actor_scope")
+            ledger_key = f"{scope}:{actor_scope}:{key}"
+            entry = self._data["owner_create_idempotency"].get(ledger_key)
+            if entry is None:
+                # Schema v1/v2 entries were endpoint-scoped but not actor-scoped.
+                # They are inherently ambiguous, so exact legacy entries remain
+                # readable while mismatches continue to fail closed.
+                legacy_key = f"{scope}:{key}"
+                entry = self._data["owner_create_idempotency"].get(legacy_key)
+            if entry is not None:
+                if (
+                    entry.get("request_hash") != request_hash
+                    or entry.get("payload_hash") != payload_hash
+                    or entry.get("resource_id") != resource_id
+                ):
+                    raise AllocationAuthorityConflict(
+                        f"Idempotency key {key!r} was already used with a different request"
+                    )
+                return _deepcopy(entry), True
+            now = utc_now()
+            entry = {
+                "operation": scope,
+                "actor_scope": actor_scope,
+                "request_hash": request_hash,
+                "payload_hash": payload_hash,
+                "resource_id": resource_id,
+                "status": "pending",
+                "created_at": now,
+                "updated_at": now,
+            }
+            self._data["owner_create_idempotency"][ledger_key] = entry
+            self._persist_locked()
+            return _deepcopy(entry), False
+
+    def complete_owner_create(
+        self,
+        *,
+        scope: str,
+        actor_scope: str,
+        key: str,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            self._reload_locked()
+            actor_scope = self._require_text({"actor_scope": actor_scope}, "actor_scope")
+            ledger_key = f"{scope}:{actor_scope}:{key}"
+            entry = self._data["owner_create_idempotency"].get(ledger_key)
+            if entry is None:
+                legacy_key = f"{scope}:{key}"
+                legacy_entry = self._data["owner_create_idempotency"].get(legacy_key)
+                if legacy_entry is not None:
+                    ledger_key = legacy_key
+                    entry = legacy_entry
+            if entry is None:
+                raise AllocationAuthorityError(
+                    f"Owner create idempotency reservation is missing: {ledger_key}"
+                )
+            entry["status"] = "succeeded"
+            entry["updated_at"] = utc_now()
+            self._persist_locked()
+            return _deepcopy(entry)
+
     def create_rebalance(self, payload: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         with self._lock:
             self._reload_locked()
@@ -306,28 +387,6 @@ class AllocationAuthorityStore:
                 "canonical_write_authority": "capital_service",
                 "persistence_mode": "owner_store",
             }
-            allocations = self._data["allocations"]
-            for line in lines:
-                allocation_id = line["allocation_id"]
-                if allocation_id in allocations:
-                    continue
-                allocations[allocation_id] = {
-                    "allocation_id": allocation_id,
-                    "capital_pool_id": pool_id,
-                    "capital_scope": line["capital_scope"],
-                    "capital_sleeve_id": line.get("capital_sleeve_id"),
-                    "persona_id": line["persona_id"],
-                    "stage": line.get("stage"),
-                    "current_weight": line["current_weight"],
-                    "target_weight": line["current_weight"],
-                    "allocation_version": 0,
-                    "binding_state": "active",
-                    "containment_state": None,
-                    "last_rebalance_id": None,
-                    "updated_at": now,
-                    "authoritative_capital_readback": True,
-                    "canonical_write_authority": "capital_service",
-                }
             self._data["rebalances"][rebalance_id] = record
             self._data["idempotency"][f"rebalance.create:{idempotency_key}"] = {
                 "operation": "rebalance.create",
@@ -434,10 +493,40 @@ class AllocationAuthorityStore:
             for line in proposal.get("lines") or []:
                 allocation = allocations.get(line.get("allocation_id"))
                 if allocation is None:
+                    expected = float(line.get("current_weight") or 0)
+                    if expected == 0.0:
+                        continue
                     stale.append(
                         {
                             "allocation_id": line.get("allocation_id"),
+                            "expected_current_weight": expected,
                             "reason": "allocation_missing",
+                        }
+                    )
+                    continue
+                expected_identity = {
+                    "capital_pool_id": proposal["capital_pool_id"],
+                    "capital_scope": str(line.get("capital_scope") or "pool"),
+                    "capital_sleeve_id": str(line.get("capital_sleeve_id") or "").strip() or None,
+                    "persona_id": str(line.get("persona_id") or "").strip(),
+                    "binding_id": str(line.get("binding_id") or "").strip() or None,
+                }
+                actual_identity = {
+                    "capital_pool_id": allocation.get("capital_pool_id"),
+                    "capital_scope": str(allocation.get("capital_scope") or "pool"),
+                    "capital_sleeve_id": (
+                        str(allocation.get("capital_sleeve_id") or "").strip() or None
+                    ),
+                    "persona_id": str(allocation.get("persona_id") or "").strip(),
+                    "binding_id": str(allocation.get("binding_id") or "").strip() or None,
+                }
+                if actual_identity != expected_identity:
+                    stale.append(
+                        {
+                            "allocation_id": line.get("allocation_id"),
+                            "expected_identity": expected_identity,
+                            "actual_identity": actual_identity,
+                            "reason": "allocation_identity_mismatch",
                         }
                     )
                     continue
@@ -494,7 +583,27 @@ class AllocationAuthorityStore:
 
             allocation_readback: list[Dict[str, Any]] = []
             for line in proposal.get("lines") or []:
-                allocation = allocations[line["allocation_id"]]
+                allocation = allocations.get(line["allocation_id"])
+                if allocation is None:
+                    allocation = {
+                        "allocation_id": line["allocation_id"],
+                        "capital_pool_id": proposal["capital_pool_id"],
+                        "capital_scope": line["capital_scope"],
+                        "capital_sleeve_id": line.get("capital_sleeve_id"),
+                        "persona_id": line["persona_id"],
+                        "binding_id": line.get("binding_id"),
+                        "stage": line.get("stage"),
+                        "current_weight": 0.0,
+                        "target_weight": 0.0,
+                        "allocation_version": 0,
+                        "binding_state": line.get("binding_state") or "bound",
+                        "containment_state": None,
+                        "last_rebalance_id": None,
+                        "updated_at": now,
+                        "authoritative_capital_readback": True,
+                        "canonical_write_authority": "capital_service",
+                    }
+                    allocations[line["allocation_id"]] = allocation
                 allocation.update(
                     {
                         "current_weight": line["target_weight"],
@@ -522,6 +631,11 @@ class AllocationAuthorityStore:
                 "authoritative_capital_state_applied": True,
                 "live_capital_side_effects": False,
                 "canonical_write_authority": "capital_service",
+                "audit_delivery_status": "pending",
+                "audit_delivery_attempts": 0,
+                "audit_delivery_error": None,
+                "audit_event_id": None,
+                "audit_delivered_at": None,
                 "idempotent_replay": False,
             }
             proposal.update(
@@ -550,6 +664,59 @@ class AllocationAuthorityStore:
             }
             self._persist_locked()
             return _deepcopy(receipt), False
+
+    def get_rebalance_receipt(self, command_id: str) -> Dict[str, Any]:
+        with self._lock:
+            self._reload_locked()
+            receipt = self._data["command_receipts"].get(command_id)
+            if receipt is None:
+                raise AllocationAuthorityNotFound(
+                    f"Rebalance receipt not found for command: {command_id}"
+                )
+            return _deepcopy(receipt)
+
+    def update_rebalance_audit_delivery(
+        self,
+        command_id: str,
+        *,
+        event_id: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            self._reload_locked()
+            receipt = self._data["command_receipts"].get(command_id)
+            if receipt is None:
+                raise AllocationAuthorityNotFound(
+                    f"Rebalance receipt not found for command: {command_id}"
+                )
+            if receipt.get("audit_delivery_status") == "delivered":
+                return _deepcopy(receipt)
+            receipt["audit_delivery_attempts"] = int(
+                receipt.get("audit_delivery_attempts") or 0
+            ) + 1
+            if event_id:
+                receipt.update(
+                    {
+                        "audit_delivery_status": "delivered",
+                        "audit_delivery_error": None,
+                        "audit_event_id": event_id,
+                        "audit_delivered_at": utc_now(),
+                    }
+                )
+            else:
+                receipt.update(
+                    {
+                        "audit_delivery_status": "pending",
+                        "audit_delivery_error": str(error or "audit append failed"),
+                    }
+                )
+            rebalance_id = str(receipt.get("rebalance_id") or "")
+            proposal = self._data["rebalances"].get(rebalance_id)
+            if proposal is not None:
+                proposal["apply_receipt"] = _deepcopy(receipt)
+                proposal["updated_at"] = utc_now()
+            self._persist_locked()
+            return _deepcopy(receipt)
 
     def list_allocations(
         self,
@@ -718,6 +885,11 @@ class AllocationAuthorityStore:
                 "authoritative_capital_state_applied": True,
                 "live_capital_side_effects": False,
                 "canonical_write_authority": "capital_service",
+                "audit_delivery_status": "pending",
+                "audit_delivery_attempts": 0,
+                "audit_delivery_error": None,
+                "audit_event_id": None,
+                "audit_delivered_at": None,
                 "idempotent_replay": False,
             }
             self._data["containments"][containment_id] = record
@@ -737,6 +909,64 @@ class AllocationAuthorityStore:
             }
             self._persist_locked()
             return _deepcopy(record), False
+
+    def get_containment_receipt(self, command_id: str) -> Dict[str, Any]:
+        with self._lock:
+            self._reload_locked()
+            command = self._data["containment_commands"].get(command_id)
+            if command is None:
+                raise AllocationAuthorityNotFound(
+                    f"Containment receipt not found for command: {command_id}"
+                )
+            record = self._data["containments"].get(command.get("containment_id"))
+            if record is None:
+                raise AllocationAuthorityError(
+                    f"Containment command {command_id!r} has no durable receipt"
+                )
+            return _deepcopy(record)
+
+    def update_containment_audit_delivery(
+        self,
+        command_id: str,
+        *,
+        event_id: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            self._reload_locked()
+            command = self._data["containment_commands"].get(command_id)
+            if command is None:
+                raise AllocationAuthorityNotFound(
+                    f"Containment receipt not found for command: {command_id}"
+                )
+            record = self._data["containments"].get(command.get("containment_id"))
+            if record is None:
+                raise AllocationAuthorityError(
+                    f"Containment command {command_id!r} has no durable receipt"
+                )
+            if record.get("audit_delivery_status") == "delivered":
+                return _deepcopy(record)
+            record["audit_delivery_attempts"] = int(
+                record.get("audit_delivery_attempts") or 0
+            ) + 1
+            if event_id:
+                record.update(
+                    {
+                        "audit_delivery_status": "delivered",
+                        "audit_delivery_error": None,
+                        "audit_event_id": event_id,
+                        "audit_delivered_at": utc_now(),
+                    }
+                )
+            else:
+                record.update(
+                    {
+                        "audit_delivery_status": "pending",
+                        "audit_delivery_error": str(error or "audit append failed"),
+                    }
+                )
+            self._persist_locked()
+            return _deepcopy(record)
 
     def list_containments(
         self,

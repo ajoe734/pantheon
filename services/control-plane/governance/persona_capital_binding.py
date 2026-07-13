@@ -36,10 +36,13 @@ The canonical JSON schema lives at:
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from threading import RLock
 from typing import Any, Dict, List, Optional
 
 
@@ -120,6 +123,7 @@ class PersonaCapitalBinding:
     binding_id              : immutable unique identifier
     persona_id              : the persona being bound
     capital_pool_id         : the capital pool being bound to
+    capital_sleeve_id       : durable allocation-sleeve identity within the pool
     role                    : advisor | paper_owner | live_owner
     allowed_deployment_scope: upper-bound on deployment stage (none/paper/canary/live)
     status                  : pending | active | suspended | revoked | expired
@@ -141,6 +145,7 @@ class PersonaCapitalBinding:
     status: str
     created_at: str
 
+    capital_sleeve_id: Optional[str] = None
     mandate: Optional[str] = None
     budget: Optional[float] = None
     effective_from: Optional[str] = None
@@ -230,6 +235,12 @@ def validate_binding(binding: PersonaCapitalBinding) -> List[str]:
         errors.append("persona_id must not be empty")
     if not binding.capital_pool_id:
         errors.append("capital_pool_id must not be empty")
+    if binding.capital_sleeve_id is not None:
+        normalized_sleeve_id = binding.capital_sleeve_id.strip()
+        if not normalized_sleeve_id:
+            errors.append("capital_sleeve_id must not be empty when supplied")
+        elif normalized_sleeve_id != binding.capital_sleeve_id:
+            errors.append("capital_sleeve_id must not contain surrounding whitespace")
     if binding.status == BindingStatus.ACTIVE.value and not binding.approval_decision_id:
         errors.append("approval_decision_id is required before a binding can be active")
     role_ceiling = _ROLE_SCOPE_CEILING[binding.role]
@@ -239,15 +250,20 @@ def validate_binding(binding: PersonaCapitalBinding) -> List[str]:
             "allowed_deployment_scope exceeds the deployment ceiling for the binding role: "
             f"role={binding.role!r} ceiling={role_ceiling.value!r} scope={binding.allowed_deployment_scope!r}"
         )
-    if binding.effective_from and binding.effective_to:
+    effective_from: Optional[datetime] = None
+    effective_to: Optional[datetime] = None
+    if binding.effective_from:
         try:
             effective_from = _parse_effective_timestamp(binding.effective_from)
+        except ValueError as exc:
+            errors.append(f"Invalid effective_from timestamp: {exc}")
+    if binding.effective_to:
+        try:
             effective_to = _parse_effective_timestamp(binding.effective_to)
         except ValueError as exc:
-            errors.append(f"Invalid effective window timestamp: {exc}")
-        else:
-            if effective_to <= effective_from:
-                errors.append("effective_to must be later than effective_from")
+            errors.append(f"Invalid effective_to timestamp: {exc}")
+    if effective_from is not None and effective_to is not None and effective_to <= effective_from:
+        errors.append("effective_to must be later than effective_from")
     return errors
 
 
@@ -297,31 +313,41 @@ class PersonaCapitalBindingStore:
     def __init__(self, path: Optional[Path] = None) -> None:
         self._bindings: Dict[str, PersonaCapitalBinding] = {}
         self._path = path
+        self._lock = RLock()
         if path and path.exists():
             self._load(path)
 
     # ---- CRUD ----
 
     def create(self, binding: PersonaCapitalBinding) -> PersonaCapitalBinding:
-        if binding.binding_id in self._bindings:
-            raise PersonaCapitalBindingError(f"Binding already exists: {binding.binding_id}")
-        errors = validate_binding(binding)
-        if errors:
-            raise PersonaCapitalBindingError(f"Invalid binding: {errors}")
-        if binding.is_active and binding.role == BindingRole.LIVE_OWNER.value:
-            self._check_single_live_owner(binding.capital_pool_id, exclude_id=None)
-        self._bindings[binding.binding_id] = binding
-        self._save()
-        return binding
+        with self._lock:
+            if binding.binding_id in self._bindings:
+                raise PersonaCapitalBindingError(f"Binding already exists: {binding.binding_id}")
+            errors = validate_binding(binding)
+            if errors:
+                raise PersonaCapitalBindingError(f"Invalid binding: {errors}")
+            self._check_unique_capital_sleeve(binding, exclude_id=None)
+            if binding.is_active and binding.role == BindingRole.LIVE_OWNER.value:
+                self._check_single_live_owner(binding.capital_pool_id, exclude_id=None)
+            snapshot = dict(self._bindings)
+            self._bindings[binding.binding_id] = binding
+            try:
+                self._save()
+            except Exception:
+                self._bindings = snapshot
+                raise
+            return binding
 
     def get(self, binding_id: str) -> Optional[PersonaCapitalBinding]:
-        return self._bindings.get(binding_id)
+        with self._lock:
+            return self._bindings.get(binding_id)
 
     def require(self, binding_id: str) -> PersonaCapitalBinding:
-        b = self.get(binding_id)
-        if b is None:
-            raise PersonaCapitalBindingError(f"Binding not found: {binding_id}")
-        return b
+        with self._lock:
+            b = self.get(binding_id)
+            if b is None:
+                raise PersonaCapitalBindingError(f"Binding not found: {binding_id}")
+            return b
 
     def list(
         self,
@@ -330,16 +356,17 @@ class PersonaCapitalBindingStore:
         status: Optional[str] = None,
         role: Optional[str] = None,
     ) -> List[PersonaCapitalBinding]:
-        bindings = list(self._bindings.values())
-        if persona_id:
-            bindings = [b for b in bindings if b.persona_id == persona_id]
-        if capital_pool_id:
-            bindings = [b for b in bindings if b.capital_pool_id == capital_pool_id]
-        if status:
-            bindings = [b for b in bindings if b.status == status]
-        if role:
-            bindings = [b for b in bindings if b.role == role]
-        return bindings
+        with self._lock:
+            bindings = list(self._bindings.values())
+            if persona_id:
+                bindings = [b for b in bindings if b.persona_id == persona_id]
+            if capital_pool_id:
+                bindings = [b for b in bindings if b.capital_pool_id == capital_pool_id]
+            if status:
+                bindings = [b for b in bindings if b.status == status]
+            if role:
+                bindings = [b for b in bindings if b.role == role]
+            return bindings
 
     def activate(self, binding_id: str, approval_decision_id: str) -> PersonaCapitalBinding:
         """
@@ -348,34 +375,69 @@ class PersonaCapitalBindingStore:
         Requires an ApprovalDecision ID. For live_owner role, enforces that no
         other active live_owner binding exists for the same pool.
         """
-        binding = self.require(binding_id)
-        _validate_binding_status_transition(binding.status, BindingStatus.ACTIVE.value)
-        if binding.role == BindingRole.LIVE_OWNER.value:
-            self._check_single_live_owner(binding.capital_pool_id, exclude_id=binding_id)
-        updated = PersonaCapitalBinding(
-            **{
-                **binding.to_dict(),
-                "status": BindingStatus.ACTIVE.value,
-                "approval_decision_id": approval_decision_id,
-                "updated_at": utc_now(),
-            }
-        )
-        errors = validate_binding(updated)
-        if errors:
-            raise PersonaCapitalBindingError(f"Invalid binding: {errors}")
-        self._bindings[binding_id] = updated
-        self._save()
-        return updated
+        with self._lock:
+            binding = self.require(binding_id)
+            _validate_binding_status_transition(binding.status, BindingStatus.ACTIVE.value)
+            if binding.role == BindingRole.LIVE_OWNER.value:
+                self._check_single_live_owner(binding.capital_pool_id, exclude_id=binding_id)
+            updated = PersonaCapitalBinding(
+                **{
+                    **binding.to_dict(),
+                    "status": BindingStatus.ACTIVE.value,
+                    "approval_decision_id": approval_decision_id,
+                    "updated_at": utc_now(),
+                }
+            )
+            errors = validate_binding(updated)
+            if errors:
+                raise PersonaCapitalBindingError(f"Invalid binding: {errors}")
+            snapshot = dict(self._bindings)
+            self._bindings[binding_id] = updated
+            try:
+                self._save()
+            except Exception:
+                self._bindings = snapshot
+                raise
+            return updated
 
     def update_status(self, binding_id: str, new_status: str) -> PersonaCapitalBinding:
-        binding = self.require(binding_id)
-        _validate_binding_status_transition(binding.status, new_status)
-        updated = PersonaCapitalBinding(
-            **{**binding.to_dict(), "status": new_status, "updated_at": utc_now()}
-        )
-        self._bindings[binding_id] = updated
-        self._save()
-        return updated
+        with self._lock:
+            binding = self.require(binding_id)
+            _validate_binding_status_transition(binding.status, new_status)
+            updated = PersonaCapitalBinding(
+                **{**binding.to_dict(), "status": new_status, "updated_at": utc_now()}
+            )
+            snapshot = dict(self._bindings)
+            self._bindings[binding_id] = updated
+            try:
+                self._save()
+            except Exception:
+                self._bindings = snapshot
+                raise
+            return updated
+
+    def _check_unique_capital_sleeve(
+        self,
+        binding: PersonaCapitalBinding,
+        *,
+        exclude_id: Optional[str],
+    ) -> None:
+        """Keep the durable pool+sleeve identity bound to exactly one record."""
+        sleeve_id = str(binding.capital_sleeve_id or "").strip()
+        if not sleeve_id:
+            return
+        with self._lock:
+            for existing in self._bindings.values():
+                if (
+                    existing.binding_id != exclude_id
+                    and existing.capital_pool_id == binding.capital_pool_id
+                    and str(existing.capital_sleeve_id or "").strip() == sleeve_id
+                ):
+                    raise PersonaCapitalBindingError(
+                        "Capital sleeve identity is already bound: "
+                        f"pool={binding.capital_pool_id!r}, sleeve={sleeve_id!r}, "
+                        f"binding={existing.binding_id!r}"
+                    )
 
     # ---- Single-live-owner check ----
 
@@ -386,18 +448,19 @@ class PersonaCapitalBindingStore:
 
         This enforces the canonical rule: one pool, one live deployment sponsor.
         """
-        for b in self._bindings.values():
-            if (
-                b.capital_pool_id == capital_pool_id
-                and b.role == BindingRole.LIVE_OWNER.value
-                and b.status == BindingStatus.ACTIVE.value
-                and b.binding_id != exclude_id
-            ):
-                raise PersonaCapitalBindingError(
-                    f"Single-live-owner rule violated: pool {capital_pool_id!r} already has "
-                    f"an active live_owner binding ({b.binding_id}). "
-                    "Revoke or suspend it before activating a new live_owner."
-                )
+        with self._lock:
+            for b in self._bindings.values():
+                if (
+                    b.capital_pool_id == capital_pool_id
+                    and b.role == BindingRole.LIVE_OWNER.value
+                    and b.status == BindingStatus.ACTIVE.value
+                    and b.binding_id != exclude_id
+                ):
+                    raise PersonaCapitalBindingError(
+                        f"Single-live-owner rule violated: pool {capital_pool_id!r} already has "
+                        f"an active live_owner binding ({b.binding_id}). "
+                        "Revoke or suspend it before activating a new live_owner."
+                    )
 
     def live_owner_for_pool(self, capital_pool_id: str) -> Optional[PersonaCapitalBinding]:
         """Return the active live_owner binding for a pool, if any."""
@@ -428,15 +491,44 @@ class PersonaCapitalBindingStore:
     def _save(self) -> None:
         if self._path:
             records = [b.to_dict() for b in self._bindings.values()]
-            self._path.write_text(json.dumps(records, indent=2))
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_name = tempfile.mkstemp(
+                dir=str(self._path.parent),
+                prefix=f".{self._path.name}.",
+                suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(records, handle, indent=2, ensure_ascii=True)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp_name, self._path)
+                try:
+                    directory_fd = os.open(str(self._path.parent), os.O_RDONLY)
+                except OSError:
+                    directory_fd = None
+                if directory_fd is not None:
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+            finally:
+                if os.path.exists(temp_name):
+                    os.unlink(temp_name)
 
     def _load(self, path: Path) -> None:
-        data = json.loads(path.read_text())
-        if not isinstance(data, list):
-            raise PersonaCapitalBindingError(f"Expected JSON array in {path}")
-        for record in data:
-            b = PersonaCapitalBinding.from_dict(record)
-            self._bindings[b.binding_id] = b
+        with self._lock:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                raise PersonaCapitalBindingError(f"Expected JSON array in {path}")
+            for record in data:
+                b = PersonaCapitalBinding.from_dict(record)
+                errors = validate_binding(b)
+                if errors:
+                    raise PersonaCapitalBindingError(f"Invalid persisted binding: {errors}")
+                self._check_unique_capital_sleeve(b, exclude_id=None)
+                self._bindings[b.binding_id] = b
 
 
 # ---------------------------------------------------------------------------

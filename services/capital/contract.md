@@ -66,10 +66,12 @@ underlying JSON stores directly.
 - `GET    /api/rebalances?capital_pool_id=...&status=...`
 - `GET    /api/rebalances/{rebalance_id}`
 - `POST   /api/rebalances/{rebalance_id}/apply`
+- `GET    /api/rebalances/receipts/{command_id}`
 - `GET    /api/allocations?capital_pool_id=...&persona_id=...`
 - `GET    /api/capital-pools/{pool_id}/allocations?persona_id=...`
 - `POST   /api/containments`
 - `GET    /api/containments?persona_id=...`
+- `GET    /api/containments/receipts/{command_id}`
 
 ### Governance support
 
@@ -99,28 +101,52 @@ underlying JSON stores directly.
 8. BFF/runtime read models consume the service's persisted snapshots:
    - `capital_pools.json`
    - `persona_capital_bindings.json`
-9. Rebalance proposals persist their normalized allocation lines. Apply uses only
-   those server-owned lines; callers cannot replace target weights at apply time.
-10. Apply verifies every persisted `current_weight` against authoritative state
+9. Pool and binding create accept optional paired `idempotency_key` and
+   `request_hash`. The owner also persists a server-computed semantic payload
+   hash; exact restart replays return the same resource and conflicting reuse is
+   rejected. Owner-create idempotency is actor-scoped, and the complete
+   reservation/check/create sequence is serialized inside the single Capital
+   writer process. Bindings persist `capital_sleeve_id` as a top-level identity;
+   a non-empty `(capital_pool_id, capital_sleeve_id)` pair is globally unique in
+   the binding owner store.
+10. Rebalance proposals persist their normalized allocation lines but do not
+   create or mutate allocation state. Sleeve lines must match a durable
+   persona/pool/sleeve binding; pending and active bindings inside their
+   effective window are accepted, while suspended, revoked, expired, or
+   out-of-window bindings are rejected. First apply revalidates the durable
+   binding identity; a successful command receipt remains replayable after a
+   later binding lifecycle change. Binding lifecycle mutations and the first
+   apply owner commit share an in-process critical section so a revoke cannot
+   interleave after validation. Apply uses only those server-owned lines.
+11. Apply verifies every persisted `current_weight` against authoritative state
     before changing any allocation. A stale line fails the proposal without a
-    partial allocation mutation.
-11. A live-running allocation increase requires an approval reference. The
+    partial allocation mutation. Apply may bootstrap a missing sleeve allocation
+    only when the persisted expected `current_weight` is exactly zero.
+12. A live-running allocation increase requires an approval reference. The
     service derives that requirement from the persisted proposal; non-live and
     risk-decreasing proposals do not require approval.
-12. `idempotency_key`, `request_hash`, the server-computed payload hash, and
+13. `idempotency_key`, `request_hash`, the server-computed payload hash, and
     `command_id` are persisted. An exact replay returns the durable result and a
     conflicting reuse fails closed.
-13. Successful apply receipts and allocation records set
+14. Successful apply receipts and allocation records set
     `authoritative_capital_readback=true`; receipts also set
     `authoritative_capital_state_applied=true` and
     `live_capital_side_effects=false`.
-14. Containment can only preserve or reduce the authoritative capital baseline.
+15. Rebalance and containment receipts are durably addressable by `command_id`.
+    External audit delivery is recorded as `pending` or `delivered`; an audit
+    sink failure after the owner commit does not roll back or hide terminal
+    capital state, and an idempotent replay retries pending delivery. Delivery is
+    intentionally at-least-once: audit consumers must deduplicate retries by the
+    stable `audit_ref`; this contract does not promise exactly-once audit append.
+16. Containment can only preserve or reduce the authoritative capital baseline.
     Promotion, canary/live stage creation, and allocation increases are rejected.
     A freeze record emits both `state` and `containment_state` as `frozen`.
-15. JSON allocation authority writes use one aggregate document, an in-process
-    `RLock`, and atomic temporary-file replacement. With
+17. JSON pool, binding, and allocation writes use in-process `RLock` protection
+    and atomic temporary-file replacement with file/directory `fsync`. With
     `CAPITAL_STORE_BACKEND=postgres`, the same aggregate is persisted through
-    `PostgresJsonOwnerStore`.
+    `PostgresJsonOwnerStore`. The aggregate remains a single-writer owner design:
+    `PostgresJsonOwnerStore` does not provide cross-replica compare-and-swap, so
+    Capital must run one writer until a transactional/CAS store replaces it.
 
 ## Downstream Read Paths
 
