@@ -191,24 +191,28 @@ def test_management_persona_fleet_hydrates_live_persona_market_context() -> None
     crypto = rows["persona-20260528-04688755"]
     assert crypto["name"] == "Crypto-Alt-Hunter"
     assert crypto["owner"] == "pantheon-dev-browser"
-    assert crypto["state"] == "paper_running"
-    assert crypto["capital_mode"] == "paper"
-    assert crypto["paper_ledger_id"] == "paper-ledger-persona-20260528-04688755"
-    assert crypto["paper_ledger"]["is_isolated"] is True
+    assert crypto["state"] == "deployed"
+    assert crypto["capital_mode"] == "none"
+    assert crypto["paper_ledger_id"] is None
+    assert crypto["paper_ledger"] is None
     assert crypto["capital_pool_id"] is None
-    assert crypto["deployment_stage"] == "paper"
-    assert crypto["runtime_binding_id"]
-    assert crypto["runtime_health"]["status"] in {"healthy", "degraded", "critical"}
+    assert crypto["deployment_stage"] == "none"
+    assert crypto["runtime_id"] is None
+    assert crypto["runtime_binding_id"] is None
     assert crypto["data_source_summary"]["state"] == "datasource_smoke_ok"
     assert crypto["data_source_summary"]["provider_count"] >= 1
     assert crypto["data_source_summary"]["provider_status_counts"]["datasource_smoke_ok"] >= 1
     assert crypto["current_work"] is None
-    assert crypto["perf_delta"] > 0
+    assert crypto["perf_delta"] is None
+    assert crypto["performance_summary"]["source"] == "unavailable"
+    assert crypto["performance_summary"]["pnl"] is None
+    assert crypto["performance_summary"]["max_drawdown"] is None
+    assert crypto["performance_summary"]["total_trades"] is None
 
     tw = rows["persona-20260528-5937dea1"]
-    assert tw["state"] == "paper_running"
-    assert tw["capital_mode"] == "paper"
-    assert tw["paper_ledger_id"] == "paper-ledger-persona-20260528-5937dea1"
+    assert tw["state"] == "deployed"
+    assert tw["capital_mode"] == "none"
+    assert tw["paper_ledger_id"] is None
     assert tw["capital_pool_id"] is None
     assert tw["data_source_summary"]["state"] == "partial_readback"
     assert tw["data_source_summary"]["provider_status_counts"]["read_ok"] >= 1
@@ -216,9 +220,9 @@ def test_management_persona_fleet_hydrates_live_persona_market_context() -> None
     assert tw["research_summary"]["stage"] == "management_review_linked"
 
     us = rows["persona-20260528-597cbad2"]
-    assert us["state"] == "paper_running"
-    assert us["capital_mode"] == "paper"
-    assert us["paper_ledger_id"] == "paper-ledger-persona-20260528-597cbad2"
+    assert us["state"] == "deployed"
+    assert us["capital_mode"] == "none"
+    assert us["paper_ledger_id"] is None
     assert us["current_work"] is None
 
 
@@ -283,6 +287,354 @@ def test_management_persona_fleet_prefers_declared_runtime_identity_over_market_
     )
     assert runtime_row["persona_id"] == persona_id
     assert runtime_row["persona_capital_binding_id"] == persona_binding_id
+
+
+def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    persona_a = "persona-paper-alpha"
+    persona_b = "persona-paper-beta"
+    runtime_a = "runtime-persona-paper-alpha-paper"
+    runtime_b = "runtime-persona-paper-beta-paper"
+    runtime_binding_a = "rb-paper-alpha"
+    runtime_binding_b = "rb-paper-beta"
+    capital_binding_a = "binding-persona-paper-alpha-paper"
+    capital_binding_b = "binding-persona-paper-beta-paper"
+    pool_a = "pool-persona-paper-alpha-paper"
+    pool_b = "pool-persona-paper-beta-paper"
+
+    def write_store(name: str, payload: object) -> Path:
+        path = tmp_path / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    stores = {
+        "PANTHEON_BFF_PERSONA_REGISTRY_STORE": write_store(
+            "personas.json",
+            {
+                persona_a: {
+                    "persona_id": persona_a,
+                    "name": "Paper Alpha",
+                    "lifecycle_state": "paper_running",
+                    "status": "paper_running",
+                    "created_at": "2026-07-13T00:00:00Z",
+                    "metadata": {
+                        "market_scope": ["US"],
+                        "capital_mode": "paper",
+                        "deployment_stage": "paper",
+                        "runtimeId": runtime_a,
+                        "runtimeBindingId": capital_binding_a,
+                        "legacyPaperCapitalPoolId": pool_a,
+                    },
+                },
+                persona_b: {
+                    "persona_id": persona_b,
+                    "name": "Paper Beta",
+                    "lifecycle_state": "paper_running",
+                    "status": "paper_running",
+                    "created_at": "2026-07-13T00:01:00Z",
+                    "metadata": {
+                        "market_scope": ["US"],
+                        "capital_mode": "paper",
+                        "deployment_stage": "paper",
+                        "runtime_id": runtime_b,
+                        "runtime_binding_id": capital_binding_b,
+                        "legacy_paper_capital_pool_id": pool_b,
+                    },
+                },
+            },
+        ),
+        "PANTHEON_BFF_PERSONA_SESSION_STORE": write_store("sessions.json", {}),
+        "PANTHEON_BFF_PERSONA_BINDING_STORE": write_store(
+            "persona_capital_bindings.json",
+            {
+                capital_binding_a: {
+                    "binding_id": capital_binding_a,
+                    "persona_id": persona_a,
+                    "capital_pool_id": pool_a,
+                    "status": "active",
+                },
+                capital_binding_b: {
+                    "binding_id": capital_binding_b,
+                    "persona_id": persona_b,
+                    "capital_pool_id": pool_b,
+                    "status": "active",
+                },
+            },
+        ),
+        "PANTHEON_BFF_RUNTIME_BINDING_STORE": write_store(
+            "runtime_bindings.json",
+            {
+                runtime_binding_a: {
+                    "binding_id": runtime_binding_a,
+                    "runtime_id": runtime_a,
+                    "persona_id": "persona-us-equity",
+                    "persona_capital_binding_id": capital_binding_a,
+                    "capital_pool_id": pool_a,
+                    "plan_id": "plan-paper-alpha",
+                    "deployment_mode": "paper",
+                    "status": "active",
+                },
+                runtime_binding_b: {
+                    "binding_id": runtime_binding_b,
+                    "runtime_id": runtime_b,
+                    "persona_capital_binding_id": capital_binding_b,
+                    "capital_pool_id": pool_b,
+                    "plan_id": "plan-paper-beta",
+                    "deployment_mode": "paper",
+                    "status": "active",
+                },
+            },
+        ),
+        "PANTHEON_BFF_DEPLOYMENT_PLAN_STORE": write_store(
+            "deployment_plans.json",
+            {
+                "plan-paper-alpha": {
+                    "plan_id": "plan-paper-alpha",
+                    "binding_ids": [capital_binding_a],
+                    "capital_pool_id": pool_a,
+                    "strategy_id": "strategy-paper-alpha",
+                    "target_stage": "paper",
+                    "status": "executed",
+                },
+                "plan-paper-beta": {
+                    "plan_id": "plan-paper-beta",
+                    "binding_ids": [capital_binding_b],
+                    "capital_pool_id": pool_b,
+                    "strategy_id": "strategy-paper-beta",
+                    "target_stage": "paper",
+                    "status": "executed",
+                },
+            },
+        ),
+        "PANTHEON_BFF_TELEMETRY_SUMMARY_STORE": write_store(
+            "telemetry_summaries.json",
+            {
+                runtime_a: {
+                    "runtime_id": runtime_a,
+                    "projection_source": "telemetry_ingest",
+                    "collected_at": "2026-07-13T00:10:00Z",
+                    "pnl": 0.12,
+                    "drawdown": 0.02,
+                    "fill_rate": 0.99,
+                    "avg_slippage_bps": 1.0,
+                    "sharpe_ratio": 1.8,
+                    "total_trades": 17,
+                },
+                runtime_b: {
+                    "runtime_id": runtime_b,
+                    "projection_source": "telemetry_ingest",
+                    "collected_at": "2026-07-13T00:11:00Z",
+                    "summary": {
+                        "total_pnl": -0.08,
+                        "max_drawdown": 0.08,
+                        "fill_rate": 0.80,
+                        "avg_slippage_bps": 5.0,
+                        "sharpe": 0.3,
+                        "total_trades": 0,
+                    },
+                },
+            },
+        ),
+    }
+    for env_name in (
+        "PANTHEON_PERSONA_DATA_DIR",
+        "PANTHEON_GOVERNANCE_DATA_DIR",
+        "PANTHEON_RUNTIME_DATA_DIR",
+        "PANTHEON_PERSONA_SERVICE_URL",
+        "PANTHEON_RUNTIME_MANAGER_URL",
+        "PANTHEON_TELEMETRY_API_URL",
+        "PANTHEON_TELEMETRY_URL",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    for env_name, path in stores.items():
+        monkeypatch.setenv(env_name, str(path))
+
+    store = ReadSurfaceStore(
+        str(tmp_path / "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    runtimes = {runtime["runtime_id"]: runtime for runtime in store.list_runtime_bindings()}
+    assert runtimes[runtime_a]["persona_id"] == persona_a
+    assert runtimes[runtime_b]["persona_id"] == persona_b
+    assert runtimes[runtime_a]["runtime_binding_id"] == runtime_binding_a
+    assert runtimes[runtime_b]["runtime_binding_id"] == runtime_binding_b
+    assert runtimes[runtime_a]["persona_capital_binding_id"] == capital_binding_a
+    assert runtimes[runtime_b]["persona_capital_binding_id"] == capital_binding_b
+
+    with _client_with_store(store) as client:
+        attribution_response = client.get(
+            "/bff/management/performance-attribution/by-persona?page_size=100",
+            headers=HEADERS,
+        )
+        rankings_response = client.get(
+            "/bff/management/persona-league/rankings?criteria=overall&limit=100",
+            headers=HEADERS,
+        )
+        fleet_response = client.get(
+            "/bff/management/persona-fleet?page_size=100",
+            headers=HEADERS,
+        )
+
+    assert attribution_response.status_code == 200, attribution_response.text
+    attribution_rows = {
+        item["dimension_key"]: item
+        for item in attribution_response.json()["data"]["items"]
+    }
+    assert attribution_rows[persona_a]["data_confidence"] == "formal"
+    assert attribution_rows[persona_b]["data_confidence"] == "formal"
+    assert attribution_rows[persona_a]["source_refs"]["runtime_ids"] == [runtime_a]
+    assert attribution_rows[persona_b]["source_refs"]["runtime_ids"] == [runtime_b]
+    assert attribution_rows[persona_a]["metrics"]["total_pnl"] == 0.12
+    assert attribution_rows[persona_b]["metrics"]["total_pnl"] == -0.08
+    assert attribution_rows[persona_a]["metrics"]["total_trades"] == 17
+    assert attribution_rows[persona_b]["metrics"]["total_trades"] == 0
+    assert all(
+        runtime_a not in item["source_refs"]["runtime_ids"]
+        and runtime_b not in item["source_refs"]["runtime_ids"]
+        for item in attribution_rows.values()
+        if item["dimension_key"] == "unassigned"
+    )
+
+    assert rankings_response.status_code == 200, rankings_response.text
+    ranking_rows = {
+        item["persona_id"]: item
+        for item in rankings_response.json()["data"]["items"][0]["items"]
+    }
+    assert ranking_rows[persona_a]["eligible"] is True
+    assert ranking_rows[persona_b]["eligible"] is True
+    assert ranking_rows[persona_a]["exclusion_reason"] is None
+    assert ranking_rows[persona_b]["exclusion_reason"] is None
+    assert ranking_rows[persona_a]["evidence_coverage"] > 0
+    assert ranking_rows[persona_b]["evidence_coverage"] > 0
+    assert ranking_rows[persona_a]["source_confidence"] == "formal"
+    assert ranking_rows[persona_b]["source_confidence"] == "formal"
+    assert ranking_rows[persona_a]["metrics"]["runtime_ids"] == [runtime_a]
+    assert ranking_rows[persona_b]["metrics"]["runtime_ids"] == [runtime_b]
+    assert ranking_rows[persona_a]["metrics"]["total_trades"] == 17
+    assert ranking_rows[persona_b]["metrics"]["total_trades"] == 0
+    assert ranking_rows[persona_a]["score"] > ranking_rows[persona_b]["score"]
+
+    assert fleet_response.status_code == 200, fleet_response.text
+    fleet_rows = {
+        item["persona_id"]: item
+        for item in fleet_response.json()["data"]["items"]
+    }
+    assert fleet_rows[persona_a]["runtime_id"] == runtime_a
+    assert fleet_rows[persona_b]["runtime_id"] == runtime_b
+    assert fleet_rows[persona_a]["runtime_binding_id"] == runtime_binding_a
+    assert fleet_rows[persona_b]["runtime_binding_id"] == runtime_binding_b
+    assert fleet_rows[persona_a]["performance_summary"]["source"] == "telemetry_summaries"
+    assert fleet_rows[persona_b]["performance_summary"]["source"] == "telemetry_summaries"
+    assert fleet_rows[persona_a]["performance_summary"]["pnl"] == 0.12
+    assert fleet_rows[persona_b]["performance_summary"]["pnl"] == -0.08
+    assert fleet_rows[persona_a]["performance_summary"]["total_trades"] == 17
+    assert fleet_rows[persona_b]["performance_summary"]["total_trades"] == 0
+    seed_values = {24560.0, 426000.0, 48000.0, 0.057, 0.071, 0.064}
+    for persona_id in (persona_a, persona_b):
+        performance = fleet_rows[persona_id]["performance_summary"]
+        assert performance["pnl"] not in seed_values
+        assert performance["max_drawdown"] not in seed_values
+
+
+def test_runtime_registry_identity_reconciliation_is_unique_and_fail_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    persona_store = tmp_path / "personas.json"
+    runtime_store = tmp_path / "runtime_bindings.json"
+    binding_store = tmp_path / "persona_capital_bindings.json"
+    persona_store.write_text(
+        json.dumps(
+            {
+                "persona-candidate-a": {
+                    "persona_id": "persona-candidate-a",
+                    "metadata": {"runtimeId": "runtime-ambiguous"},
+                },
+                "persona-candidate-b": {
+                    "persona_id": "persona-candidate-b",
+                    "metadata": {"runtime_id": "runtime-ambiguous"},
+                },
+                "persona-unique": {
+                    "persona_id": "persona-unique",
+                    "metadata": {"runtimeId": "runtime-unique"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_store.write_text(
+        json.dumps(
+            {
+                "rb-ambiguous": {
+                    "binding_id": "rb-ambiguous",
+                    "runtime_id": "runtime-ambiguous",
+                    "persona_id": "persona-us-equity",
+                    "deployment_mode": "paper",
+                },
+                "rb-unique": {
+                    "binding_id": "rb-unique",
+                    "runtime_id": "runtime-unique",
+                    "persona_id": "persona-us-equity",
+                    "deployment_mode": "paper",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    binding_store.write_text("{}", encoding="utf-8")
+    for env_name in (
+        "PANTHEON_PERSONA_DATA_DIR",
+        "PANTHEON_GOVERNANCE_DATA_DIR",
+        "PANTHEON_RUNTIME_DATA_DIR",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_PERSONA_REGISTRY_STORE", str(persona_store))
+    monkeypatch.setenv("PANTHEON_BFF_RUNTIME_BINDING_STORE", str(runtime_store))
+    monkeypatch.setenv("PANTHEON_BFF_PERSONA_BINDING_STORE", str(binding_store))
+
+    store = ReadSurfaceStore(
+        str(tmp_path / "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    runtimes = {runtime["runtime_id"]: runtime for runtime in store.list_runtime_bindings()}
+
+    assert runtimes["runtime-unique"]["persona_id"] == "persona-unique"
+    assert runtimes["runtime-ambiguous"]["persona_id"] is None
+
+
+def test_pm12_authoritative_runtime_id_avoids_stale_alias_probe_and_reuses_summary(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def telemetry_summary(runtime_id: str):
+        calls.append(runtime_id)
+        return {
+            "runtime_id": runtime_id,
+            "pnl": 0.0,
+            "drawdown": 0.0,
+            "total_trades": 0,
+            "collected_at": "2026-07-13T00:00:00Z",
+        }
+
+    monkeypatch.setattr(bff_main.read_store, "get_telemetry_summary", telemetry_summary)
+    row = {
+        "binding_summary": {"runtime_ids": ["runtime-authoritative"]},
+        "session_summary": {
+            "runtime_ids": [],
+            "runtime_binding_ids": ["rb-stale-session-alias"],
+        },
+    }
+
+    metrics = bff_main._pm12_persona_telemetry_metrics(row)
+
+    assert calls == ["runtime-authoritative"]
+    assert metrics["runtime_ids"] == ["runtime-authoritative"]
+    assert metrics["pnl"] == 0.0
+    assert metrics["drawdown"] == 0.0
+    assert metrics["total_trades"] == 0
 
 
 def test_persona_league_filters_and_requires_governance_for_rank_actions() -> None:
@@ -936,3 +1288,301 @@ def test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector
     assert out_dss["live_source_connector_ids"] == ["crypto-coingecko-spot"]
     assert out_sources[0]["connectorId"] == "crypto-coingecko-spot"
     assert out_sources[0]["sourceHealthAvailable"] is True
+
+
+def test_unassigned_runtime_telemetry_isolation_and_no_seed_leaks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    persona_custom = "persona-custom-empty"
+    runtime_unassigned = "runtime-devloop-unassigned"
+    runtime_binding_unassigned = "rb-devloop-unassigned"
+    
+    def write_store(name: str, payload: object) -> Path:
+        path = tmp_path / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    stores = {
+        "PANTHEON_BFF_PERSONA_REGISTRY_STORE": write_store(
+            "personas.json",
+            {
+                persona_custom: {
+                    "persona_id": persona_custom,
+                    "name": "Custom Empty US",
+                    "lifecycle_state": "deployed",
+                    "status": "deployed",
+                    "created_at": "2026-07-13T00:00:00Z",
+                    "metadata": {
+                        "market_scope": ["US"],
+                        "capital_mode": "paper",
+                        "deployment_stage": "paper",
+                    },
+                },
+            },
+        ),
+        "PANTHEON_BFF_PERSONA_SESSION_STORE": write_store("sessions.json", {}),
+        "PANTHEON_BFF_PERSONA_BINDING_STORE": write_store("persona_capital_bindings.json", {}),
+        "PANTHEON_BFF_RUNTIME_BINDING_STORE": write_store(
+            "runtime_bindings.json",
+            {
+                runtime_binding_unassigned: {
+                    "binding_id": runtime_binding_unassigned,
+                    "runtime_id": runtime_unassigned,
+                    "persona_id": "persona-us-equity",  # stale seed persona_id
+                    "deployment_mode": "paper",
+                    "status": "active",
+                },
+            },
+        ),
+        "PANTHEON_BFF_DEPLOYMENT_PLAN_STORE": write_store("deployment_plans.json", {}),
+        "PANTHEON_BFF_TELEMETRY_SUMMARY_STORE": write_store(
+            "telemetry_summaries.json",
+            {
+                runtime_unassigned: {
+                    "runtime_id": runtime_unassigned,
+                    "projection_source": "telemetry_ingest",
+                    "collected_at": "2026-07-13T00:10:00Z",
+                    "pnl": 0.55,
+                    "drawdown": 0.05,
+                    "fill_rate": 0.95,
+                    "avg_slippage_bps": 2.0,
+                    "sharpe_ratio": 2.0,
+                    "total_trades": 6841,
+                },
+            },
+        ),
+    }
+    for env_name in (
+        "PANTHEON_PERSONA_DATA_DIR",
+        "PANTHEON_GOVERNANCE_DATA_DIR",
+        "PANTHEON_RUNTIME_DATA_DIR",
+        "PANTHEON_PERSONA_SERVICE_URL",
+        "PANTHEON_RUNTIME_MANAGER_URL",
+        "PANTHEON_TELEMETRY_API_URL",
+        "PANTHEON_TELEMETRY_URL",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    for env_name, path in stores.items():
+        monkeypatch.setenv(env_name, str(path))
+
+    store = ReadSurfaceStore(
+        str(tmp_path / "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    runtimes = {runtime["runtime_id"]: runtime for runtime in store.list_runtime_bindings()}
+    # The unassigned devloop runtime has no canonical binding or unique declaration, so it must reconcile to None.
+    assert runtimes[runtime_unassigned]["persona_id"] is None
+
+    with _client_with_store(store) as client:
+        attribution_response = client.get(
+            "/bff/management/performance-attribution/by-persona?page_size=100",
+            headers=HEADERS,
+        )
+        fleet_response = client.get(
+            "/bff/management/persona-fleet?page_size=100",
+            headers=HEADERS,
+        )
+
+    assert attribution_response.status_code == 200, attribution_response.text
+    attribution_rows = {
+        item["dimension_key"]: item
+        for item in attribution_response.json()["data"]["items"]
+    }
+    # Unassigned telemetry remains categorized as unassigned
+    assert attribution_rows["unassigned"]["metrics"]["total_trades"] == 6841
+    # Custom empty persona does not get any telemetry
+    assert persona_custom not in attribution_rows
+
+    assert fleet_response.status_code == 200, fleet_response.text
+    fleet_rows = {
+        item["persona_id"]: item
+        for item in fleet_response.json()["data"]["items"]
+    }
+    # Custom empty persona has no telemetry, so performance fields must be null (not faked from same-market seed)
+    custom_perf = fleet_rows[persona_custom]["performance_summary"]
+    assert custom_perf["source"] == "unavailable"
+    assert custom_perf["pnl"] is None
+    assert custom_perf["max_drawdown"] is None
+    assert custom_perf["total_trades"] is None
+
+
+def test_canonical_binding_precedence_and_mixed_topology(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    persona_test = "persona-test-precedence"
+    rt_stale = "rt-stale"
+    binding_stale = "binding-stale"
+    rt_assigned = "rt-assigned"
+    binding_canonical = "binding-canonical"
+    rt_devloop = "rt-devloop"
+
+    def write_store(name: str, payload: object) -> Path:
+        path = tmp_path / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    stores = {
+        "PANTHEON_BFF_PERSONA_REGISTRY_STORE": write_store(
+            "personas.json",
+            {
+                persona_test: {
+                    "persona_id": persona_test,
+                    "name": "Precedence Persona",
+                    "lifecycle_state": "deployed",
+                    "status": "deployed",
+                    "created_at": "2026-07-13T00:00:00Z",
+                    "metadata": {
+                        "market_scope": ["US"],
+                        "capital_mode": "paper",
+                        "deployment_stage": "paper",
+                    },
+                },
+            },
+        ),
+        "PANTHEON_BFF_PERSONA_SESSION_STORE": write_store("sessions.json", {}),
+        "PANTHEON_BFF_PERSONA_BINDING_STORE": write_store(
+            "persona_capital_bindings.json",
+            {
+                binding_canonical: {
+                    "binding_id": binding_canonical,
+                    "persona_capital_binding_id": binding_canonical,
+                    "persona_id": persona_test,
+                    "status": "active",
+                    "validity": "active",
+                }
+            }
+        ),
+        "PANTHEON_BFF_RUNTIME_BINDING_STORE": write_store(
+            "runtime_bindings.json",
+            {
+                "rb-stale": {
+                    "binding_id": "rb-stale",
+                    "runtime_id": rt_stale,
+                    "persona_capital_binding_id": binding_stale,
+                    "persona_id": persona_test,
+                    "deployment_mode": "paper",
+                    "status": "active",
+                },
+                "rb-assigned": {
+                    "binding_id": "rb-assigned",
+                    "runtime_id": rt_assigned,
+                    "persona_capital_binding_id": binding_canonical,
+                    "persona_id": None,
+                    "deployment_mode": "paper",
+                    "status": "active",
+                },
+                "rb-devloop": {
+                    "binding_id": "rb-devloop",
+                    "runtime_id": rt_devloop,
+                    "persona_capital_binding_id": "binding-devloop-unassigned",
+                    "persona_id": "persona-us-equity",  # stale seed
+                    "deployment_mode": "paper",
+                    "status": "active",
+                }
+            },
+        ),
+        "PANTHEON_BFF_DEPLOYMENT_PLAN_STORE": write_store("deployment_plans.json", {}),
+        "PANTHEON_BFF_TELEMETRY_SUMMARY_STORE": write_store("telemetry_summaries.json", {}),
+    }
+
+    for env_name in (
+        "PANTHEON_PERSONA_DATA_DIR",
+        "PANTHEON_GOVERNANCE_DATA_DIR",
+        "PANTHEON_RUNTIME_DATA_DIR",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    for env_name, path in stores.items():
+        monkeypatch.setenv(env_name, str(path))
+
+    # Set service URL env to simulate HTTP service-backed client
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry-service.pantheon")
+
+    # Mock HTTP GET for telemetry summaries
+    def mock_http_json_get(base_url, path, **kwargs):
+        if "runtime-summaries" in path:
+            return True, {
+                "summaries": [
+                    {
+                        "runtime_id": rt_assigned,
+                        "collected_at": "2026-07-13T01:00:00Z",
+                        "pnl": 0.0,
+                        "drawdown": 0.0,
+                        "fill_rate": 0.0,
+                        "avg_slippage_bps": 0.0,
+                        "total_trades": 0,
+                    },
+                    {
+                        "runtime_id": rt_devloop,
+                        "collected_at": "2026-07-13T02:00:00Z",
+                        "pnl": 120.5,
+                        "drawdown": 0.01,
+                        "fill_rate": 0.99,
+                        "avg_slippage_bps": 0.5,
+                        "total_trades": 45,
+                    }
+                ]
+            }
+        return False, None
+
+    import read_store
+    monkeypatch.setattr(read_store, "_http_json_get", mock_http_json_get)
+
+    store = ReadSurfaceStore(
+        str(tmp_path / "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+
+    # 1. Verify Canonical-binding precedence without registry fallback
+    runtimes = {runtime["runtime_id"]: runtime for runtime in store.list_runtime_bindings()}
+    # Active runtime binding resolves to persona_test via binding-canonical
+    assert runtimes[rt_assigned]["persona_capital_binding_id"] == binding_canonical
+    assert runtimes[rt_assigned]["persona_id"] == persona_test
+
+    # Stale runtime binding resolves to None because binding-stale is not active/canonical
+    assert runtimes[rt_stale]["persona_id"] is None
+
+    # Devloop runtime binding resolves to None because binding-devloop-unassigned is not active/canonical
+    assert runtimes[rt_devloop]["persona_id"] is None
+
+    with _client_with_store(store) as client:
+        attribution_response = client.get(
+            "/bff/management/performance-attribution/by-persona?page_size=100",
+            headers=HEADERS,
+        )
+        fleet_response = client.get(
+            "/bff/management/persona-fleet?page_size=100",
+            headers=HEADERS,
+        )
+        league_response = client.get(
+            "/bff/management/persona-league/rankings",
+            headers=HEADERS,
+        )
+
+    assert attribution_response.status_code == 200, attribution_response.text
+    attribution_rows = {
+        item["dimension_key"]: item
+        for item in attribution_response.json()["data"]["items"]
+    }
+    # Assigned persona has its own zero metrics record
+    assert attribution_rows[persona_test]["metrics"]["total_trades"] == 0
+    # Devloop telemetry stays fail-closed in unassigned
+    assert attribution_rows["unassigned"]["metrics"]["total_trades"] == 45
+
+    assert fleet_response.status_code == 200, fleet_response.text
+    fleet_rows = {
+        item["persona_id"]: item
+        for item in fleet_response.json()["data"]["items"]
+    }
+    # Assigned persona must show exact telemetry fields and source 'telemetry_summaries'
+    assigned_perf = fleet_rows[persona_test]["performance_summary"]
+    assert assigned_perf["source"] == "telemetry_summaries"
+    assert assigned_perf["pnl"] == 0.0
+    assert assigned_perf["max_drawdown"] == 0.0
+    assert assigned_perf["total_trades"] == 0
+    
+    # Absent persona-owned evidence on custom persona must not leak seed values
+    assert fleet_rows[persona_test]["perf_delta"] is None
+
+    assert league_response.status_code == 200, league_response.text
