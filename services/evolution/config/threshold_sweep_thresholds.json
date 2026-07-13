@@ -1,0 +1,23 @@
+{
+  "_schema_note": "Governance ThresholdEvaluator schema (services/control-plane/governance/evolution_decision.py ThresholdSnapshot). This file is live config only: edit it (or point EVOCHAIN_THRESHOLD_SWEEP_CONFIG_PATH at an override) to retune values, no image rebuild required.",
+  "thresholds": [
+    {
+      "metric_name": "rolling_drawdown_multiple",
+      "signal_type": "performance_degradation",
+      "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1",
+      "summary_field": "drawdown",
+      "comparator": "gt",
+      "threshold_value": 1.25,
+      "window": "paper-daily-sweep"
+    },
+    {
+      "metric_name": "rolling_pnl_floor",
+      "signal_type": "performance_degradation",
+      "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1 (drawdown-derived policy; absolute PnL floor is an operator-tunable placeholder pending capital-scale calibration)",
+      "summary_field": "pnl",
+      "comparator": "lt",
+      "threshold_value": -500.0,
+      "window": "paper-daily-sweep"
+    }
+  ]
+}
