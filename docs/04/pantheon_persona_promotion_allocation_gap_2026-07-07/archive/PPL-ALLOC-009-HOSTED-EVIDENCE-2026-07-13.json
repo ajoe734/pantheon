@@ -1,6 +1,6 @@
 {
   "task_id": "PPL-ALLOC-009",
-  "captured_at": "2026-07-13T04:19:09Z",
+  "captured_at": "2026-07-13T04:57:49Z",
   "environment": "dev",
   "deployment": {
     "frontend": {
@@ -13,8 +13,8 @@
     "bff": {
       "health_status": 200,
       "health_service": "operator-bff",
-      "dev_deploy_run": 29216864125,
-      "dev_deploy_source_sha": "72a61ceb43ab970bdeabb3eae7938920b8898379",
+      "dev_deploy_run": 29225028783,
+      "dev_deploy_source_sha": "276eb9c0312871aeb2ebb2f14545720da040e46a",
       "deploy_conclusion": "success",
       "commit_identity_endpoint": false
     }
@@ -69,6 +69,25 @@
     "apply_command_id": "7a3e7310-0596-4805-81d6-40b75fd7a412",
     "apply_command_status_after_polls": "submitted",
     "proposal_applied_after_command": false,
+    "terminal_receipt_recheck": {
+      "previous_rebalance_read_after_deploy_status": 404,
+      "restart_persistence_preserved": false,
+      "rebalance_id": "rb-20260713-002",
+      "proposal_create_status": 202,
+      "apply_without_approval_status": 409,
+      "apply_without_approval_error": "PRECONDITION_FAILED",
+      "apply_with_approval_status": 202,
+      "apply_command_id": "a729a21d-2d92-40ad-a8f4-95cf767cbac7",
+      "apply_command_status": "executed",
+      "dispatch_path": "bff_action_adapter",
+      "entity_type": "Rebalance",
+      "entity_id": "rb-20260713-002",
+      "live_capital_side_effects": false,
+      "proposal_status_after_command": "pending",
+      "proposal_applied_after_command": false,
+      "readback_source": "local_snapshot",
+      "readback_status": "degraded"
+    },
     "authoritative_capital_readback": false
   },
   "emergency_containment": {
