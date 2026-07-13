@@ -60,7 +60,7 @@ from services.evolution.threshold_sweep_worker import (
 from services.incident.incident import IncidentStore
 from services.incident.reference_validation import CanonicalReferenceValidator
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
-from services.incidents.main import app, store as main_store
+from services.incidents.main import app
 
 _SCHEMA_PATH = str(
     Path(__file__).resolve().parents[1] / "telemetry" / "telemetry_event.schema.json"
@@ -95,6 +95,12 @@ THRESHOLDS = [
 
 BASELINES = {"artifact-evochain-001": {"expected_drawdown": 0.12}}
 
+# Fixed reference "now" for freshness checks: 30 seconds after the fixtures'
+# heartbeat/metric as-of times below — within RuntimeSummaryProjectionStore's
+# default 90s heartbeat-staleness window *and* this worker's metric-freshness
+# window, and deterministic across real test-run times.
+_NOW = datetime(2026, 7, 13, 0, 0, 30, tzinfo=timezone.utc)
+
 
 def _summary(**overrides) -> dict:
     base = {
@@ -108,17 +114,39 @@ def _summary(**overrides) -> dict:
         "artifact_version": "1.0.0",
         "drawdown": 0.18,  # raw fraction; ratio vs 0.12 baseline = 1.5 > 1.25 -> breach
         "pnl": -120.0,
+        "last_heartbeat_at": "2026-07-13T00:00:00Z",
+        "drawdown_at": "2026-07-13T00:00:00Z",
+        "pnl_at": "2026-07-13T00:00:00Z",
     }
     base.update(overrides)
     return base
 
 
 def _seed_real_summary(store: RuntimeSummaryProjectionStore, **event_overrides) -> dict:
-    """Project a real telemetry-shaped event and return the store's summary.
+    """Project real telemetry-shaped events and return the store's summary.
 
     Used so tests exercise the actual RuntimeSummaryProjectionStore projection
-    instead of hand-crafting a summary dict with the ratio already baked in.
+    instead of hand-crafting a summary dict with the ratio (or freshness
+    markers) already baked in. Seeds a heartbeat event first (affirmative
+    freshness signal) and then the metric event.
     """
+    heartbeat_event = {
+        "runtime_id": "runtime-evochain-001",
+        "binding_id": "rb-evochain-001",
+        "deployment_stage": "paper",
+        "capital_pool_id": "pool-evochain-001",
+        "artifact_id": "artifact-evochain-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-evochain-001",
+        "persona_capital_binding_id": "pcb-evochain-001",
+        "event_id": f"evt-seed-heartbeat-{uuid.uuid4().hex[:8]}",
+        "event_type": "heartbeat",
+        "created_at": "2026-07-13T00:00:00Z",
+        "metadata": {"connectivity_status": "connected"},
+        "metrics": {"heartbeat": 1},
+    }
+    store.project_event(heartbeat_event)
+
     event = {
         "runtime_id": "runtime-evochain-001",
         "binding_id": "rb-evochain-001",
@@ -135,7 +163,7 @@ def _seed_real_summary(store: RuntimeSummaryProjectionStore, **event_overrides) 
     }
     event.update(event_overrides)
     store.project_event(event)
-    return store.get(event["runtime_id"])
+    return store.get(event["runtime_id"], now=_NOW)
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +223,55 @@ def test_load_thresholds_drops_disabled_entries(tmp_path):
     assert load_thresholds(str(cfg)) == []
 
 
+def test_load_thresholds_drops_truthy_non_bool_enabled(tmp_path):
+    """`"false"` is truthy in Python; a live-config typo must not activate an
+    uncalibrated/unapproved threshold (round-2 review: "`enabled` is
+    truthiness-based (`"false"` enables an entry)")."""
+    cfg = tmp_path / "cfg.json"
+    entry = dict(THRESHOLDS[0])
+    entry["enabled"] = "false"
+    cfg.write_text(json.dumps({"thresholds": [entry]}), encoding="utf-8")
+    assert load_thresholds(str(cfg)) == []
+
+
+def test_load_thresholds_drops_unhashable_comparator_without_raising(tmp_path):
+    """An unhashable JSON value for `comparator` must be dropped fail-closed
+    at load time, not raise TypeError and restart-loop the default-on worker
+    (round-2 review point 5)."""
+    cfg = tmp_path / "cfg.json"
+    entry = dict(THRESHOLDS[0])
+    entry["comparator"] = ["gt"]
+    cfg.write_text(json.dumps({"thresholds": [entry]}), encoding="utf-8")
+    assert load_thresholds(str(cfg)) == []
+
+
+def test_load_thresholds_drops_unhashable_telemetry_event_type_without_raising(tmp_path):
+    cfg = tmp_path / "cfg.json"
+    entry = dict(THRESHOLDS[0])
+    entry["telemetry_event_type"] = {"nested": "value"}
+    cfg.write_text(json.dumps({"thresholds": [entry]}), encoding="utf-8")
+    assert load_thresholds(str(cfg)) == []
+
+
+def test_load_thresholds_drops_unhashable_ratio_baseline_key_without_raising(tmp_path):
+    """A list `ratio_baseline_key` would raise TypeError from
+    `dict.get(unhashable)` in evaluate_breaches() if it reached that far;
+    it must be dropped here instead."""
+    cfg = tmp_path / "cfg.json"
+    entry = dict(THRESHOLDS[0])
+    entry["ratio_baseline_key"] = ["expected_drawdown"]
+    cfg.write_text(json.dumps({"thresholds": [entry]}), encoding="utf-8")
+    assert load_thresholds(str(cfg)) == []
+
+
+def test_load_thresholds_drops_non_finite_threshold_value(tmp_path):
+    cfg = tmp_path / "cfg.json"
+    entry = dict(THRESHOLDS[0])
+    entry["threshold_value"] = float("nan")
+    cfg.write_text(json.dumps({"thresholds": [entry]}, allow_nan=True), encoding="utf-8")
+    assert load_thresholds(str(cfg)) == []
+
+
 # ---------------------------------------------------------------------------
 # load_baselines — fail-closed on missing/malformed live config
 # ---------------------------------------------------------------------------
@@ -230,7 +307,7 @@ def test_evaluate_breaches_detects_drawdown_breach_from_real_projection():
     summary = _seed_real_summary(projection_store)
 
     payloads, diagnostics = evaluate_breaches(
-        [summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES
+        [summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
 
     drawdown_payloads = [p for p in payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"]
@@ -245,7 +322,7 @@ def test_evaluate_breaches_detects_drawdown_breach_from_real_projection():
 
 def test_evaluate_breaches_missing_baseline_is_diagnostic_only_fail_closed():
     payloads, diagnostics = evaluate_breaches(
-        [_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines={}
+        [_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines={}, now=_NOW
     )
     assert all(p["threshold_snapshot"]["metric_name"] != "rolling_drawdown_multiple" for p in payloads)
     assert any("no approved" in d and "expected_drawdown" in d for d in diagnostics)
@@ -253,7 +330,7 @@ def test_evaluate_breaches_missing_baseline_is_diagnostic_only_fail_closed():
 
 def test_evaluate_breaches_no_breach_when_within_threshold():
     payloads, diagnostics = evaluate_breaches(
-        [_summary(drawdown=0.10, pnl=10.0)], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES
+        [_summary(drawdown=0.10, pnl=10.0)], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     assert payloads == []
     assert diagnostics == []
@@ -261,7 +338,7 @@ def test_evaluate_breaches_no_breach_when_within_threshold():
 
 def test_evaluate_breaches_skips_non_paper_stage():
     payloads, diagnostics = evaluate_breaches(
-        [_summary(deployment_stage="canary")], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES
+        [_summary(deployment_stage="canary")], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     assert payloads == []
     assert any("not eligible for the paper threshold sweep" in d for d in diagnostics)
@@ -290,17 +367,95 @@ def test_evaluate_breaches_skips_stale_summary():
     stale_summary = projection_store.get("runtime-evochain-001", now=far_future)
 
     payloads, diagnostics = evaluate_breaches(
-        [stale_summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES
+        [stale_summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     assert payloads == []
     assert any("stale/degraded" in d for d in diagnostics)
+
+
+def test_evaluate_breaches_missing_heartbeat_is_diagnostic_only_fail_closed():
+    """A real summary with no heartbeat/state/connectivity must not read as
+    healthy just because it carries no explicit bad marker (round-2 review:
+    "a real summary with no heartbeat/state/connectivity is accepted")."""
+    projection_store = RuntimeSummaryProjectionStore(path=None)
+    drawdown_event = {
+        "runtime_id": "runtime-evochain-001",
+        "binding_id": "rb-evochain-001",
+        "deployment_stage": "paper",
+        "capital_pool_id": "pool-evochain-001",
+        "artifact_id": "artifact-evochain-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-evochain-001",
+        "persona_capital_binding_id": "pcb-evochain-001",
+        "event_id": "evt-no-heartbeat-001",
+        "event_type": "drawdown_snapshot",
+        "created_at": "2026-07-13T00:00:00Z",
+        "metrics": {"drawdown_pct": 0.30, "pnl": -120.0},  # would breach if evaluated
+    }
+    no_heartbeat_summary = projection_store.project_event(drawdown_event)
+    assert "last_heartbeat_at" not in no_heartbeat_summary
+
+    payloads, diagnostics = evaluate_breaches(
+        [no_heartbeat_summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    assert payloads == []
+    assert any("stale/degraded" in d for d in diagnostics)
+
+
+def test_evaluate_breaches_old_metric_with_fresh_heartbeat_is_diagnostic_only_fail_closed():
+    """A fresh heartbeat must not mask an old metric value (round-2 review:
+    "a fresh heartbeat masks an arbitrarily old drawdown value... a probe
+    with a 12-day-old drawdown plus a fresh heartbeat produced one breach
+    and no diagnostic")."""
+    projection_store = RuntimeSummaryProjectionStore(path=None)
+    old_drawdown_event = {
+        "runtime_id": "runtime-evochain-001",
+        "binding_id": "rb-evochain-001",
+        "deployment_stage": "paper",
+        "capital_pool_id": "pool-evochain-001",
+        "artifact_id": "artifact-evochain-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-evochain-001",
+        "persona_capital_binding_id": "pcb-evochain-001",
+        "event_id": "evt-old-drawdown-001",
+        "event_type": "drawdown_snapshot",
+        "created_at": "2026-07-01T00:00:00Z",  # 12 days before the fresh heartbeat below
+        "metrics": {"drawdown_pct": 0.30, "pnl": -120.0},  # would breach if evaluated
+    }
+    projection_store.project_event(old_drawdown_event)
+
+    fresh_heartbeat_event = {
+        "runtime_id": "runtime-evochain-001",
+        "binding_id": "rb-evochain-001",
+        "deployment_stage": "paper",
+        "capital_pool_id": "pool-evochain-001",
+        "artifact_id": "artifact-evochain-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-evochain-001",
+        "persona_capital_binding_id": "pcb-evochain-001",
+        "event_id": "evt-fresh-heartbeat-001",
+        "event_type": "heartbeat",
+        "created_at": "2026-07-13T00:00:00Z",
+        "metadata": {"connectivity_status": "connected"},
+        "metrics": {"heartbeat": 1},
+    }
+    projection_store.project_event(fresh_heartbeat_event)
+
+    summary = projection_store.get("runtime-evochain-001", now=_NOW)
+    assert "staleness" not in summary  # heartbeat itself is fresh
+
+    payloads, diagnostics = evaluate_breaches(
+        [summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    assert all(p["threshold_snapshot"]["metric_name"] != "rolling_drawdown_multiple" for p in payloads)
+    assert any("no fresh as-of time" in d for d in diagnostics)
 
 
 def test_evaluate_breaches_missing_identity_field_is_diagnostic_only():
     incomplete = _summary()
     del incomplete["capital_pool_id"]
     payloads, diagnostics = evaluate_breaches(
-        [incomplete], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES
+        [incomplete], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     assert payloads == []
     assert any("missing identity fields" in d for d in diagnostics)
@@ -311,7 +466,7 @@ def test_evaluate_breaches_missing_metric_field_is_diagnostic_only():
     del incomplete["drawdown"]
     del incomplete["pnl"]
     payloads, diagnostics = evaluate_breaches(
-        [incomplete], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES
+        [incomplete], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     assert payloads == []
     assert len(diagnostics) == 2
@@ -319,21 +474,21 @@ def test_evaluate_breaches_missing_metric_field_is_diagnostic_only():
 
 def test_evaluate_breaches_non_numeric_metric_is_diagnostic_only():
     payloads, diagnostics = evaluate_breaches(
-        [_summary(drawdown="not-a-number")], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES
+        [_summary(drawdown="not-a-number")], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     assert all(p["threshold_snapshot"]["metric_name"] != "rolling_drawdown_multiple" for p in payloads)
     assert any("non-numeric" in d for d in diagnostics)
 
 
 def test_evaluate_breaches_dedupe_key_stable_across_reruns():
-    first, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES)
-    second, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES)
+    first, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
+    second, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
     assert first[0]["telemetry_event"]["event_id"] == second[0]["telemetry_event"]["event_id"]
 
 
 def test_evaluate_breaches_dedupe_key_changes_across_window_bucket():
-    day1, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES)
-    day2, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-14", baselines=BASELINES)
+    day1, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
+    day2, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-14", baselines=BASELINES, now=_NOW)
     assert day1[0]["telemetry_event"]["event_id"] != day2[0]["telemetry_event"]["event_id"]
 
 
@@ -342,7 +497,7 @@ def test_evaluate_breaches_dedupe_key_changes_across_window_bucket():
 # ---------------------------------------------------------------------------
 
 def test_derived_telemetry_event_is_schema_valid_and_ingest_admissible():
-    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES)
+    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
     drawdown_event = next(
         p for p in payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
     )["telemetry_event"]
@@ -390,7 +545,7 @@ def test_payload_accepted_by_real_consumer_and_idempotent_on_rerun():
     store = IncidentStore(path=None)
     consumer = ThresholdTelemetryIncidentConsumer(incident_store=store)
 
-    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES)
+    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
     drawdown_payload = next(
         p for p in payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
     )
@@ -399,6 +554,10 @@ def test_payload_accepted_by_real_consumer_and_idempotent_on_rerun():
     assert first.created is True
     assert first.incident.binding_id == "rb-evochain-001"
     assert first.incident.status == "open"
+    # dedupe_key is the operator-facing audit trail proving why a rerun
+    # deduped instead of opening a second incident; it must survive into
+    # canonical incident evidence, not be dropped by the consumer.
+    assert "dedupe_key=" in (first.incident.evidence_summary or "")
 
     second = consumer.consume(drawdown_payload)
     assert second.created is False
@@ -412,7 +571,7 @@ def test_two_breached_metrics_on_same_binding_open_two_distinct_incidents():
     consumer = ThresholdTelemetryIncidentConsumer(incident_store=store)
 
     payloads, _ = evaluate_breaches(
-        [_summary(drawdown=0.30, pnl=-600.0)], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES
+        [_summary(drawdown=0.30, pnl=-600.0)], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     assert len(payloads) == 2
 
@@ -465,11 +624,15 @@ def test_consume_threshold_route_passes_real_canonical_reference_validator(monke
     gap (LIN-001A/LIN-002 lineage is a static benchmark corpus, not a live
     index of ingested events) that keeps this from resolving against the
     *default* unmocked validator today.
-    """
-    main_store._incidents.clear()
-    main_store._postmortems.clear()
 
-    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES)
+    Uses an injected in-memory IncidentStore (not the module-level `store`,
+    which persists to the developer/runtime-shared
+    `/tmp/pantheon/incidents/incidents.json` file) so this test cannot leak a
+    write into that file.
+    """
+    monkeypatch.setattr("services.incidents.main.store", IncidentStore(path=None))
+
+    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
     drawdown_payload = next(
         p for p in payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
     )
@@ -525,8 +688,43 @@ def test_consume_threshold_route_passes_real_canonical_reference_validator(monke
     assert r.status_code == 201, r.text
     assert r.json()["binding_id"] == event["binding_id"]
 
-    main_store._incidents.clear()
-    main_store._postmortems.clear()
+
+def test_consume_threshold_route_422s_against_default_deployed_reference_validator(monkeypatch):
+    """Real route, real DEFAULT (unmocked, no injected fakes) reference_validator.
+
+    This is the "deployed lookup path" the round-2 review asked for: no fake
+    binding/telemetry lookups, so `CanonicalReferenceValidator()`'s default
+    `_RuntimeBindingLookup`/`_TelemetryLineageLookup` are exercised as they
+    would be in the running `incidents` service. `_TelemetryLineageLookup`
+    resolves through `LineageReadService`, which is loaded once at process
+    startup from the static LIN-001A benchmark corpus
+    (`services/registry/lineage/lin001a_benchmark_corpus.json`) — nothing in
+    this codebase writes a freshly-ingested telemetry event into that graph,
+    so this producer's derived event_id can never resolve there today. That
+    is a pre-existing cross-cutting platform gap (see
+    EVOCHAIN-001-threshold-breach-producer.md), not something this producer
+    task can close by itself. This test pins today's actual behavior (422)
+    so a future fix to that platform gap is a visible, deliberate change
+    here, not a silent regression; run_tick's own handling of a non-201/200
+    post_incident status is covered by
+    test_run_tick_fails_closed_when_telemetry_ingest_rejects_derived_event's
+    fail-closed contract (any non-2xx status is a diagnostic, never a
+    fabricated incident).
+    """
+    monkeypatch.setattr("services.incidents.main.store", IncidentStore(path=None))
+    monkeypatch.setattr(
+        "services.incidents.main.reference_validator",
+        CanonicalReferenceValidator(),
+    )
+
+    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
+    drawdown_payload = next(
+        p for p in payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
+    )
+
+    r = client.post("/api/incidents/consume-threshold", json=drawdown_payload)
+    assert r.status_code == 422, r.text
+    assert "reference_errors" in r.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +791,7 @@ def test_run_tick_fails_closed_when_telemetry_ingest_rejects_derived_event():
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
         post_incident=post,
+        now=_NOW,
     )
     assert result["incidents_created"] == 0
     assert result["errors"] >= 1

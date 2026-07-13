@@ -34,6 +34,7 @@ rule.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import urllib.error
@@ -129,6 +130,15 @@ _METRICS_KEY_ALIASES: dict[str, str] = {
     "drawdown": "drawdown_pct",
 }
 
+# Maximum age of a per-metric value (`RuntimeSummaryProjectionStore`'s
+# `f"{field}_at"` companion timestamp) before it is treated as stale and
+# skipped as a diagnostic. A fresh heartbeat never masks an old metric: each
+# metric field is checked against its own as-of time, not the summary's
+# overall last-event time. Generous relative to the default daily sweep
+# cadence (`EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS`), tight relative to a
+# genuinely abandoned metric (e.g. a value last refreshed many days ago).
+_DEFAULT_METRIC_MAX_AGE_SECONDS = 172800  # 2 days
+
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
     value = int(os.getenv(name, str(default)))
@@ -167,13 +177,38 @@ def load_thresholds(path: str | None = None) -> list[dict[str, Any]]:
             continue
         if not all(key in entry for key in _REQUIRED_THRESHOLD_KEYS):
             continue
-        if entry["comparator"] not in _COMPARATORS:
+        # Strict scalar/enum typing so a malformed-but-JSON-valid entry (e.g.
+        # a list where a string is expected) is dropped here, fail-closed,
+        # instead of raising TypeError later in evaluate_breaches() when it
+        # is used as a dict key or comparator lookup.
+        if not all(
+            isinstance(entry.get(key), str)
+            for key in ("metric_name", "signal_type", "policy_source", "summary_field")
+        ):
             continue
-        if isinstance(entry["threshold_value"], bool) or not isinstance(entry["threshold_value"], (int, float)):
+        comparator = entry["comparator"]
+        if not isinstance(comparator, str) or comparator not in _COMPARATORS:
             continue
-        if entry["telemetry_event_type"] not in _TELEMETRY_EVENT_TYPES:
+        threshold_value = entry["threshold_value"]
+        if (
+            isinstance(threshold_value, bool)
+            or not isinstance(threshold_value, (int, float))
+            or not math.isfinite(threshold_value)
+        ):
             continue
-        if not entry.get("enabled", False):
+        telemetry_event_type = entry["telemetry_event_type"]
+        if not isinstance(telemetry_event_type, str) or telemetry_event_type not in _TELEMETRY_EVENT_TYPES:
+            continue
+        ratio_baseline_key = entry.get("ratio_baseline_key")
+        if ratio_baseline_key is not None and not isinstance(ratio_baseline_key, str):
+            continue
+        window = entry.get("window")
+        if window is not None and not isinstance(window, str):
+            continue
+        # `enabled` must be a literal bool: a truthy non-bool JSON value
+        # (e.g. the string "false", which is truthy in Python) must not
+        # silently activate an uncalibrated/unapproved threshold.
+        if entry.get("enabled") is not True:
             continue
         valid.append(dict(entry))
     return valid
@@ -223,6 +258,14 @@ def _extract_identity(summary: Mapping[str, Any]) -> tuple[dict[str, str], list[
 
 
 def _is_stale_or_degraded(summary: Mapping[str, Any]) -> bool:
+    # Require an affirmative freshness signal rather than only rejecting
+    # explicit bad markers: a summary that has never received a heartbeat
+    # carries no `staleness`/`state`/`connectivity_status` markers at all
+    # (RuntimeSummaryProjectionStore only sets them once a heartbeat event
+    # has been projected), so treat "no heartbeat on record" itself as
+    # ambiguous/fail-closed instead of implicitly healthy.
+    if not summary.get("last_heartbeat_at"):
+        return True
     if summary.get("staleness"):
         return True
     if str(summary.get("state") or "").strip().lower() == "degraded":
@@ -232,12 +275,45 @@ def _is_stale_or_degraded(summary: Mapping[str, Any]) -> bool:
     return False
 
 
+def _parse_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _metric_is_stale(
+    summary: Mapping[str, Any],
+    field: str,
+    *,
+    now: datetime,
+    max_age_seconds: int,
+) -> bool:
+    """A fresh heartbeat must never mask an old metric value.
+
+    ``RuntimeSummaryProjectionStore`` stamps each metric field with its own
+    ``f"{field}_at"`` as-of time. A metric with no as-of time on record, or
+    one whose as-of time is missing/unparseable/too old/in the future, is
+    ambiguous and must not be evaluated (fail-closed).
+    """
+    as_of = _parse_utc(summary.get(f"{field}_at"))
+    if as_of is None:
+        return True
+    age_seconds = (now - as_of).total_seconds()
+    return age_seconds < 0 or age_seconds > max_age_seconds
+
+
 def evaluate_breaches(
     summaries: Sequence[Mapping[str, Any]],
     thresholds: Sequence[Mapping[str, Any]],
     *,
     window_bucket: str,
     baselines: Mapping[str, Mapping[str, Any]] | None = None,
+    now: datetime | None = None,
+    metric_max_age_seconds: int = _DEFAULT_METRIC_MAX_AGE_SECONDS,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Evaluate runtime performance summaries against live-config thresholds.
 
@@ -250,6 +326,7 @@ def evaluate_breaches(
     diagnostics: list[str] = []
     payloads: list[dict[str, Any]] = []
     active_baselines = baselines or {}
+    moment = now or datetime.now(timezone.utc)
 
     for summary in summaries:
         if not isinstance(summary, Mapping):
@@ -286,6 +363,14 @@ def evaluate_breaches(
                 diagnostics.append(
                     f"skip {identity['binding_id']}/{metric_name}: "
                     f"telemetry field {field!r} missing or non-numeric"
+                )
+                continue
+
+            if _metric_is_stale(summary, field, now=moment, max_age_seconds=metric_max_age_seconds):
+                diagnostics.append(
+                    f"skip {identity['binding_id']}/{metric_name}: "
+                    f"telemetry field {field!r} has no fresh as-of time; a fresh heartbeat does not "
+                    "make an old metric value evaluable (fail-closed)"
                 )
                 continue
 
@@ -423,6 +508,7 @@ def run_tick(
     baselines: Mapping[str, Mapping[str, Any]] | None = None,
     timeout: float = 30.0,
     now: datetime | None = None,
+    metric_max_age_seconds: int = _DEFAULT_METRIC_MAX_AGE_SECONDS,
     fetch_summaries: Callable[..., list[dict[str, Any]]] = default_fetch_summaries,
     admit_telemetry_event: Callable[..., dict[str, Any]] = default_admit_telemetry_event,
     post_incident: Callable[..., dict[str, Any]] = default_post_incident,
@@ -457,7 +543,12 @@ def run_tick(
 
     result["summaries_evaluated"] = len(summaries)
     candidates, diagnostics = evaluate_breaches(
-        summaries, active_thresholds, window_bucket=window_bucket, baselines=active_baselines
+        summaries,
+        active_thresholds,
+        window_bucket=window_bucket,
+        baselines=active_baselines,
+        now=moment,
+        metric_max_age_seconds=metric_max_age_seconds,
     )
     result["candidates"] = len(candidates)
     result["diagnostics"].extend(diagnostics)
@@ -520,6 +611,11 @@ def main() -> int:
     baselines_path = os.getenv("EVOCHAIN_THRESHOLD_SWEEP_BASELINES_PATH") or None
     interval_seconds = _env_int("EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS", 86400, minimum=1)
     max_ticks = _env_int("EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS", 0, minimum=0)
+    metric_max_age_seconds = _env_int(
+        "EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS",
+        _DEFAULT_METRIC_MAX_AGE_SECONDS,
+        minimum=1,
+    )
 
     tick = 0
     while True:
@@ -529,6 +625,7 @@ def main() -> int:
             incidents_api_url=incidents_api_url,
             config_path=config_path,
             baselines_path=baselines_path,
+            metric_max_age_seconds=metric_max_age_seconds,
         )
         print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)
         if max_ticks and tick >= max_ticks:

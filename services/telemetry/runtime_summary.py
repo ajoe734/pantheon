@@ -159,6 +159,12 @@ class RuntimeSummaryProjectionStore:
                 for source_key in source_keys:
                     if source_key in metrics:
                         current[target_key] = metrics[source_key]
+                        # Per-metric as-of timestamp: a metric only carried
+                        # forward by `dict.update` above (e.g. an old drawdown
+                        # value untouched by a newer heartbeat-only event)
+                        # must not read as fresh just because the summary's
+                        # overall `last_event_at` advanced.
+                        current[f"{target_key}_at"] = event_time
                         break
 
             # Surface executed paper fills so trade activity is visible end-to-end.
