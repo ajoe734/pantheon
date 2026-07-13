@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -12,12 +13,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main as bff_main
 from command_queue import CommandStore
 from read_store import ReadSurfaceStore
+from rebalance_authority_test_support import CapitalBffAuthorityHarness
 
 
 HEADERS = {"Authorization": "Bearer codex2-ppl-alloc:operator,reviewer"}
 LIVE_PERSONA_ID = "persona-ppl-alloc-012-live"
 LIVE_BINDING_ID = "binding-ppl-alloc-012-live"
 LIVE_RUNTIME_ID = "runtime-ppl-alloc-012-live"
+LIVE_SLEEVE_ID = "sleeve-ppl-alloc-012-live"
 LIVE_ARCHETYPE = "ppl_alloc_live"
 
 
@@ -41,7 +44,7 @@ def _write_live_binding(store: ReadSurfaceStore, *, current_weight: float) -> No
         metadata={
             "allowed_deployment_scope": "live",
             "capital_mode": "live",
-            "capital_sleeve_id": "sleeve-live",
+            "capital_sleeve_id": LIVE_SLEEVE_ID,
             "current_weight": current_weight,
         },
     )
@@ -68,7 +71,7 @@ def _seed_live_persona(store: ReadSurfaceStore) -> None:
         state="running",
         params={
             "capital_pool_id": "pool-real",
-            "capital_sleeve_id": "sleeve-live",
+            "capital_sleeve_id": LIVE_SLEEVE_ID,
             "current_weight": 0.04,
         },
     )
@@ -253,10 +256,31 @@ def test_snapshot_id_is_stable_across_semantically_equivalent_item_ordering() ->
 def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        harness: CapitalBffAuthorityHarness | None = None
         try:
-            client = _client(td)
+            harness = CapitalBffAuthorityHarness(Path(td))
+            harness.__enter__()
+            assert harness.client is not None
+            client = harness.client
             store = bff_main.read_store
             assert isinstance(store, ReadSurfaceStore)
+            owner_binding = client.post(
+                "/api/v1/bindings",
+                headers={
+                    "Authorization": "Bearer codex2-ppl-alloc:operator",
+                    "Idempotency-Key": "ppl-alloc-012-owner-binding",
+                },
+                json={
+                    "binding_id": LIVE_BINDING_ID,
+                    "persona_id": LIVE_PERSONA_ID,
+                    "capital_pool_id": "pool-real",
+                    "capital_sleeve_id": LIVE_SLEEVE_ID,
+                    "role": "live_owner",
+                    "allowed_deployment_scope": "live",
+                },
+            )
+            assert owner_binding.status_code == 201, owner_binding.text
             _seed_live_persona(store)
 
             quarterly = client.get(
@@ -281,9 +305,9 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
             )
             assert live_row["stage"] == "live_running"
             assert live_row["capital_scope"] == "live_sleeve"
-            assert live_row["capital_scope_id"] == "sleeve-live"
+            assert live_row["capital_scope_id"] == LIVE_SLEEVE_ID
             assert live_row["capital_pool_id"] == "pool-real"
-            assert live_row["capital_sleeve_id"] == "sleeve-live"
+            assert live_row["capital_sleeve_id"] == LIVE_SLEEVE_ID
             assert live_row["current_weight"] == 0.04
             assert live_row["current_weight_source"] == "persona_binding"
             assert live_row["eligible"] is True
@@ -291,15 +315,6 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
             assert "telemetry-summary:runtime-ppl-alloc-012-live" in {
                 ref["ref_id"] for ref in live_row["evidence_refs"]
             }
-
-            paper_row = _item_by_persona(
-                quarterly_body["data"]["items"],
-                "persona-alpha",
-            )
-            assert paper_row["stage"] == "paper_running"
-            assert paper_row["current_weight"] is None
-            assert paper_row["current_weight_source"] == "not_applicable_paper_ledger"
-            assert paper_row["capital_scope"] == "paper_ledger"
 
             filtered = client.get(
                 "/bff/management/quarterly-ranking",
@@ -404,6 +419,8 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
             evaluation_body = evaluation.json()
             line = evaluation_body["data"]["lines"][0]
             assert evaluation_body["meta"]["ranking_snapshot_id"] == snapshot_id
+            evaluation_id = evaluation_body["data"]["allocation_evaluation_id"]
+            policy_version = evaluation_body["data"]["allocation_policy_version"]
             for field in (
                 "ranking_snapshot_id",
                 "persona_id",
@@ -412,9 +429,42 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
                 "capital_pool_id",
                 "capital_sleeve_id",
                 "current_weight",
-                "evidence_refs",
             ):
                 assert line[field] == live_row[field]
+            assert line["evidence_refs"] == live_row["evidence_ref_ids"]
+
+            row_tamper_cases = {
+                "stage": "paper_running",
+                "current_weight": 0.99,
+                "target_weight": 0.99,
+                "delta": 0.99,
+                "allocation_policy_input": {},
+                "evidence_ref_ids": [*live_row["evidence_ref_ids"], "forged-evidence"],
+                "evidence_refs": [
+                    *live_row["evidence_refs"],
+                    {"ref_id": "forged-evidence"},
+                ],
+            }
+            for field, forged_value in row_tamper_cases.items():
+                tampered = client.post(
+                    "/bff/management/allocation-policy/evaluate",
+                    headers=HEADERS,
+                    json={
+                        "ranking_snapshot_id": snapshot_id,
+                        "rows": [{**live_row, field: forged_value}],
+                    },
+                )
+                assert tampered.status_code == 422, (field, tampered.text)
+
+            reloaded = ReadSurfaceStore(
+                str(harness.read_path),
+                allow_local_snapshot_fallback=False,
+            )
+            assert reloaded.get_ranking_snapshot(snapshot_id) is not None
+            assert reloaded.get_allocation_evaluation(evaluation_id) is not None
+            harness.restart()
+            assert harness.client is not None
+            client = harness.client
 
             proposal = client.post(
                 "/bff/rebalances",
@@ -422,6 +472,8 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
                 json={
                     "capital_pool_id": "pool-real",
                     "ranking_snapshot_id": snapshot_id,
+                    "allocation_evaluation_id": evaluation_id,
+                    "allocation_policy_version": policy_version,
                     "reason": "PPL-ALLOC-012 round trip",
                     "lines": evaluation_body["data"]["lines"],
                     "simulation": {"status": "passed"},
@@ -438,13 +490,74 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
             assert detail.status_code == 200, detail.text
             detail_data = detail.json()["data"]
             assert detail_data["ranking_snapshot_id"] == snapshot_id
+            assert detail_data["allocation_evaluation_id"] == evaluation_id
+            assert detail_data["allocation_policy_version"] == policy_version
             assert detail_data["lines"][0]["ranking_snapshot_id"] == snapshot_id
-            assert detail_data["lines"][0]["evidence_refs"] == live_row["evidence_refs"]
+            assert detail_data["lines"][0]["evidence_refs"] == live_row["evidence_ref_ids"]
+            for field in (
+                "current_weight",
+                "target_weight",
+                "delta",
+                "cap_reasons",
+                "allocation_line_digest",
+            ):
+                assert detail_data["lines"][0][field] == line[field]
+
+            proposal_tamper_cases = {
+                "current_weight": 0.03,
+                "target_weight": 0.08,
+                "delta": 0.04,
+                "cap_reasons": ["forged-cap"],
+                "evidence_refs": [*line["evidence_refs"], "forged-evidence"],
+            }
+            for index, (field, forged_value) in enumerate(
+                proposal_tamper_cases.items()
+            ):
+                forged_line = {**line, field: forged_value}
+                if index % 2:
+                    forged_line.pop("allocation_line_digest", None)
+                    forged_line["allocation_line_digest"] = bff_main._pm12_allocation_line_digest(
+                        forged_line
+                    )
+                tampered = client.post(
+                    "/bff/rebalances",
+                    headers={
+                        **HEADERS,
+                        "Idempotency-Key": f"ppl-alloc-012-line-tamper-{index}",
+                    },
+                    json={
+                        "capital_pool_id": "pool-real",
+                        "ranking_snapshot_id": snapshot_id,
+                        "allocation_evaluation_id": evaluation_id,
+                        "allocation_policy_version": policy_version,
+                        "reason": "PPL-ALLOC-012 tamper rejection",
+                        "lines": [forged_line],
+                        "simulation": {"status": "passed"},
+                        "constraints": {"pool_total_max": 1},
+                        "rollback_target": {
+                            "snapshot_id": "allocation-before-ppl-alloc-012"
+                        },
+                    },
+                )
+                assert tampered.status_code == 422, (field, tampered.text)
 
             missing_snapshot = client.post(
                 "/bff/management/allocation-policy/evaluate",
                 headers=HEADERS,
                 json={"rows": [live_row]},
+            )
+            unknown_snapshot = client.post(
+                "/bff/management/allocation-policy/evaluate",
+                headers=HEADERS,
+                json={
+                    "ranking_snapshot_id": "ranking-quarterly-forged",
+                    "rows": [
+                        {
+                            **live_row,
+                            "ranking_snapshot_id": "ranking-quarterly-forged",
+                        }
+                    ],
+                },
             )
             mixed_snapshot = client.post(
                 "/bff/management/allocation-policy/evaluate",
@@ -474,6 +587,8 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
                 json={
                     "capital_pool_id": "pool-real",
                     "ranking_snapshot_id": snapshot_id,
+                    "allocation_evaluation_id": evaluation_id,
+                    "allocation_policy_version": policy_version,
                     "lines": [{**line, "ranking_snapshot_id": "ranking-quarterly-other"}],
                     "simulation": {"status": "passed"},
                     "constraints": {"pool_total_max": 1},
@@ -489,6 +604,8 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
                 json={
                     "capital_pool_id": "pool-real",
                     "ranking_snapshot_id": snapshot_id,
+                    "allocation_evaluation_id": evaluation_id,
+                    "allocation_policy_version": policy_version,
                     "lines": [
                         {
                             key: value
@@ -502,12 +619,98 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
                 },
             )
             assert missing_snapshot.status_code == 422
+            assert unknown_snapshot.status_code == 422
             assert mixed_snapshot.status_code == 422
             assert missing_row_snapshot.status_code == 422
             assert mismatched_proposal.status_code == 422
             assert missing_line_snapshot.status_code == 422
         finally:
+            if harness is not None:
+                harness.__exit__(None, None, None)
             bff_main.read_store = original_store
+            bff_main.command_store = original_command_store
+
+
+def test_durable_lineage_integrity_fails_closed_after_same_id_store_tamper() -> None:
+    for tamper_target in ("ranking_snapshot", "allocation_evaluation"):
+        with tempfile.TemporaryDirectory() as td:
+            original_store = bff_main.read_store
+            try:
+                client = _client(td, fallback=False)
+                store = bff_main.read_store
+                assert isinstance(store, ReadSurfaceStore)
+                _seed_live_persona(store)
+                ranking = client.get(
+                    "/bff/management/quarterly-ranking",
+                    headers=HEADERS,
+                    params={"quarter": "2026-Q3", "page_size": 200},
+                )
+                assert ranking.status_code == 200, ranking.text
+                snapshot_id = ranking.json()["data"]["ranking_snapshot_id"]
+                live_row = _item_by_persona(
+                    ranking.json()["data"]["items"],
+                    LIVE_PERSONA_ID,
+                )
+                evaluated = client.post(
+                    "/bff/management/allocation-policy/evaluate",
+                    headers=HEADERS,
+                    json={"ranking_snapshot_id": snapshot_id, "rows": [live_row]},
+                )
+                assert evaluated.status_code == 200, evaluated.text
+                evaluation = evaluated.json()["data"]
+
+                if tamper_target == "ranking_snapshot":
+                    stored_items = store._data["ranking_snapshots"][snapshot_id][
+                        "items"
+                    ]
+                    stored_row = _item_by_persona(stored_items, LIVE_PERSONA_ID)
+                    stored_row["stage"] = "paper_running"
+                else:
+                    evaluation_id = evaluation["allocation_evaluation_id"]
+                    store._data["allocation_evaluations"][evaluation_id]["lines"][
+                        0
+                    ]["target_weight"] = 0.99
+                store._save()
+                bff_main.read_store = ReadSurfaceStore(
+                    os.path.join(td, "read-surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+
+                if tamper_target == "ranking_snapshot":
+                    rejected = client.post(
+                        "/bff/management/allocation-policy/evaluate",
+                        headers=HEADERS,
+                        json={
+                            "ranking_snapshot_id": snapshot_id,
+                            "rows": [live_row],
+                        },
+                    )
+                else:
+                    rejected = client.post(
+                        "/bff/rebalances",
+                        headers={
+                            **HEADERS,
+                            "Idempotency-Key": "ppl-alloc-012-corrupt-evaluation",
+                        },
+                        json={
+                            "capital_pool_id": "pool-real",
+                            "ranking_snapshot_id": snapshot_id,
+                            "allocation_evaluation_id": evaluation[
+                                "allocation_evaluation_id"
+                            ],
+                            "allocation_policy_version": evaluation[
+                                "allocation_policy_version"
+                            ],
+                            "lines": evaluation["lines"],
+                            "simulation": {"status": "passed"},
+                            "constraints": {"pool_total_max": 1},
+                            "rollback_target": {"snapshot_id": "before-corruption"},
+                        },
+                    )
+                assert rejected.status_code == 422, rejected.text
+                assert "integrity" in rejected.text.lower()
+            finally:
+                bff_main.read_store = original_store
 
 
 def test_binding_weight_mutation_changes_snapshot_and_quarterly_surfaces_converge() -> None:
@@ -751,6 +954,264 @@ def test_live_runtime_without_active_persona_binding_fails_closed() -> None:
             bff_main.read_store = original_store
 
 
+def test_runtime_binding_mode_is_actual_stage_not_binding_ceiling() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _client(td, fallback=False)
+            store = bff_main.read_store
+            assert isinstance(store, ReadSurfaceStore)
+            persona_id = "persona-ppl-alloc-012-paper-under-live-ceiling"
+            binding_id = "binding-ppl-alloc-012-paper-under-live-ceiling"
+            runtime_id = "runtime-ppl-alloc-012-paper-under-live-ceiling"
+            store.create_persona(
+                persona_id=persona_id,
+                name="PPL Paper Under Live Ceiling",
+                actor_id="Codex2",
+                lifecycle_state="live_running",
+                metadata={"capital_mode": "live", "deployment_stage": "live"},
+            )
+            store.create_persona_binding(
+                binding_id=binding_id,
+                persona_id=persona_id,
+                capital_pool_id="pool-paper-under-live-ceiling",
+                actor_id="Codex2",
+                validity="active",
+                metadata={
+                    "allowed_deployment_scope": "live",
+                    "capital_mode": "live",
+                    "current_weight": 0.04,
+                },
+            )
+            store.create_runtime_binding(
+                runtime_id=runtime_id,
+                name="PPL Paper Under Live Ceiling",
+                persona_id=persona_id,
+                binding_id=binding_id,
+                deployment_plan_id="plan-ppl-alloc-012-paper-under-live-ceiling",
+                runtime_kind="paper",
+                actor_id="Codex2",
+                state="running",
+                params={"capital_pool_id": "pool-paper-under-live-ceiling"},
+            )
+            _install_runtime_observations(
+                store,
+                persona_id=persona_id,
+                runtime_id=runtime_id,
+            )
+
+            response = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q3", "page_size": 200},
+            )
+            assert response.status_code == 200, response.text
+            row = _item_by_persona(response.json()["data"]["items"], persona_id)
+            assert row["deployment_stage"] == "paper"
+            assert row["stage"] == "paper_running"
+            assert row["runtime_resolution"] == "active"
+            assert row["session_resolution"] == "active"
+            assert row["telemetry_resolution"] == "fresh"
+            assert row["current_weight"] is None
+            assert row["current_weight_source"] == "not_applicable_paper_ledger"
+            assert row["eligible"] is True
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_missing_runtime_fails_closed_even_with_live_binding_and_observations() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _client(td, fallback=False)
+            store = bff_main.read_store
+            assert isinstance(store, ReadSurfaceStore)
+            persona_id = "persona-ppl-alloc-012-missing-runtime"
+            runtime_id = "runtime-ppl-alloc-012-phantom"
+            store.create_persona(
+                persona_id=persona_id,
+                name="PPL Missing Runtime",
+                actor_id="Codex2",
+                lifecycle_state="live_running",
+                metadata={"capital_mode": "live", "deployment_stage": "live"},
+            )
+            store.create_persona_binding(
+                binding_id="binding-ppl-alloc-012-missing-runtime",
+                persona_id=persona_id,
+                capital_pool_id="pool-missing-runtime",
+                actor_id="Codex2",
+                validity="active",
+                metadata={
+                    "allowed_deployment_scope": "live",
+                    "capital_mode": "live",
+                    "current_weight": 0.04,
+                },
+            )
+            _install_runtime_observations(
+                store,
+                persona_id=persona_id,
+                runtime_id=runtime_id,
+            )
+
+            response = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q3", "page_size": 200},
+            )
+            assert response.status_code == 200, response.text
+            row = _item_by_persona(response.json()["data"]["items"], persona_id)
+            assert row["stage"] == "not_running"
+            assert row["deployment_stage"] == "none"
+            assert row["runtime_resolution"] == "missing"
+            assert row["current_weight"] is None
+            assert row["eligible"] is False
+            assert "missing_runtime" in row["exclusion_codes"]
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_runtime_binding_requires_fresh_explicit_deployment_mode() -> None:
+    for runtime_patch, removed_fields, expected_resolution, expected_code in (
+        ({}, {"deployment_mode"}, "invalid_deployment_mode", "inactive_runtime"),
+        ({"stale": True}, set(), "stale", "stale_runtime"),
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            original_store = bff_main.read_store
+            try:
+                client = _client(td, fallback=False)
+                store = bff_main.read_store
+                assert isinstance(store, ReadSurfaceStore)
+                _seed_live_persona(store)
+                original_runtimes = store.list_runtime_bindings
+
+                def runtime_bindings(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+                    records = original_runtimes(*args, **kwargs)
+                    for record in records:
+                        if record.get("runtime_id") != LIVE_RUNTIME_ID:
+                            continue
+                        for field in removed_fields:
+                            record.pop(field, None)
+                        record.update(runtime_patch)
+                    return records
+
+                store.list_runtime_bindings = runtime_bindings  # type: ignore[method-assign]
+                response = client.get(
+                    "/bff/management/quarterly-ranking",
+                    headers=HEADERS,
+                    params={"quarter": "2026-Q3", "page_size": 200},
+                )
+                assert response.status_code == 200, response.text
+                row = _item_by_persona(
+                    response.json()["data"]["items"],
+                    LIVE_PERSONA_ID,
+                )
+                assert row["stage"] == "not_running"
+                assert row["deployment_stage"] == "none"
+                assert row["runtime_resolution"] == expected_resolution
+                assert row["current_weight"] is None
+                assert row["eligible"] is False
+                assert expected_code in row["exclusion_codes"]
+            finally:
+                bff_main.read_store = original_store
+
+
+def test_ended_or_stale_runtime_session_fails_closed() -> None:
+    for session_patch, expected_resolution, expected_code in (
+        ({"ended_at": "2026-07-10T00:05:00Z"}, "ended", "ended_session"),
+        (
+            {"staleness": {"status": "stale", "reason": "stale_heartbeat"}},
+            "stale",
+            "stale_session",
+        ),
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            original_store = bff_main.read_store
+            try:
+                client = _client(td, fallback=False)
+                store = bff_main.read_store
+                assert isinstance(store, ReadSurfaceStore)
+                _seed_live_persona(store)
+                original_sessions = store.get_sessions_for_persona
+
+                def sessions_for_persona(persona_id: str | None) -> list[dict[str, Any]] | None:
+                    if persona_id == LIVE_PERSONA_ID:
+                        return [{
+                            "id": "session-ppl-alloc-012-live",
+                            "status": "active",
+                            "runtime_binding_id": LIVE_RUNTIME_ID,
+                            "last_heartbeat_at": "2026-07-10T00:00:00Z",
+                            **session_patch,
+                        }]
+                    return original_sessions(persona_id)
+
+                store.get_sessions_for_persona = sessions_for_persona  # type: ignore[method-assign]
+                response = client.get(
+                    "/bff/management/quarterly-ranking",
+                    headers=HEADERS,
+                    params={"quarter": "2026-Q3", "page_size": 200},
+                )
+                assert response.status_code == 200, response.text
+                row = _item_by_persona(response.json()["data"]["items"], LIVE_PERSONA_ID)
+                assert row["stage"] == "live_running"
+                assert row["session_resolution"] == expected_resolution
+                assert row["eligible"] is False
+                assert expected_code in row["exclusion_codes"]
+            finally:
+                bff_main.read_store = original_store
+
+
+def test_stale_or_mismatched_telemetry_cannot_supply_ranking_coverage() -> None:
+    for telemetry_patch, expected_resolution in (
+        ({"stale": True}, "stale"),
+        ({"state": "degraded"}, "degraded"),
+        ({"connectivity_status": "disconnected"}, "degraded"),
+        ({"runtime_id": "runtime-ppl-alloc-012-other"}, "identity_mismatch"),
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            original_store = bff_main.read_store
+            try:
+                client = _client(td, fallback=False)
+                store = bff_main.read_store
+                assert isinstance(store, ReadSurfaceStore)
+                _seed_live_persona(store)
+                original_telemetry = store.get_telemetry_summary
+
+                def telemetry_for_runtime(runtime_id: str) -> dict[str, Any] | None:
+                    if runtime_id == LIVE_RUNTIME_ID:
+                        return {
+                            "runtime_id": LIVE_RUNTIME_ID,
+                            "pnl": 99.0,
+                            "drawdown": 0.0,
+                            "fill_rate": 1.0,
+                            "total_trades": 999,
+                            "collected_at": "2026-07-10T00:00:00Z",
+                            **telemetry_patch,
+                        }
+                    return original_telemetry(runtime_id)
+
+                store.get_telemetry_summary = telemetry_for_runtime  # type: ignore[method-assign]
+                response = client.get(
+                    "/bff/management/quarterly-ranking",
+                    headers=HEADERS,
+                    params={"quarter": "2026-Q3", "page_size": 200},
+                )
+                assert response.status_code == 200, response.text
+                row = _item_by_persona(response.json()["data"]["items"], LIVE_PERSONA_ID)
+                assert row["telemetry_resolution"] == expected_resolution
+                assert row["metrics"]["telemetry_coverage_count"] == 0
+                assert row["evidence_refs"] == []
+                assert row["source_confidence"] == "unavailable"
+                assert row["eligible"] is False
+                expected_code = {
+                    "stale": "stale_telemetry",
+                    "degraded": "degraded_telemetry",
+                    "identity_mismatch": "runtime_identity_mismatch",
+                }[expected_resolution]
+                assert expected_code in row["exclusion_codes"]
+            finally:
+                bff_main.read_store = original_store
+
+
 def test_declared_stopped_runtime_cannot_be_authoritative_despite_active_status() -> None:
     persona_id = "persona-ppl-alloc-012-stopped-runtime"
     binding_id = "binding-ppl-alloc-012-stopped-runtime"
@@ -846,11 +1307,12 @@ def test_declared_stopped_runtime_cannot_be_authoritative_despite_active_status(
             )
             assert response.status_code == 200, response.text
             row = _item_by_persona(response.json()["data"]["items"], persona_id)
-            assert row["stage"] == "live_running"
-            assert "inactive" in row["binding_resolution"]
+            assert row["stage"] == "not_running"
+            assert row["runtime_resolution"] == "inactive"
             assert row["current_weight"] is None
             assert row["current_weight_source"] == "unavailable"
             assert row["eligible"] is False
+            assert "inactive_runtime" in row["exclusion_codes"]
         finally:
             bff_main.read_store = original_store
 
@@ -888,11 +1350,23 @@ def test_invalid_binding_weights_never_serialize_or_become_eligible() -> None:
                     actor_id="Codex2",
                     validity="active",
                     metadata={
+                        "allowed_deployment_scope": "live",
                         "capital_mode": "live",
                         "capital_sleeve_id": f"sleeve-invalid-{label}",
                         "current_weight": invalid_weight,
                         "target_weight": invalid_weight,
                     },
+                )
+                store.create_runtime_binding(
+                    runtime_id=runtime_id,
+                    name=f"PPL Invalid Weight {label}",
+                    persona_id=persona_id,
+                    binding_id=f"binding-ppl-alloc-012-invalid-{label}",
+                    deployment_plan_id=f"plan-ppl-alloc-012-invalid-{label}",
+                    runtime_kind="live",
+                    actor_id="Codex2",
+                    state="running",
+                    params={"capital_pool_id": f"pool-invalid-{label}"},
                 )
                 _install_runtime_observations(
                     store,
@@ -941,6 +1415,17 @@ def test_paper_ledger_without_persona_binding_remains_ranking_eligible() -> None
                     "deployment_stage": "paper",
                     "paper_ledger_id": paper_ledger_id,
                 },
+            )
+            store.create_runtime_binding(
+                runtime_id=runtime_id,
+                name="PPL Paper Ledger Unbound",
+                persona_id=persona_id,
+                binding_id="",
+                deployment_plan_id="plan-ppl-alloc-012-paper-unbound",
+                runtime_kind="paper",
+                actor_id="Codex2",
+                state="running",
+                params={"paper_ledger_id": paper_ledger_id},
             )
             _install_runtime_observations(
                 store,
@@ -1332,6 +1817,23 @@ def test_multiple_active_bindings_fail_closed_without_seed_weight() -> None:
                         "current_weight": weight,
                     },
                 )
+            runtime_id = "runtime-ppl-alloc-012-ambiguous"
+            store.create_runtime_binding(
+                runtime_id=runtime_id,
+                name="PPL Alloc Ambiguous",
+                persona_id=persona_id,
+                binding_id="binding-ppl-alloc-012-a",
+                deployment_plan_id="plan-ppl-alloc-012-ambiguous",
+                runtime_kind="live",
+                actor_id="Codex2",
+                state="running",
+                params={"capital_pool_id": "pool-a"},
+            )
+            _install_runtime_observations(
+                store,
+                persona_id=persona_id,
+                runtime_id=runtime_id,
+            )
 
             response = client.get(
                 "/bff/management/quarterly-ranking",
@@ -1483,13 +1985,13 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
             assert response.status_code == 200, response.text
             rows = response.json()["data"]["items"]
             stage_mismatch = _item_by_persona(rows, "persona-stage-mismatch")
-            assert stage_mismatch["stage"] == "live_running"
+            assert stage_mismatch["stage"] == "not_running"
             assert stage_mismatch["current_weight"] is None
             assert stage_mismatch["capital_scope"] == "unbound"
-            assert "binding_mismatch" in stage_mismatch["exclusion_codes"]
+            assert "missing_runtime" in stage_mismatch["exclusion_codes"]
 
             inactive = _item_by_persona(rows, "persona-inactive-binding")
-            assert inactive["stage"] == "live_running"
+            assert inactive["stage"] == "not_running"
             assert inactive["current_weight"] is None
             assert inactive["capital_scope"] == "unbound"
             assert inactive["binding_resolution"] == "inactive"

@@ -147,7 +147,11 @@ from command_executor import (
     create_capital_rebalance_proposal,
     execute_command_with_status,
 )
-from persona_allocation_policy import calculate_target_allocations, validate_emergency_lines
+from persona_allocation_policy import (
+    build_pm12_allocation_policy_input,
+    calculate_target_allocations,
+    validate_emergency_lines,
+)
 from emergency_containment_policy import validate_emergency_containment
 from session_lifecycle_store import SessionLifecycleStore
 from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
@@ -3866,6 +3870,19 @@ def _normalize_quarterly_recommendation_command(cmd: OperatorCommand) -> Operato
         or cmd.target.id
         or ""
     ).strip()
+    target_recommendation_id = str(cmd.target.id or "").strip()
+    if (
+        recommendation_id
+        and target_recommendation_id
+        and recommendation_id != target_recommendation_id
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "recommendation_id does not match the command target",
+            "Use target.id as the authoritative quarterly recommendation id.",
+            precondition_failed="recommendation_id",
+        )
     if recommendation_id:
         params["recommendation_id"] = recommendation_id
         params["recommendationId"] = recommendation_id
@@ -5569,6 +5586,219 @@ def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIden
         params["ttlSeconds"] = ttl_seconds
 
 
+def _pm12_resolve_quarterly_recommendation_submit_params(
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    recommendation_id = str(
+        params.get("recommendation_id") or params.get("recommendationId") or ""
+    ).strip()
+    snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    quarter = str(params.get("quarter") or "").strip().upper()
+    if not recommendation_id or not snapshot_id or not quarter:
+        return dict(params)
+    snapshot = _pm12_allocation_snapshot_record(snapshot_id)
+    snapshot_quarter = str(snapshot.get("period") or "").strip().upper()
+    if snapshot_quarter != quarter:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "quarter does not match the admitted ranking snapshot",
+            "The submitted quarter must be the immutable snapshot period.",
+            precondition_failed="quarter",
+        )
+
+    matched_item: Optional[Dict[str, Any]] = None
+    matched_action_id = ""
+    for item in snapshot.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        persona_id = str(item.get("persona_id") or "").strip()
+        for action_id in _pm12_recommendation_action_ids(item):
+            expected_id = f"pm12-{quarter.lower()}-{persona_id}-{action_id}"
+            if expected_id == recommendation_id:
+                matched_item = item
+                matched_action_id = action_id
+                break
+        if matched_item is not None:
+            break
+    if matched_item is None:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "recommendation is not in the admitted ranking snapshot",
+            "The recommendation id/action/persona tuple was not materialized by the snapshot.",
+            precondition_failed="recommendation_id",
+        )
+
+    asserted_action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or ""
+    ).strip()
+    if asserted_action_id and asserted_action_id != matched_action_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "recommendation action does not match the admitted snapshot",
+            "The caller-supplied recommendation action is not authoritative.",
+            precondition_failed="recommendation_action_id",
+        )
+
+    item = {
+        **json.loads(json.dumps(matched_item)),
+        "ranking_snapshot_id": snapshot_id,
+        "evidence_refs": [],
+    }
+    quarter_window = _pm12_quarter_window(quarter, utc_now())
+    source_recommendation = _pm12_quarterly_recommendation_item(
+        item,
+        action_id=matched_action_id,
+        quarter_window=quarter_window,
+        evidence_refs=[],
+    )
+    source_recommendation["human_review_state"] = {
+        "status": "recommended_not_submitted",
+        "decision_status": "pending",
+        "submitted": False,
+        "submit_status": "not_submitted",
+        "decision": None,
+        "decided_at": None,
+        "decided_by": None,
+    }
+    stored_source = _promotion_review_stored_source(source_recommendation)
+    stage_path = _promotion_review_stage_path(source_recommendation)
+    canonical_assertions = {
+        "persona_id": item.get("persona_id"),
+        "stage": item.get("stage"),
+        "deployment_stage": item.get("deployment_stage"),
+        "stage_from": stage_path.get("from_stage"),
+        "stage_to": stage_path.get("target_stage"),
+        "review_kind": stage_path.get("review_kind"),
+        "current_weight": item.get("current_weight"),
+        "target_weight": item.get("target_weight"),
+        "delta": item.get("delta"),
+        "capital_scope": item.get("capital_scope"),
+        "capital_pool_id": item.get("capital_pool_id"),
+        "capital_sleeve_id": item.get("capital_sleeve_id"),
+        "evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
+    }
+    for field, authoritative_value in canonical_assertions.items():
+        if field not in params:
+            continue
+        asserted_value = params.get(field)
+        if field == "evidence_ref_ids":
+            asserted_value = sorted(asserted_value or [])
+        if _stable_json_hash(asserted_value) != _stable_json_hash(authoritative_value):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "quarterly recommendation assertion mismatch",
+                f"{field} does not match the admitted ranking snapshot.",
+                precondition_failed=field,
+            )
+    if params.get("evidence_refs") not in (None, []):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "caller evidence is not admissible",
+            "Quarterly recommendation evidence is materialized server-side.",
+            precondition_failed="evidence_refs",
+        )
+    asserted_source = params.get("source_recommendation")
+    if asserted_source is not None:
+        if not isinstance(asserted_source, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "source recommendation assertion mismatch",
+                "source_recommendation must be an object when supplied.",
+                precondition_failed="source_recommendation",
+            )
+        nested_assertions = {
+            "id": recommendation_id,
+            "recommendation_id": recommendation_id,
+            "ranking_snapshot_id": snapshot_id,
+            "quarter": quarter,
+            "persona_id": item.get("persona_id"),
+            "action_id": matched_action_id,
+            "recommendation_action_id": matched_action_id,
+            "stage": item.get("stage"),
+            "deployment_stage": item.get("deployment_stage"),
+            "stage_from": stage_path.get("from_stage"),
+            "stage_to": stage_path.get("target_stage"),
+            "review_kind": stage_path.get("review_kind"),
+            "current_weight": item.get("current_weight"),
+            "target_weight": item.get("target_weight"),
+            "delta": item.get("delta"),
+            "capital_scope": item.get("capital_scope"),
+            "capital_pool_id": item.get("capital_pool_id"),
+            "capital_sleeve_id": item.get("capital_sleeve_id"),
+            "evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
+        }
+        for field, authoritative_value in nested_assertions.items():
+            if field not in asserted_source:
+                continue
+            asserted_value = asserted_source.get(field)
+            if field == "evidence_ref_ids":
+                asserted_value = sorted(asserted_value or [])
+            if _stable_json_hash(asserted_value) != _stable_json_hash(
+                authoritative_value
+            ):
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "source recommendation assertion mismatch",
+                    f"source_recommendation.{field} does not match the admitted ranking snapshot.",
+                    precondition_failed=field,
+                )
+        if asserted_source.get("evidence_refs") not in (None, []):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "caller evidence is not admissible",
+                "source_recommendation evidence is materialized server-side.",
+                precondition_failed="evidence_refs",
+            )
+
+    canonical: Dict[str, Any] = {
+        "quarter": quarter,
+        "recommendation_id": recommendation_id,
+        "recommendationId": recommendation_id,
+        "recommendation_action_id": matched_action_id,
+        "recommendationActionId": matched_action_id,
+        "ranking_snapshot_id": snapshot_id,
+        "ranking_snapshot_content_digest": snapshot.get("content_digest"),
+        "ranking_item_digest": _stable_json_hash(matched_item),
+        "ranking_evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
+        "persona_id": item.get("persona_id"),
+        "stage": item.get("stage"),
+        "deployment_stage": item.get("deployment_stage"),
+        "current_weight": item.get("current_weight"),
+        "target_weight": item.get("target_weight"),
+        "capital_scope": item.get("capital_scope"),
+        "capital_pool_id": item.get("capital_pool_id"),
+        "capital_sleeve_id": item.get("capital_sleeve_id"),
+        "stage_from": stage_path.get("from_stage"),
+        "stage_to": stage_path.get("target_stage"),
+        "review_kind": stage_path.get("review_kind"),
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "liveCapitalMutation": False,
+        "direct_live_capital_mutation": False,
+        "runtime_mutation": False,
+        "source_type": "quarterly_ranking_recommendation",
+        "source_record_id": recommendation_id,
+        "source_recommendation": stored_source,
+        "audit_event": "quarterly_ranking.recommendation_submitted",
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+    }
+    for field in ("reason", "note", "memo", "rationale"):
+        value = str(params.get(field) or "").strip()
+        if value:
+            canonical[field] = value
+    return canonical
+
+
 def _validate_quarterly_ranking_recommendation_submit(
     params: Dict[str, Any],
     identity: OperatorIdentity,
@@ -5582,6 +5812,11 @@ def _validate_quarterly_ranking_recommendation_submit(
             precondition_failed="role_check",
             suggestion="Escalate to a user with operator, approver, or admin role",
         )
+
+    _raise_if_promotion_review_direct_mutation_requested(params)
+    resolved = _pm12_resolve_quarterly_recommendation_submit_params(params)
+    params.clear()
+    params.update(resolved)
 
     required = {"quarter", "recommendation_id", "ranking_snapshot_id"}
     missing = required - {key for key, value in params.items() if value not in (None, "")}
@@ -5840,7 +6075,14 @@ def _validate_rebalance_proposal(params: Dict[str, Any], identity: OperatorIdent
             "Operator does not hold the required role",
             precondition_failed="role_check",
         )
-    _enforce_ops_console_preconditions(params, identity)
+    raise _bff_error(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        "RebalanceProposal requires server-side allocation admission",
+        "Submit the exact allocation evaluation through POST /bff/rebalances.",
+        precondition_failed="allocation_evaluation_id",
+        suggestion="Use POST /bff/management/allocation-policy/evaluate, then POST /bff/rebalances.",
+    )
 
 
 def _validate_approved_apply(params: Dict[str, Any], identity: OperatorIdentity) -> None:
@@ -24957,6 +25199,308 @@ async def bff_ranking_formula_action(
 
 # -- Rebalances BFF ----------------------------------------------------------
 
+_PM12_ALLOCATION_POLICY_VERSION = "persona-real-allocation-v1"
+_PM12_ALLOCATION_LINE_DIGEST_FIELDS = (
+    "ranking_snapshot_id",
+    "allocation_evaluation_id",
+    "allocation_policy_version",
+    "persona_id",
+    "stage",
+    "capital_scope",
+    "capital_pool_id",
+    "capital_sleeve_id",
+    "current_weight",
+    "target_weight",
+    "delta",
+    "cap_reasons",
+    "evidence_refs",
+)
+_PM12_ALLOCATION_ASSERTION_FIELDS = (
+    "stage",
+    "deployment_stage",
+    "capital_scope",
+    "capital_scope_id",
+    "capital_pool_id",
+    "capital_sleeve_id",
+    "current_weight",
+    "target_weight",
+    "delta",
+    "overall_score",
+    "score",
+    "tier",
+    "tier_id",
+    "formula_version",
+    "allocation_policy_input",
+    "eligible",
+    "exclusion_codes",
+    "exclusion_reasons",
+    "evidence_ref_ids",
+)
+
+
+def _pm12_allocation_line_digest(line: Dict[str, Any]) -> str:
+    basis = {
+        field: line.get(field)
+        for field in _PM12_ALLOCATION_LINE_DIGEST_FIELDS
+    }
+    basis["capital_scope"] = line.get("capital_scope") or "pool"
+    basis["cap_reasons"] = list(line.get("cap_reasons") or [])
+    basis["evidence_refs"] = list(line.get("evidence_refs") or [])
+    return _stable_json_hash(basis)
+
+
+def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
+    snapshot = read_store.get_ranking_snapshot(snapshot_id)
+    if not isinstance(snapshot, dict):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "unknown ranking snapshot",
+            "Allocation evaluation requires a BFF-admitted quarterly ranking snapshot.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    expected_content_digest = _stable_json_hash({
+        "surface": snapshot.get("surface"),
+        "period": snapshot.get("period"),
+        "formula_version": snapshot.get("formula_version"),
+        "items": snapshot.get("items") or [],
+    })
+    if str(snapshot.get("content_digest") or "") != expected_content_digest:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking snapshot integrity check failed",
+            "The durable snapshot content no longer matches its admitted digest.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    if (
+        str(snapshot.get("surface") or "") != "quarterly"
+        or str(snapshot.get("formula_version") or "")
+        != _PM12_LEAGUE_FORMULA_VERSION
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking snapshot is not allocation eligible",
+            "Only admitted PM-12 quarterly snapshots can feed allocation evaluation.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    return snapshot
+
+
+def _pm12_allocation_evaluation_record(evaluation_id: str) -> Dict[str, Any]:
+    evaluation = read_store.get_allocation_evaluation(evaluation_id)
+    if not isinstance(evaluation, dict):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "unknown allocation evaluation",
+            "The proposal must join to a durable server-side allocation evaluation.",
+            precondition_failed="allocation_evaluation_id",
+        )
+    lines = evaluation.get("lines")
+    if not isinstance(lines, list) or not lines:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "allocation evaluation integrity check failed",
+            "The durable allocation evaluation has no admitted lines.",
+            precondition_failed="allocation_evaluation_id",
+        )
+    for index, line in enumerate(lines):
+        if not isinstance(line, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "allocation evaluation integrity check failed",
+                f"The durable allocation line at index {index} is invalid.",
+                precondition_failed="allocation_line_digest",
+            )
+        supplied_digest = str(line.get("allocation_line_digest") or "").strip()
+        if not supplied_digest or _pm12_allocation_line_digest(line) != supplied_digest:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "allocation evaluation integrity check failed",
+                f"The durable allocation line at index {index} no longer matches its digest.",
+                precondition_failed="allocation_line_digest",
+            )
+    expected_content_digest = _stable_json_hash({
+        "ranking_snapshot_id": evaluation.get("ranking_snapshot_id"),
+        "allocation_evaluation_id": evaluation.get("allocation_evaluation_id"),
+        "allocation_policy_version": evaluation.get("allocation_policy_version"),
+        "lines": lines,
+    })
+    if str(evaluation.get("content_digest") or "") != expected_content_digest:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "allocation evaluation integrity check failed",
+            "The durable allocation evaluation no longer matches its admitted digest.",
+            precondition_failed="allocation_evaluation_id",
+        )
+    return evaluation
+
+
+def _pm12_assert_allocation_row(
+    *,
+    asserted: Dict[str, Any],
+    authoritative: Dict[str, Any],
+    snapshot: Dict[str, Any],
+    index: int,
+) -> None:
+    for field in _PM12_ALLOCATION_ASSERTION_FIELDS:
+        if field not in asserted:
+            continue
+        asserted_value = asserted.get(field)
+        authoritative_value = authoritative.get(field)
+        if field in {"exclusion_codes", "exclusion_reasons", "evidence_ref_ids"}:
+            asserted_value = sorted(asserted_value or [])
+            authoritative_value = sorted(authoritative_value or [])
+        if _stable_json_hash(asserted_value) != _stable_json_hash(authoritative_value):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking row assertion mismatch",
+                f"rows[{index}].{field} does not match the admitted ranking snapshot.",
+                precondition_failed=field,
+            )
+
+    if "evidence_refs" in asserted:
+        persona_id = str(authoritative.get("persona_id") or "")
+        supplied_digest = _stable_json_hash(asserted.get("evidence_refs") or [])
+        allowed = (
+            snapshot.get("evidence_assertion_digests", {}).get(persona_id, [])
+            if isinstance(snapshot.get("evidence_assertion_digests"), dict)
+            else []
+        )
+        if supplied_digest not in allowed:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking evidence assertion mismatch",
+                f"rows[{index}].evidence_refs was not emitted for this admitted snapshot.",
+                precondition_failed="evidence_refs",
+            )
+
+
+def _pm12_materialize_allocation_evaluation(
+    snapshot: Dict[str, Any],
+    asserted_rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    snapshot_id = str(snapshot.get("ranking_snapshot_id") or "")
+    snapshot_items = [
+        item
+        for item in snapshot.get("items") or []
+        if isinstance(item, dict)
+    ]
+    items_by_persona = {
+        str(item.get("persona_id") or ""): item
+        for item in snapshot_items
+        if str(item.get("persona_id") or "").strip()
+    }
+    requested: Dict[str, Dict[str, Any]] = {}
+    for index, row in enumerate(asserted_rows):
+        if not isinstance(row, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "invalid allocation row",
+                f"rows[{index}] must be an object.",
+                precondition_failed="rows",
+            )
+        row_snapshot_id = str(row.get("ranking_snapshot_id") or "").strip()
+        if row_snapshot_id != snapshot_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking snapshot mismatch",
+                f"rows[{index}].ranking_snapshot_id must match the admitted snapshot.",
+                precondition_failed="ranking_snapshot_id",
+            )
+        persona_id = str(row.get("persona_id") or "").strip()
+        authoritative = items_by_persona.get(persona_id)
+        if authoritative is None:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking row is not in the admitted snapshot",
+                f"rows[{index}].persona_id is not part of {snapshot_id}.",
+                precondition_failed="persona_id",
+            )
+        if persona_id in requested:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "duplicate ranking row",
+                f"rows[{index}].persona_id appears more than once.",
+                precondition_failed="persona_id",
+            )
+        _pm12_assert_allocation_row(
+            asserted=row,
+            authoritative=authoritative,
+            snapshot=snapshot,
+            index=index,
+        )
+        requested[persona_id] = authoritative
+
+    canonical_rows: List[Dict[str, Any]] = []
+    for item in snapshot_items:
+        persona_id = str(item.get("persona_id") or "")
+        if persona_id not in requested:
+            continue
+        canonical_rows.append({
+            **json.loads(json.dumps(item)),
+            "ranking_snapshot_id": snapshot_id,
+            "evidence_refs": list(item.get("evidence_ref_ids") or []),
+        })
+    try:
+        raw_lines = calculate_target_allocations(canonical_rows)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking snapshot cannot be evaluated",
+            str(exc),
+            precondition_failed="allocation_policy_input",
+        ) from exc
+
+    basis = {
+        "ranking_snapshot_id": snapshot_id,
+        "allocation_policy_version": _PM12_ALLOCATION_POLICY_VERSION,
+        "persona_ids": [line.get("persona_id") for line in raw_lines],
+        "lines": raw_lines,
+    }
+    basis_digest = _stable_json_hash(basis)
+    evaluation_id = f"allocation-evaluation-{basis_digest[:24]}"
+    lines: List[Dict[str, Any]] = []
+    for line in raw_lines:
+        normalized = {
+            **line,
+            "ranking_snapshot_id": snapshot_id,
+            "allocation_evaluation_id": evaluation_id,
+            "allocation_policy_version": _PM12_ALLOCATION_POLICY_VERSION,
+        }
+        normalized["allocation_line_digest"] = _pm12_allocation_line_digest(
+            normalized
+        )
+        lines.append(normalized)
+    content_digest = _stable_json_hash({
+        "ranking_snapshot_id": snapshot_id,
+        "allocation_evaluation_id": evaluation_id,
+        "allocation_policy_version": _PM12_ALLOCATION_POLICY_VERSION,
+        "lines": lines,
+    })
+    return read_store.put_allocation_evaluation({
+        "allocation_evaluation_id": evaluation_id,
+        "ranking_snapshot_id": snapshot_id,
+        "allocation_policy_version": _PM12_ALLOCATION_POLICY_VERSION,
+        "content_digest": content_digest,
+        "lines": lines,
+        "created_at": utc_now(),
+        "applied": False,
+    })
+
 @app.post("/bff/management/allocation-policy/evaluate")
 async def bff_evaluate_persona_allocation_policy(
     payload: Dict[str, Any] = Body(...),
@@ -24977,67 +25521,105 @@ async def bff_evaluate_persona_allocation_policy(
             "Allocation evaluation must join to one immutable ranking snapshot.",
             precondition_failed="ranking_snapshot_id",
         )
-    normalized_rows: List[Dict[str, Any]] = []
-    for index, row in enumerate(rows):
-        if not isinstance(row, dict):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "invalid allocation row",
-                f"rows[{index}] must be an object.",
-                precondition_failed="rows",
-            )
-        row_snapshot_id = str(row.get("ranking_snapshot_id") or "").strip()
-        if not row_snapshot_id:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "ranking_snapshot_id is required on every allocation row",
-                f"rows[{index}].ranking_snapshot_id must identify the source ranking row.",
-                precondition_failed="ranking_snapshot_id",
-            )
-        if row_snapshot_id != ranking_snapshot_id:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "ranking snapshot mismatch",
-                f"rows[{index}].ranking_snapshot_id does not match the request snapshot.",
-                precondition_failed="ranking_snapshot_id",
-            )
-        normalized_rows.append({**row, "ranking_snapshot_id": ranking_snapshot_id})
-    lines = calculate_target_allocations(normalized_rows)
+    if not rows:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "rows is required",
+            "Allocation evaluation requires at least one admitted ranking row.",
+            precondition_failed="rows",
+        )
+    snapshot = _pm12_allocation_snapshot_record(ranking_snapshot_id)
+    evaluation = _pm12_materialize_allocation_evaluation(snapshot, rows)
     return {
         "data": {
             "ranking_snapshot_id": ranking_snapshot_id,
-            "lines": lines,
+            "allocation_evaluation_id": evaluation["allocation_evaluation_id"],
+            "allocation_policy_version": evaluation["allocation_policy_version"],
+            "lines": evaluation["lines"],
             "applied": False,
         },
         "meta": {
             "snapshot_at": utc_now(),
             "ranking_snapshot_id": ranking_snapshot_id,
-            "policy": "persona-real-allocation-v1",
+            "allocation_evaluation_id": evaluation["allocation_evaluation_id"],
+            "policy": evaluation["allocation_policy_version"],
         },
     }
 
 
 def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    required = ("ranking_snapshot_id", "simulation", "constraints", "rollback_target")
+    required = (
+        "ranking_snapshot_id",
+        "allocation_evaluation_id",
+        "allocation_policy_version",
+        "simulation",
+        "constraints",
+        "rollback_target",
+    )
     missing = [
         field
         for field in required
         if (
             not str(payload.get(field) or "").strip()
-            if field == "ranking_snapshot_id"
+            if field in {
+                "ranking_snapshot_id",
+                "allocation_evaluation_id",
+                "allocation_policy_version",
+            }
             else not payload.get(field)
         )
     ]
     lines = payload.get("lines")
     if not isinstance(lines, list) or not lines:
         missing.append("lines")
-    line_fields = ("ranking_snapshot_id", "persona_id", "stage", "capital_scope", "current_weight", "target_weight", "delta", "cap_reasons", "evidence_refs")
+    line_fields = (
+        "ranking_snapshot_id",
+        "allocation_evaluation_id",
+        "allocation_line_digest",
+        "allocation_policy_version",
+        "persona_id",
+        "stage",
+        "capital_scope",
+        "current_weight",
+        "target_weight",
+        "delta",
+        "cap_reasons",
+        "evidence_refs",
+    )
     normalized_lines: List[Dict[str, Any]] = []
     if not missing:
         ranking_snapshot_id = str(payload.get("ranking_snapshot_id") or "").strip()
+        allocation_evaluation_id = str(
+            payload.get("allocation_evaluation_id") or ""
+        ).strip()
+        allocation_policy_version = str(
+            payload.get("allocation_policy_version") or ""
+        ).strip()
+        snapshot = _pm12_allocation_snapshot_record(ranking_snapshot_id)
+        evaluation = _pm12_allocation_evaluation_record(
+            allocation_evaluation_id
+        )
+        if (
+            str(evaluation.get("ranking_snapshot_id") or "")
+            != ranking_snapshot_id
+            or str(evaluation.get("allocation_policy_version") or "")
+            != allocation_policy_version
+        ):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "rebalance lineage mismatch",
+                "The allocation evaluation does not belong to the supplied snapshot and policy.",
+                precondition_failed="allocation_evaluation_id",
+            )
+        expected_lines = {
+            str(line.get("allocation_line_digest") or ""): line
+            for line in evaluation.get("lines") or []
+            if isinstance(line, dict)
+            and str(line.get("allocation_line_digest") or "").strip()
+        }
+        seen_line_digests: Set[str] = set()
         for index, line in enumerate(lines):
             if not isinstance(line, dict):
                 raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid proposal line", f"lines[{index}] must be an object")
@@ -25061,7 +25643,51 @@ def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[s
                     f"lines[{index}].ranking_snapshot_id does not match the proposal snapshot.",
                     precondition_failed="ranking_snapshot_id",
                 )
-            normalized_lines.append({**line, "ranking_snapshot_id": ranking_snapshot_id})
+            line_evaluation_id = str(
+                line.get("allocation_evaluation_id") or ""
+            ).strip()
+            line_policy_version = str(
+                line.get("allocation_policy_version") or ""
+            ).strip()
+            line_digest = str(line.get("allocation_line_digest") or "").strip()
+            if (
+                line_evaluation_id != allocation_evaluation_id
+                or line_policy_version != allocation_policy_version
+            ):
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "allocation lineage mismatch",
+                    f"lines[{index}] does not match the proposal evaluation and policy.",
+                    precondition_failed="allocation_evaluation_id",
+                )
+            expected = expected_lines.get(line_digest)
+            if expected is None or line_digest in seen_line_digests:
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "unadmitted allocation line",
+                    f"lines[{index}] is not a unique line from the admitted evaluation.",
+                    precondition_failed="allocation_line_digest",
+                )
+            if _stable_json_hash(line) != _stable_json_hash(expected):
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "allocation line assertion mismatch",
+                    f"lines[{index}] was changed after server-side allocation evaluation.",
+                    precondition_failed="allocation_line_digest",
+                )
+            seen_line_digests.add(line_digest)
+            normalized_lines.append(json.loads(json.dumps(expected)))
+        if seen_line_digests != set(expected_lines):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "incomplete allocation evaluation",
+                "Proposal lines must exactly match the admitted allocation evaluation.",
+                precondition_failed="allocation_line_digest",
+            )
     if missing:
         raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "incomplete rebalance proposal", f"Missing proposal fields: {', '.join(missing)}")
     if payload.get("emergency"):
@@ -25076,7 +25702,7 @@ def _capital_owner_role(identity: OperatorIdentity) -> str:
     return next(
         (
             role
-            for role in ("admin", "approver", "reviewer", "operator")
+            for role in ("admin", "approver", "operator", "reviewer")
             if role in identity.roles
         ),
         "operator",
@@ -25428,6 +26054,9 @@ async def bff_create_rebalance(
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = sha256_checksum({"route": "POST /bff/rebalances", "payload": payload})
     dry_run = _request_dry_run_requested()
+    proposal_lines = payload.get("lines")
+    if proposal_lines is not None or not dry_run:
+        proposal_lines = _validate_rebalance_proposal_payload(payload)
     if not dry_run:
         durable = command_store.get_command_by_idempotency_key(
             resolved_key,
@@ -25457,6 +26086,13 @@ async def bff_create_rebalance(
                 durable_result.get("rebalance_id")
                 or (durable.get("target") or {}).get("id")
             )
+            for lineage_field in (
+                "ranking_snapshot_id",
+                "allocation_evaluation_id",
+                "allocation_policy_version",
+            ):
+                if durable_result.get(lineage_field):
+                    replay[lineage_field] = durable_result[lineage_field]
             return replay
         cached = _capital_bff_idempotency_check(
             identity.operator_id, resolved_key, request_hash
@@ -25470,9 +26106,6 @@ async def bff_create_rebalance(
             "Rebalance must specify a capital_pool_id",
             precondition_failed="capital_pool_id",
         )
-    proposal_lines = payload.get("lines")
-    if proposal_lines is not None:
-        proposal_lines = _validate_rebalance_proposal_payload(payload)
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
@@ -25488,50 +26121,50 @@ async def bff_create_rebalance(
         combined = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
         combined["rebalance_id"] = f"dryrun-rb-{uuid.uuid4().hex[:8]}"
         combined["ranking_snapshot_id"] = payload.get("ranking_snapshot_id")
-        return JSONResponse(status_code=200, content=jsonable_encoder(combined))
-    # Full auditable proposals are owned by the Capital service.  The legacy
-    # minimal command shape (no proposal lines) remains a compatibility record,
-    # but it is terminal and never claims authoritative capital mutation.
-    if proposal_lines is not None:
-        try:
-            rebalance = create_capital_rebalance_proposal(
-                {
-                    "capital_pool_id": capital_pool_id,
-                    "proposal_type": (
-                        "emergency_containment"
-                        if payload.get("emergency")
-                        else "quarterly_rebalance"
-                    ),
-                    "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
-                    "reason": payload.get("reason") or "",
-                    "params": payload.get("params") or {},
-                    "lines": proposal_lines,
-                    "simulation": payload.get("simulation"),
-                    "constraints": payload.get("constraints"),
-                    "rollback_target": payload.get("rollback_target"),
-                    "audit_refs": list(payload.get("audit_refs") or []),
-                    "emergency": bool(payload.get("emergency")),
-                    "actor_id": identity.operator_id,
-                    "actor_role": _capital_owner_role(identity),
-                    "idempotency_key": resolved_key,
-                    "request_hash": request_hash,
-                }
-            )
-        except Exception as exc:
-            _raise_capital_owner_error(exc, operation="persist rebalance proposal")
-            raise
-        command_type = CommandType.REBALANCE_PROPOSAL
-        authoritative = True
-    else:
-        rebalance = read_store.create_rebalance(
-            capital_pool_id=capital_pool_id,
-            actor_id=identity.operator_id,
-            created_at=submitted_at,
-            params=payload.get("params"),
-            reason=payload.get("reason"),
+        combined["allocation_evaluation_id"] = payload.get(
+            "allocation_evaluation_id"
         )
-        command_type = CommandType.REBALANCE_ACTION
-        authoritative = False
+        combined["allocation_policy_version"] = payload.get(
+            "allocation_policy_version"
+        )
+        return JSONResponse(status_code=200, content=jsonable_encoder(combined))
+    # Every persisted proposal is joined to a durable ranking snapshot and
+    # server-materialized allocation evaluation before Capital owns the write.
+    try:
+        rebalance = create_capital_rebalance_proposal(
+            {
+                "capital_pool_id": capital_pool_id,
+                "proposal_type": (
+                    "emergency_containment"
+                    if payload.get("emergency")
+                    else "quarterly_rebalance"
+                ),
+                "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+                "allocation_evaluation_id": payload.get(
+                    "allocation_evaluation_id"
+                ),
+                "allocation_policy_version": payload.get(
+                    "allocation_policy_version"
+                ),
+                "reason": payload.get("reason") or "",
+                "params": payload.get("params") or {},
+                "lines": proposal_lines,
+                "simulation": payload.get("simulation"),
+                "constraints": payload.get("constraints"),
+                "rollback_target": payload.get("rollback_target"),
+                "audit_refs": list(payload.get("audit_refs") or []),
+                "emergency": bool(payload.get("emergency")),
+                "actor_id": identity.operator_id,
+                "actor_role": _capital_owner_role(identity),
+                "idempotency_key": resolved_key,
+                "request_hash": request_hash,
+            }
+        )
+    except Exception as exc:
+        _raise_capital_owner_error(exc, operation="persist rebalance proposal")
+        raise
+    command_type = CommandType.REBALANCE_PROPOSAL
+    authoritative = True
 
     rebalance_id = str(rebalance.get("rebalance_id") or rebalance.get("id") or "").strip()
     if not rebalance_id:
@@ -25573,6 +26206,9 @@ async def bff_create_rebalance(
             "actor_role": _capital_owner_role(identity),
             "idempotency_key": resolved_key,
             "request_hash": request_hash,
+            "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+            "allocation_evaluation_id": payload.get("allocation_evaluation_id"),
+            "allocation_policy_version": payload.get("allocation_policy_version"),
         },
         audit_context=audit_record,
         foundation_context={"idempotency_record": idempotency_record.to_dict()},
@@ -25581,6 +26217,9 @@ async def bff_create_rebalance(
         "command_id": command_id,
         "rebalance_id": rebalance_id,
         "capital_pool_id": capital_pool_id,
+        "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+        "allocation_evaluation_id": payload.get("allocation_evaluation_id"),
+        "allocation_policy_version": payload.get("allocation_policy_version"),
         "status": "proposal_persisted",
         "proposal_persisted": True,
         "authoritative_capital_readback": authoritative,
@@ -25606,6 +26245,12 @@ async def bff_create_rebalance(
     combined["rebalance_id"] = rebalance_id
     if proposal_lines is not None:
         combined["ranking_snapshot_id"] = payload.get("ranking_snapshot_id")
+        combined["allocation_evaluation_id"] = payload.get(
+            "allocation_evaluation_id"
+        )
+        combined["allocation_policy_version"] = payload.get(
+            "allocation_policy_version"
+        )
         combined["lines"] = proposal_lines
     _capital_bff_idempotency_store(
         identity.operator_id, resolved_key, request_hash, combined
@@ -43305,9 +43950,150 @@ def _pm12_persona_binding_summary(
     }
 
 
+def _pm12_record_freshness_issue(record: Dict[str, Any]) -> Optional[str]:
+    sources = [record]
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict):
+        sources.append(metadata)
+    for source in sources:
+        if source.get("stale") is True or source.get("is_stale") is True:
+            return "stale"
+        if source.get("degraded") is True:
+            return "degraded"
+        for key in (
+            "freshness_status",
+            "heartbeat_status",
+            "data_status",
+            "source_status",
+            "state",
+            "status",
+            "connectivity_status",
+        ):
+            status = str(source.get(key) or "").strip().lower()
+            if status in {"stale", "expired", "lagging", "unavailable"}:
+                return "stale"
+            if status in {
+                "degraded",
+                "partial",
+                "invalid",
+                "disconnected",
+                "offline",
+                "failed",
+                "error",
+            }:
+                return "degraded"
+        for key in ("staleness", "freshness"):
+            marker = source.get(key)
+            if isinstance(marker, str):
+                marker_text = marker.strip().lower()
+                if marker_text in {"stale", "expired", "lagging"}:
+                    return "stale"
+                if marker_text in {"degraded", "partial", "invalid"}:
+                    return "degraded"
+            if not isinstance(marker, dict):
+                continue
+            marker_status = str(
+                marker.get("status")
+                or marker.get("state")
+                or marker.get("freshness_status")
+                or ""
+            ).strip().lower()
+            marker_reason = str(marker.get("reason") or "").strip().lower()
+            if marker_status in {"stale", "expired", "lagging"} or "stale" in marker_reason:
+                return "stale"
+            if marker_status in {"degraded", "partial", "invalid"}:
+                return "degraded"
+            age = _management_number(marker.get("age_seconds"))
+            threshold = _management_number(marker.get("threshold_seconds"))
+            if age is not None and threshold is not None and age > threshold:
+                return "stale"
+    return None
+
+
+def _pm12_runtime_identity_aliases(runtime: Dict[str, Any]) -> Set[str]:
+    return {
+        str(value or "").strip()
+        for value in (
+            runtime.get("id"),
+            runtime.get("runtime_id"),
+            runtime.get("runtime_binding_id"),
+            runtime.get("binding_id"),
+        )
+        if str(value or "").strip()
+    }
+
+
+def _pm12_session_runtime_aliases(session: Dict[str, Any]) -> Set[str]:
+    return {
+        str(value or "").strip()
+        for value in (
+            session.get("runtime_id"),
+            session.get("runtime_binding_id"),
+            session.get("execution_runtime_id"),
+        )
+        if str(value or "").strip()
+    }
+
+
+def _pm12_runtime_session_resolution(
+    persona_id: str,
+    runtime: Dict[str, Any],
+) -> tuple[Optional[Dict[str, Any]], str]:
+    if not runtime:
+        return None, "missing_runtime"
+    sessions = [
+        session
+        for session in (read_store.get_sessions_for_persona(persona_id) or [])
+        if isinstance(session, dict)
+    ]
+    runtime_aliases = _pm12_runtime_identity_aliases(runtime)
+    matching = [
+        session
+        for session in sessions
+        if _pm12_session_runtime_aliases(session).intersection(runtime_aliases)
+    ]
+    if not matching:
+        if any(_pm12_session_runtime_aliases(session) for session in sessions):
+            return None, "identity_mismatch"
+        return None, "missing"
+
+    ended = [
+        session
+        for session in matching
+        if session.get("ended_at") not in (None, "")
+        or str(session.get("status") or session.get("state") or "").strip().lower()
+        in {"ended", "closed", "completed", "stopped", "terminated", "expired"}
+    ]
+    candidates = [session for session in matching if session not in ended]
+    stale = [session for session in candidates if _pm12_record_freshness_issue(session)]
+    candidates = [session for session in candidates if session not in stale]
+    active = [
+        session
+        for session in candidates
+        if str(session.get("status") or session.get("state") or "").strip().lower()
+        in {"active", "running"}
+        and session.get("active") is not False
+    ]
+    if len(active) == 1:
+        return active[0], "active"
+    if len(active) > 1:
+        return None, "identity_mismatch"
+    if stale:
+        return None, "stale"
+    if ended:
+        return None, "ended"
+    return None, "inactive"
+
+
 def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
     sessions = read_store.get_sessions_for_persona(persona_id) or []
-    active = [s for s in sessions if str(s.get("status") or "").lower() == "active"]
+    active = [
+        session
+        for session in sessions
+        if str(session.get("status") or "").lower() == "active"
+        and session.get("ended_at") in (None, "")
+        and _pm12_record_freshness_issue(session) is None
+    ]
     return {
         "total": len(sessions),
         "active": len(active),
@@ -43520,6 +44306,18 @@ def _pm12_persona_runtime_ids(
     *,
     telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
 ) -> List[str]:
+    if "runtime_resolution" in row:
+        if str(row.get("runtime_resolution") or "") != "active":
+            return []
+        authoritative_ids = [
+            *(row.get("runtime_ids") if isinstance(row.get("runtime_ids"), list) else []),
+            row.get("runtime_id"),
+        ]
+        return list(dict.fromkeys(
+            str(value or "").strip()
+            for value in authoritative_ids
+            if str(value or "").strip()
+        ))
     bindings = row.get("binding_summary") if isinstance(row.get("binding_summary"), dict) else {}
     sessions = row.get("session_summary") if isinstance(row.get("session_summary"), dict) else {}
     if not sessions:
@@ -43585,6 +44383,24 @@ def _pm12_finite_number(value: Any) -> Optional[float]:
     if parsed is None or not math.isfinite(parsed):
         return None
     return parsed
+
+
+def _pm12_telemetry_record_resolution(
+    record: Dict[str, Any],
+    expected_runtime_id: str,
+) -> str:
+    declared_runtime_id = str(
+        record.get("runtime_id")
+        or record.get("runtimeId")
+        or record.get("execution_runtime_id")
+        or ""
+    ).strip()
+    if declared_runtime_id and declared_runtime_id != expected_runtime_id:
+        return "identity_mismatch"
+    freshness_issue = _pm12_record_freshness_issue(record)
+    if freshness_issue is not None:
+        return freshness_issue
+    return "fresh"
 
 
 def _pm12_telemetry_metrics_from_records(
@@ -43723,12 +44539,16 @@ def _pm12_persona_telemetry_records(
                 telemetry_cache[runtime_id] = summary
         if not isinstance(summary, dict):
             continue
+        if _pm12_telemetry_record_resolution(summary, runtime_id) != "fresh":
+            continue
         candidates: List[Dict[str, Any]] = [dict(summary)]
         for key in _PM12_TELEMETRY_HISTORY_KEYS:
             raw_history = summary.get(key)
             if isinstance(raw_history, list):
                 candidates.extend(dict(item) for item in raw_history if isinstance(item, dict))
         for candidate in candidates:
+            if _pm12_telemetry_record_resolution(candidate, runtime_id) != "fresh":
+                continue
             candidate.setdefault("runtime_id", runtime_id)
             dedupe_key = (
                 str(candidate.get("runtime_id") or ""),
@@ -43755,18 +44575,37 @@ def _pm12_persona_telemetry_records(
 def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
     telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
     runtime_ids = _pm12_persona_runtime_ids(row, telemetry_cache=telemetry_cache)
-    return _pm12_telemetry_metrics_from_records(
+    records = [
+        record
+        for record in _pm12_persona_telemetry_records(
+            row,
+            runtime_ids=runtime_ids,
+            telemetry_cache=telemetry_cache,
+        )
+        if isinstance(record, dict)
+    ]
+    metrics = _pm12_telemetry_metrics_from_records(
         runtime_ids,
-        [
-            record
-            for record in _pm12_persona_telemetry_records(
-                row,
-                runtime_ids=runtime_ids,
-                telemetry_cache=telemetry_cache,
-            )
-            if isinstance(record, dict)
-        ],
+        records,
     )
+    resolutions = [
+        _pm12_telemetry_record_resolution(summary, runtime_id)
+        for runtime_id in runtime_ids
+        for summary in [telemetry_cache.get(runtime_id)]
+        if isinstance(summary, dict)
+    ]
+    if records:
+        telemetry_resolution = "fresh"
+    elif "identity_mismatch" in resolutions:
+        telemetry_resolution = "identity_mismatch"
+    elif "stale" in resolutions:
+        telemetry_resolution = "stale"
+    elif "degraded" in resolutions:
+        telemetry_resolution = "degraded"
+    else:
+        telemetry_resolution = "missing"
+    metrics["telemetry_resolution"] = telemetry_resolution
+    return metrics
 
 
 def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, float]:
@@ -44077,7 +44916,7 @@ def _pm12_quarterly_ranking_items(
         persona_id = str(item.get("persona_id") or "")
         quarter = quarter_window["quarter"]
         gov_state = _pm12_quarterly_ranking_governance_state(persona_id, quarter)
-        items.append({
+        ranking_item = {
             **item,
             "rank": rank,
             "score": score,
@@ -44089,7 +44928,11 @@ def _pm12_quarterly_ranking_items(
             "period": "quarter",
             "criteria": "overall",
             "governance_state": gov_state,
-        })
+        }
+        ranking_item["allocation_policy_input"] = build_pm12_allocation_policy_input(
+            ranking_item
+        )
+        items.append(ranking_item)
     return items
 
 
@@ -44299,6 +45142,20 @@ def _pm12_record_lifecycle_is_active(
     fields: tuple[str, ...],
     active_values: Set[str],
 ) -> bool:
+    if _pm12_record_freshness_issue(record) is not None:
+        return False
+    if any(
+        record.get(field) not in (None, "")
+        for field in ("retired_at", "ended_at", "terminated_at", "deleted_at")
+    ):
+        return False
+    now = datetime.now(timezone.utc)
+    effective_from = _audit_datetime(record.get("effective_from"))
+    effective_to = _audit_datetime(record.get("effective_to"))
+    if effective_from is not None and effective_from > now:
+        return False
+    if effective_to is not None and effective_to <= now:
+        return False
     declared = [
         str(record.get(field) or "").strip().lower()
         for field in fields
@@ -44354,7 +45211,7 @@ def _pm12_binding_runtime_context(
         if _pm12_record_lifecycle_is_active(
             record,
             fields=("status", "state"),
-            active_values={"active", "ready", "bound", "running", "idle"},
+            active_values={"active", "running", "idle"},
         )
     ]
     declared_runtime_records = [
@@ -44369,7 +45226,7 @@ def _pm12_binding_runtime_context(
         if _pm12_record_lifecycle_is_active(
             record,
             fields=("status", "state"),
-            active_values={"active", "ready", "bound", "running", "idle"},
+            active_values={"active", "running", "idle"},
         )
     ]
     declared_runtime = declared_runtime_matches[0] if len(declared_runtime_matches) == 1 else {}
@@ -44542,6 +45399,29 @@ def _pm12_binding_runtime_context(
         if runtime_binding_id not in active_binding_ids:
             runtime = {}
             binding_resolution = "binding_mismatch"
+    if binding and runtime:
+        binding_metadata = (
+            binding.get("metadata")
+            if isinstance(binding.get("metadata"), dict)
+            else {}
+        )
+        allowed_scope = str(
+            binding.get("allowed_deployment_scope")
+            or binding_metadata.get("allowed_deployment_scope")
+            or ""
+        ).strip().lower()
+        runtime_mode = str(
+            runtime.get("deployment_mode") or ""
+        ).strip().lower()
+        scope_rank = {"paper": 1, "canary": 2, "live": 3}
+        if runtime_mode in {"canary", "live"} and allowed_scope not in scope_rank:
+            binding_resolution = "binding_mismatch"
+        elif (
+            allowed_scope in scope_rank
+            and runtime_mode in scope_rank
+            and scope_rank[runtime_mode] > scope_rank[allowed_scope]
+        ):
+            binding_resolution = "binding_mismatch"
     return binding, runtime, binding_resolution
 
 
@@ -44577,6 +45457,8 @@ _PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
     "overall_score",
     "tier",
     "tier_id",
+    "formula_version",
+    "allocation_policy_input",
     "components",
     "metrics",
     "stage",
@@ -44589,9 +45471,13 @@ _PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
     "paper_ledger_id",
     "current_weight",
     "target_weight",
+    "delta",
     "current_weight_source",
     "binding_state",
     "binding_resolution",
+    "runtime_resolution",
+    "session_resolution",
+    "telemetry_resolution",
     "binding_ids",
     "runtime_ids",
     "strategy_ids",
@@ -44608,12 +45494,9 @@ _PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
 )
 
 
-def _pm12_ranking_snapshot_id(
+def _pm12_ranking_snapshot_payload_items(
     items: List[Dict[str, Any]],
-    *,
-    surface: str,
-    period: str,
-) -> str:
+) -> List[Dict[str, Any]]:
     set_like_fields = {
         "binding_ids",
         "runtime_ids",
@@ -44679,12 +45562,32 @@ def _pm12_ranking_snapshot_id(
             str(item.get("persona_id") or ""),
         )
     )
-    digest = _stable_json_hash({
+    return payload_items
+
+
+def _pm12_ranking_snapshot_content(
+    items: List[Dict[str, Any]],
+    *,
+    surface: str,
+    period: str,
+) -> Dict[str, Any]:
+    return {
         "surface": surface,
         "period": period,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-        "items": payload_items,
-    })
+        "items": _pm12_ranking_snapshot_payload_items(items),
+    }
+
+
+def _pm12_ranking_snapshot_id(
+    items: List[Dict[str, Any]],
+    *,
+    surface: str,
+    period: str,
+) -> str:
+    digest = _stable_json_hash(
+        _pm12_ranking_snapshot_content(items, surface=surface, period=period)
+    )
     clean_period = re.sub(r"[^a-z0-9]+", "-", str(period or "current").strip().lower()).strip("-")
     return f"ranking-{surface}-{clean_period or 'current'}-{digest[:24]}"
 
@@ -44695,7 +45598,34 @@ def _pm12_attach_ranking_snapshot(
     surface: str,
     period: str,
 ) -> tuple[List[Dict[str, Any]], str]:
-    snapshot_id = _pm12_ranking_snapshot_id(items, surface=surface, period=period)
+    content = _pm12_ranking_snapshot_content(items, surface=surface, period=period)
+    content_digest = _stable_json_hash(content)
+    clean_period = re.sub(
+        r"[^a-z0-9]+",
+        "-",
+        str(period or "current").strip().lower(),
+    ).strip("-")
+    snapshot_id = (
+        f"ranking-{surface}-{clean_period or 'current'}-{content_digest[:24]}"
+    )
+    evidence_assertion_digests: Dict[str, List[str]] = {}
+    for item in items:
+        persona_id = str(item.get("persona_id") or "").strip()
+        if not persona_id:
+            continue
+        evidence_assertion_digests.setdefault(persona_id, []).append(
+            _stable_json_hash(item.get("evidence_refs") or [])
+        )
+    read_store.put_ranking_snapshot({
+        "ranking_snapshot_id": snapshot_id,
+        "surface": surface,
+        "period": period,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "content_digest": content_digest,
+        "items": content["items"],
+        "evidence_assertion_digests": evidence_assertion_digests,
+        "created_at": utc_now(),
+    })
     return (
         [
             {
@@ -44827,7 +45757,9 @@ def _enrich_persona_item_with_bindings(
     raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
     binding_context_item = {
         **item,
-        "runtime_ids": _pm12_persona_runtime_ids(item),
+        # Session observations may locate candidate records, but they cannot
+        # choose an authoritative RuntimeBinding.
+        "runtime_ids": [],
         "binding_id": (
             league_entry.get("binding_id")
             or league_entry.get("persona_capital_binding_id")
@@ -44858,22 +45790,45 @@ def _enrich_persona_item_with_bindings(
         bindings=bindings,
         runtimes=runtimes,
     )
-    session_runtime_ids = set(_pm12_persona_runtime_ids(item))
-    matching_runtimes = (
-        [runtime]
-        if runtime
-        else [
-            candidate
-            for candidate in runtimes
-            if str(candidate.get("runtime_id") or candidate.get("id") or "").strip()
-            in session_runtime_ids
-        ]
-    )
+    runtime_mode = str(runtime.get("deployment_mode") or "").strip().lower()
+    runtime_mode = {
+        "paper_running": "paper",
+        "canary_running": "canary",
+        "live_running": "live",
+    }.get(runtime_mode, runtime_mode)
+    if runtime and runtime_mode in _PERSONA_FLEET_RUNNING_STAGE_STATES:
+        runtime_resolution = "active"
+    elif runtime:
+        runtime_resolution = "invalid_deployment_mode"
+    elif "runtime_ambiguous" in binding_resolution:
+        runtime_resolution = "ambiguous"
+    elif any(_pm12_record_freshness_issue(record) for record in runtimes):
+        runtime_resolution = "stale"
+    elif any(record.get("retired_at") not in (None, "") for record in runtimes):
+        runtime_resolution = "retired"
+    elif "runtime_inactive" in binding_resolution or (
+        runtimes
+        and not any(
+            _pm12_record_lifecycle_is_active(
+                record,
+                fields=("status", "state"),
+                active_values={"active", "running", "idle"},
+            )
+            for record in runtimes
+        )
+    ):
+        runtime_resolution = "inactive"
+    elif "mismatch" in binding_resolution:
+        runtime_resolution = "identity_mismatch"
+    else:
+        runtime_resolution = "missing"
+    _, session_resolution = _pm12_runtime_session_resolution(persona_id, runtime)
+    matching_runtimes = [runtime] if runtime else []
 
     strategy_ids = []
     binding_ids = []
     pool_ids = []
-    runtime_ids = list(session_runtime_ids)
+    runtime_ids: List[str] = []
     sleeve_ids = []
     artifact_ids = []
     broker_ids = []
@@ -44924,37 +45879,17 @@ def _enrich_persona_item_with_bindings(
         if runtime_broker_id:
             broker_ids.append(str(runtime_broker_id))
 
-    deployment_stage = (
-        runtime.get("deployment_stage")
-        or runtime.get("deployment_mode")
-        or binding.get("allowed_deployment_scope")
-        or _persona_fleet_record_value(binding, "deployment_stage", "capital_mode", "capitalMode")
-        or raw_metadata.get("deployment_stage")
-        or raw_metadata.get("capital_mode")
-        or league_entry.get("deployment_stage")
-        or item.get("deployment_stage")
-        or item.get("stage")
-        or "none"
-    )
-    capital_mode = "none"
-    for value in (
-        _persona_fleet_record_value(runtime, "capital_mode", "capitalMode", "runtime_kind", "deployment_stage", "deployment_mode"),
-        _persona_fleet_record_value(binding, "capital_mode", "capitalMode", "allowed_deployment_scope", "deployment_stage"),
-        raw_metadata.get("capital_mode"),
-        raw_metadata.get("deployment_stage"),
-        league_entry.get("capital_mode"),
-        league_entry.get("deployment_stage"),
-        deployment_stage,
-    ):
-        normalized_mode = str(value or "").strip().lower()
-        normalized_mode = {
-            "paper_running": "paper",
-            "canary_running": "canary",
-            "live_running": "live",
-        }.get(normalized_mode, normalized_mode)
-        if normalized_mode in _PERSONA_FLEET_RUNNING_STAGE_STATES:
-            capital_mode = normalized_mode
-            break
+    deployment_stage = runtime.get("deployment_mode") or "none"
+    capital_mode = {
+        "paper_running": "paper",
+        "canary_running": "canary",
+        "live_running": "live",
+    }.get(str(deployment_stage or "").strip().lower(), str(deployment_stage or "").strip().lower())
+    if capital_mode not in _PERSONA_FLEET_RUNNING_STAGE_STATES:
+        capital_mode = "none"
+        deployment_stage = "none"
+    else:
+        deployment_stage = capital_mode
     source_pool_id = (
         _persona_fleet_record_value(binding, "capital_pool_id", "pool_id")
         or _persona_fleet_record_value(runtime, "capital_pool_id", "pool_id")
@@ -44997,31 +45932,36 @@ def _enrich_persona_item_with_bindings(
         or item.get("stage")
         or "unknown"
     )
-    stage = _persona_fleet_lifecycle_state(
-        persona_status=raw_metadata.get("persona_status") or persona.get("status") or lifecycle_state,
-        lifecycle_state=lifecycle_state,
-        capital_mode=capital_mode,
-        deployment_stage=deployment_stage,
-        runtime=runtime,
-        has_runtime_or_binding=bool(runtime or binding or source_pool_id),
-    )
+    normalized_lifecycle = _normalize_lifecycle_state(lifecycle_state)
+    if (
+        runtime
+        and capital_mode in _PERSONA_FLEET_RUNNING_STAGE_STATES
+        and _is_persona_lifecycle_operational(lifecycle_state)
+    ):
+        stage = f"{capital_mode}_running"
+    elif normalized_lifecycle in {"frozen", "suspended", "retired"}:
+        stage = normalized_lifecycle
+    else:
+        stage = "not_running"
     stage_capital_mode = {
         "paper_running": "paper",
         "canary_running": "canary",
         "live_running": "live",
     }.get(stage)
-    stage_binding_mismatch = bool(
-        stage_capital_mode
-        and capital_mode in _PERSONA_FLEET_RUNNING_STAGE_STATES
-        and capital_mode != stage_capital_mode
-    )
+    stage_binding_mismatch = False
     binding_for_weight = binding
     runtime_for_weight = runtime
     if stage_binding_mismatch:
         binding_resolution = f"{binding_resolution}_stage_mismatch"
-    identity_resolution_failed = not binding or any(
+    binding_identity_failed = any(
         token in binding_resolution
         for token in ("ambiguous", "mismatch", "inactive")
+    )
+    identity_resolution_failed = (
+        not runtime
+        or runtime_resolution != "active"
+        or binding_identity_failed
+        or (capital_mode in {"canary", "live"} and not binding)
     )
     if identity_resolution_failed:
         binding_for_weight = {}
@@ -45062,6 +46002,22 @@ def _enrich_persona_item_with_bindings(
             persona_id=persona_id,
             capital_mode=stage_capital_mode,
             deployment_stage=stage_capital_mode,
+            paper_ledger_id=None,
+            live_pool_id=None,
+            binding={},
+            runtime={},
+            league_entry={},
+            raw_metadata={},
+            context_metadata={},
+        )
+    elif identity_resolution_failed:
+        capital_mode = "none"
+        live_pool_id = None
+        paper_ledger_id = None
+        capital_projection = _persona_fleet_capital_binding_projection(
+            persona_id=persona_id,
+            capital_mode="none",
+            deployment_stage="none",
             paper_ledger_id=None,
             live_pool_id=None,
             binding={},
@@ -45164,6 +46120,8 @@ def _enrich_persona_item_with_bindings(
         "target_weight": capital_projection.get("target_weight"),
         "binding_state": capital_projection.get("binding_state"),
         "binding_resolution": binding_resolution,
+        "runtime_resolution": runtime_resolution,
+        "session_resolution": session_resolution,
         "capital_binding": capital_projection.get("capital_binding"),
         "current_weight_source": current_weight_source,
     })
@@ -45246,9 +46204,13 @@ def _pm12_quarterly_recommendation_item(
         "paper_ledger_id": item.get("paper_ledger_id"),
         "current_weight": item.get("current_weight"),
         "target_weight": item.get("target_weight"),
+        "delta": item.get("delta"),
         "current_weight_source": item.get("current_weight_source"),
         "binding_state": item.get("binding_state"),
         "binding_resolution": item.get("binding_resolution"),
+        "runtime_resolution": item.get("runtime_resolution"),
+        "session_resolution": item.get("session_resolution"),
+        "telemetry_resolution": item.get("telemetry_resolution"),
         "binding_ids": list(item.get("binding_ids") or []),
         "strategy_ids": list(item.get("strategy_ids") or []),
         "runtime_ids": list(item.get("runtime_ids") or []),
@@ -45268,6 +46230,9 @@ def _pm12_quarterly_recommendation_item(
         "tier": item.get("tier"),
         "tier_id": item.get("tier_id"),
         "tier_label": item.get("tier_label"),
+        "allocation_policy_input": json.loads(
+            json.dumps(item.get("allocation_policy_input") or {})
+        ),
         "formula_version": item.get("formula_version") or _PM12_LEAGUE_FORMULA_VERSION,
         "action_id": action_id,
         "action_label": action["label"],
@@ -45894,6 +46859,16 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         )
     _reject_body_idempotency_key(payload)
     _raise_if_promotion_review_direct_mutation_requested(payload)
+    for key in ("recommendation_id", "recommendationId"):
+        asserted_id = str(payload.get(key) or "").strip()
+        if asserted_id and asserted_id != recommendation_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "recommendation id assertion mismatch",
+                f"{key} must match the recommendation id in the route.",
+                precondition_failed="recommendation_id",
+            )
 
     snapshot_at = utc_now()
     requested_ranking_snapshot_id = str(
@@ -45927,6 +46902,20 @@ async def bff_management_quarterly_ranking_recommendation_submit(
                 "Replay the immutable ranking snapshot stored with the original submission.",
                 precondition_failed="ranking_snapshot_id",
             )
+        replay_assertions = {
+            **payload,
+            "quarter": (
+                payload.get("quarter")
+                or existing_submission.get("quarter")
+                or _promotion_review_quarter_from_id(recommendation_id)
+            ),
+            "recommendation_id": recommendation_id,
+            "ranking_snapshot_id": stored_ranking_snapshot_id,
+        }
+        _validate_quarterly_ranking_recommendation_submit(
+            replay_assertions,
+            identity,
+        )
         stored_source = existing_submission.get("source_recommendation")
         if not isinstance(stored_source, dict):
             stored_source = {
@@ -46023,30 +47012,9 @@ async def bff_management_quarterly_ranking_recommendation_submit(
 
     command_payload = {
         **payload,
-        "quarter": review.get("quarter"),
-        "review_id": review["review_id"],
-        "promotion_review_id": review["promotion_review_id"],
+        "quarter": payload.get("quarter") or review.get("quarter"),
         "recommendation_id": review["recommendation_id"],
-        "recommendationId": review["recommendation_id"],
-        "recommendation_action_id": review.get("action_id"),
-        "recommendationActionId": review.get("action_id"),
         "ranking_snapshot_id": authoritative_ranking_snapshot_id,
-        "persona_id": review.get("persona_id"),
-        "stage_from": (review.get("promotion_path") or {}).get("from_stage"),
-        "stage_to": (review.get("promotion_path") or {}).get("target_stage"),
-        "review_kind": review.get("review_kind"),
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-        "liveCapitalMutation": False,
-        "direct_live_capital_mutation": False,
-        "runtime_mutation": False,
-        "source_type": "quarterly_ranking_recommendation",
-        "source_record_id": review["recommendation_id"],
-        "source_recommendation": _promotion_review_stored_source(
-            review["source_recommendation"]
-        ),
-        "audit_event": "quarterly_ranking.recommendation_submitted",
-        "policy": "promotion_governance_human_gate_no_direct_live_capital",
     }
     _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
     command_response = _sem_command_response(
@@ -46539,6 +47507,13 @@ def _pm12_persona_league_ranking_item(
     telemetry_count = metrics.get("telemetry_coverage_count", 0)
     active_stages = {"paper_running", "canary_running", "live_running"}
     lifecycle_operational = _is_persona_lifecycle_operational(state)
+    runtime_resolution = str(row.get("runtime_resolution") or "missing")
+    session_resolution = str(row.get("session_resolution") or "missing")
+    telemetry_resolution = str(
+        metrics.get("telemetry_resolution") or (
+            "fresh" if telemetry_count else "missing"
+        )
+    )
 
     exclusion_codes: List[str] = []
     exclusion_reasons: List[str] = []
@@ -46548,9 +47523,45 @@ def _pm12_persona_league_ranking_item(
     if stage not in active_stages:
         exclusion_codes.append("stage_not_running")
         exclusion_reasons.append(f"Inactive governed stage: {stage}")
-    if telemetry_count == 0:
+    if runtime_resolution == "missing":
+        exclusion_codes.append("missing_runtime")
+        exclusion_reasons.append("No authoritative active RuntimeBinding")
+    elif runtime_resolution in {"inactive", "retired"}:
+        exclusion_codes.append("inactive_runtime")
+        exclusion_reasons.append(f"RuntimeBinding is {runtime_resolution}")
+    elif runtime_resolution == "stale":
+        exclusion_codes.append("stale_runtime")
+        exclusion_reasons.append("RuntimeBinding freshness is stale or degraded")
+    elif runtime_resolution == "invalid_deployment_mode":
+        exclusion_codes.append("inactive_runtime")
+        exclusion_reasons.append("RuntimeBinding has no authoritative deployment_mode")
+    elif runtime_resolution in {"ambiguous", "identity_mismatch"}:
+        exclusion_codes.append("runtime_identity_mismatch")
+        exclusion_reasons.append("RuntimeBinding identity is not authoritative")
+    if session_resolution in {"missing", "missing_runtime", "inactive"}:
+        exclusion_codes.append("missing_active_session")
+        exclusion_reasons.append("No active session is joined to the RuntimeBinding")
+    elif session_resolution == "ended":
+        exclusion_codes.append("ended_session")
+        exclusion_reasons.append("The RuntimeBinding session has ended")
+    elif session_resolution == "stale":
+        exclusion_codes.append("stale_session")
+        exclusion_reasons.append("The RuntimeBinding session heartbeat is stale")
+    elif session_resolution == "identity_mismatch":
+        exclusion_codes.append("runtime_identity_mismatch")
+        exclusion_reasons.append("Session identity does not join to the RuntimeBinding")
+    if telemetry_resolution == "missing":
         exclusion_codes.append("missing_telemetry")
         exclusion_reasons.append("No telemetry coverage")
+    elif telemetry_resolution == "stale":
+        exclusion_codes.append("stale_telemetry")
+        exclusion_reasons.append("Runtime telemetry is stale")
+    elif telemetry_resolution == "degraded":
+        exclusion_codes.append("degraded_telemetry")
+        exclusion_reasons.append("Runtime telemetry is degraded")
+    elif telemetry_resolution == "identity_mismatch":
+        exclusion_codes.append("runtime_identity_mismatch")
+        exclusion_reasons.append("Telemetry identity does not join to the RuntimeBinding")
     if stage in {"canary_running", "live_running"} and row.get("current_weight") is None:
         exclusion_codes.append("missing_current_weight")
         exclusion_reasons.append("Missing authoritative current weight")
@@ -46567,6 +47578,8 @@ def _pm12_persona_league_ranking_item(
     ):
         exclusion_codes.append("binding_mismatch")
         exclusion_reasons.append("Binding/runtime identity prevents an authoritative allocation join")
+    exclusion_codes = list(dict.fromkeys(exclusion_codes))
+    exclusion_reasons = list(dict.fromkeys(exclusion_reasons))
     eligible = not exclusion_reasons
     exclusion_reason = "; ".join(exclusion_reasons) if exclusion_reasons else None
 
@@ -46598,6 +47611,9 @@ def _pm12_persona_league_ranking_item(
         "target_weight": row.get("target_weight"),
         "binding_state": row.get("binding_state"),
         "binding_resolution": row.get("binding_resolution"),
+        "runtime_resolution": runtime_resolution,
+        "session_resolution": session_resolution,
+        "telemetry_resolution": telemetry_resolution,
         "current_weight_source": row.get("current_weight_source"),
         "binding_ids": list(row.get("binding_ids") or []),
         "strategy_ids": list(row.get("strategy_ids") or []),

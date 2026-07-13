@@ -1,4 +1,10 @@
-from persona_allocation_policy import calculate_target_allocations, stage_recommendation
+import pytest
+
+from persona_allocation_policy import (
+    build_pm12_allocation_policy_input,
+    calculate_target_allocations,
+    stage_recommendation,
+)
 
 
 def _row(persona_id, stage, tier, current, **extra):
@@ -53,3 +59,95 @@ def test_fresh_real_allocation_entrants_bootstrap_to_stage_tier_caps():
     assert by_id["fresh-live"]["delta"] == 0.08
     assert "quarterly_increase_cap_25pct" not in by_id["fresh-canary"]["cap_reasons"]
     assert "quarterly_increase_cap_25pct" not in by_id["fresh-live"]["cap_reasons"]
+
+
+def test_pm12_adapter_uses_overall_score_and_governed_tier_crosswalk():
+    row = {
+        "persona_id": "persona-alpha",
+        "stage": "live_running",
+        "tier": "tier-2",
+        "overall_score": 70.85,
+        "formula_version": "pm12-default-v1",
+        "current_weight": 0.04,
+        "ranking_snapshot_id": "ranking-quarterly-2026-q3-example",
+        "capital_scope": "real",
+        "capital_pool_id": "pool-real",
+        "evidence_refs": ["ev-alpha"],
+    }
+
+    lines = calculate_target_allocations([row])
+
+    assert lines == [
+        {
+            "ranking_snapshot_id": "ranking-quarterly-2026-q3-example",
+            "persona_id": "persona-alpha",
+            "stage": "live_running",
+            "capital_scope": "real",
+            "capital_pool_id": "pool-real",
+            "capital_sleeve_id": None,
+            "current_weight": 0.04,
+            "target_weight": 0.05,
+            "delta": 0.01,
+            "rank_score": 70.85,
+            "capacity_adjusted_score": 70.85,
+            "allocation_policy_input": {
+                "schema_version": "persona-allocation-policy-input/v1",
+                "adapter_version": "pm12-quarterly-overall-tier-v1",
+                "policy_version": "persona-real-allocation-v1",
+                "source_formula_version": "pm12-default-v1",
+                "rank_score_source": "overall_score",
+                "rank_score": 70.85,
+                "source_tier": "tier-2",
+                "allocation_tier": "a",
+            },
+            "recommendation": "allocation_increase_or_retain_review",
+            "cap_reasons": ["live_a_tier_cap", "quarterly_increase_cap_25pct"],
+            "exclusions": [],
+            "evidence_refs": ["ev-alpha"],
+            "eligible": None,
+            "exclusion_reasons": [],
+            "exclusion_codes": [],
+            "requires_human_approval": True,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("formula_version", "pm12-unknown-v1"),
+        ("tier", "tier-5"),
+        ("overall_score", float("nan")),
+    ],
+)
+def test_pm12_adapter_rejects_unknown_or_non_finite_semantics(field, value):
+    row = {
+        "formula_version": "pm12-default-v1",
+        "tier": "tier-1",
+        "overall_score": 90.0,
+        field: value,
+    }
+
+    with pytest.raises(ValueError):
+        build_pm12_allocation_policy_input(row)
+
+
+def test_pm12_adapter_rejects_tampered_supplied_schema():
+    row = {
+        "formula_version": "pm12-default-v1",
+        "tier": "tier-2",
+        "overall_score": 70.85,
+        "allocation_policy_input": {
+            "schema_version": "persona-allocation-policy-input/v1",
+            "adapter_version": "pm12-quarterly-overall-tier-v1",
+            "policy_version": "persona-real-allocation-v1",
+            "source_formula_version": "pm12-default-v1",
+            "rank_score_source": "overall_score",
+            "rank_score": 99.0,
+            "source_tier": "tier-2",
+            "allocation_tier": "a",
+        },
+    }
+
+    with pytest.raises(ValueError, match="rank_score"):
+        build_pm12_allocation_policy_input(row)

@@ -243,7 +243,7 @@ def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item(mon
         assert inbox_detail.json()["data"]["source_type"] == "promotion_review"
 
 
-def test_quarterly_recommendation_submit_ignores_caller_source_snapshot() -> None:
+def test_quarterly_recommendation_submit_rejects_caller_source_snapshot_tampering() -> None:
     with _isolated_client() as client:
         review = _first_review(client)
         authoritative = review["source_recommendation"]
@@ -266,12 +266,13 @@ def test_quarterly_recommendation_submit_ignores_caller_source_snapshot() -> Non
             json={"quarter": "2026-Q1", "source_recommendation": forged},
         )
 
-        assert submit.status_code == 202, submit.text
+        assert submit.status_code == 422, submit.text
+        assert bff_main.command_store._get_all_commands() == []
+
+        clean_submit = _submit_review(client, review["review_id"], idem=_idem())
+        assert clean_submit.status_code == 202, clean_submit.text
         records = bff_main.command_store._get_all_commands()
         stored = records[0]["params"]["source_recommendation"]
-        assert stored["name"] == authoritative["name"]
-        assert stored.get("rationale") == authoritative.get("rationale")
-        assert stored.get("priority") == authoritative.get("priority")
         assert stored["evidence_refs"] == []
         assert stored["evidence_ref_ids"] == []
 
@@ -293,6 +294,103 @@ def test_quarterly_recommendation_submit_ignores_caller_source_snapshot() -> Non
         assert "FORGED PRIVATE EVIDENCE" not in serialized
 
 
+def test_quarterly_recommendation_submit_rejects_tuple_tampering_before_and_on_replay() -> None:
+    tamper_cases = {
+        "stage": "forged_stage",
+        "stage_from": "forged_stage",
+        "current_weight": 0.99,
+        "target_weight": 0.99,
+        "delta": 0.99,
+        "evidence_ref_ids": ["forged-evidence"],
+        "evidence_refs": [{"ref_id": "forged-evidence"}],
+    }
+    with _isolated_client() as client:
+        review = _first_review(client)
+        route = (
+            "/bff/management/quarterly-ranking/recommendations/"
+            f"{review['review_id']}/submit"
+        )
+        for field, forged_value in tamper_cases.items():
+            rejected = client.post(
+                route,
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
+                json={
+                    "quarter": review["quarter"],
+                    "ranking_snapshot_id": review["ranking_snapshot_id"],
+                    field: forged_value,
+                },
+            )
+            assert rejected.status_code == 422, (field, rejected.text)
+        assert bff_main.command_store._get_all_commands() == []
+
+        accepted = _submit_review(client, review["review_id"], idem=_idem())
+        assert accepted.status_code == 202, accepted.text
+        for field, forged_value in tamper_cases.items():
+            rejected_replay = client.post(
+                route,
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
+                json={
+                    "quarter": review["quarter"],
+                    "ranking_snapshot_id": review["ranking_snapshot_id"],
+                    field: forged_value,
+                },
+            )
+            assert rejected_replay.status_code == 422, (
+                field,
+                rejected_replay.text,
+            )
+
+
+def test_generic_quarterly_submit_paths_reject_unadmitted_or_tampered_tuple() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        tamper_cases = (
+            ("ranking_snapshot_id", "ranking-quarterly-forged"),
+            ("recommendation_id", "pm12-2026-q1-forged"),
+            ("stage", "forged_stage"),
+            ("stage_from", "forged_stage"),
+            ("current_weight", 0.99),
+            ("target_weight", 0.99),
+            ("delta", 0.99),
+            ("evidence_ref_ids", ["forged-evidence"]),
+            ("evidence_refs", [{"ref_id": "forged-evidence"}]),
+        )
+        for route, idempotency_header in (
+            ("/bff/v1/commands", "Idempotency-Key"),
+            ("/api/v1/operator/commands", "X-Idempotency-Key"),
+        ):
+            for field, forged_value in tamper_cases:
+                params = {
+                    "quarter": review["quarter"],
+                    "recommendation_id": review["recommendation_id"],
+                    "ranking_snapshot_id": review["ranking_snapshot_id"],
+                    field: forged_value,
+                }
+                rejected = client.post(
+                    route,
+                    headers={
+                        **OPERATOR_HEADERS,
+                        idempotency_header: _idem(),
+                    },
+                    json={
+                        "command": "QuarterlyRankingRecommendationSubmit",
+                        "target": {
+                            "type": "Ranking",
+                            "id": review["recommendation_id"],
+                        },
+                        "params": params,
+                        "audit_context": {
+                            "reason": "Reject untrusted ranking lineage"
+                        },
+                    },
+                )
+                assert rejected.status_code == 422, (
+                    route,
+                    field,
+                    rejected.text,
+                )
+
+
 def test_generic_command_does_not_block_trusted_semantic_submission() -> None:
     with _isolated_client() as client:
         review = _first_review(client)
@@ -305,6 +403,7 @@ def test_generic_command_does_not_block_trusted_semantic_submission() -> None:
                 "params": {
                     "quarter": review["quarter"],
                     "recommendation_id": review["recommendation_id"],
+                    "ranking_snapshot_id": review["ranking_snapshot_id"],
                     "recommendation_action_id": review["action_id"],
                     "persona_id": review["persona_id"],
                     "stage_from": review["promotion_path"]["from_stage"],
