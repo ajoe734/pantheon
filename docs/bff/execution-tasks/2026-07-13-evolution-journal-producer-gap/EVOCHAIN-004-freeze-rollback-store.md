@@ -1,6 +1,6 @@
 # EVOCHAIN-004 — Freeze / Rollback Canonical Store
 
-Status: ready for refreshed reviewer handoff
+Status: owner closeout evidence complete; pending task PR merge
 
 Owner: Codex
 Reviewer: Claude
@@ -76,6 +76,7 @@ Anchor commits:
 
 - `d7ee20512` — governance owner-store/read API layer
 - `f455cbb8f` — BFF service-client/surface-truth layer
+- `7fe37853e` — refreshed reviewer approval handoff state
 
 ## Owner Closeout Recheck
 
@@ -84,8 +85,12 @@ suite passed. During owner finalization, a branch audit found that the new BFF
 clients could select the legacy `PANTHEON_GOVERNANCE_API_URL` before the
 explicit governance URL. Deployed service-family configuration may point that
 legacy alias at evolution. The closeout correction removes the legacy alias
-from both new datasets and adds conflict regression coverage. The corrected
-branch is routed through a refreshed Claude review before publication.
+from both new datasets and adds conflict regression coverage.
+
+Claude's refreshed review approved corrected commit `ef679632a`; the approval
+handoff was anchored at `7fe37853e`. Owner closeout then merged current
+`origin/dev` (`0e8c06603`) in `dc9385344` and reran the complete focused suite
+before publication.
 
 ## Verification
 
@@ -111,11 +116,16 @@ Owner closeout correction result before latest-`dev` composition:
 Final owner revalidation after merging `origin/dev` at `4e410f2cf`:
 `51 passed, 12 warnings in 26.43s`.
 
+Final owner closeout verification after merging `origin/dev` at `0e8c06603`
+in `dc9385344`: `52 passed, 12 warnings in 146.20s`. The additional passing
+case comes from newer `dev` coverage in the selected journal test module; the
+warning class remains the existing FastAPI `on_event` deprecation.
+
 Additional checks:
 
-- `git diff --check` — passed
-- branch reconciliation — `origin/dev` at `4e410f2cf` merged cleanly in
-  `6594dae60` before final validation
+- `git diff --check origin/dev...HEAD` — passed
+- final branch reconciliation — `origin/dev` at `0e8c06603` merged cleanly in
+  `dc9385344` before final owner verification
 
 ## Residual Risks / Follow-up
 
