@@ -11262,8 +11262,6 @@ class ReadSurfaceStore:
                 "persona_capital_binding_id": (
                     declaration.get("persona_capital_binding_id")
                     or declaration.get("personaCapitalBindingId")
-                    or declaration.get("runtime_binding_id")
-                    or declaration.get("runtimeBindingId")
                 ),
             }
             for field, index in declaration_indexes.items():
@@ -11277,11 +11275,6 @@ class ReadSurfaceStore:
                 continue
             projected = json.loads(json.dumps(binding))
             persona_binding_id = str(projected.get("persona_capital_binding_id") or "").strip()
-            if not persona_binding_id:
-                runtime_binding_id = str(projected.get("binding_id") or "").strip()
-                if runtime_binding_id in capital_binding_by_id:
-                    persona_binding_id = runtime_binding_id
-                    projected["persona_capital_binding_id"] = runtime_binding_id
 
             capital_binding = capital_binding_by_id.get(persona_binding_id, {})
             canonical_persona_id = str(capital_binding.get("persona_id") or "").strip()
@@ -11314,8 +11307,6 @@ class ReadSurfaceStore:
                         declared_binding_id = str(
                             declaration.get("persona_capital_binding_id")
                             or declaration.get("personaCapitalBindingId")
-                            or declaration.get("runtime_binding_id")
-                            or declaration.get("runtimeBindingId")
                             or ""
                         ).strip()
                         if declared_binding_id:
