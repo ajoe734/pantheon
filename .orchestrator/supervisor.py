@@ -9636,6 +9636,14 @@ def higher_priority_ready_task_exists(
 ) -> bool:
     if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
         return False
+    # A replacement supervisor must first reconcile the workers it inherited.
+    # During that first cycle last_successful_loop_at is deliberately reset to
+    # None.  Preempting a fresh, still-live wrapper in this window destroys the
+    # very task the restart is meant to recover and can fan out an entire new
+    # dispatch frontier before the recovered state has settled.
+    supervisor_state = (state or {}).get("supervisor", {})
+    if supervisor_state.get("started_at") and not supervisor_state.get("last_successful_loop_at"):
+        return False
     current_priority = dispatch_reason_priority(worker.get("request_snapshot", {}).get("reason"))
     if current_priority is None:
         return False
