@@ -175,3 +175,108 @@ changes. Pantheon-side, all five are addressed:
    (`9416c7979`), unblocking the `BEHIND` merge state again.
 
 Re-verified: `python3 -m pytest integrations/openclaw/skills/agora/trading_room_workspace/test_skill.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_locale_contract.py -q` -> 63 passed (was 59; +4 new regression tests); `python3 -m pytest scripts/test_agora_v1_7_bundle.py -q` -> 8 passed (no schema/bundle drift); grep confirms no unconditional `"partial"` default remains.
+
+## Round 3: review-requested changes addressed (2026-07-13)
+
+Reviewer Codex reopened the task again after round 2, finding the round-2
+fixes incomplete in five ways. Pantheon-side, all five are addressed:
+
+1. **Freshness truth still forgeable/overstated.** Two gaps in
+   `_workspace_data_freshness`: (a) `agora.strategy.summary` resolved to
+   `full` for *any* scoped workshop session matching `strategy_id`,
+   regardless of whether that session had actually reached the
+   `trading_room` readiness gate; (b) `agora.research.evidence_refs`
+   trusted the caller-supplied `evidenceRefs` list length verbatim, with no
+   check that those refs corresponded to anything real. Both are now
+   derived from server truth: the strategy summary only reports `full` when
+   a session's readiness assessment shows the `trading_room` gate state is
+   `ready` (reusing the same gate-state helper as the ready-strategy
+   projection list), and evidence-ref freshness only counts caller-supplied
+   refs that match a real `ref_id` on that ready session's assessment. A
+   third bug was fixed alongside these: the session lookup called
+   `list_sessions(limit=100)` once and discarded `next_cursor`, silently
+   missing a real ready session beyond the first page of an operator's
+   sessions; it now follows `next_cursor` until the match is found or the
+   scope is exhausted. New tests: `test_workspace_proposal_forged_evidence_refs_are_ignored`,
+   `test_workspace_proposal_non_ready_session_does_not_report_full_strategy_summary`,
+   `test_workspace_proposal_strategy_summary_paginates_across_all_sessions`.
+2. **`add_registered_widget` layout op accepted a widget with no
+   `dataAvailability`.** `_apply_workspace_layout_ops`'s
+   `add_registered_widget` branch appended the caller's `widgetSpec`
+   straight into the view without any per-widget validation; the
+   whole-workspace revalidation pass after every layout op does not
+   require `dataAvailability` (existing pre-rename widgets may still lack
+   it), so this path silently persisted a widget missing the field
+   (HTTP 200). The branch now runs the same `require_data_availability=True`
+   validation used by the dedicated add-widget route before appending, and
+   normalizes legacy `complete`/`unavailable` values first. New test:
+   `test_workspace_layout_add_registered_widget_requires_data_availability`.
+3. **Persisted pre-rename `complete`/`unavailable` records returned raw.**
+   `_load_workspace_for_identity`, `_load_revision_proposal_for_identity`,
+   the versions-list route, and the version-rollback route all now
+   normalize legacy `dataAvailability` literals (view, widget, and
+   revision-proposal `beforeSpec`/`proposedSpec`/top-level fields) at the
+   load/rollback boundary, before any revalidation runs. This fixes three
+   concrete 422s: an unrelated widget PATCH failing because a *different*
+   widget in the workspace still carried a raw legacy value; a
+   widget-revision-proposal accept failing because a sibling widget in the
+   same view carried a raw legacy value; and a version rollback failing
+   because the target version was recorded before the rename. New tests:
+   `test_workspace_load_normalizes_legacy_availability_for_unrelated_mutations`,
+   `test_widget_revision_accept_normalizes_legacy_availability_elsewhere_in_view`,
+   `test_workspace_version_rollback_normalizes_legacy_availability`.
+4. **v1.5 contract drift -- superseded mid-task by a concurrent frozen-v1.5
+   decision.** The initial diagnosis (`TradingRoomViewSpec`/
+   `TradingRoomWidgetSpec` in `trading_room_workspace.schema.json` not
+   requiring `dataAvailability`, `CreateWidgetRevisionProposalRequest` in
+   `agora_v1_5.openapi.yaml` still advertising the retired
+   `complete`/`partial`/`unavailable` enum) was correct, and an initial fix
+   regenerated `bundle_index.v1_5.json`/`v1_6.json`/`v1_7.json` to match.
+   While that fix was in flight, `AG-UIPOL-001` (commit `b6034dbc9`,
+   reviewer Codex2, merged to `dev` 2026-07-13T18:09:19Z) explicitly
+   *restored* `trading_room_workspace.schema.json` to its frozen v1.5 state
+   and created an additive `specs/agora/v8/trading_room_workspace_v1_7.schema.json`
+   as the new live contract for this domain (`test_trading_room.py`'s
+   `_workspace_schema_validate` now points at the v1.7 file). Merging that
+   in produced a broken hybrid (part-frozen, part-renamed) file; the merge
+   was reset and redone cleanly. This task's v1.5/v1.6 edits were reverted
+   byte-for-byte to `origin/dev` (`trading_room_workspace.schema.json`,
+   `agora_v1_5.openapi.yaml`, `bundle_index.v1_5.json`, `bundle_index.v1_6.json`,
+   `bundle_index.v1_7.json`, and the frozen-hash literal in
+   `scripts/test_agora_v1_7_bundle.py` are now identical to `dev`, verified
+   with `git diff origin/dev -- <path>` for each). The substantive fix --
+   requiring `dataAvailability` on `TradingRoomViewSpec`/`TradingRoomWidgetSpec`
+   -- was re-applied to the correct, live file instead:
+   `specs/agora/v8/trading_room_workspace_v1_7.schema.json` (its
+   `WidgetRevisionProposal` definition already required it).
+   `bundle_index.v1_7.json`'s `files` hash for that one schema is refreshed
+   to match (no test currently locks it, but leaving a stale hash next to a
+   correct one would be misleading). `CreateWidgetRevisionProposalRequest`'s
+   enum bug in `agora_v1_5.openapi.yaml` is a genuine drift against current
+   runtime behavior, but the file is part of the same frozen v1.5 bundle
+   (untouched by AG-UIPOL-001, originally established by `AG-XR-DYNUI-001`)
+   with no v1.7 counterpart to redirect the fix to; deliberately left
+   unfixed rather than unilaterally reinterpreting a decision made under a
+   different task/reviewer pair. Flagging as a residual gap for a
+   follow-up that either amends the frozen-bundle scope or adds a v1.7
+   OpenAPI delta for this request body.
+5. **Hosted FE deploy gap.** BFF deploy run `29272906725` is confirmed
+   `success` (headSha `79c830f21...`, 2026-07-13T18:03:14Z) -- Pantheon-side
+   BFF is current. The hosted dev FE manifest (`/deployment.json`) is still
+   pinned at `3e5177c`, which predates execute-plans PR #302's merge commit
+   `40f0082` (the FE-side full/partial/missing adapter). As of this
+   re-verification, `origin/dev` on `execute-plans` is 53 commits ahead of
+   the hosted FE SHA (41 ahead of `40f0082` specifically) -- dev has moved
+   substantially further since the round-2 note recorded "12 commits
+   behind". `Pantheon Dev FE Deploy` runs continue to report `skipped` on
+   every plain `dev` push (confirmed again on runs through
+   2026-07-13T18:21:02Z); only a `publish/v*` cut or a manually authorized
+   `workflow_dispatch` redeploys the hosted dev FE, and dispatching that
+   workflow remains a shared-infra action gated behind human/chair
+   authorization that this lane cannot trigger unilaterally. The fresh
+   hosted Winner Branch screenshot and a post-rename, genuinely
+   server-derived literal `full` capture against the *exact* deployed FE
+   SHA both remain the one outstanding item, unchanged in kind from the
+   round-2 note but now against a substantially wider commit gap.
+
+Re-verified after reconciling with `origin/dev`'s frozen-v1.5/live-v1.7 split: `python3 -m pytest integrations/openclaw/skills/agora/trading_room_workspace/test_skill.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_locale_contract.py -q` -> 70 passed (was 63; +7 new regression tests); `python3 -m pytest scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py scripts/test_agora_v1_6_bundle.py scripts/test_agora_v1_7_bundle.py scripts/test_agora_compat_manifest.py -q` -> 41 passed; grep confirms no unconditional `"partial"` default remains.
