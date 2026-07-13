@@ -411,6 +411,35 @@ def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_on
     assert tw["research_summary"]["current_project_count"] >= 1
 
 
+def test_fleet_visible_persona_detail_uses_governed_catalog_fallback() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+
+        with _client_with_store(store) as client:
+            fleet = client.get("/bff/management/persona-fleet", headers=HEADERS)
+            detail = client.get("/bff/personas/persona-crypto", headers=HEADERS)
+            unknown = client.get("/bff/personas/persona-not-in-catalog", headers=HEADERS)
+
+    assert fleet.status_code == 200, fleet.text
+    fleet_ids = {item["persona_id"] for item in fleet.json()["data"]["items"]}
+    assert "persona-crypto" in fleet_ids
+
+    assert detail.status_code == 200, detail.text
+    payload = detail.json()
+    assert payload["data"]["id"] == "persona-crypto"
+    assert payload["data"]["name"] == "Crypto Persona"
+    surface = payload["meta"]["surfaces"]["persona_detail"]
+    assert surface["status"] == "degraded"
+    assert surface["source"] == "persona_catalog_list_fallback"
+    assert surface["missing_bindings"] is False
+
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+
 def test_tw_qlib_research_experiment_drilldown_is_governed_default_not_seed() -> None:
     with tempfile.TemporaryDirectory() as td:
         store = ReadSurfaceStore(
