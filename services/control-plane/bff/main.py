@@ -21699,6 +21699,7 @@ def _submit_final_command_admission(
     x_idempotency_key: Optional[str],
     route: str = _FINAL_COMMAND_ROUTE,
     source_route: Optional[str] = None,
+    foundation_raw_payload: Optional[Dict[str, Any]] = None,
     audit_extra: Optional[Dict[str, Any]] = None,
     extra_precondition: Optional[Callable[[OperatorIdentity, OperatorCommand], None]] = None,
     enqueue: bool = True,
@@ -21716,7 +21717,11 @@ def _submit_final_command_admission(
     foundation_context = _build_foundation_command_context(
         cmd=cmd,
         identity=identity,
-        raw_payload=payload,
+        raw_payload=(
+            foundation_raw_payload
+            if foundation_raw_payload is not None
+            else payload
+        ),
         trace_id=x_trace_id,
         correlation_id=x_correlation_id,
         request_id=x_request_id,
@@ -48532,146 +48537,35 @@ async def remediate_v5_intervention(
     routes it through the same admission, idempotency, and audit pipeline as all
     other governed commands.
     """
-    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-
     merged_params = dict(payload)
     merged_params["intervention_id"] = intervention_id
-
-    cmd = OperatorCommand(
-        command=CommandType.REMEDIATE_SENTINEL_INTERVENTION,
-        target=TargetObject(
-            type=ObjectType.SENTINEL_INTERVENTION,
-            id=intervention_id,
-        ),
-        action="remediate_sentinel_intervention",
-        params=merged_params,
-        audit_context=AuditContext(
-            reason=str(payload.get("reason") or "HIQ Sentinel remediation"),
-            incident_id=str(payload.get("incident_id") or "").strip() or None,
-        ),
-    )
-
-    foundation_context = _build_foundation_command_context(
-        cmd=cmd,
-        identity=identity,
-        raw_payload={**payload, "intervention_id": intervention_id},
-        trace_id=x_trace_id,
-        correlation_id=x_correlation_id,
-        request_id=x_request_id,
-        idempotency_key=resolved_key,
-    )
-
-    precondition_evidence: Dict[str, str] = {}
-    try:
-        _reject_body_idempotency_key(payload)
-        _validate_audit_context(cmd)
-        _validate_remediate_sentinel_intervention(merged_params, identity)
-        precondition_evidence = _require_final_command_preconditions(
-            cmd=cmd,
-            payload={**payload, "intervention_id": intervention_id},
-            confirm_token=x_confirm_token,
-            identity=identity,
-            correlation_id=foundation_context["trace_context"].correlation_id,
-        )
-    except HTTPException as exc:
-        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-
-    stored_params = _stored_command_params(cmd, identity)
-
-    duplicate = command_store.get_command_by_idempotency_key(
-        foundation_context["idempotency_record"].idempotency_key,
-        operator_id=identity.operator_id,
-    )
-    if duplicate:
-        duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
-        if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
-            raise _foundation_idempotency_conflict_error(
-                foundation_context=foundation_context,
-                existing_command_id=str(duplicate.get("command_id") or ""),
-            )
-        return _project_final_command_response(
-            command_id=duplicate["command_id"],
-            command=cmd.command,
-            accepted_at=duplicate.get("submitted_at") or utc_now(),
-            status=CommandStatus(duplicate.get("status") or CommandStatus.SUBMITTED.value),
-            staleness_warning=None,
-        )
-
-    active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
-    if active:
-        error = _bff_error(
-            409, ErrorCode.RESOURCE_CONFLICT,
-            "A remediation command is already in flight for this intervention",
-            f"Command {active[0]['command_id']} is currently {active[0]['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete before retrying",
-        )
-        raise _foundation_bff_error(error, foundation_context=foundation_context)
-
-    staleness_warning = _check_read_surface_state()
-
-    command_envelope = foundation_context["command_envelope"]
-    idempotency_record = foundation_context["idempotency_record"]
-    idempotency_record = idempotency_record.with_status(
-        "succeeded",
-        result_ref=f"command:{command_envelope.command_id}",
-    )
-    foundation_context["idempotency_record"] = idempotency_record
-    command_id = command_envelope.command_id
-    submitted_at = utc_now()
-
-    auth_context = _command_runtime_auth_context(
-        command_id=command_id,
-        authorization=authorization,
-        mfa_token=x_mfa_token,
-        identity=identity,
-    )
-
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "mfa_verified": identity.mfa_verified,
-        "reason": cmd.audit_context.reason,
-        "incident_id": cmd.audit_context.incident_id,
-        "preconditions_checked": [
-            "authentication", "authorization", "two_man", "params_shape", "concurrent_safety"
-        ],
-        "timestamp": submitted_at,
-        "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
-        "auth": auth_context,
-        "foundation": _serialize_foundation_context(foundation_context),
+    command_payload = {
+        **payload,
+        "command": CommandType.REMEDIATE_SENTINEL_INTERVENTION.value,
+        "target": {
+            "type": ObjectType.SENTINEL_INTERVENTION.value,
+            "id": intervention_id,
+        },
+        "action": "remediate_sentinel_intervention",
+        "params": merged_params,
+        "audit_context": {
+            "reason": str(payload.get("reason") or "HIQ Sentinel remediation"),
+            "incident_id": str(payload.get("incident_id") or "").strip() or None,
+        },
     }
-    if precondition_evidence:
-        audit_record["precondition_evidence"] = precondition_evidence
-
-    record, active_after_precheck = command_store.submit_command_if_no_active_target(
-        command_id=command_id,
-        command_type=cmd.command,
-        target=cmd.target,
-        submitted_at=submitted_at,
-        params=stored_params,
-        audit_context=audit_record,
-        foundation_context=_serialize_foundation_context(foundation_context),
-    )
-    if active_after_precheck:
-        error = _bff_error(
-            409, ErrorCode.RESOURCE_CONFLICT,
-            "A remediation command is already in flight for this intervention",
-            f"Command {active_after_precheck['command_id']} is currently {active_after_precheck['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete before retrying",
-        )
-        raise _foundation_bff_error(error, foundation_context=foundation_context)
-    assert record is not None
-    background_tasks.add_task(_process_command_stub, command_id)
-
-    return _project_final_command_response(
-        command_id=command_id,
-        command=cmd.command,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
+    return _submit_final_command_admission(
+        background_tasks=background_tasks,
+        payload=command_payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        route=_FOUNDATION_COMMAND_ROUTE,
+        foundation_raw_payload={**payload, "intervention_id": intervention_id},
     )
 
 
@@ -54756,20 +54650,56 @@ def _confirm_token_expiry_from_record(record: Dict[str, Any]) -> Optional[dateti
     return submitted_at + timedelta(seconds=ttl_seconds)
 
 
+def _guarded_command_confirm_token_id(record: Dict[str, Any]) -> Optional[str]:
+    entry = get_catalog_entry(str(record.get("type") or ""))
+    if entry is None or not getattr(entry, "requires_confirm_token", False):
+        return None
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    evidence = (
+        audit.get("precondition_evidence")
+        if isinstance(audit.get("precondition_evidence"), dict)
+        else {}
+    )
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    token_id = str(
+        evidence.get("confirm_token_id")
+        or params.get("confirm_token_id")
+        or ""
+    ).strip()
+    return token_id or None
+
+
 def _confirm_token_lifecycle_payload(token_id: str) -> Dict[str, Any]:
     status = "available"
     expires_at: Optional[datetime] = None
     latest_record: Optional[Dict[str, Any]] = None
-    for record in _confirm_token_records(token_id):
-        record_type = record.get("type")
-        if record_type == CommandType.CONFIRM_TOKEN_CREATE.value:
-            status = "created"
-            expires_at = _confirm_token_expiry_from_record(record)
-        elif record_type == CommandType.CONFIRM_TOKEN_REDEEM.value:
+    for record in command_store._get_all_commands():
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        if (
+            target.get("type") == ObjectType.CONFIRM_TOKEN.value
+            and target.get("id") == token_id
+        ):
+            record_type = record.get("type")
+            if record_type == CommandType.CONFIRM_TOKEN_CREATE.value:
+                status = "created"
+                expires_at = _confirm_token_expiry_from_record(record)
+            elif record_type == CommandType.CONFIRM_TOKEN_REDEEM.value:
+                status = "redeemed"
+            elif record_type == CommandType.CONFIRM_TOKEN_DELETE.value:
+                status = "deleted"
+            latest_record = record
+            continue
+
+        # Before automatic redemption existed, guarded admissions persisted the
+        # validated token id on the command/audit record but did not append a
+        # RedeemConfirmToken record.  Treat that durable admission as consumed
+        # so an upgrade cannot grant the same token one additional use.
+        if (
+            status == "created"
+            and _guarded_command_confirm_token_id(record) == token_id
+        ):
             status = "redeemed"
-        elif record_type == CommandType.CONFIRM_TOKEN_DELETE.value:
-            status = "deleted"
-        latest_record = record
+            latest_record = record
 
     expired = False
     if expires_at is not None and status == "created":

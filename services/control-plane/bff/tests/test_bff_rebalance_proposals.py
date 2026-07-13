@@ -287,6 +287,80 @@ def test_bff_apply_bootstraps_zero_weight_owner_allocation(tmp_path: Path) -> No
         assert allocation["authoritative_capital_readback"] is True
 
 
+def test_pre_auto_redeem_guarded_record_keeps_token_consumed_after_upgrade_restart(
+    tmp_path: Path,
+) -> None:
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        created = _create_proposal(harness, key="rb-proposal-upgrade-consumption")
+        rebalance_id = created.json()["rebalance_id"]
+        assert harness.client is not None
+        apply_body, apply_headers = harness.apply_evidence(
+            rebalance_id,
+            suffix="upgrade-consumption",
+        )
+        request_headers = {
+            **apply_headers,
+            "Idempotency-Key": "rb-apply-upgrade-consumption",
+        }
+        accepted = harness.client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            json=apply_body,
+            headers=request_headers,
+        )
+        assert accepted.status_code == 202, accepted.text
+        command_id = accepted.json()["data"]["command_id"]
+        token_id = apply_headers["X-Confirm-Token"]
+
+        # Simulate a command admitted before automatic redemption was deployed:
+        # its guarded command/audit evidence is durable, but no explicit redeem
+        # record exists yet.
+        records = [
+            record
+            for record in bff_main.command_store._get_all_commands()
+            if not (
+                record.get("type")
+                == bff_main.CommandType.CONFIRM_TOKEN_REDEEM.value
+                and record.get("target", {}).get("id") == token_id
+            )
+        ]
+        bff_main.command_store._update_commands(records)
+        assert (
+            harness.client.get(
+                f"/bff/confirm-tokens/{token_id}",
+                headers=HEADERS,
+            ).json()["data"]["status"]
+            == "redeemed"
+        )
+
+        harness.restart()
+        assert harness.client is not None
+        token_state = harness.client.get(
+            f"/bff/confirm-tokens/{token_id}",
+            headers=HEADERS,
+        )
+        assert token_state.status_code == 200, token_state.text
+        assert token_state.json()["data"]["status"] == "redeemed"
+
+        replay = harness.client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            json=apply_body,
+            headers=request_headers,
+        )
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["data"]["command_id"] == command_id
+
+        reused = harness.client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            json=apply_body,
+            headers={
+                **apply_headers,
+                "Idempotency-Key": "rb-apply-upgrade-reused-token",
+            },
+        )
+        assert reused.status_code == 428, reused.text
+        assert reused.json()["error"]["details"]["reason"] == "CONFIRM_TOKEN_INVALID"
+
+
 @pytest.mark.parametrize(
     "failure_kind",
     ["url_disconnect", "json_decode", "truncated_response"],
@@ -1106,6 +1180,21 @@ def test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt(
             assert proposal.status_code == 200, proposal.text
             assert proposal.json()["data"]["applied"] is True
             assert proposal.json()["data"]["apply_command_id"] == command_id
+            token_id = apply_headers["X-Confirm-Token"]
+            token_state = restarted_client.get(
+                f"/bff/confirm-tokens/{token_id}",
+                headers=HEADERS,
+            )
+            assert token_state.status_code == 200, token_state.text
+            assert token_state.json()["data"]["status"] == "redeemed"
+            redemption_records = [
+                record
+                for record in bff_main.command_store._get_all_commands()
+                if record.get("type")
+                == bff_main.CommandType.CONFIRM_TOKEN_REDEEM.value
+                and record.get("target", {}).get("id") == token_id
+            ]
+            assert len(redemption_records) == 1
         harness.client = None
 
 
