@@ -20,6 +20,10 @@ Routes
   POST   /api/governance/approvals/{decision_id}/review     accept review
   POST   /api/governance/approvals/{decision_id}/decide     record outcome
   POST   /api/governance/approvals/{decision_id}/revoke     revoke decided decision
+  GET    /api/governance/freeze-orders                      list freeze orders
+  GET    /api/governance/freeze-orders/{freeze_order_id}    get freeze order
+  GET    /api/governance/rollbacks                          list rollback records
+  GET    /api/governance/rollbacks/{rollback_id}            get rollback record
   GET    /api/governance/write-authority                    write-authority matrix
   GET    /api/governance/audit                              audit log read path
   GET    /health                                            liveness probe
@@ -73,6 +77,7 @@ try:
     )
     from .authz import evaluate_authz_request
     from .pg_store import build_approval_decision_store, build_governance_audit_store
+    from .record_store import GovernanceRecordStore, build_governance_record_store
     from .write_authority import is_authorized_to_decide, matrix_as_list
 except ImportError:
     from models import (  # type: ignore
@@ -88,6 +93,7 @@ except ImportError:
     )
     from authz import evaluate_authz_request  # type: ignore
     from pg_store import build_approval_decision_store, build_governance_audit_store  # type: ignore
+    from record_store import GovernanceRecordStore, build_governance_record_store  # type: ignore
     from write_authority import is_authorized_to_decide, matrix_as_list  # type: ignore
 
 logging.basicConfig(level=logging.INFO)
@@ -102,11 +108,23 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 AUDIT_LOG_PATH = os.path.join(DATA_DIR, "audit.jsonl")
 STORE_PATH     = os.path.join(DATA_DIR, "approval_decisions.json")
+FREEZE_ORDER_STORE_PATH = os.path.join(DATA_DIR, "freeze_orders.json")
+ROLLBACK_STORE_PATH = os.path.join(DATA_DIR, "rollbacks.json")
 
 STORE_BACKEND = os.getenv("GOVERNANCE_STORE_BACKEND", "json").strip().lower() or "json"
 PERSISTENCE_POSTURE = require_persistence_posture("governance")
 store = build_approval_decision_store(STORE_PATH)
 audit_store = build_governance_audit_store(AUDIT_LOG_PATH)
+freeze_order_store: GovernanceRecordStore = build_governance_record_store(
+    FREEZE_ORDER_STORE_PATH,
+    table=os.getenv("GOVERNANCE_FREEZE_ORDER_STORE_TABLE", "governance.freeze_orders"),
+    id_fields=("freeze_order_id", "id"),
+)
+rollback_store: GovernanceRecordStore = build_governance_record_store(
+    ROLLBACK_STORE_PATH,
+    table=os.getenv("GOVERNANCE_ROLLBACK_STORE_TABLE", "governance.rollbacks"),
+    id_fields=("rollback_id", "id"),
+)
 
 # ---------------------------------------------------------------------------
 # FastAPI application
@@ -125,10 +143,16 @@ register_fastapi_health_routes(
     app,
     "governance",
     dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
-    metrics=lambda: {"approval_count": len(store.list_all())},
+    metrics=lambda: {
+        "approval_count": len(store.list_all()),
+        "freeze_order_count": len(freeze_order_store.list_all()),
+        "rollback_count": len(rollback_store.list_all()),
+    },
     details=lambda: {
         "data_dir": DATA_DIR,
         "store_path": STORE_PATH,
+        "freeze_order_store_path": FREEZE_ORDER_STORE_PATH,
+        "rollback_store_path": ROLLBACK_STORE_PATH,
         "store_backend": STORE_BACKEND,
         "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
     },
@@ -174,6 +198,95 @@ def _get_or_404(decision_id: str) -> ApprovalDecision:
     if not decision:
         raise HTTPException(status_code=404, detail=f"Decision '{decision_id}' not found")
     return decision
+
+
+def _record_or_404(
+    record_store: GovernanceRecordStore,
+    record_id: str,
+    *,
+    label: str,
+) -> Dict[str, Any]:
+    record = record_store.get(record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"{label} '{record_id}' not found")
+    return record
+
+
+def _record_time(record: Dict[str, Any], *fields: str) -> str:
+    for field in fields:
+        value = record.get(field)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Routes — freeze-order and rollback read models
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/api/governance/freeze-orders",
+    response_model=List[Dict[str, Any]],
+    summary="List canonical freeze orders",
+)
+def list_freeze_orders(
+    status: Optional[str] = Query(None),
+    scope: Optional[str] = Query(None),
+) -> List[Dict[str, Any]]:
+    """List governance quarantine records, most-recent first."""
+    records = freeze_order_store.list_all()
+    if status:
+        records = [record for record in records if record.get("status") == status]
+    if scope:
+        records = [record for record in records if record.get("scope") == scope]
+    return sorted(
+        records,
+        key=lambda record: _record_time(record, "created_at", "issued_at", "updated_at"),
+        reverse=True,
+    )
+
+
+@app.get(
+    "/api/governance/freeze-orders/{freeze_order_id}",
+    response_model=Dict[str, Any],
+    summary="Get a canonical freeze order",
+)
+def get_freeze_order(freeze_order_id: str) -> Dict[str, Any]:
+    return _record_or_404(freeze_order_store, freeze_order_id, label="Freeze order")
+
+
+@app.get(
+    "/api/governance/rollbacks",
+    response_model=List[Dict[str, Any]],
+    summary="List canonical rollback records",
+)
+def list_rollbacks(
+    runtime_id: Optional[str] = Query(None),
+    action_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+) -> List[Dict[str, Any]]:
+    """List rollback request/outcome read models, most-recent first."""
+    records = rollback_store.list_all()
+    if runtime_id:
+        records = [record for record in records if record.get("runtime_id") == runtime_id]
+    if action_type:
+        records = [record for record in records if record.get("action_type") == action_type]
+    if status:
+        records = [record for record in records if record.get("status") == status]
+    return sorted(
+        records,
+        key=lambda record: _record_time(record, "initiated_at", "requested_at", "created_at", "updated_at"),
+        reverse=True,
+    )
+
+
+@app.get(
+    "/api/governance/rollbacks/{rollback_id}",
+    response_model=Dict[str, Any],
+    summary="Get a canonical rollback record",
+)
+def get_rollback(rollback_id: str) -> Dict[str, Any]:
+    return _record_or_404(rollback_store, rollback_id, label="Rollback")
 
 # ---------------------------------------------------------------------------
 # Routes — proposals

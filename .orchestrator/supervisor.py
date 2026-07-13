@@ -9992,6 +9992,21 @@ def dispatch_ready_tasks(
                 quiet=SUPERVISOR_LOG_QUIET,
             )
             return changed
+        # Reserve room for already-queued task deliveries, then clamp this
+        # wave to the remaining global slots.  Checking the cap only once at
+        # wave entry lets (for example) 4 live workers queue 10 more against a
+        # cap of 10, and process_queue launches the whole wave to 14.
+        pending_only_total = len(pending_task_ids - active_task_ids)
+        reserved_total = live_total + pending_only_total
+        if reserved_total >= max_concurrent:
+            console_log(
+                f"ready dispatch skipped: reserved worker count {reserved_total} >= "
+                f"max_concurrent_workers {max_concurrent} "
+                f"(live={live_total}, pending={pending_only_total})",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+            return changed
+        max_dispatches_per_tick = min(max_dispatches_per_tick, max_concurrent - reserved_total)
     considered_agents = 0
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:
