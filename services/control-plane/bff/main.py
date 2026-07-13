@@ -13,8 +13,10 @@ import threading
 import time
 import uuid
 from collections import deque
-from contextvars import ContextVar
+from concurrent.futures import Executor, ThreadPoolExecutor
+from contextvars import ContextVar, copy_context
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
@@ -3302,6 +3304,80 @@ def _require_two_man_signature_evidence(
     return signature_id
 
 
+def _require_final_command_confirm_token(
+    *,
+    cmd: OperatorCommand,
+    payload: Dict[str, Any],
+    confirm_token: Optional[str],
+    identity: OperatorIdentity,
+    correlation_id: Optional[str],
+) -> Optional[str]:
+    entry = get_catalog_entry(cmd.command.value)
+    if entry is None or not getattr(entry, "requires_confirm_token", False):
+        return None
+
+    params = dict(cmd.params)
+    token_id = _precondition_value(payload, params, _CONFIRM_TOKEN_FIELDS, confirm_token)
+    if not token_id:
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=428,
+            code=ErrorCode.CONFIRMATION_REQUIRED,
+            message="Confirmation token is required before this action can be accepted",
+            reason="CONFIRM_TOKEN_MISSING",
+            kind="confirm_token",
+            correlation_id=correlation_id,
+            suggestion="Retry with X-Confirm-Token or confirmToken after the operator confirmation step",
+        )
+    token_records = _confirm_token_records(token_id)
+    create_record = next(
+        (
+            record
+            for record in reversed(token_records)
+            if record.get("type") == CommandType.CONFIRM_TOKEN_CREATE.value
+        ),
+        None,
+    )
+    token_state = _confirm_token_lifecycle_payload(token_id)
+    if create_record is None or token_state.get("status") != "created":
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=428,
+            code=ErrorCode.CONFIRMATION_REQUIRED,
+            message="Confirmation token is not valid for this command",
+            reason="CONFIRM_TOKEN_INVALID",
+            kind="confirm_token",
+            correlation_id=correlation_id,
+            suggestion="Issue a fresh confirm token bound to this command, target, and operator",
+            details_extra={"confirmToken": token_id, "tokenStatus": token_state.get("status")},
+        )
+    if not _record_bound_to_command_and_target(create_record, cmd):
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=428,
+            code=ErrorCode.CONFIRMATION_REQUIRED,
+            message="Confirmation token is not bound to this command target",
+            reason="CONFIRM_TOKEN_BINDING_MISMATCH",
+            kind="confirm_token",
+            correlation_id=correlation_id,
+            suggestion="Issue a confirm token for the exact command and target being submitted",
+            details_extra={"confirmToken": token_id},
+        )
+    if not _record_bound_to_caller(create_record, identity):
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=428,
+            code=ErrorCode.CONFIRMATION_REQUIRED,
+            message="Confirmation token is not bound to this operator",
+            reason="CONFIRM_TOKEN_CALLER_MISMATCH",
+            kind="confirm_token",
+            correlation_id=correlation_id,
+            suggestion="Use a confirm token issued for the same authenticated operator",
+            details_extra={"confirmToken": token_id},
+        )
+    return token_id
+
+
 def _require_final_command_preconditions(
     *,
     cmd: OperatorCommand,
@@ -3314,68 +3390,18 @@ def _require_final_command_preconditions(
     if entry is None:
         return {}
 
-    params = dict(cmd.params)
     evidence: Dict[str, str] = {}
-    if getattr(entry, "requires_confirm_token", False):
-        token_id = _precondition_value(payload, params, _CONFIRM_TOKEN_FIELDS, confirm_token)
-        if not token_id:
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=428,
-                code=ErrorCode.CONFIRMATION_REQUIRED,
-                message="Confirmation token is required before this action can be accepted",
-                reason="CONFIRM_TOKEN_MISSING",
-                kind="confirm_token",
-                correlation_id=correlation_id,
-                suggestion="Retry with X-Confirm-Token or confirmToken after the operator confirmation step",
-            )
-        token_records = _confirm_token_records(token_id)
-        create_record = next(
-            (
-                record
-                for record in reversed(token_records)
-                if record.get("type") == CommandType.CONFIRM_TOKEN_CREATE.value
-            ),
-            None,
-        )
-        token_state = _confirm_token_lifecycle_payload(token_id)
-        if create_record is None or token_state.get("status") != "created":
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=428,
-                code=ErrorCode.CONFIRMATION_REQUIRED,
-                message="Confirmation token is not valid for this command",
-                reason="CONFIRM_TOKEN_INVALID",
-                kind="confirm_token",
-                correlation_id=correlation_id,
-                suggestion="Issue a fresh confirm token bound to this command, target, and operator",
-                details_extra={"confirmToken": token_id, "tokenStatus": token_state.get("status")},
-            )
-        if not _record_bound_to_command_and_target(create_record, cmd):
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=428,
-                code=ErrorCode.CONFIRMATION_REQUIRED,
-                message="Confirmation token is not bound to this command target",
-                reason="CONFIRM_TOKEN_BINDING_MISMATCH",
-                kind="confirm_token",
-                correlation_id=correlation_id,
-                suggestion="Issue a confirm token for the exact command and target being submitted",
-                details_extra={"confirmToken": token_id},
-            )
-        if not _record_bound_to_caller(create_record, identity):
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=428,
-                code=ErrorCode.CONFIRMATION_REQUIRED,
-                message="Confirmation token is not bound to this operator",
-                reason="CONFIRM_TOKEN_CALLER_MISMATCH",
-                kind="confirm_token",
-                correlation_id=correlation_id,
-                suggestion="Use a confirm token issued for the same authenticated operator",
-                details_extra={"confirmToken": token_id},
-            )
+    token_id = _require_final_command_confirm_token(
+        cmd=cmd,
+        payload=payload,
+        confirm_token=confirm_token,
+        identity=identity,
+        correlation_id=correlation_id,
+    )
+    if token_id:
         evidence["confirm_token_id"] = token_id
+
+    params = dict(cmd.params)
 
     if getattr(entry, "requires_approval", False):
         approval_decision_id = _precondition_value(payload, params, _APPROVAL_EVIDENCE_FIELDS)
@@ -4210,6 +4236,92 @@ def _stored_command_params(
         }
     )
     return params
+
+
+def _assert_duplicate_confirm_token_matches(
+    *,
+    duplicate: Dict[str, Any],
+    cmd: OperatorCommand,
+    payload: Dict[str, Any],
+    confirm_token: Optional[str],
+    foundation_context: Dict[str, Any],
+) -> None:
+    audit = duplicate.get("audit") if isinstance(duplicate.get("audit"), dict) else {}
+    evidence = (
+        audit.get("precondition_evidence")
+        if isinstance(audit.get("precondition_evidence"), dict)
+        else {}
+    )
+    stored_params = (
+        duplicate.get("params") if isinstance(duplicate.get("params"), dict) else {}
+    )
+    stored_token_id = str(
+        evidence.get("confirm_token_id")
+        or stored_params.get("confirm_token_id")
+        or ""
+    ).strip()
+    if not stored_token_id:
+        return
+    supplied_token_id = _precondition_value(
+        payload,
+        dict(cmd.params),
+        _CONFIRM_TOKEN_FIELDS,
+        confirm_token,
+    )
+    if supplied_token_id == stored_token_id:
+        return
+    raise _foundation_idempotency_conflict_error(
+        foundation_context=foundation_context,
+        existing_command_id=str(duplicate.get("command_id") or ""),
+    )
+
+
+def _persist_admitted_command_with_confirm_token(
+    *,
+    command_id: str,
+    command_type: CommandType,
+    target: TargetObject,
+    submitted_at: str,
+    params: Dict[str, Any],
+    audit_context: Dict[str, Any],
+    foundation_context: Dict[str, Any],
+    precondition_evidence: Dict[str, str],
+    identity: OperatorIdentity,
+) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    token_id = str(precondition_evidence.get("confirm_token_id") or "").strip()
+    if not token_id:
+        return command_store.submit_command_if_no_active_target(
+            command_id=command_id,
+            command_type=command_type,
+            target=target,
+            submitted_at=submitted_at,
+            params=params,
+            audit_context=audit_context,
+            foundation_context=foundation_context,
+        )
+
+    confirmation_id = f"auto-confirm-{command_id}"
+    confirmation_request = {
+        "confirm_token": token_id,
+        "command_id": command_id,
+        "confirmation_id": confirmation_id,
+        "confirmed_by": identity.operator_id,
+    }
+    return command_store.submit_command_with_confirm_token_redeem_if_no_active_target(
+        command_id=command_id,
+        command_type=command_type,
+        target=target,
+        submitted_at=submitted_at,
+        params=params,
+        audit_context=audit_context,
+        foundation_context=foundation_context,
+        confirm_token_id=token_id,
+        confirmation_id=confirmation_id,
+        confirmation_command_id=f"cmd-{uuid.uuid4().hex[:16]}",
+        confirmation_idempotency_key=f"auto-confirm:{command_id}",
+        confirmation_request_hash=_stable_json_hash(confirmation_request),
+        operator_id=identity.operator_id,
+    )
 
 
 def _resolve_execution_params_for_record(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -6770,6 +6882,14 @@ def _dataset_surface_status(
     return surface
 
 
+def _dataset_source_after_read(dataset: str) -> str:
+    """Return source provenance without repeating a completed backend read."""
+    cached_source = getattr(read_store, "dataset_source_cached", None)
+    if callable(cached_source):
+        return str(cached_source(dataset) or "missing")
+    return str(read_store.dataset_source(dataset) or "missing")
+
+
 def _composed_dataset_surface_status(
     dataset: str,
     records: Sequence[Any],
@@ -6777,7 +6897,11 @@ def _composed_dataset_surface_status(
     snapshot_at: str,
     source: str,
 ) -> Dict[str, Any]:
-    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at)
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        source=_dataset_source_after_read(dataset),
+    )
     if records and surface.get("source") == "missing":
         return {
             "status": "ok",
@@ -11187,11 +11311,16 @@ def _build_management_ep5_readiness_payload() -> Dict[str, Any]:
     )
 
 
-def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
+def _build_management_cockpit_payload(
+    snapshot_at: str,
+    *,
+    human_inbox: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     operator_home = _build_operator_home_payload(snapshot_at)
     runtime_health = _build_operator_health_status_payload(snapshot_at)
     alerts_payload = _build_operator_alerts_payload(snapshot_at)
-    human_inbox = _human_inbox_payload(snapshot_at, page_size=None)
+    if human_inbox is None:
+        human_inbox = _human_inbox_payload(snapshot_at, page_size=None)
     trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
     anomalies = _build_management_anomalies_payload(snapshot_at)
 
@@ -11246,6 +11375,77 @@ def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
     return {
         "data": data,
         "meta": meta,
+    }
+
+
+def _management_cockpit_read_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "2.5").strip()
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return 2.5
+
+
+_MANAGEMENT_COCKPIT_READ_SLOT_COUNT = 2
+_MANAGEMENT_COCKPIT_READ_SLOTS = threading.BoundedSemaphore(
+    _MANAGEMENT_COCKPIT_READ_SLOT_COUNT
+)
+_MANAGEMENT_COCKPIT_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_MANAGEMENT_COCKPIT_READ_SLOT_COUNT,
+    thread_name_prefix="bff-management-cockpit",
+)
+
+
+def _management_cockpit_degraded_payload(
+    snapshot_at: str,
+    *,
+    human_inbox: Dict[str, Any],
+    saturated: bool,
+) -> Dict[str, Any]:
+    surface = _management_read_timeout_surface(
+        "management_cockpit",
+        snapshot_at=snapshot_at,
+        message=(
+            "Management cockpit composition was not submitted because read capacity is saturated."
+            if saturated
+            else "Management cockpit composition exceeded its bounded read budget."
+        ),
+    )
+    if saturated:
+        surface.update(
+            {
+                "source": "management_read_capacity",
+                "reason": "read_capacity_saturated",
+                "staleness": {
+                    "served_from": "capacity_degraded",
+                    "last_known_at": snapshot_at,
+                },
+            }
+        )
+    empty_section = {"items": [], "summary": {}}
+    return {
+        "data": {
+            "id": "management-cockpit",
+            "snapshot_at": snapshot_at,
+            "operator_home": {},
+            "runtime_health": {},
+            "alerts": dict(empty_section),
+            "human_inbox": human_inbox,
+            "trading_pulse": {},
+            "anomalies": dict(empty_section),
+            "links": {
+                "self": f"/bff{_MANAGEMENT_COCKPIT_ROUTE}",
+                "human_inbox": "/bff/management/human-inbox",
+            },
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "partial": True,
+            "surfaces": {
+                "management_cockpit": surface,
+                "human_inbox": human_inbox["meta"]["surfaces"]["human_inbox"],
+            },
+        },
     }
 
 
@@ -13718,6 +13918,10 @@ class _ManagementReadTimeout(Exception):
     """Raised when a management read exceeds its bounded wait budget (MGMT-LOAD-005)."""
 
 
+class _ManagementReadSaturated(Exception):
+    """Raised before submission when a bounded read executor has no capacity."""
+
+
 def _discard_late_management_read_result(task: "asyncio.Task[Any]") -> None:
     if task.cancelled():
         return
@@ -13730,24 +13934,48 @@ async def _run_management_read(
     func: Callable[..., Any],
     *args: Any,
     timeout_seconds: Optional[float] = None,
+    capacity: Optional[threading.BoundedSemaphore] = None,
+    executor: Optional[Executor] = None,
     **kwargs: Any,
 ) -> Any:
     """Run a synchronous read-store aggregation on a worker thread, bounded by a wait budget.
 
-    Deliberately uses asyncio.wait rather than asyncio.wait_for: once the
-    underlying OS thread has started executing synchronous code, Python
-    cannot forcibly cancel it, so wait_for would still block the caller for
-    the full duration of the slow call before raising TimeoutError (it only
-    reclassifies the outcome afterward). asyncio.wait instead stops waiting
-    at the budget and lets the route return a degraded response immediately;
-    the abandoned thread keeps running in the background and its (now
-    irrelevant) result is discarded by _discard_late_management_read_result.
+    Deliberately uses asyncio.wait rather than asyncio.wait_for: once an OS
+    thread has started synchronous work, Python cannot forcibly cancel it.
+    For capacity-bounded calls the semaphore is acquired before executor
+    submission and released by the actual concurrent future, so timed-out
+    work cannot create an unbounded queue of late jobs.
     """
     budget = _management_read_timeout_seconds() if timeout_seconds is None else timeout_seconds
-    task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    if capacity is None:
+        task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    else:
+        # Reserve capacity before submitting work. Acquiring inside ``func``
+        # would still allow an unbounded number of timed-out jobs to collect in
+        # the executor queue while earlier synchronous calls keep running.
+        if not capacity.acquire(blocking=False):
+            raise _ManagementReadSaturated()
+        context = copy_context()
+        call = partial(func, *args, **kwargs)
+        try:
+            worker_future = executor.submit(context.run, call) if executor else None
+            if worker_future is None:
+                raise RuntimeError("A bounded management read requires an executor")
+        except BaseException:
+            capacity.release()
+            raise
+
+        # Hold the reservation until the actual worker future finishes, not
+        # merely until the asyncio wrapper times out or is cancelled.
+        worker_future.add_done_callback(lambda _future: capacity.release())
+        task = asyncio.wrap_future(worker_future)
     done, _pending = await asyncio.wait({task}, timeout=budget)
     if task in done:
         return task.result()
+    if capacity is not None:
+        # Cancels only work that has not started; a running thread keeps its
+        # reservation until the concurrent future's completion callback.
+        worker_future.cancel()
     task.add_done_callback(_discard_late_management_read_result)
     raise _ManagementReadTimeout()
 
@@ -16602,7 +16830,32 @@ async def bff_management_cockpit(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    return _build_management_cockpit_payload(snapshot_at)
+    human_inbox, _items, _sources, _failures = await _human_inbox_payload_bounded(
+        snapshot_at,
+        identity=identity,
+        page_size=None,
+    )
+    try:
+        return await _run_management_read(
+            _build_management_cockpit_payload,
+            snapshot_at,
+            human_inbox=human_inbox,
+            timeout_seconds=_management_cockpit_read_timeout_seconds(),
+            capacity=_MANAGEMENT_COCKPIT_READ_SLOTS,
+            executor=_MANAGEMENT_COCKPIT_READ_EXECUTOR,
+        )
+    except _ManagementReadSaturated:
+        return _management_cockpit_degraded_payload(
+            snapshot_at,
+            human_inbox=human_inbox,
+            saturated=True,
+        )
+    except _ManagementReadTimeout:
+        return _management_cockpit_degraded_payload(
+            snapshot_at,
+            human_inbox=human_inbox,
+            saturated=False,
+        )
 
 
 @app.get("/bff/management/trading-pulse")
@@ -21346,8 +21599,7 @@ async def submit_command(
         idempotency_key=x_idempotency_key,
     )
 
-    # 2. Command-specific precondition validation (role + params shape)
-    precondition_evidence: Dict[str, str] = {}
+    # 2. Command-specific validation that does not consume mutable evidence.
     try:
         x_idempotency_key = _require_operator_command_idempotency_key(x_idempotency_key)
         _reject_server_managed_rebalance_evidence_command(cmd)
@@ -21359,26 +21611,8 @@ async def submit_command(
         validator = _VALIDATORS.get(cmd.command)
         if validator:
             validator(cmd.params, identity)
-        if cmd.command in {
-            CommandType.APPROVED_APPLY,
-            CommandType.EMERGENCY_CONTAINMENT,
-        }:
-            precondition_evidence = _require_final_command_preconditions(
-                cmd=cmd,
-                payload=payload,
-                confirm_token=x_confirm_token,
-                identity=identity,
-                correlation_id=foundation_context["trace_context"].correlation_id,
-            )
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
-    stored_params["idempotency_key"] = x_idempotency_key
-    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
-    _canonicalize_validated_precondition_evidence(
-        stored_params,
-        precondition_evidence,
-    )
 
     duplicate = command_store.get_command_by_idempotency_key(
         foundation_context["idempotency_record"].idempotency_key,
@@ -21392,6 +21626,13 @@ async def submit_command(
                 existing_command_id=str(duplicate.get("command_id") or ""),
             )
             raise conflict_error
+        _assert_duplicate_confirm_token_matches(
+            duplicate=duplicate,
+            cmd=cmd,
+            payload=payload,
+            confirm_token=x_confirm_token,
+            foundation_context=foundation_context,
+        )
         return _project_command_submission_response(
             command_id=duplicate["command_id"],
             command=cmd.command,
@@ -21399,6 +21640,30 @@ async def submit_command(
             status=CommandStatus(duplicate.get("status") or CommandStatus.SUBMITTED.value),
             staleness_warning=None,
         )
+
+    precondition_evidence: Dict[str, str] = {}
+    if cmd.command in {
+        CommandType.APPROVED_APPLY,
+        CommandType.EMERGENCY_CONTAINMENT,
+    }:
+        try:
+            precondition_evidence = _require_final_command_preconditions(
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                identity=identity,
+                correlation_id=foundation_context["trace_context"].correlation_id,
+            )
+        except HTTPException as exc:
+            raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+
+    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
+    stored_params["idempotency_key"] = x_idempotency_key
+    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
+    _canonicalize_validated_precondition_evidence(
+        stored_params,
+        precondition_evidence,
+    )
 
     # 3. Concurrent modification check (§5.1)
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
@@ -21450,15 +21715,66 @@ async def submit_command(
     if precondition_evidence:
         audit_record["precondition_evidence"] = dict(precondition_evidence)
 
-    record, active_after_precheck = command_store.submit_command_if_no_active_target(
-        command_id=command_id,
-        command_type=cmd.command,
-        target=cmd.target,
-        submitted_at=submitted_at,
-        params=stored_params,
-        audit_context=audit_record,
-        foundation_context=_serialize_foundation_context(foundation_context),
-    )
+    serialized_foundation = _serialize_foundation_context(foundation_context)
+    with command_store.serialized_transaction():
+        duplicate_after_precheck = command_store.get_command_by_idempotency_key(
+            x_idempotency_key,
+            operator_id=identity.operator_id,
+        )
+        if duplicate_after_precheck:
+            duplicate_record = (
+                (duplicate_after_precheck.get("foundation") or {})
+                .get("idempotency_record")
+                or {}
+            )
+            if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
+                raise _foundation_idempotency_conflict_error(
+                    foundation_context=foundation_context,
+                    existing_command_id=str(duplicate_after_precheck.get("command_id") or ""),
+                )
+            _assert_duplicate_confirm_token_matches(
+                duplicate=duplicate_after_precheck,
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                foundation_context=foundation_context,
+            )
+            return _project_command_submission_response(
+                command_id=duplicate_after_precheck["command_id"],
+                command=cmd.command,
+                accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
+                status=CommandStatus(
+                    duplicate_after_precheck.get("status")
+                    or CommandStatus.SUBMITTED.value
+                ),
+                staleness_warning=None,
+            )
+
+        if precondition_evidence.get("confirm_token_id"):
+            try:
+                revalidated_token_id = _require_final_command_confirm_token(
+                    cmd=cmd,
+                    payload=payload,
+                    confirm_token=x_confirm_token,
+                    identity=identity,
+                    correlation_id=foundation_context["trace_context"].correlation_id,
+                )
+            except HTTPException as exc:
+                raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+            if revalidated_token_id:
+                precondition_evidence["confirm_token_id"] = revalidated_token_id
+
+        record, active_after_precheck = _persist_admitted_command_with_confirm_token(
+            command_id=command_id,
+            command_type=cmd.command,
+            target=cmd.target,
+            submitted_at=submitted_at,
+            params=stored_params,
+            audit_context=audit_record,
+            foundation_context=serialized_foundation,
+            precondition_evidence=precondition_evidence,
+            identity=identity,
+        )
     if active_after_precheck:
         error = _bff_error(
             409, ErrorCode.RESOURCE_CONFLICT,
@@ -21526,6 +21842,7 @@ def _submit_final_command_admission(
     x_idempotency_key: Optional[str],
     route: str = _FINAL_COMMAND_ROUTE,
     source_route: Optional[str] = None,
+    foundation_raw_payload: Optional[Dict[str, Any]] = None,
     audit_extra: Optional[Dict[str, Any]] = None,
     extra_precondition: Optional[Callable[[OperatorIdentity, OperatorCommand], None]] = None,
     enqueue: bool = True,
@@ -21543,7 +21860,11 @@ def _submit_final_command_admission(
     foundation_context = _build_foundation_command_context(
         cmd=cmd,
         identity=identity,
-        raw_payload=payload,
+        raw_payload=(
+            foundation_raw_payload
+            if foundation_raw_payload is not None
+            else payload
+        ),
         trace_id=x_trace_id,
         correlation_id=x_correlation_id,
         request_id=x_request_id,
@@ -21552,7 +21873,6 @@ def _submit_final_command_admission(
         source_route=source_route,
     )
 
-    precondition_evidence: Dict[str, str] = {}
     try:
         _reject_body_idempotency_key(payload)
         _reject_server_managed_rebalance_evidence_command(cmd)
@@ -21566,23 +21886,8 @@ def _submit_final_command_admission(
         validator = _VALIDATORS.get(cmd.command)
         if validator:
             validator(cmd.params, identity)
-        precondition_evidence = _require_final_command_preconditions(
-            cmd=cmd,
-            payload=payload,
-            confirm_token=x_confirm_token,
-            identity=identity,
-            correlation_id=foundation_context["trace_context"].correlation_id,
-        )
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-
-    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
-    stored_params["idempotency_key"] = resolved_key
-    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
-    _canonicalize_validated_precondition_evidence(
-        stored_params,
-        precondition_evidence,
-    )
 
     duplicate = command_store.get_command_by_idempotency_key(
         foundation_context["idempotency_record"].idempotency_key,
@@ -21595,6 +21900,13 @@ def _submit_final_command_admission(
                 foundation_context=foundation_context,
                 existing_command_id=str(duplicate.get("command_id") or ""),
             )
+        _assert_duplicate_confirm_token_matches(
+            duplicate=duplicate,
+            cmd=cmd,
+            payload=payload,
+            confirm_token=x_confirm_token,
+            foundation_context=foundation_context,
+        )
         duplicate_status = CommandStatus(
             duplicate.get("status") or CommandStatus.SUBMITTED.value
         )
@@ -21619,6 +21931,25 @@ def _submit_final_command_admission(
             else None,
             deprecation=response_deprecation,
         )
+
+    try:
+        precondition_evidence = _require_final_command_preconditions(
+            cmd=cmd,
+            payload=payload,
+            confirm_token=x_confirm_token,
+            identity=identity,
+            correlation_id=foundation_context["trace_context"].correlation_id,
+        )
+    except HTTPException as exc:
+        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+
+    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
+    stored_params["idempotency_key"] = resolved_key
+    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
+    _canonicalize_validated_precondition_evidence(
+        stored_params,
+        precondition_evidence,
+    )
 
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
     if active:
@@ -21687,15 +22018,69 @@ def _submit_final_command_admission(
     if audit_extra:
         audit_record.update({key: value for key, value in audit_extra.items() if value is not None})
 
-    record, active_after_precheck = command_store.submit_command_if_no_active_target(
-        command_id=command_id,
-        command_type=cmd.command,
-        target=cmd.target,
-        submitted_at=submitted_at,
-        params=stored_params,
-        audit_context=audit_record,
-        foundation_context=_serialize_foundation_context(foundation_context),
-    )
+    serialized_foundation = _serialize_foundation_context(foundation_context)
+    with command_store.serialized_transaction():
+        duplicate_after_precheck = command_store.get_command_by_idempotency_key(
+            resolved_key,
+            operator_id=identity.operator_id,
+        )
+        if duplicate_after_precheck:
+            duplicate_record = (
+                (duplicate_after_precheck.get("foundation") or {})
+                .get("idempotency_record")
+                or {}
+            )
+            if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
+                raise _foundation_idempotency_conflict_error(
+                    foundation_context=foundation_context,
+                    existing_command_id=str(duplicate_after_precheck.get("command_id") or ""),
+                )
+            _assert_duplicate_confirm_token_matches(
+                duplicate=duplicate_after_precheck,
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                foundation_context=foundation_context,
+            )
+            return _project_final_command_response(
+                command_id=duplicate_after_precheck["command_id"],
+                command=cmd.command,
+                accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
+                status=CommandStatus(
+                    duplicate_after_precheck.get("status")
+                    or CommandStatus.SUBMITTED.value
+                ),
+                staleness_warning=None,
+                meta=_command_response_durable_meta(resolved_key, replayed=True)
+                if include_durable_meta
+                else None,
+                deprecation=response_deprecation,
+            )
+
+        try:
+            revalidated_token_id = _require_final_command_confirm_token(
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                identity=identity,
+                correlation_id=foundation_context["trace_context"].correlation_id,
+            )
+        except HTTPException as exc:
+            raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+        if revalidated_token_id:
+            precondition_evidence["confirm_token_id"] = revalidated_token_id
+
+        record, active_after_precheck = _persist_admitted_command_with_confirm_token(
+            command_id=command_id,
+            command_type=cmd.command,
+            target=cmd.target,
+            submitted_at=submitted_at,
+            params=stored_params,
+            audit_context=audit_record,
+            foundation_context=serialized_foundation,
+            precondition_evidence=precondition_evidence,
+            identity=identity,
+        )
     if active_after_precheck:
         error = _bff_error(
             409, ErrorCode.RESOURCE_CONFLICT,
@@ -25316,8 +25701,11 @@ async def bff_apply_rebalance_proposal(
     rebalance = read_store.get_rebalance(rebalance_id)
     if not rebalance:
         raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Rebalance not found", f"Rebalance {rebalance_id} does not exist")
+    live_stages = {"live", "live_candidate", "live_running"}
     increases_live = any(
-        line.get("stage") == "live_running" and float(line.get("target_weight") or 0) > float(line.get("current_weight") or 0)
+        str(line.get("stage") or "").strip().lower() in live_stages
+        and float(line.get("target_weight") or 0)
+        > float(line.get("current_weight") or 0)
         for line in rebalance.get("lines") or []
     )
     approval_ref = str(
@@ -32814,35 +33202,442 @@ def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str
     )
 
 
+_HUMAN_INBOX_PROMOTION_PRODUCER = "management_quarterly_ranking_recommendation_submit"
+_HUMAN_INBOX_INACTIVE_COMMAND_STATUSES = {
+    "canceled",
+    "cancelled",
+    "expired",
+    "failed",
+    "timed_out",
+    "timeout",
+}
+_HUMAN_INBOX_PROMOTION_SNAPSHOT_SCALARS = {
+    "action_id",
+    "action_label",
+    "archetype",
+    "binding_state",
+    "capital_mode",
+    "capital_pool_id",
+    "capital_scope",
+    "capital_scope_id",
+    "capital_sleeve_id",
+    "current_weight",
+    "current_weight_source",
+    "deployment_stage",
+    "eligible",
+    "exclusion_reason",
+    "formula_version",
+    "id",
+    "name",
+    "owner",
+    "paper_ledger_id",
+    "priority",
+    "quarter",
+    "rank",
+    "ranking_snapshot_id",
+    "rationale",
+    "recommendation_id",
+    "risk",
+    "risk_level",
+    "score",
+    "source_confidence",
+    "stage",
+    "state",
+    "target_weight",
+    "tier",
+    "tier_id",
+    "tier_label",
+    "persona_id",
+}
+_HUMAN_INBOX_PROMOTION_SNAPSHOT_STRING_LISTS = {
+    "artifact_ids",
+    "binding_ids",
+    "broker_ids",
+    "capital_pool_ids",
+    "exclusion_codes",
+    "exclusion_reasons",
+    "rationale_codes",
+    "runtime_ids",
+    "sleeve_ids",
+    "strategy_ids",
+}
+
+
+def _human_inbox_promotion_recommendation_id(command: Dict[str, Any]) -> str:
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    target = command.get("target") if isinstance(command.get("target"), dict) else {}
+    return str(
+        params.get("recommendation_id")
+        or params.get("recommendationId")
+        or params.get("review_id")
+        or params.get("promotion_review_id")
+        or target.get("id")
+        or ""
+    ).strip()
+
+
+def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
+    if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        return False
+    if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
+        return False
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    target = command.get("target") if isinstance(command.get("target"), dict) else {}
+    recommendation_id = _human_inbox_promotion_recommendation_id(command)
+    if (
+        not recommendation_id
+        or target.get("type") != ObjectType.RANKING.value
+        or str(target.get("id") or "").strip() != recommendation_id
+    ):
+        return False
+    expected_quarter = _promotion_review_quarter_from_id(recommendation_id)
+    quarter = str(params.get("quarter") or "").strip().upper()
+    persona_id = str(params.get("persona_id") or "").strip()
+    action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or ""
+    ).strip()
+    if not expected_quarter or quarter != expected_quarter or not persona_id:
+        return False
+    if action_id not in _PROMOTION_REVIEW_ACTION_IDS:
+        return False
+    for flag in (
+        "direct_live_capital_mutation",
+        "liveCapitalMutation",
+        "live_capital_mutation",
+        "runtime_mutation",
+    ):
+        if params.get(flag) not in (None, False):
+            return False
+
+    foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
+    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    audit_foundation = audit.get("foundation") if isinstance(audit.get("foundation"), dict) else {}
+    trusted_producer = (
+        foundation.get("trusted_evidence_producer")
+        or audit.get("trusted_evidence_producer")
+        or audit_foundation.get("trusted_evidence_producer")
+    )
+    if trusted_producer == _HUMAN_INBOX_PROMOTION_PRODUCER:
+        return True
+    # Legacy submissions from the dedicated semantic route predate the
+    # producer marker. Generic /bff/v1 command admission always persists an
+    # admission_route and must not manufacture viewer-visible inbox rows.
+    if foundation.get("admission_route"):
+        return False
+    if not foundation:
+        # Pre-foundation command-store rows were written by the dedicated
+        # semantic submit route. API-admitted generic commands always carry an
+        # admission_route, so this compatibility path cannot be reached by a
+        # current generic command request.
+        return True
+    return (
+        params.get("source_type") == "quarterly_ranking_recommendation"
+        and params.get("source_record_id") == recommendation_id
+        and params.get("audit_event") == "quarterly_ranking.recommendation_submitted"
+        and params.get("policy") == "promotion_governance_human_gate_no_direct_live_capital"
+    )
+
+
+def _human_inbox_sanitize_promotion_snapshot(
+    command: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    if not _human_inbox_trusted_promotion_submission(command):
+        return None
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    recommendation_id = _human_inbox_promotion_recommendation_id(command)
+    expected_quarter = str(_promotion_review_quarter_from_id(recommendation_id) or "").upper()
+    persona_id = str(params.get("persona_id") or "").strip()
+    action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or ""
+    ).strip()
+    raw_snapshot = params.get("source_recommendation")
+    if raw_snapshot is not None and not isinstance(raw_snapshot, dict):
+        return None
+    raw = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+
+    for snapshot_id in (raw.get("id"), raw.get("recommendation_id")):
+        if snapshot_id not in (None, "") and str(snapshot_id).strip() != recommendation_id:
+            return None
+    snapshot_quarter = str(raw.get("quarter") or expected_quarter).strip().upper()
+    snapshot_persona = str(raw.get("persona_id") or persona_id).strip()
+    snapshot_action = str(raw.get("action_id") or action_id).strip()
+    if (
+        snapshot_quarter != expected_quarter
+        or snapshot_persona != persona_id
+        or snapshot_action != action_id
+    ):
+        return None
+    params_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    raw_snapshot_id = str(raw.get("ranking_snapshot_id") or "").strip()
+    if params_snapshot_id and raw_snapshot_id != params_snapshot_id:
+        return None
+
+    sanitized: Dict[str, Any] = {}
+    for key in _HUMAN_INBOX_PROMOTION_SNAPSHOT_SCALARS:
+        value = raw.get(key)
+        if value is None or isinstance(value, (dict, list)):
+            continue
+        sanitized[key] = value
+    for key in _HUMAN_INBOX_PROMOTION_SNAPSHOT_STRING_LISTS:
+        value = raw.get(key)
+        if isinstance(value, list):
+            sanitized[key] = [str(item) for item in value if isinstance(item, (str, int, float))]
+    for key in ("components", "metrics"):
+        value = raw.get(key)
+        if isinstance(value, dict):
+            sanitized[key] = {
+                str(metric): number
+                for metric, number in value.items()
+                if isinstance(number, (int, float)) and not isinstance(number, bool)
+            }
+
+    sanitized.update(
+        {
+            "id": recommendation_id,
+            "recommendation_id": recommendation_id,
+            "quarter": expected_quarter,
+            "persona_id": persona_id,
+            "action_id": action_id,
+            "name": sanitized.get("name") or params.get("persona_name") or persona_id,
+            "priority": sanitized.get("priority") or params.get("priority") or "high",
+            "risk_level": sanitized.get("risk_level") or params.get("risk_level") or "high",
+            "rationale": sanitized.get("rationale")
+            or params.get("rationale")
+            or "Submitted ranking recommendation requires Human Gate review.",
+            # Evidence bodies are request-scoped and may contain privileged
+            # material. Never replay arbitrary command params onto a read row.
+            "evidence_refs": [],
+            "evidence_ref_ids": [],
+        }
+    )
+    if params_snapshot_id:
+        sanitized["ranking_snapshot_id"] = params_snapshot_id
+    stage_from = str(params.get("stage_from") or sanitized.get("stage") or sanitized.get("state") or "").strip()
+    if stage_from:
+        sanitized.setdefault("stage", stage_from)
+        sanitized.setdefault("state", stage_from)
+    expected_path = _promotion_review_stage_path(sanitized)
+    for param_key, path_key in (
+        ("stage_from", "from_stage"),
+        ("stage_to", "target_stage"),
+        ("review_kind", "review_kind"),
+    ):
+        value = str(params.get(param_key) or "").strip()
+        if value and value != str(expected_path.get(path_key) or ""):
+            return None
+    return sanitized
+
+
+def _human_inbox_submission_projection_from_record(
+    command: Dict[str, Any],
+    recommendation_id: str,
+) -> Dict[str, Any]:
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    return {
+        "submitted": True,
+        "submit_status": command.get("status"),
+        "command_id": command.get("command_id"),
+        "commandId": command.get("command_id"),
+        "receipt_id": command.get("command_id"),
+        "submitted_at": command.get("submitted_at"),
+        "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
+        "recommendation_id": recommendation_id,
+        "recommendation_action_id": params.get("recommendation_action_id")
+        or params.get("recommendationActionId"),
+        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
+        "quarter": params.get("quarter"),
+        "persona_id": params.get("persona_id"),
+        "stage_from": params.get("stage_from"),
+        "stage_to": params.get("stage_to"),
+        "review_kind": params.get("review_kind"),
+        "human_inbox_id": _promotion_review_target_id(recommendation_id),
+        "live_capital_mutation": False,
+        "requires_human_gate_decision": True,
+    }
+
+
+def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
+    command_type = str(command.get("type") or "")
+    if command_type not in {
+        CommandType.HUMAN_GATE_APPROVE.value,
+        CommandType.HUMAN_GATE_REJECT.value,
+    }:
+        return ""
+    target = command.get("target") if isinstance(command.get("target"), dict) else {}
+    if target.get("type") != ObjectType.HUMAN_GATE_ITEM.value:
+        return ""
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    raw_target_id = str(target.get("id") or "").strip()
+    recommendation_id = _promotion_review_clean_id(raw_target_id)
+    if (
+        not recommendation_id
+        or raw_target_id != _promotion_review_target_id(recommendation_id)
+    ):
+        return ""
+    for key in (
+        "human_gate_item_id",
+        "humanGateItemId",
+        "review_id",
+        "reviewId",
+        "promotion_review_id",
+        "promotionReviewId",
+        "recommendation_id",
+        "recommendationId",
+    ):
+        alias = params.get(key)
+        if alias not in (None, "") and _promotion_review_clean_id(alias) != recommendation_id:
+            return ""
+    return recommendation_id
+
+
+def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
+        return None
+    if not _human_inbox_decision_recommendation_id(command):
+        return None
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    decision = str(params.get("decision") or "").strip().lower()
+    if decision not in _PROMOTION_REVIEW_DECISIONS:
+        return None
+    command_type = str(command.get("type") or "")
+    if command_type == CommandType.HUMAN_GATE_REJECT.value and decision != "reject":
+        return None
+    if command_type == CommandType.HUMAN_GATE_APPROVE.value and decision not in {
+        "approve",
+        "approve_with_conditions",
+    }:
+        return None
+    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    projection: Dict[str, Any] = {
+        "decision": decision,
+        "decision_status": "accepted",
+        "command_id": command.get("command_id"),
+        "commandId": command.get("command_id"),
+        "receipt_id": command.get("command_id"),
+        "submitted_at": command.get("submitted_at"),
+        "decided_at": command.get("submitted_at"),
+        "decided_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
+        "command_status": command.get("status"),
+        "live_capital_mutation": False,
+        "requires_human_gate_decision": True,
+    }
+    rationale = params.get("rationale") or params.get("reason") or params.get("rejection_reason") or params.get("memo")
+    if rationale not in (None, ""):
+        projection["rationale"] = rationale
+    if "conditions" in params:
+        projection["conditions"] = _management_json_clone(params.get("conditions"))
+    return projection
+
+
+def _human_inbox_promotion_review_from_projection(
+    recommendation: Dict[str, Any],
+    *,
+    submission: Dict[str, Any],
+    decision: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    review_id = str(recommendation.get("recommendation_id") or recommendation.get("id") or "")
+    stage_path = _promotion_review_stage_path(recommendation)
+    decision_status = "accepted" if decision else "pending"
+    item: Dict[str, Any] = {
+        **{
+            key: _management_json_clone(value)
+            for key, value in recommendation.items()
+            if key not in {"id", "status"}
+        },
+        "id": review_id,
+        "review_id": review_id,
+        "promotion_review_id": review_id,
+        "recommendation_id": review_id,
+        "status": "decision_accepted" if decision else "pending_human_gate",
+        "decision_status": decision_status,
+        "submitted": True,
+        "submit_status": submission.get("submit_status"),
+        "human_inbox_id": _promotion_review_target_id(review_id),
+        "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
+        "allowedActions": {
+            "canSubmit": False,
+            "canApprove": not bool(decision),
+            "canApproveWithConditions": not bool(decision),
+            "canReject": not bool(decision),
+        },
+        "promotion_path": stage_path,
+        "review_kind": stage_path.get("review_kind"),
+        "source_recommendation": _management_json_clone(recommendation),
+        "submission": submission,
+        "governance": {
+            "requires_human_gate_decision": True,
+            "decision_status": decision_status,
+            "live_capital_mutation": False,
+            "direct_live_capital_mutation": False,
+            "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        },
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "direct_live_capital_mutation": False,
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        "links": {
+            "persona": f"/bff/personas/{recommendation.get('persona_id')}",
+            "recommendation": "/bff/management/quarterly-ranking/recommendations",
+            "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
+            "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
+            "human_inbox": f"/bff/management/human-inbox/{quote(_promotion_review_target_id(review_id), safe='')}",
+        },
+    }
+    if decision:
+        item["decision"] = decision
+    return item
+
+
+def _submitted_promotion_review_record_from_command(
+    command: Dict[str, Any],
+    *,
+    decision: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Project one trusted durable submission without rebuilding PM12 reads."""
+    recommendation = _human_inbox_sanitize_promotion_snapshot(command)
+    if recommendation is None:
+        return None
+    recommendation_id = str(recommendation["recommendation_id"])
+    return _human_inbox_promotion_review_from_projection(
+        recommendation,
+        submission=_human_inbox_submission_projection_from_record(command, recommendation_id),
+        decision=decision,
+    )
+
+
 def _submitted_promotion_review_records(
     identity: OperatorIdentity,
     *,
     snapshot_at: str,
 ) -> List[Dict[str, Any]]:
-    records: List[Dict[str, Any]] = []
-    seen: Set[str] = set()
+    del identity, snapshot_at  # Projection is identity-stable; evidence is always stripped.
+    submissions: Dict[str, Dict[str, Any]] = {}
+    decisions: Dict[str, Dict[str, Any]] = {}
+    # One command-log read per aggregate, regardless of submitted row count.
     for command in command_store._get_all_commands():
-        if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        if command.get("type") == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+            recommendation = _human_inbox_sanitize_promotion_snapshot(command)
+            if recommendation is not None:
+                submissions[str(recommendation["recommendation_id"])] = command
             continue
-        params = command.get("params") if isinstance(command.get("params"), dict) else {}
-        recommendation_id = str(
-            params.get("recommendation_id")
-            or params.get("recommendationId")
-            or (command.get("target") or {}).get("id")
-            or ""
-        ).strip()
-        if not recommendation_id or recommendation_id in seen:
-            continue
-        review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
-            identity,
-            recommendation_id,
-            snapshot_at=snapshot_at,
-            quarter=str(params.get("quarter") or "").strip() or None,
+        recommendation_id = _human_inbox_decision_recommendation_id(command)
+        decision = _human_inbox_decision_projection_from_record(command)
+        if recommendation_id and decision is not None:
+            decisions[recommendation_id] = decision
+
+    records: List[Dict[str, Any]] = []
+    for recommendation_id, command in submissions.items():
+        review = _submitted_promotion_review_record_from_command(
+            command,
+            decision=decisions.get(recommendation_id),
         )
-        if review is None or not bool(review.get("submitted")):
-            continue
-        seen.add(recommendation_id)
-        records.append(review)
+        if review is not None:
+            records.append(review)
     return records
 
 
@@ -32917,6 +33712,230 @@ def _human_inbox_promotion_review_item(review: Dict[str, Any]) -> Optional[Dict[
     )
 
 
+def _human_inbox_project_items(
+    *,
+    snapshot_at: str,
+    review_records: Sequence[Dict[str, Any]],
+    approval_records: Sequence[Dict[str, Any]],
+    intervention_records: Sequence[Dict[str, Any]],
+    sentinel_records: Sequence[Dict[str, Any]],
+    persona_rows: Sequence[Dict[str, Any]],
+    promotion_review_records: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Project already-loaded contributors into the canonical inbox rows."""
+    items: List[Dict[str, Any]] = []
+    projectors: Sequence[tuple[Sequence[Dict[str, Any]], Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]]] = (
+        (review_records, _human_inbox_governance_review_item),
+        (approval_records, _human_inbox_approval_item),
+        (intervention_records, _human_inbox_intervention_item),
+        (sentinel_records, _human_inbox_sentinel_item),
+        (
+            persona_rows,
+            lambda row: _human_inbox_persona_readiness_item(row, snapshot_at=snapshot_at),
+        ),
+        (promotion_review_records, _human_inbox_promotion_review_item),
+    )
+    for records, projector in projectors:
+        for record in records:
+            projected = projector(record)
+            if projected is not None:
+                items.append(projected)
+    items.sort(
+        key=lambda item: (
+            _HUMAN_INBOX_PRIORITY_RANK.get(str(item.get("priority") or "unknown"), 0),
+            str(item.get("created_at") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    return items
+
+
+def _human_inbox_governance_contributor(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    records = list(read_store.list_governance_review_queue_items() or [])
+    return records, _dataset_surface_status(
+        "governance_review_queue_items",
+        snapshot_at=snapshot_at,
+        has_data=bool(records),
+        missing_message="Governance review queue has no readable source records.",
+        source=_dataset_source_after_read("governance_review_queue_items"),
+    )
+
+
+def _human_inbox_approval_contributor(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    records = list(read_store.list_approval_queue_items() or [])
+    return records, _dataset_surface_status(
+        "approval_queue_items",
+        snapshot_at=snapshot_at,
+        has_data=bool(records),
+        missing_message="Approval queue has no readable source records.",
+        source=_dataset_source_after_read("approval_queue_items"),
+    )
+
+
+def _human_inbox_intervention_contributor(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    records = list(_v5_intervention_records())
+    surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+        has_data=bool(records),
+        missing_message="V5 interventions have no readable source records.",
+        source=_dataset_source_after_read("v5_interventions"),
+    )
+    local_ids = {
+        str(record.get("intervention_id") or record.get("id") or "")
+        for record in _V5_INTERVENTIONS_STORE
+        if isinstance(record, dict)
+    }
+    has_local_record = any(
+        str(record.get("intervention_id") or record.get("id") or "") in local_ids
+        for record in records
+    )
+    if has_local_record and surface.get("source") == "missing":
+        surface = {**_surface_status(), "source": "bff_local_registry"}
+    return records, surface
+
+
+def _human_inbox_sentinel_contributor(
+    snapshot_at: str,
+) -> tuple[tuple[bool, List[Dict[str, Any]]], Dict[str, Any]]:
+    available, raw_records = read_store.list_sentinel_findings()
+    records = list(raw_records or [])
+    incidents_source = _dataset_source_after_read("incidents")
+    if incidents_source != "missing":
+        surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    else:
+        surface = _dataset_surface_status(
+            "sentinel_findings",
+            snapshot_at=snapshot_at,
+            source=_dataset_source_after_read("sentinel_findings") if available else "missing",
+        )
+    return (bool(available), records), surface
+
+
+def _build_persona_readiness_items(snapshot_at: str) -> List[Dict[str, Any]]:
+    """Build only the persona fields consumed by Human Inbox readiness rows.
+
+    The full Fleet projection performs per-persona binding, runtime, strategy,
+    source-health, incident, and evolution reads. Human Inbox does not consume
+    those fields, so using it here created a large N+1 latency chain. This
+    projection deliberately performs one persona read and one league read and
+    reuses the loaded personas when deriving market context defaults.
+    """
+    personas = list(
+        read_store.list_personas(include_market_persona_defaults=True) or []
+    )
+    league_by_persona = {
+        str(item.get("persona_id") or item.get("id") or "").strip(): item
+        for item in (
+            read_store.list_persona_league(
+                include_market_persona_defaults=True,
+            )
+            or []
+        )
+        if str(item.get("persona_id") or item.get("id") or "").strip()
+    }
+    context_defaults = _persona_fleet_context_defaults_by_market(personas)
+    rows: List[Dict[str, Any]] = []
+    for persona in personas:
+        persona_id = _persona_id(persona)
+        if not persona_id:
+            continue
+        metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        context_metadata, _context_persona = _persona_fleet_context_overlay(
+            persona,
+            metadata,
+            context_defaults,
+        )
+        league_entry = league_by_persona.get(persona_id, {})
+        governance_required = bool(
+            league_entry.get("governance_required")
+            if "governance_required" in league_entry
+            else context_metadata.get("governance_required", True)
+        )
+        recommendation = (
+            league_entry.get("recommendation")
+            or context_metadata.get("recommended_governance_action")
+            or ""
+        )
+        human_needed = governance_required and str(recommendation).strip().lower() not in {
+            "",
+            "none",
+            "no_change",
+        }
+        research_status = (
+            context_metadata.get("research_status")
+            if isinstance(context_metadata.get("research_status"), dict)
+            else {}
+        )
+        current_projects = (
+            context_metadata.get("current_research_projects")
+            if isinstance(context_metadata.get("current_research_projects"), list)
+            else []
+        )
+        can_deploy = research_status.get("can_deploy")
+        if can_deploy is None:
+            can_deploy = context_metadata.get("can_deploy")
+        rows.append(
+            {
+                "id": persona_id,
+                "persona_id": persona_id,
+                "name": persona.get("name") or persona_id,
+                "persona_name": persona.get("name") or persona_id,
+                "human_needed": human_needed,
+                "state": str(
+                    metadata.get("persona_status")
+                    or league_entry.get("status")
+                    or persona.get("status")
+                    or persona.get("lifecycle_state")
+                    or "unknown"
+                ),
+                "current_work": context_metadata.get("current_work"),
+                "recommendation": recommendation,
+                "can_deploy": can_deploy,
+                "priority": league_entry.get("priority") or context_metadata.get("priority"),
+                "updated_at": (
+                    league_entry.get("updated_at")
+                    or persona.get("updated_at")
+                    or persona.get("last_active_at")
+                    or snapshot_at
+                ),
+                "research_status": _management_json_clone(research_status),
+                "current_research_projects": _management_json_clone(current_projects),
+                "data_source_status": _management_json_clone(
+                    context_metadata.get("data_source_status") or {}
+                ),
+            }
+        )
+    return rows
+
+
+def _human_inbox_persona_contributor(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    rows = list(_build_persona_readiness_items(snapshot_at) or [])
+    return rows, _composed_dataset_surface_status(
+        "persona_fleet",
+        rows,
+        snapshot_at=snapshot_at,
+        source="bff_composed",
+    )
+
+
+def _human_inbox_promotion_contributor(
+    identity: OperatorIdentity,
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    records = _submitted_promotion_review_records(identity, snapshot_at=snapshot_at)
+    return records, {**_surface_status(), "source": "command_store"}
+
+
 def _human_inbox_all_items(
     snapshot_at: Optional[str] = None,
     *,
@@ -32925,70 +33944,38 @@ def _human_inbox_all_items(
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     snapshot_at = snapshot_at or utc_now()
     include_all = not source_types
-    review_records = (
-        read_store.list_governance_review_queue_items() or []
-        if include_all or "governance_review" in source_types
-        else []
-    )
-    approval_records = (
-        read_store.list_approval_queue_items() or []
-        if include_all or "approval" in source_types
-        else []
-    )
-    intervention_records = (
-        _v5_intervention_records()
-        if include_all or "intervention" in source_types
-        else []
-    )
+    review_records: List[Dict[str, Any]] = []
+    approval_records: List[Dict[str, Any]] = []
+    intervention_records: List[Dict[str, Any]] = []
+    sentinel_available = False
+    sentinel_records: List[Dict[str, Any]] = []
+    persona_rows: List[Dict[str, Any]] = []
+    promotion_review_records: List[Dict[str, Any]] = []
+    surfaces: Dict[str, Dict[str, Any]] = {}
+    if include_all or "governance_review" in source_types:
+        review_records, surfaces["governance_review_queue"] = _human_inbox_governance_contributor(snapshot_at)
+    if include_all or "approval" in source_types:
+        approval_records, surfaces["approval_queue"] = _human_inbox_approval_contributor(snapshot_at)
+    if include_all or "intervention" in source_types:
+        intervention_records, surfaces["v5_interventions"] = _human_inbox_intervention_contributor(snapshot_at)
     if include_all or "sentinel_finding" in source_types:
-        sentinel_available, sentinel_records = read_store.list_sentinel_findings()
-    else:
-        sentinel_available, sentinel_records = False, []
-    persona_rows = (
-        _build_persona_health_items(
+        sentinel_result, surfaces["sentinel_findings"] = _human_inbox_sentinel_contributor(snapshot_at)
+        sentinel_available, sentinel_records = sentinel_result
+    if include_all or "readiness_blocker" in source_types:
+        persona_rows, surfaces["persona_readiness"] = _human_inbox_persona_contributor(snapshot_at)
+    if identity is not None and (include_all or "promotion_review" in source_types):
+        promotion_review_records, surfaces["promotion_reviews"] = _human_inbox_promotion_contributor(
+            identity,
             snapshot_at,
-            include_market_persona_defaults=True,
         )
-        if include_all or "readiness_blocker" in source_types
-        else []
-    )
-    promotion_review_records = (
-        _submitted_promotion_review_records(identity, snapshot_at=snapshot_at)
-        if identity is not None and (include_all or "promotion_review" in source_types)
-        else []
-    )
-    items: List[Dict[str, Any]] = []
-    for review in review_records:
-        projected = _human_inbox_governance_review_item(review)
-        if projected is not None:
-            items.append(projected)
-    for approval in approval_records:
-        projected = _human_inbox_approval_item(approval)
-        if projected is not None:
-            items.append(projected)
-    for intervention in intervention_records:
-        projected = _human_inbox_intervention_item(intervention)
-        if projected is not None:
-            items.append(projected)
-    for sentinel in sentinel_records:
-        projected = _human_inbox_sentinel_item(sentinel)
-        if projected is not None:
-            items.append(projected)
-    for persona in persona_rows:
-        projected = _human_inbox_persona_readiness_item(persona, snapshot_at=snapshot_at)
-        if projected is not None:
-            items.append(projected)
-    for review in promotion_review_records:
-        projected = _human_inbox_promotion_review_item(review)
-        if projected is not None:
-            items.append(projected)
-    items.sort(
-        key=lambda item: (
-            _HUMAN_INBOX_PRIORITY_RANK.get(str(item.get("priority") or "unknown"), 0),
-            str(item.get("created_at") or ""),
-            str(item.get("id") or ""),
-        ),
-        reverse=True,
+    items = _human_inbox_project_items(
+        snapshot_at=snapshot_at,
+        review_records=review_records,
+        approval_records=approval_records,
+        intervention_records=intervention_records,
+        sentinel_records=sentinel_records,
+        persona_rows=persona_rows,
+        promotion_review_records=promotion_review_records,
     )
     return items, {
         "governance_review_records": review_records,
@@ -32998,7 +33985,188 @@ def _human_inbox_all_items(
         "sentinel_records": sentinel_records,
         "persona_rows": persona_rows,
         "promotion_review_records": promotion_review_records,
+        "surfaces": surfaces,
     }
+
+
+def _human_inbox_surface_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "2.5").strip()
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return 2.5
+
+
+def _human_inbox_read_error_surface(
+    dataset: str,
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    return {
+        "status": "degraded",
+        "dataset": dataset,
+        "source": "management_read_error",
+        "reason": "read_error",
+        "message": f"{dataset} failed while composing the Human Inbox; returned rows may be partial.",
+        "staleness": {"served_from": "read_error", "last_known_at": snapshot_at},
+    }
+
+
+def _human_inbox_read_slot_count() -> int:
+    try:
+        return max(1, int(os.getenv("PANTHEON_BFF_HUMAN_INBOX_READ_CONCURRENCY", "12")))
+    except (TypeError, ValueError):
+        return 12
+
+
+_HUMAN_INBOX_READ_SLOT_COUNT = _human_inbox_read_slot_count()
+_HUMAN_INBOX_READ_SLOTS = threading.BoundedSemaphore(_HUMAN_INBOX_READ_SLOT_COUNT)
+_HUMAN_INBOX_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_HUMAN_INBOX_READ_SLOT_COUNT,
+    thread_name_prefix="bff-human-inbox",
+)
+
+
+def _human_inbox_capacity_surface(
+    dataset: str,
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    return {
+        "status": "degraded",
+        "dataset": dataset,
+        "source": "management_read_capacity",
+        "reason": "read_capacity_saturated",
+        "message": (
+            f"{dataset} was not submitted because Human Inbox read capacity "
+            "is occupied by earlier synchronous contributors."
+        ),
+        "staleness": {"served_from": "capacity_degraded", "last_known_at": snapshot_at},
+    }
+
+
+async def _human_inbox_all_items_bounded(
+    snapshot_at: str,
+    *,
+    identity: OperatorIdentity,
+    source_types: Optional[set[str]],
+) -> tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Dict[str, Any]]]:
+    """Load independent inbox contributors concurrently under per-surface budgets."""
+    include_all = not source_types
+    timeout_seconds = _human_inbox_surface_timeout_seconds()
+    jobs: Dict[str, Any] = {}
+    if include_all or "governance_review" in source_types:
+        jobs["governance_review_records"] = _run_management_read(
+            _human_inbox_governance_contributor,
+            snapshot_at,
+            timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
+        )
+    if include_all or "approval" in source_types:
+        jobs["approval_records"] = _run_management_read(
+            _human_inbox_approval_contributor,
+            snapshot_at,
+            timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
+        )
+    if include_all or "intervention" in source_types:
+        jobs["intervention_records"] = _run_management_read(
+            _human_inbox_intervention_contributor,
+            snapshot_at,
+            timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
+        )
+    if include_all or "sentinel_finding" in source_types:
+        jobs["sentinel_result"] = _run_management_read(
+            _human_inbox_sentinel_contributor,
+            snapshot_at,
+            timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
+        )
+    if include_all or "readiness_blocker" in source_types:
+        jobs["persona_rows"] = _run_management_read(
+            _human_inbox_persona_contributor,
+            snapshot_at,
+            timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
+        )
+    if include_all or "promotion_review" in source_types:
+        jobs["promotion_review_records"] = _run_management_read(
+            _human_inbox_promotion_contributor,
+            identity,
+            snapshot_at,
+            timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
+        )
+
+    results = await asyncio.gather(*jobs.values(), return_exceptions=True)
+    loaded: Dict[str, Any] = {
+        "governance_review_records": [],
+        "approval_records": [],
+        "intervention_records": [],
+        "sentinel_available": False,
+        "sentinel_records": [],
+        "persona_rows": [],
+        "promotion_review_records": [],
+        "surfaces": {},
+    }
+    surface_specs = {
+        "governance_review_records": ("governance_review_queue", "governance_review_queue_items"),
+        "approval_records": ("approval_queue", "approval_queue_items"),
+        "intervention_records": ("v5_interventions", "v5_interventions"),
+        "sentinel_result": ("sentinel_findings", "sentinel_findings"),
+        "persona_rows": ("persona_readiness", "persona_fleet"),
+        "promotion_review_records": ("promotion_reviews", "promotion_reviews"),
+    }
+    failures: Dict[str, Dict[str, Any]] = {}
+    for key, result in zip(jobs, results):
+        surface_key, dataset = surface_specs[key]
+        if isinstance(result, _ManagementReadSaturated):
+            failures[surface_key] = _human_inbox_capacity_surface(
+                dataset,
+                snapshot_at=snapshot_at,
+            )
+            continue
+        if isinstance(result, _ManagementReadTimeout):
+            failures[surface_key] = _management_read_timeout_surface(
+                dataset,
+                snapshot_at=snapshot_at,
+                message=(
+                    f"{dataset} exceeded the Human Inbox surface budget; "
+                    "completed contributors are returned as a partial result."
+                ),
+            )
+            continue
+        if isinstance(result, Exception):
+            log.warning("bff.human_inbox contributor=%s failed: %r", dataset, result)
+            failures[surface_key] = _human_inbox_read_error_surface(
+                dataset,
+                snapshot_at=snapshot_at,
+            )
+            continue
+        value, surface = result
+        loaded["surfaces"][surface_key] = surface
+        if key == "sentinel_result":
+            loaded["sentinel_available"], loaded["sentinel_records"] = value
+        else:
+            loaded[key] = list(value or [])
+
+    items = _human_inbox_project_items(
+        snapshot_at=snapshot_at,
+        review_records=loaded["governance_review_records"],
+        approval_records=loaded["approval_records"],
+        intervention_records=loaded["intervention_records"],
+        sentinel_records=loaded["sentinel_records"],
+        persona_rows=loaded["persona_rows"],
+        promotion_review_records=loaded["promotion_review_records"],
+    )
+    return items, loaded, failures
 
 
 def _human_inbox_filter_items(
@@ -33058,6 +34226,29 @@ def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Di
     }
 
 
+def _human_inbox_loaded_surface(
+    *,
+    snapshot_at: str,
+    source: str,
+    available: bool = True,
+    has_data: Optional[bool] = None,
+    empty_is_unavailable: bool = False,
+    missing_message: Optional[str] = None,
+) -> Dict[str, Any]:
+    surface = dict(_surface_status())
+    surface["source"] = source
+    if not available or (empty_is_unavailable and has_data is False):
+        surface["status"] = "unavailable"
+        surface["source"] = "missing" if not available else source
+        if missing_message:
+            surface["message"] = missing_message
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+    return surface
+
+
 def _human_inbox_surfaces(
     *,
     snapshot_at: str,
@@ -33067,78 +34258,108 @@ def _human_inbox_surfaces(
     sentinel_available: bool,
     sentinel_records: List[Dict[str, Any]],
     persona_rows: List[Dict[str, Any]],
+    promotion_review_records: List[Dict[str, Any]],
+    source_types: Optional[set[str]] = None,
+    surface_failures: Optional[Dict[str, Dict[str, Any]]] = None,
+    loaded_surfaces: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    review_surface = _dataset_surface_status(
-        "governance_review_queue_items",
-        snapshot_at=snapshot_at,
-        has_data=bool(governance_review_records),
-        missing_message="Governance review queue has no readable source records.",
-    )
-    approval_surface = _dataset_surface_status(
-        "approval_queue_items",
-        snapshot_at=snapshot_at,
-        has_data=bool(approval_records),
-        missing_message="Approval queue has no readable source records.",
-    )
-    intervention_surface = _dataset_surface_status(
-        "v5_interventions",
-        snapshot_at=snapshot_at,
-        has_data=bool(intervention_records),
-        missing_message="V5 interventions have no readable source records.",
-    )
-    if intervention_records and intervention_surface.get("status") == "unavailable":
-        intervention_surface = dict(_surface_status())
-        intervention_surface["source"] = "bff_local_registry"
-    incidents_source = read_store.dataset_source("incidents")
-    sentinel_dataset = "incidents" if incidents_source != "missing" else "sentinel_findings"
-    sentinel_surface = _dataset_surface_status(
-        sentinel_dataset,
-        snapshot_at=snapshot_at,
-        has_data=bool(sentinel_records),
-        missing_message="Sentinel findings have no readable source records.",
-        source=None if sentinel_available else "missing",
-    )
-    persona_surface = _composed_dataset_surface_status(
-        "persona_fleet",
-        persona_rows,
-        snapshot_at=snapshot_at,
-        source="bff_composed",
-    )
-    source_surfaces = [
-        review_surface,
-        approval_surface,
-        intervention_surface,
-        sentinel_surface,
-        persona_surface,
-    ]
-    return {
-        "human_inbox": _aggregate_group_surface(
-            "human_inbox",
-            source_surfaces,
+    include_all = not source_types
+    failures = surface_failures or {}
+    provenance = loaded_surfaces or {}
+    contributor_surfaces: Dict[str, Dict[str, Any]] = {}
+
+    if include_all or "governance_review" in source_types:
+        contributor_surfaces["governance_review_queue"] = failures.get(
+            "governance_review_queue"
+        ) or provenance.get("governance_review_queue") or _human_inbox_loaded_surface(
             snapshot_at=snapshot_at,
-            unavailable_message="Human inbox aggregate unavailable.",
-            degraded_message="Human inbox aggregate is available, but one or more contributing surfaces are degraded.",
-        ),
-        "governance_review_queue": review_surface,
-        "approval_queue": approval_surface,
-        "v5_interventions": intervention_surface,
-        "sentinel_findings": sentinel_surface,
-        "persona_readiness": persona_surface,
+            source="read_store",
+            has_data=bool(governance_review_records),
+            empty_is_unavailable=True,
+            missing_message="Governance review queue has no readable source records.",
+        )
+    if include_all or "approval" in source_types:
+        contributor_surfaces["approval_queue"] = failures.get(
+            "approval_queue"
+        ) or provenance.get("approval_queue") or _human_inbox_loaded_surface(
+            snapshot_at=snapshot_at,
+            source="read_store",
+            has_data=bool(approval_records),
+            empty_is_unavailable=True,
+            missing_message="Approval queue has no readable source records.",
+        )
+    if include_all or "intervention" in source_types:
+        local_intervention_ids = {
+            str(record.get("intervention_id") or record.get("id") or "")
+            for record in _V5_INTERVENTIONS_STORE
+            if isinstance(record, dict)
+        }
+        has_local_intervention = any(
+            str(record.get("intervention_id") or record.get("id") or "") in local_intervention_ids
+            for record in intervention_records
+        )
+        contributor_surfaces["v5_interventions"] = failures.get(
+            "v5_interventions"
+        ) or provenance.get("v5_interventions") or _human_inbox_loaded_surface(
+            snapshot_at=snapshot_at,
+            source="bff_local_registry" if has_local_intervention else "read_store",
+            has_data=bool(intervention_records),
+            empty_is_unavailable=True,
+            missing_message="V5 interventions have no readable source records.",
+        )
+    if include_all or "sentinel_finding" in source_types:
+        contributor_surfaces["sentinel_findings"] = failures.get(
+            "sentinel_findings"
+        ) or provenance.get("sentinel_findings") or _human_inbox_loaded_surface(
+            snapshot_at=snapshot_at,
+            source="read_store" if sentinel_available else "missing",
+            available=sentinel_available,
+            has_data=bool(sentinel_records),
+            missing_message="Sentinel findings have no readable source records.",
+        )
+    if include_all or "readiness_blocker" in source_types:
+        contributor_surfaces["persona_readiness"] = failures.get(
+            "persona_readiness"
+        ) or provenance.get("persona_readiness") or _human_inbox_loaded_surface(
+            snapshot_at=snapshot_at,
+            source="bff_composed",
+            has_data=bool(persona_rows),
+        )
+    if include_all or "promotion_review" in source_types:
+        contributor_surfaces["promotion_reviews"] = failures.get(
+            "promotion_reviews"
+        ) or provenance.get("promotion_reviews") or _human_inbox_loaded_surface(
+            snapshot_at=snapshot_at,
+            source="command_store",
+            has_data=bool(promotion_review_records),
+        )
+
+    aggregate_surface = _aggregate_group_surface(
+        "human_inbox",
+        list(contributor_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Human inbox aggregate unavailable.",
+        degraded_message="Human inbox aggregate is available, but one or more contributing surfaces are degraded.",
+    )
+    return {
+        "human_inbox": aggregate_surface,
+        **contributor_surfaces,
     }
 
 
-def _human_inbox_payload(
+def _human_inbox_payload_from_loaded(
     snapshot_at: str,
     *,
-    identity: Optional[OperatorIdentity] = None,
+    items: List[Dict[str, Any]],
+    sources: Dict[str, Any],
+    source_types: Optional[set[str]],
     source_type: Optional[str] = None,
     status: Optional[str] = None,
     priority: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: Optional[int] = 20,
+    surface_failures: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    source_types = _human_inbox_csv_filter(source_type)
-    items, sources = _human_inbox_all_items(snapshot_at, identity=identity, source_types=source_types)
     filtered = _human_inbox_filter_items(
         items,
         source_type=source_type,
@@ -33162,7 +34383,17 @@ def _human_inbox_payload(
         sentinel_available=bool(sources["sentinel_available"]),
         sentinel_records=sources["sentinel_records"],
         persona_rows=sources["persona_rows"],
+        promotion_review_records=sources["promotion_review_records"],
+        source_types=source_types,
+        surface_failures=surface_failures,
+        loaded_surfaces=sources.get("surfaces"),
     )
+    if surface_failures:
+        meta["partial"] = True
+        meta["degradation"] = {
+            "reason": "one_or_more_human_inbox_contributors_incomplete",
+            "contributors": sorted(surface_failures),
+        }
     summary = _human_inbox_summary(filtered, len(page_items))
     canonical_page_items = _management_prune_camel_aliases(page_items)
     return {
@@ -33180,6 +34411,67 @@ def _human_inbox_payload(
     }
 
 
+def _human_inbox_payload(
+    snapshot_at: str,
+    *,
+    identity: Optional[OperatorIdentity] = None,
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: Optional[int] = 20,
+) -> Dict[str, Any]:
+    source_types = _human_inbox_csv_filter(source_type)
+    items, sources = _human_inbox_all_items(snapshot_at, identity=identity, source_types=source_types)
+    return _human_inbox_payload_from_loaded(
+        snapshot_at,
+        items=items,
+        sources=sources,
+        source_types=source_types,
+        source_type=source_type,
+        status=status,
+        priority=priority,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+async def _human_inbox_payload_bounded(
+    snapshot_at: str,
+    *,
+    identity: OperatorIdentity,
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: Optional[int] = 20,
+) -> tuple[
+    Dict[str, Any],
+    List[Dict[str, Any]],
+    Dict[str, Any],
+    Dict[str, Dict[str, Any]],
+]:
+    source_types = _human_inbox_csv_filter(source_type)
+    items, sources, failures = await _human_inbox_all_items_bounded(
+        snapshot_at,
+        identity=identity,
+        source_types=source_types,
+    )
+    payload = _human_inbox_payload_from_loaded(
+        snapshot_at,
+        items=items,
+        sources=sources,
+        source_types=source_types,
+        source_type=source_type,
+        status=status,
+        priority=priority,
+        page_token=page_token,
+        page_size=page_size,
+        surface_failures=failures,
+    )
+    return payload, items, sources, failures
+
+
 def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
     clean = str(item_id or "").strip()
     candidates = {
@@ -33193,6 +34485,21 @@ def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
         str(item.get("persona_id") or ""),
     }
     return clean in candidates
+
+
+def _human_inbox_detail_source_types(item_id: str) -> Optional[set[str]]:
+    clean = str(item_id or "").strip().lower()
+    for prefix, source_type in (
+        ("governance_review:", "governance_review"),
+        ("approval:", "approval"),
+        ("intervention:", "intervention"),
+        ("sentinel_finding:", "sentinel_finding"),
+        ("readiness_blocker:", "readiness_blocker"),
+        ("promotion_review:", "promotion_review"),
+    ):
+        if clean.startswith(prefix):
+            return {source_type}
+    return None
 
 
 def _hiq_backlog_filter_values(value: Optional[str], *, default: Optional[set[str]] = None) -> Optional[set[str]]:
@@ -33450,6 +34757,10 @@ def _management_hiq_backlog_response(
     q: str,
     page_token: Optional[str],
     page_size: int,
+    human_inbox_items: Optional[List[Dict[str, Any]]] = None,
+    human_inbox_sources: Optional[Dict[str, Any]] = None,
+    human_inbox_failures: Optional[Dict[str, Dict[str, Any]]] = None,
+    human_inbox_source_types: Optional[set[str]] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     source_types = _hiq_backlog_filter_values(source_type)
@@ -33457,15 +34768,23 @@ def _management_hiq_backlog_response(
     priorities = _hiq_backlog_filter_values(priority)
     kinds = _hiq_backlog_filter_values(kind, default=_HIQ_BACKLOG_DEFAULT_KINDS)
 
-    human_inbox_items, inbox_sources = _human_inbox_all_items(snapshot_at)
+    if human_inbox_items is None or human_inbox_sources is None:
+        human_inbox_items, inbox_sources = _human_inbox_all_items(snapshot_at)
+    else:
+        inbox_sources = human_inbox_sources
     inbox_by_source_id = {
         str(item.get("source_id") or ""): item
         for item in human_inbox_items
         if str(item.get("source_type") or "") == "intervention" and item.get("source_id")
     }
 
-    intervention_records = _v5_intervention_records()
-    available_sentinel_findings, sentinel_findings = read_store.list_sentinel_findings()
+    if human_inbox_sources is None:
+        intervention_records = _v5_intervention_records()
+        available_sentinel_findings, sentinel_findings = read_store.list_sentinel_findings()
+    else:
+        intervention_records = list(inbox_sources.get("intervention_records") or [])
+        available_sentinel_findings = bool(inbox_sources.get("sentinel_available"))
+        sentinel_findings = list(inbox_sources.get("sentinel_records") or [])
     items: List[Dict[str, Any]] = []
     for record in intervention_records:
         projected = _hiq_backlog_intervention_item(
@@ -33518,21 +34837,6 @@ def _management_hiq_backlog_response(
         "basis": "composed_from_v5_interventions_sentinel_findings_and_human_inbox",
     }
 
-    intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
-    intervention_surface = _dataset_surface_status(
-        "v5_interventions",
-        snapshot_at=snapshot_at,
-        source=intervention_source,
-    )
-    incidents_source = read_store.dataset_source("incidents")
-    if incidents_source != "missing":
-        sentinel_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
-    else:
-        sentinel_surface = _dataset_surface_status(
-            "sentinel_findings",
-            snapshot_at=snapshot_at,
-            source=None if available_sentinel_findings else "missing",
-        )
     human_inbox_surfaces = _human_inbox_surfaces(
         snapshot_at=snapshot_at,
         governance_review_records=inbox_sources["governance_review_records"],
@@ -33541,7 +34845,38 @@ def _management_hiq_backlog_response(
         sentinel_available=bool(inbox_sources["sentinel_available"]),
         sentinel_records=inbox_sources["sentinel_records"],
         persona_rows=inbox_sources["persona_rows"],
+        promotion_review_records=inbox_sources.get("promotion_review_records", []),
+        source_types=human_inbox_source_types,
+        surface_failures=human_inbox_failures,
+        loaded_surfaces=inbox_sources.get("surfaces"),
     )
+    if human_inbox_sources is not None:
+        intervention_surface = human_inbox_surfaces["v5_interventions"]
+        sentinel_surface = human_inbox_surfaces["sentinel_findings"]
+    else:
+        intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
+        intervention_surface = _dataset_surface_status(
+            "v5_interventions",
+            snapshot_at=snapshot_at,
+            source=intervention_source or _dataset_source_after_read("v5_interventions"),
+        )
+        incidents_source = _dataset_source_after_read("incidents")
+        if incidents_source != "missing":
+            sentinel_surface = _dataset_surface_status(
+                "incidents",
+                snapshot_at=snapshot_at,
+                source=incidents_source,
+            )
+        else:
+            sentinel_surface = _dataset_surface_status(
+                "sentinel_findings",
+                snapshot_at=snapshot_at,
+                source=(
+                    _dataset_source_after_read("sentinel_findings")
+                    if available_sentinel_findings
+                    else "missing"
+                ),
+            )
     hiq_surface = _aggregate_group_surface(
         "hiq_backlog",
         [
@@ -34394,6 +35729,31 @@ def _evolution_journal_summary(items: List[Dict[str, Any]], returned_count: int)
     }
 
 
+def _evolution_entry_text(item: Dict[str, Any]) -> str:
+    target = item.get("target") or {}
+    target_parts = [target.get("type"), target.get("id"), target.get("version")]
+    target_str = " ".join([str(p) for p in target_parts if p])
+    
+    record = item.get("record") or {}
+    evidence_refs = record.get("evidence_refs") or []
+    evidence_str = ""
+    if isinstance(evidence_refs, list):
+        evidence_str = " ".join([json.dumps(ref) for ref in evidence_refs])
+        
+    parts = [
+        item.get("id"),
+        item.get("title"),
+        item.get("summary"),
+        item.get("status"),
+        item.get("entry_type") or item.get("entryType"),
+        item.get("source_id"),
+        item.get("action_type"),
+        target_str,
+        evidence_str,
+    ]
+    return " ".join([str(p) for p in parts if p]).lower()
+
+
 def _evolution_journal_items(
     *,
     identity: OperatorIdentity,
@@ -34434,6 +35794,30 @@ def _evolution_journal_items(
         item = _evolution_journal_rollback_item(rollback)
         if item is not None:
             items.append(item)
+
+    for item in items:
+        is_seed = False
+        source_id = str(item.get("source_id") or "").lower()
+        journal_id = str(item.get("id") or "").lower()
+        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
+            if marker in source_id or marker in journal_id:
+                is_seed = True
+                break
+        if not is_seed:
+            for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
+                inner = item.get(key)
+                if isinstance(inner, dict):
+                    for field in ("id", "decision_id", "source_id", "incident_id", "incident_ref", "linked_incident_id", "report_id"):
+                        val = str(inner.get(field) or "").lower()
+                        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
+                            if marker in val:
+                                is_seed = True
+                                break
+                        if is_seed:
+                            break
+                if is_seed:
+                    break
+        item["origin"] = "seed" if is_seed else "live"
 
     items.sort(
         key=lambda item: (
@@ -34934,8 +36318,10 @@ async def bff_management_human_inbox(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    return _human_inbox_payload(
-        utc_now(),
+    snapshot_at = utc_now()
+    started = time.monotonic()
+    payload, _items, _sources, failures = await _human_inbox_payload_bounded(
+        snapshot_at,
         identity=identity,
         source_type=source_type,
         status=status,
@@ -34943,6 +36329,12 @@ async def bff_management_human_inbox(
         page_token=page_token,
         page_size=page_size,
     )
+    _log_management_read_timing(
+        "human_inbox",
+        started,
+        timed_out=any(surface.get("reason") == "read_timeout" for surface in failures.values()),
+    )
+    return payload
 
 
 @app.get("/bff/management/human-inbox/{item_id}")
@@ -34955,7 +36347,12 @@ async def bff_management_human_inbox_detail(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    items, sources = _human_inbox_all_items(snapshot_at, identity=identity)
+    source_types = _human_inbox_detail_source_types(item_id)
+    items, sources, failures = await _human_inbox_all_items_bounded(
+        snapshot_at,
+        identity=identity,
+        source_types=source_types,
+    )
     for item in items:
         if _human_inbox_detail_match(item, item_id):
             detail = json.loads(json.dumps(item))
@@ -34968,8 +36365,27 @@ async def bff_management_human_inbox_detail(
                 sentinel_available=bool(sources["sentinel_available"]),
                 sentinel_records=sources["sentinel_records"],
                 persona_rows=sources["persona_rows"],
+                promotion_review_records=sources["promotion_review_records"],
+                source_types=source_types,
+                surface_failures=failures,
+                loaded_surfaces=sources.get("surfaces"),
             )
+            if failures:
+                meta["partial"] = True
+                meta["degradation"] = {
+                    "reason": "one_or_more_human_inbox_contributors_incomplete",
+                    "contributors": sorted(failures),
+                }
             return {"data": detail, "meta": meta}
+    if failures:
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Human inbox detail could not be resolved from a partial aggregate",
+            "One or more Human Inbox contributors timed out or failed; retry before treating the item as absent.",
+            precondition_failed="human_inbox_partial_read",
+            suggestion="Retry the Human Inbox detail after the degraded contributor recovers.",
+        )
     raise _bff_error(
         404,
         ErrorCode.RESOURCE_NOT_FOUND,
@@ -34992,6 +36408,13 @@ async def bff_management_hiq_backlog(
     """BFF: read-only HIQ backlog aggregate for sentinel and intervention review."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    snapshot_at = utc_now()
+    inbox_source_types = {"intervention", "sentinel_finding"}
+    inbox_items, inbox_sources, inbox_failures = await _human_inbox_all_items_bounded(
+        snapshot_at,
+        identity=identity,
+        source_types=inbox_source_types,
+    )
     return _management_hiq_backlog_response(
         source_type=source_type,
         status=status,
@@ -35000,6 +36423,10 @@ async def bff_management_hiq_backlog(
         q=q,
         page_token=page_token,
         page_size=page_size,
+        human_inbox_items=inbox_items,
+        human_inbox_sources=inbox_sources,
+        human_inbox_failures=inbox_failures,
+        human_inbox_source_types=inbox_source_types,
     )
 
 
@@ -35036,6 +36463,9 @@ async def bff_management_evolution_journal(
     status: Optional[str] = None,
     action_type: Optional[str] = None,
     risk_level: Optional[str] = None,
+    persona: Optional[str] = None,
+    mutation_review: Optional[str] = None,
+    decision: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
@@ -35056,6 +36486,19 @@ async def bff_management_evolution_journal(
         action_type=action_type,
         risk_level=risk_level,
     )
+    if persona:
+        p_clean = persona.strip()
+        if p_clean:
+            filtered = [item for item in filtered if p_clean.lower() in _evolution_entry_text(item)]
+    if mutation_review:
+        mr_clean = mutation_review.strip()
+        if mr_clean:
+            filtered = [item for item in filtered if mr_clean.lower() in _evolution_entry_text(item)]
+    if decision:
+        dec_clean = decision.strip()
+        if dec_clean:
+            filtered = [item for item in filtered if dec_clean.lower() in _evolution_entry_text(item)]
+
     total = len(filtered)
     page_items, next_page_token = _page_slice(filtered, page_token, page_size)
     meta = _snapshot_meta(snapshot_at)
@@ -43309,7 +44752,7 @@ def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, An
 def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, Any]]:
     clean_id = _promotion_review_clean_id(review_id)
     for record in reversed(command_store._get_all_commands()):
-        if record.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        if not _human_inbox_trusted_promotion_submission(record):
             continue
         target = record.get("target") if isinstance(record.get("target"), dict) else {}
         params = record.get("params") if isinstance(record.get("params"), dict) else {}
@@ -43346,17 +44789,11 @@ def _promotion_review_submission_projection(review_id: Any) -> Optional[Dict[str
 
 def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
     clean_id = _promotion_review_clean_id(review_id)
-    target_id = _promotion_review_target_id(clean_id)
     for record in reversed(command_store._get_all_commands()):
-        target = record.get("target") if isinstance(record.get("target"), dict) else {}
-        params = record.get("params") if isinstance(record.get("params"), dict) else {}
-        if target.get("type") != ObjectType.HUMAN_GATE_ITEM.value:
-            continue
-        if target.get("id") == target_id:
-            return record
-        if str(params.get("review_id") or params.get("promotion_review_id") or "").strip() == clean_id:
-            return record
-        if str(params.get("recommendation_id") or "").strip() == clean_id:
+        if (
+            _human_inbox_decision_recommendation_id(record) == clean_id
+            and _human_inbox_decision_projection_from_record(record) is not None
+        ):
             return record
     return None
 
@@ -43365,32 +44802,7 @@ def _promotion_review_decision_projection(review_id: Any) -> Optional[Dict[str, 
     record = _latest_promotion_review_command(review_id)
     if record is None:
         return None
-    params = record.get("params") if isinstance(record.get("params"), dict) else {}
-    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    rationale = (
-        params.get("rationale")
-        or params.get("reason")
-        or params.get("rejection_reason")
-        or params.get("memo")
-    )
-    projection: Dict[str, Any] = {
-        "decision": params.get("decision"),
-        "decision_status": "accepted",
-        "command_id": record.get("command_id"),
-        "commandId": record.get("command_id"),
-        "receipt_id": record.get("command_id"),
-        "submitted_at": record.get("submitted_at"),
-        "decided_at": record.get("submitted_at"),
-        "decided_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
-        "command_status": record.get("status"),
-        "live_capital_mutation": False,
-        "requires_human_gate_decision": True,
-    }
-    if rationale not in (None, ""):
-        projection["rationale"] = rationale
-    if "conditions" in params:
-        projection["conditions"] = json.loads(json.dumps(params.get("conditions")))
-    return projection
+    return _human_inbox_decision_projection_from_record(record)
 
 
 def _promotion_review_item_from_recommendation(
@@ -43731,6 +45143,17 @@ def _promotion_review_submit_response(
     return JSONResponse(status_code=command_response.status_code, content=jsonable_encoder(content))
 
 
+def _promotion_review_stored_source(
+    recommendation: Dict[str, Any],
+) -> Dict[str, Any]:
+    stored = json.loads(json.dumps(recommendation))
+    # Command params are visible on governance read surfaces. Persist the
+    # authoritative recommendation tuple, never submitter-supplied evidence.
+    stored["evidence_refs"] = []
+    stored["evidence_ref_ids"] = []
+    return stored
+
+
 @app.post("/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit", status_code=202)
 async def bff_management_quarterly_ranking_recommendation_submit(
     recommendation_id: str,
@@ -43823,6 +45246,9 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         "runtime_mutation": False,
         "source_type": "quarterly_ranking_recommendation",
         "source_record_id": review["recommendation_id"],
+        "source_recommendation": _promotion_review_stored_source(
+            review["source_recommendation"]
+        ),
         "audit_event": "quarterly_ranking.recommendation_submitted",
         "policy": "promotion_governance_human_gate_no_direct_live_capital",
     }
@@ -43835,6 +45261,7 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         identity=identity,
         idempotency_key=idempotency_key,
         x_idempotency_key=x_idempotency_key,
+        trusted_evidence_producer=_HUMAN_INBOX_PROMOTION_PRODUCER,
     )
     return _promotion_review_submit_response(command_response, review=review)
 
@@ -47499,146 +48926,35 @@ async def remediate_v5_intervention(
     routes it through the same admission, idempotency, and audit pipeline as all
     other governed commands.
     """
-    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-
     merged_params = dict(payload)
     merged_params["intervention_id"] = intervention_id
-
-    cmd = OperatorCommand(
-        command=CommandType.REMEDIATE_SENTINEL_INTERVENTION,
-        target=TargetObject(
-            type=ObjectType.SENTINEL_INTERVENTION,
-            id=intervention_id,
-        ),
-        action="remediate_sentinel_intervention",
-        params=merged_params,
-        audit_context=AuditContext(
-            reason=str(payload.get("reason") or "HIQ Sentinel remediation"),
-            incident_id=str(payload.get("incident_id") or "").strip() or None,
-        ),
-    )
-
-    foundation_context = _build_foundation_command_context(
-        cmd=cmd,
-        identity=identity,
-        raw_payload={**payload, "intervention_id": intervention_id},
-        trace_id=x_trace_id,
-        correlation_id=x_correlation_id,
-        request_id=x_request_id,
-        idempotency_key=resolved_key,
-    )
-
-    precondition_evidence: Dict[str, str] = {}
-    try:
-        _reject_body_idempotency_key(payload)
-        _validate_audit_context(cmd)
-        _validate_remediate_sentinel_intervention(merged_params, identity)
-        precondition_evidence = _require_final_command_preconditions(
-            cmd=cmd,
-            payload={**payload, "intervention_id": intervention_id},
-            confirm_token=x_confirm_token,
-            identity=identity,
-            correlation_id=foundation_context["trace_context"].correlation_id,
-        )
-    except HTTPException as exc:
-        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-
-    stored_params = _stored_command_params(cmd, identity)
-
-    duplicate = command_store.get_command_by_idempotency_key(
-        foundation_context["idempotency_record"].idempotency_key,
-        operator_id=identity.operator_id,
-    )
-    if duplicate:
-        duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
-        if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
-            raise _foundation_idempotency_conflict_error(
-                foundation_context=foundation_context,
-                existing_command_id=str(duplicate.get("command_id") or ""),
-            )
-        return _project_final_command_response(
-            command_id=duplicate["command_id"],
-            command=cmd.command,
-            accepted_at=duplicate.get("submitted_at") or utc_now(),
-            status=CommandStatus(duplicate.get("status") or CommandStatus.SUBMITTED.value),
-            staleness_warning=None,
-        )
-
-    active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
-    if active:
-        error = _bff_error(
-            409, ErrorCode.RESOURCE_CONFLICT,
-            "A remediation command is already in flight for this intervention",
-            f"Command {active[0]['command_id']} is currently {active[0]['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete before retrying",
-        )
-        raise _foundation_bff_error(error, foundation_context=foundation_context)
-
-    staleness_warning = _check_read_surface_state()
-
-    command_envelope = foundation_context["command_envelope"]
-    idempotency_record = foundation_context["idempotency_record"]
-    idempotency_record = idempotency_record.with_status(
-        "succeeded",
-        result_ref=f"command:{command_envelope.command_id}",
-    )
-    foundation_context["idempotency_record"] = idempotency_record
-    command_id = command_envelope.command_id
-    submitted_at = utc_now()
-
-    auth_context = _command_runtime_auth_context(
-        command_id=command_id,
-        authorization=authorization,
-        mfa_token=x_mfa_token,
-        identity=identity,
-    )
-
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "mfa_verified": identity.mfa_verified,
-        "reason": cmd.audit_context.reason,
-        "incident_id": cmd.audit_context.incident_id,
-        "preconditions_checked": [
-            "authentication", "authorization", "two_man", "params_shape", "concurrent_safety"
-        ],
-        "timestamp": submitted_at,
-        "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
-        "auth": auth_context,
-        "foundation": _serialize_foundation_context(foundation_context),
+    command_payload = {
+        **payload,
+        "command": CommandType.REMEDIATE_SENTINEL_INTERVENTION.value,
+        "target": {
+            "type": ObjectType.SENTINEL_INTERVENTION.value,
+            "id": intervention_id,
+        },
+        "action": "remediate_sentinel_intervention",
+        "params": merged_params,
+        "audit_context": {
+            "reason": str(payload.get("reason") or "HIQ Sentinel remediation"),
+            "incident_id": str(payload.get("incident_id") or "").strip() or None,
+        },
     }
-    if precondition_evidence:
-        audit_record["precondition_evidence"] = precondition_evidence
-
-    record, active_after_precheck = command_store.submit_command_if_no_active_target(
-        command_id=command_id,
-        command_type=cmd.command,
-        target=cmd.target,
-        submitted_at=submitted_at,
-        params=stored_params,
-        audit_context=audit_record,
-        foundation_context=_serialize_foundation_context(foundation_context),
-    )
-    if active_after_precheck:
-        error = _bff_error(
-            409, ErrorCode.RESOURCE_CONFLICT,
-            "A remediation command is already in flight for this intervention",
-            f"Command {active_after_precheck['command_id']} is currently {active_after_precheck['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete before retrying",
-        )
-        raise _foundation_bff_error(error, foundation_context=foundation_context)
-    assert record is not None
-    background_tasks.add_task(_process_command_stub, command_id)
-
-    return _project_final_command_response(
-        command_id=command_id,
-        command=cmd.command,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
+    return _submit_final_command_admission(
+        background_tasks=background_tasks,
+        payload=command_payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        route=_FOUNDATION_COMMAND_ROUTE,
+        foundation_raw_payload={**payload, "intervention_id": intervention_id},
     )
 
 
@@ -53723,20 +55039,56 @@ def _confirm_token_expiry_from_record(record: Dict[str, Any]) -> Optional[dateti
     return submitted_at + timedelta(seconds=ttl_seconds)
 
 
+def _guarded_command_confirm_token_id(record: Dict[str, Any]) -> Optional[str]:
+    entry = get_catalog_entry(str(record.get("type") or ""))
+    if entry is None or not getattr(entry, "requires_confirm_token", False):
+        return None
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    evidence = (
+        audit.get("precondition_evidence")
+        if isinstance(audit.get("precondition_evidence"), dict)
+        else {}
+    )
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    token_id = str(
+        evidence.get("confirm_token_id")
+        or params.get("confirm_token_id")
+        or ""
+    ).strip()
+    return token_id or None
+
+
 def _confirm_token_lifecycle_payload(token_id: str) -> Dict[str, Any]:
     status = "available"
     expires_at: Optional[datetime] = None
     latest_record: Optional[Dict[str, Any]] = None
-    for record in _confirm_token_records(token_id):
-        record_type = record.get("type")
-        if record_type == CommandType.CONFIRM_TOKEN_CREATE.value:
-            status = "created"
-            expires_at = _confirm_token_expiry_from_record(record)
-        elif record_type == CommandType.CONFIRM_TOKEN_REDEEM.value:
+    for record in command_store._get_all_commands():
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        if (
+            target.get("type") == ObjectType.CONFIRM_TOKEN.value
+            and target.get("id") == token_id
+        ):
+            record_type = record.get("type")
+            if record_type == CommandType.CONFIRM_TOKEN_CREATE.value:
+                status = "created"
+                expires_at = _confirm_token_expiry_from_record(record)
+            elif record_type == CommandType.CONFIRM_TOKEN_REDEEM.value:
+                status = "redeemed"
+            elif record_type == CommandType.CONFIRM_TOKEN_DELETE.value:
+                status = "deleted"
+            latest_record = record
+            continue
+
+        # Before automatic redemption existed, guarded admissions persisted the
+        # validated token id on the command/audit record but did not append a
+        # RedeemConfirmToken record.  Treat that durable admission as consumed
+        # so an upgrade cannot grant the same token one additional use.
+        if (
+            status == "created"
+            and _guarded_command_confirm_token_id(record) == token_id
+        ):
             status = "redeemed"
-        elif record_type == CommandType.CONFIRM_TOKEN_DELETE.value:
-            status = "deleted"
-        latest_record = record
+            latest_record = record
 
     expired = False
     if expires_at is not None and status == "created":
@@ -55792,8 +57144,12 @@ def _management_fleet_autonomy(
     return "manual"
 
 
-def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
-    return _as_float(metrics.get("training_improvement_pct")) / 100.0
+def _training_improvement_delta(metrics: Dict[str, Any]) -> Optional[float]:
+    raw_val = metrics.get("training_improvement_pct")
+    if raw_val is None:
+        return None
+    val = _as_float(raw_val)
+    return val / 100.0
 
 
 _SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
@@ -56225,9 +57581,16 @@ def _persona_fleet_market_key(persona: Dict[str, Any], metadata: Dict[str, Any])
     return None
 
 
-def _persona_fleet_context_defaults_by_market() -> Dict[str, Dict[str, Any]]:
+def _persona_fleet_context_defaults_by_market(
+    candidates: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, Dict[str, Any]]:
     defaults: Dict[str, Dict[str, Any]] = {}
-    for candidate in read_store.list_personas(include_market_persona_defaults=True):
+    persona_candidates = (
+        candidates
+        if candidates is not None
+        else read_store.list_personas(include_market_persona_defaults=True)
+    )
+    for candidate in persona_candidates:
         if not isinstance(candidate, dict):
             continue
         metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
@@ -56405,6 +57768,20 @@ def _build_persona_health_items(
             metadata,
             context_defaults,
         )
+        is_default = persona_id in ("persona-us-equity", "persona-tw-equity", "persona-crypto")
+        if not is_default:
+            keys_to_strip = {
+                "runtime_id", "runtime_binding_id", "legacy_paper_capital_pool_id", "capital_pool_id", "deployment_stage",
+                "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id",
+                "paper_ledger_id", "paperLedgerId", "paper_ledger", "paper_benchmark_budget", "paperBenchmarkBudget", "paper_budget",
+                "league_rank", "rank", "league_score",
+                "review_id", "review_type", "review", "inbox_id", "recommendation", "recommended_governance_action",
+                "ooda_stage", "ooda_status", "ooda",
+                "risk_flags", "risk_level", "violation_count", "risk",
+                "current_work",
+                "performance", "metrics", "pnl", "sharpe", "sortino", "max_drawdown", "win_rate", "trading_cost_bps", "stability_score", "human_interventions", "training_improvement_pct"
+            }
+            context_metadata = {k: v for k, v in context_metadata.items() if k not in keys_to_strip}
         league_entry = league_by_persona.get(persona_id, {})
         league_metrics = (
             league_entry.get("metrics")
@@ -56412,8 +57789,8 @@ def _build_persona_health_items(
             else {}
         )
         performance = (
-            context_metadata.get("performance")
-            if isinstance(context_metadata.get("performance"), dict)
+            metadata.get("performance")
+            if isinstance(metadata.get("performance"), dict)
             else {}
         )
         metrics = {**performance, **league_metrics}
@@ -57292,8 +58669,8 @@ def _project_persona_fleet_list_row(
     raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
     league_metrics = league_entry.get("metrics") if isinstance(league_entry.get("metrics"), dict) else {}
     performance = (
-        context_metadata.get("performance")
-        if isinstance(context_metadata.get("performance"), dict)
+        raw_metadata.get("performance")
+        if isinstance(raw_metadata.get("performance"), dict)
         else {}
     )
     telemetry_rollup = _management_telemetry_rollup(telemetry_summaries)
@@ -57768,6 +59145,20 @@ def _persona_fleet_slim_list_payload(
             raw_metadata,
             context_defaults,
         )
+        is_default = persona_id in ("persona-us-equity", "persona-tw-equity", "persona-crypto")
+        if not is_default:
+            keys_to_strip = {
+                "runtime_id", "runtime_binding_id", "legacy_paper_capital_pool_id", "capital_pool_id", "deployment_stage",
+                "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id",
+                "paper_ledger_id", "paperLedgerId", "paper_ledger", "paper_benchmark_budget", "paperBenchmarkBudget", "paper_budget",
+                "league_rank", "rank", "league_score",
+                "review_id", "review_type", "review", "inbox_id", "recommendation", "recommended_governance_action",
+                "ooda_stage", "ooda_status", "ooda",
+                "risk_flags", "risk_level", "violation_count", "risk",
+                "current_work",
+                "performance", "metrics", "pnl", "sharpe", "sortino", "max_drawdown", "win_rate", "trading_cost_bps", "stability_score", "human_interventions", "training_improvement_pct"
+            }
+            context_metadata = {k: v for k, v in context_metadata.items() if k not in keys_to_strip}
         league_entry = league_by_persona.get(persona_id, {})
         binding = _persona_fleet_first_binding_from_index(persona_id, bindings_by_persona)
         pool_id = (
@@ -57779,28 +59170,63 @@ def _persona_fleet_slim_list_payload(
         )
         declared_runtime_id = str(raw_metadata.get("runtime_id") or "").strip()
         declared_runtime_binding_id = str(raw_metadata.get("runtime_binding_id") or "").strip()
-        runtime = runtime_by_runtime_id.get(declared_runtime_id, {})
-        if not runtime:
-            runtime = runtime_by_binding.get(declared_runtime_binding_id, {})
-        if not runtime:
-            runtime = runtime_by_persona.get(persona_id, {})
-        if not runtime and binding:
-            runtime = runtime_by_binding.get(
-                str(binding.get("binding_id") or binding.get("id") or "").strip(),
-                {},
-            )
-        if not runtime:
-            runtime = runtime_by_pool.get(str(pool_id or ""), {})
+
+        # Resolve all bindings for the persona to match runtimes
+        p_bindings = bindings_by_persona.get(persona_id, [])
+        p_binding_keys = set()
+        for b in p_bindings:
+            for k in ("id", "binding_id", "persona_capital_binding_id"):
+                val = str(b.get(k) or "").strip()
+                if val:
+                    p_binding_keys.add(val)
+        if binding:
+            for k in ("id", "binding_id", "persona_capital_binding_id"):
+                val = str(binding.get(k) or "").strip()
+                if val:
+                    p_binding_keys.add(val)
+
+        # Gather all runtimes associated with this persona (handle multiple runtimes)
+        persona_runtimes = []
+        seen_r_ids = set()
+        for r in runtimes:
+            r_id = str(r.get("runtime_id") or r.get("id") or "").strip()
+            is_associated = (str(r.get("persona_id") or "").strip() == persona_id)
+            if is_associated and r_id and r_id not in seen_r_ids:
+                persona_runtimes.append(r)
+                seen_r_ids.add(r_id)
+
+        # Choose primary runtime for row details based on activity status priority
+        def runtime_priority(rt):
+            status = str(rt.get("status") or "").lower()
+            if status == "running":
+                return 0
+            if status in ("active", "bound"):
+                return 1
+            return 2
+
+        sorted_runtimes = sorted(persona_runtimes, key=runtime_priority)
+        runtime = sorted_runtimes[0] if sorted_runtimes else {}
+
         binding_ids = {
-            str(binding.get("id") or binding.get("binding_id") or "").strip()
+            str(b.get("id") or b.get("binding_id") or "").strip()
+            for b in p_bindings
         }
+        if binding:
+            binding_ids.add(str(binding.get("id") or binding.get("binding_id") or "").strip())
         binding_ids.discard("")
+
         capital_pool_ids = {str(pool_id or "").strip()}
         capital_pool_ids.discard("")
-        runtime_ids = {
-            str(runtime.get("runtime_id") or runtime.get("runtime_binding_id") or runtime.get("id") or "").strip()
-        }
-        runtime_ids.discard("")
+
+        runtime_ids = set()
+        for rt in persona_runtimes:
+            val = str(rt.get("runtime_id") or "").strip()
+            if val:
+                runtime_ids.add(val)
+        if runtime:
+            val = str(runtime.get("runtime_id") or "").strip()
+            if val:
+                runtime_ids.add(val)
         active_incidents = _persona_fleet_active_incidents_for_row(
             incidents=incidents,
             persona_id=persona_id,

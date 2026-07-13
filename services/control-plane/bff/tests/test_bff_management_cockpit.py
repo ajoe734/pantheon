@@ -69,7 +69,7 @@ def _seeded_client(td: str) -> TestClient:
             "artifact_version": "v1",
         }
     ]
-    store.get_telemetry_summary = lambda runtime_id: {
+    telemetry_summary = {
         "runtime_id": "runtime-b3-001",
         "runtime_binding_id": "binding-b3-001",
         "deployment_stage": "paper",
@@ -84,8 +84,12 @@ def _seeded_client(td: str) -> TestClient:
         "collected_at": "2026-05-23T08:10:00Z",
         "last_heartbeat_at": "2026-05-23T08:10:00Z",
         "last_event_at": "2026-05-23T08:09:00Z",
-    } if runtime_id == "runtime-b3-001" else None
-    store.get_paper_live_drift_report = lambda runtime_id: {
+    }
+    store.get_telemetry_summary = lambda runtime_id: (
+        telemetry_summary if runtime_id == "runtime-b3-001" else None
+    )
+    store.list_telemetry_summaries = lambda: [telemetry_summary]
+    drift_report = {
         "runtime_id": "runtime-b3-001",
         "artifact_id": "artifact-b3-001",
         "paper_baseline": {
@@ -131,7 +135,23 @@ def _seeded_client(td: str) -> TestClient:
             "summary": "Drawdown drift is inside the watch band.",
             "breached_metric_ids": [],
         },
-    } if runtime_id == "runtime-b3-001" else None
+    }
+    store.get_paper_live_drift_report = lambda runtime_id: (
+        drift_report if runtime_id == "runtime-b3-001" else None
+    )
+    store.list_paper_live_drift_reports = lambda: [drift_report]
+    monitoring_session = {
+        "session_id": "monitor-b3-001",
+        "binding_id": "binding-b3-001",
+        "runtime_binding_id": "binding-b3-001",
+        "runtime_id": "runtime-b3-001",
+        "deployment_stage": "paper",
+        "status": "active",
+        "active": True,
+        "started_at": "2026-05-23T07:30:00Z",
+        "last_heartbeat_at": "2026-05-23T08:10:00Z",
+    }
+    store.list_paper_runtime_monitoring_sessions = lambda: [monitoring_session]
     store.get_rollbacks = lambda runtime_id: []
     store.list_sentinel_findings = lambda **kwargs: (
         True,
@@ -165,6 +185,7 @@ def _seeded_client(td: str) -> TestClient:
         "kill_switch": "service_store",
         "runtime_bindings": "canonical",
         "telemetry_summaries": "service_store",
+        "paper_runtime_monitoring_sessions": "service_store",
         "paper_live_drift_reports": "service_store",
         "rollbacks": "service_store",
         "v5_interventions": "service_store",

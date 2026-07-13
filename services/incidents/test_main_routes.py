@@ -39,6 +39,7 @@ def clean_store(monkeypatch):
             return None
 
     monkeypatch.setattr("services.incidents.main.reference_validator", _AcceptAllValidator())
+    monkeypatch.setattr("services.incidents.main._publish_to_postmortems_if_resolved", lambda incident_id: None)
     _reset_store()
     yield
     _reset_store()

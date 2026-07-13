@@ -2567,6 +2567,10 @@ class CanonicalSnapshotAdapter:
     def source(self, dataset: str) -> str:
         return self._cache_source.get(dataset, "canonical")
 
+    def cached_source(self, dataset: str) -> Optional[str]:
+        """Return provenance from an earlier read without touching the backend."""
+        return self._cache_source.get(dataset)
+
     def list_records(
         self,
         dataset: str,
@@ -2747,6 +2751,20 @@ class ServiceBackedReadAdapter:
             "filenames": ("decisions.json",),
             "keys": ["decision_id", "id"],
             "snapshot_key": "evolution_decisions",
+        },
+        "freeze_orders": {
+            "env": "PANTHEON_BFF_FREEZE_ORDER_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR", "GOVERNANCE_DATA_DIR"),
+            "filenames": ("freeze_orders.json",),
+            "keys": ["freeze_order_id", "id"],
+            "snapshot_key": "freeze_orders",
+        },
+        "all_rollbacks": {
+            "env": "PANTHEON_BFF_ROLLBACK_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR", "GOVERNANCE_DATA_DIR"),
+            "filenames": ("rollbacks.json",),
+            "keys": ["rollback_id", "id"],
+            "snapshot_key": "all_rollbacks",
         },
         "evolution_programs": {
             "env": "PANTHEON_BFF_EVOLUTION_PROGRAM_STORE",
@@ -3145,6 +3163,22 @@ class ServiceBackedReadAdapter:
             "base_env": ("PANTHEON_EVOLUTION_API_URL", "PANTHEON_GOVERNANCE_API_URL"),
             "list_path": "/api/evolution/proposals",
         },
+        "freeze_orders": {
+            "base_env": (
+                "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+                "PANTHEON_GOVERNANCE_SERVICE_URL",
+            ),
+            "list_path": "/api/governance/freeze-orders",
+            "require_list_payload": True,
+        },
+        "all_rollbacks": {
+            "base_env": (
+                "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+                "PANTHEON_GOVERNANCE_SERVICE_URL",
+            ),
+            "list_path": "/api/governance/rollbacks",
+            "require_list_payload": True,
+        },
         "telemetry_summaries": {
             "base_env": ("PANTHEON_TELEMETRY_API_URL", "PANTHEON_TELEMETRY_URL"),
             "list_path": "/api/telemetry/runtime-summaries",
@@ -3217,6 +3251,8 @@ class ServiceBackedReadAdapter:
             payload,
             list_key=spec.get("list_key"),
         )
+        if spec.get("require_list_payload") and not isinstance(records_payload, list):
+            return False, {}
         if dataset == "lineage_edges" and isinstance(records_payload, list):
             records_payload = [
                 {
@@ -3297,6 +3333,10 @@ class ServiceBackedReadAdapter:
 
     def source(self, dataset: str) -> str:
         return self._cache_source.get(dataset, "service_store")
+
+    def cached_source(self, dataset: str) -> Optional[str]:
+        """Return provenance from an earlier read without touching the backend."""
+        return self._cache_source.get(dataset)
 
     def list_records(
         self,
@@ -9305,6 +9345,53 @@ class ReadSurfaceStore:
             return "local_snapshot"
         return "missing"
 
+    def dataset_source_cached(
+        self,
+        dataset: str,
+        *,
+        include_local_fallback: bool = True,
+    ) -> str:
+        """Resolve provenance after a read without issuing another backend read.
+
+        Human Inbox contributors already loaded their records. Calling
+        ``dataset_source`` immediately afterward repeats adapter list calls and
+        can double HTTP latency, so hot aggregation paths use this cache-only
+        variant for the provenance envelope.
+        """
+        if dataset == "approval_queue_items":
+            approval_source = self.dataset_source_cached(
+                "approval_decisions",
+                include_local_fallback=include_local_fallback,
+            )
+            if approval_source != "missing":
+                return approval_source
+        if dataset == "governance_review_queue_items":
+            for upstream_dataset in (
+                "deployment_plans",
+                "approval_decisions",
+                "evolution_decisions",
+            ):
+                upstream_source = self.dataset_source_cached(
+                    upstream_dataset,
+                    include_local_fallback=include_local_fallback,
+                )
+                if upstream_source != "missing":
+                    return upstream_source
+        canonical_source = self._canonical.cached_source(dataset)
+        if canonical_source:
+            return canonical_source
+        service_source = self._service.cached_source(dataset)
+        if service_source:
+            return service_source
+        if include_local_fallback and dataset == "personas" and self._local_bff_persona_records():
+            return "bff_local_dev_store"
+        local_payload = self._local_fallback(dataset) if include_local_fallback else None
+        if include_local_fallback and local_payload in (None, "", [], {}):
+            local_payload = self._local_overlay_records(dataset)
+        if local_payload not in (None, "", [], {}):
+            return "local_snapshot"
+        return "missing"
+
     def _decision_journal_records(self) -> Dict[str, Dict[str, Any]]:
         local_key = self._LOCAL_DATA_KEYS.get("decision_journal_entries", "decision_journal_entries")
         records = self._data.get(local_key)
@@ -11230,8 +11317,6 @@ class ReadSurfaceStore:
                 "persona_capital_binding_id": (
                     declaration.get("persona_capital_binding_id")
                     or declaration.get("personaCapitalBindingId")
-                    or declaration.get("runtime_binding_id")
-                    or declaration.get("runtimeBindingId")
                 ),
             }
             for field, index in declaration_indexes.items():
@@ -11245,11 +11330,6 @@ class ReadSurfaceStore:
                 continue
             projected = json.loads(json.dumps(binding))
             persona_binding_id = str(projected.get("persona_capital_binding_id") or "").strip()
-            if not persona_binding_id:
-                runtime_binding_id = str(projected.get("binding_id") or "").strip()
-                if runtime_binding_id in capital_binding_by_id:
-                    persona_binding_id = runtime_binding_id
-                    projected["persona_capital_binding_id"] = runtime_binding_id
 
             capital_binding = capital_binding_by_id.get(persona_binding_id, {})
             canonical_persona_id = str(capital_binding.get("persona_id") or "").strip()
@@ -11282,8 +11362,6 @@ class ReadSurfaceStore:
                         declared_binding_id = str(
                             declaration.get("persona_capital_binding_id")
                             or declaration.get("personaCapitalBindingId")
-                            or declaration.get("runtime_binding_id")
-                            or declaration.get("runtimeBindingId")
                             or ""
                         ).strip()
                         if declared_binding_id:
@@ -16200,12 +16278,21 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
         scope: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        orders = list((self._local_fallback("freeze_orders") or {}).values())
+        available, service_orders = self._service.list_records("freeze_orders")
+        if available:
+            orders = list(service_orders)
+        else:
+            local_orders = self._local_fallback("freeze_orders") or {}
+            orders = list(local_orders.values()) if isinstance(local_orders, dict) else list(local_orders)
         if status:
             orders = [o for o in orders if o.get("status") == status]
         if scope:
             orders = [o for o in orders if o.get("scope") == scope]
-        return sorted(orders, key=lambda x: x.get("created_at", ""), reverse=True)
+        return sorted(
+            orders,
+            key=lambda x: str(x.get("created_at") or x.get("issued_at") or x.get("updated_at") or ""),
+            reverse=True,
+        )
 
     def list_all_rollbacks(
         self,
@@ -16213,13 +16300,24 @@ class ReadSurfaceStore:
         action_type: Optional[str] = None,
         time_range: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        rollbacks = list(self._local_fallback("all_rollbacks") or [])
+        available, service_rollbacks = self._service.list_records("all_rollbacks")
+        if available:
+            rollbacks = list(service_rollbacks)
+        else:
+            local_rollbacks = self._local_fallback("all_rollbacks") or []
+            rollbacks = list(local_rollbacks.values()) if isinstance(local_rollbacks, dict) else list(local_rollbacks)
         if runtime_id:
             rollbacks = [r for r in rollbacks if r.get("runtime_id") == runtime_id]
         if action_type:
             rollbacks = [r for r in rollbacks if r.get("action_type") == action_type]
         # time_range filtering deferred in v1
-        return sorted(rollbacks, key=lambda x: x.get("initiated_at", ""), reverse=True)
+        return sorted(
+            rollbacks,
+            key=lambda x: str(
+                x.get("initiated_at") or x.get("requested_at") or x.get("created_at") or x.get("updated_at") or ""
+            ),
+            reverse=True,
+        )
 
     def get_rollback_review(self, rollback_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not rollback_id:
