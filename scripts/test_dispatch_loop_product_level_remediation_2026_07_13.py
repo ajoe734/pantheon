@@ -148,10 +148,26 @@ def test_dry_run_is_zero_write() -> None:
         assert not list(root.glob(".ai-status.json.*.tmp"))
 
 
-def test_dispatch_is_idempotent_and_assigns_enabled_fleets() -> None:
+def test_dispatch_is_idempotent_and_preserves_supervisor_agent_queues() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
-        prepare_status(root)
+        initial = base_state()
+        initial["agents"][0].update(
+            {
+                "status": "working",
+                "current_task_ids": ["EXISTING-CODEX-001"],
+                "next": "Continue existing Codex work",
+            }
+        )
+        initial["agents"][1].update(
+            {
+                "status": "blocked",
+                "current_task_ids": ["EXISTING-CODEX2-001"],
+                "next": "Wait for an existing dependency",
+            }
+        )
+        agents_before = deepcopy(initial["agents"])
+        prepare_status(root, initial)
 
         first = run_dispatch(root)
         assert first.returncode == 0, first.stderr
@@ -165,9 +181,7 @@ def test_dispatch_is_idempotent_and_assigns_enabled_fleets() -> None:
         assert all(task["loop_ids"] for task in tasks)
         assert all(task["proof_required"] for task in tasks)
         assert all(task["product_level_required"] is True for task in tasks)
-        by_agent = {agent["name"]: agent["current_task_ids"] for agent in state["agents"]}
-        assert sum(task_id.startswith("LOOP-PROD-") for task_id in by_agent["Codex"]) == 18
-        assert sum(task_id.startswith("LOOP-PROD-") for task_id in by_agent["Codex2"]) == 18
+        assert state["agents"] == agents_before
         assert len(log_after_first.decode("utf-8").splitlines()) == 36
 
         second = run_dispatch(root)
@@ -235,6 +249,7 @@ def test_existing_non_todo_task_record_is_preserved_in_full() -> None:
         after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
         preserved = next(task for task in after["tasks"] if task["id"] == "LOOP-PROD-000")
         assert preserved == sentinel
+        assert after["agents"] == state["agents"]
 
 
 def test_frozen_wave_rejects_dispatch_without_writes() -> None:

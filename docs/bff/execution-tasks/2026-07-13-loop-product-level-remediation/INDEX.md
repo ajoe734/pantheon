@@ -194,6 +194,8 @@ The dispatcher must be merged before live use. It:
 - checks both active and archived task IDs;
 - never resurrects an archived terminal ID;
 - preserves an existing active task record in full;
+- never rewrites `agents[].current_task_ids`, status, or next action; the live
+  supervisor alone owns capacity and frontier activation;
 - performs an atomic fsync + replace of `ai-status.json`;
 - appends assignment events only for newly inserted tasks;
 - supports catalog validation and mutation-free dry run.
