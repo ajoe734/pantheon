@@ -824,6 +824,90 @@ def test_workspace_proposal_derives_widget_availability_from_scoped_sources():
     _workspace_schema_validate(proposal)
 
 
+def test_workspace_proposal_ignores_caller_forged_bff_derived_freshness():
+    """A caller cannot claim `full` for a source the BFF itself verifies.
+
+    Regression for AG-UIPOL-003 review: `agora.strategy.summary`,
+    `agora.trading.events`, and `agora.research.evidence_refs` are computed
+    from the real TradingRoomStore/workshop_store, so caller-supplied
+    dataFreshness for these keys must be overridden, not honored via
+    setdefault.
+    """
+    store = make_trading_room_store()
+    workshop_store = _ready_workshop_store()  # only knows strat-ready-001
+    client = _client(store, workshop_store=workshop_store)
+
+    resp = client.post(
+        "/bff/agora/strategies/strat-conflicting-001/trading-room/proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
+        json={
+            "strategyVersion": "V4",
+            "dataFreshness": {
+                "agora.strategy.summary": {"status": "full", "rowCount": 999, "wired": True},
+                "agora.trading.events": {"status": "full", "rowCount": 999, "wired": True},
+                "agora.research.evidence_refs": {"status": "full", "rowCount": 999, "wired": True},
+            },
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    proposal = resp.json()["data"]
+    generator = resp.json()["meta"]["generator"]
+
+    # BFF truth: strat-conflicting-001 has no matching workshop session, no
+    # decision events, and no evidence refs -- the caller's forged "full"
+    # claims must not survive into the resolved dataFreshness.
+    assert generator["dataFreshness"]["agora.strategy.summary"]["rowCount"] == 0
+    assert generator["dataFreshness"]["agora.trading.events"]["rowCount"] == 0
+    assert generator["dataFreshness"]["agora.research.evidence_refs"]["rowCount"] == 0
+
+    strategy_summary_widget = next(
+        widget
+        for view in proposal["views"]
+        for widget in view["widgets"]
+        if widget["dataSource"] == "agora.strategy.summary"
+    )
+    assert strategy_summary_widget["dataAvailability"] != "full"
+    print("✅ workspace proposal: caller-forged BFF-derived dataFreshness is overridden by real store truth")
+
+
+def test_workspace_proposal_derives_full_from_real_scoped_workshop_session():
+    """A real ready StrategySpec version for the caller's own scope reports full.
+
+    Regression for AG-UIPOL-003 review: `_workspace_data_freshness` previously
+    called `workshop_store.list_sessions(limit=100)` without the required
+    `user_id`/`tenant_id` keyword arguments; MemoryWorkshopStore.list_sessions
+    requires them, so the call raised and was silently swallowed, making a
+    genuinely ready strategy report as not-full. Passing the caller's real
+    scope must let a real matching session resolve to full.
+    """
+    store = make_trading_room_store()
+    workshop_store = _ready_workshop_store(
+        user_id="user-001",
+        tenant_id="tenant-001",
+        strategy_id="strat-ready-001",
+    )
+    client = _client(store, user_id="user-001", tenant_id="tenant-001", workshop_store=workshop_store)
+
+    resp = client.post(
+        "/bff/agora/strategies/strat-ready-001/trading-room/proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
+        json={"strategyVersion": "V4"},
+    )
+    assert resp.status_code == 201, resp.text
+    generator = resp.json()["meta"]["generator"]
+    assert generator["dataFreshness"]["agora.strategy.summary"]["rowCount"] == 1
+
+    proposal = resp.json()["data"]
+    strategy_summary_widget = next(
+        widget
+        for view in proposal["views"]
+        for widget in view["widgets"]
+        if widget["dataSource"] == "agora.strategy.summary"
+    )
+    assert strategy_summary_widget["dataAvailability"] == "full"
+    print("✅ workspace proposal: real scoped workshop session for the caller's own tenant/user reports full")
+
+
 def test_workspace_proposal_get_and_accept_materializes_active_workspace():
     store = make_trading_room_store()
     client = _client(store)
@@ -957,6 +1041,57 @@ def test_workspace_view_and_widget_mutations_are_registry_validated():
     print("✅ workspace view/widget mutation: add routes and registry validation")
 
 
+def test_workspace_widget_mutation_requires_and_normalizes_data_availability():
+    """AG-UIPOL-003 review item 2: per-widget dataAvailability must be present
+    and valid on operator-submitted widget mutations, with legacy
+    complete/unavailable values normalized to full/missing."""
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+
+    widget_missing = dict(workspace["views"][0]["widgets"][0])
+    widget_missing["id"] = "custom_missing_availability"
+    del widget_missing["dataAvailability"]
+    missing_resp = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-add-widget-no-avail"},
+        json={"viewId": workspace["views"][0]["id"], "widgetSpec": widget_missing},
+    )
+    assert missing_resp.status_code == 422, missing_resp.text
+    assert "dataAvailability" in missing_resp.text
+
+    widget_legacy = dict(workspace["views"][0]["widgets"][0])
+    widget_legacy["id"] = "custom_legacy_availability"
+    widget_legacy["dataAvailability"] = "unavailable"
+    legacy_resp = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-add-widget-legacy-avail"},
+        json={"viewId": workspace["views"][0]["id"], "widgetSpec": widget_legacy},
+    )
+    assert legacy_resp.status_code == 201, legacy_resp.text
+    added = next(
+        w for v in legacy_resp.json()["data"]["views"] for w in v["widgets"] if w["id"] == "custom_legacy_availability"
+    )
+    assert added["dataAvailability"] == "missing"
+
+    patch_resp = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets/custom_legacy_availability",
+        headers={
+            "Authorization": "Bearer test",
+            "If-Match": legacy_resp.headers["etag"],
+            "Idempotency-Key": "idem-patch-widget-legacy-avail",
+        },
+        json={"patch": {"dataAvailability": "complete"}},
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    patched = next(
+        w for v in patch_resp.json()["data"]["views"] for w in v["widgets"] if w["id"] == "custom_legacy_availability"
+    )
+    assert patched["dataAvailability"] == "full"
+    print("✅ workspace widget mutation: dataAvailability required and legacy values normalized")
+
+
 def test_workspace_rejects_servant_direct_patch_and_code_injection():
     store = make_trading_room_store()
     client = _client(store)
@@ -1074,6 +1209,40 @@ def test_widget_revision_proposal_apply_preserves_before_after_and_records_versi
     assert [v["dashboardVersion"] for v in versions.json()["data"]] == [1, 2]
     assert versions.json()["data"][1]["changeSummary"].startswith("accepted widget revision")
     print("✅ widget revision: apply preserves before/proposed specs and records change log")
+
+
+def test_widget_revision_proposal_normalizes_legacy_complete_unavailable_values():
+    """Legacy `complete`/`unavailable` dataAvailability values are mapped to
+    the current `full`/`missing` vocabulary instead of failing validation.
+
+    Regression for AG-UIPOL-003 review item 3: an out-of-date FE build (or a
+    persisted pre-rename record) sending the old widget-revision vocabulary
+    must not crash the Winner Branch route with a 422.
+    """
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+    widget = next(w for v in workspace["views"] for w in v["widgets"] if w["id"] == "overview_candidate_funnel")
+    proposed = _make_revised_widget(widget, title_suffix="Legacy")
+    proposed["dataAvailability"] = "complete"
+
+    create = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget['id']}/revision-proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": "idem-widget-revision-legacy"},
+        json={
+            "instruction": "Legacy vocabulary compatibility check.",
+            "proposedSpec": proposed,
+            "rationale": "Confirms complete/unavailable map to full/missing.",
+            "warnings": [],
+            "dataAvailability": "unavailable",
+        },
+    )
+    assert create.status_code == 201, create.text
+    proposal = create.json()["data"]
+    assert proposal["dataAvailability"] == "missing"
+    assert proposal["proposedSpec"]["dataAvailability"] == "full"
+    print("✅ widget revision: legacy complete/unavailable values normalize to full/missing")
 
 
 def test_widget_revision_keep_original_adds_copy_and_rollback_creates_new_version():

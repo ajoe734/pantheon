@@ -43918,15 +43918,7 @@ def _pm12_persona_telemetry_records(
             if telemetry_cache is not None:
                 telemetry_cache[runtime_id] = summary
         if not isinstance(summary, dict):
-            summary = {
-                "runtime_id": runtime_id,
-                "collected_at": utc_now() if callable(globals().get("utc_now")) else datetime.now(timezone.utc).isoformat(),
-                "pnl": 0.0,
-                "drawdown": 0.0,
-                "fill_rate": 0.0,
-                "avg_slippage_bps": 0.0,
-                "total_trades": 0,
-            }
+            continue
         candidates: List[Dict[str, Any]] = [dict(summary)]
         for key in _PM12_TELEMETRY_HISTORY_KEYS:
             raw_history = summary.get(key)
@@ -57157,8 +57149,6 @@ def _training_improvement_delta(metrics: Dict[str, Any]) -> Optional[float]:
     if raw_val is None:
         return None
     val = _as_float(raw_val)
-    if val in (18.2, 14.0, 9.5):
-        return None
     return val / 100.0
 
 
@@ -57778,6 +57768,20 @@ def _build_persona_health_items(
             metadata,
             context_defaults,
         )
+        is_default = persona_id in ("persona-us-equity", "persona-tw-equity", "persona-crypto")
+        if not is_default:
+            keys_to_strip = {
+                "runtime_id", "runtime_binding_id", "legacy_paper_capital_pool_id", "capital_pool_id", "deployment_stage",
+                "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id",
+                "paper_ledger_id", "paperLedgerId", "paper_ledger", "paper_benchmark_budget", "paperBenchmarkBudget", "paper_budget",
+                "league_rank", "rank", "league_score",
+                "review_id", "review_type", "review", "inbox_id", "recommendation", "recommended_governance_action",
+                "ooda_stage", "ooda_status", "ooda",
+                "risk_flags", "risk_level", "violation_count", "risk",
+                "current_work",
+                "performance", "metrics", "pnl", "sharpe", "sortino", "max_drawdown", "win_rate", "trading_cost_bps", "stability_score", "human_interventions", "training_improvement_pct"
+            }
+            context_metadata = {k: v for k, v in context_metadata.items() if k not in keys_to_strip}
         league_entry = league_by_persona.get(persona_id, {})
         league_metrics = (
             league_entry.get("metrics")
@@ -59141,6 +59145,20 @@ def _persona_fleet_slim_list_payload(
             raw_metadata,
             context_defaults,
         )
+        is_default = persona_id in ("persona-us-equity", "persona-tw-equity", "persona-crypto")
+        if not is_default:
+            keys_to_strip = {
+                "runtime_id", "runtime_binding_id", "legacy_paper_capital_pool_id", "capital_pool_id", "deployment_stage",
+                "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id",
+                "paper_ledger_id", "paperLedgerId", "paper_ledger", "paper_benchmark_budget", "paperBenchmarkBudget", "paper_budget",
+                "league_rank", "rank", "league_score",
+                "review_id", "review_type", "review", "inbox_id", "recommendation", "recommended_governance_action",
+                "ooda_stage", "ooda_status", "ooda",
+                "risk_flags", "risk_level", "violation_count", "risk",
+                "current_work",
+                "performance", "metrics", "pnl", "sharpe", "sortino", "max_drawdown", "win_rate", "trading_cost_bps", "stability_score", "human_interventions", "training_improvement_pct"
+            }
+            context_metadata = {k: v for k, v in context_metadata.items() if k not in keys_to_strip}
         league_entry = league_by_persona.get(persona_id, {})
         binding = _persona_fleet_first_binding_from_index(persona_id, bindings_by_persona)
         pool_id = (
@@ -59172,22 +59190,7 @@ def _persona_fleet_slim_list_payload(
         seen_r_ids = set()
         for r in runtimes:
             r_id = str(r.get("runtime_id") or r.get("id") or "").strip()
-            candidates = {
-                str(r.get("persona_id") or "").strip(),
-                str(r.get("binding_id") or "").strip(),
-                str(r.get("runtime_binding_id") or "").strip(),
-                str(r.get("persona_capital_binding_id") or "").strip(),
-                str(r.get("id") or "").strip(),
-            }
-            candidates.discard("")
-
-            is_associated = (
-                persona_id in candidates
-                or (declared_runtime_id and declared_runtime_id in candidates)
-                or (declared_runtime_binding_id and declared_runtime_binding_id in candidates)
-                or bool(candidates.intersection(p_binding_keys))
-                or (pool_id and str(r.get("capital_pool_id") or "").strip() == str(pool_id).strip())
-            )
+            is_associated = (str(r.get("persona_id") or "").strip() == persona_id)
             if is_associated and r_id and r_id not in seen_r_ids:
                 persona_runtimes.append(r)
                 seen_r_ids.add(r_id)
@@ -59217,15 +59220,13 @@ def _persona_fleet_slim_list_payload(
 
         runtime_ids = set()
         for rt in persona_runtimes:
-            for k in ("runtime_id", "runtime_binding_id", "id"):
-                val = str(rt.get(k) or "").strip()
-                if val:
-                    runtime_ids.add(val)
+            val = str(rt.get("runtime_id") or "").strip()
+            if val:
+                runtime_ids.add(val)
         if runtime:
-            for k in ("runtime_id", "runtime_binding_id", "id"):
-                val = str(runtime.get(k) or "").strip()
-                if val:
-                    runtime_ids.add(val)
+            val = str(runtime.get("runtime_id") or "").strip()
+            if val:
+                runtime_ids.add(val)
         active_incidents = _persona_fleet_active_incidents_for_row(
             incidents=incidents,
             persona_id=persona_id,

@@ -1412,11 +1412,14 @@ def test_canonical_binding_precedence_and_mixed_topology(
     monkeypatch,
 ) -> None:
     persona_test = "persona-test-precedence"
+    persona_missing = "persona-test-missing"
     rt_stale = "rt-stale"
     binding_stale = "binding-stale"
     rt_assigned = "rt-assigned"
     binding_canonical = "binding-canonical"
     rt_devloop = "rt-devloop"
+    rt_missing = "rt-missing"
+    binding_missing = "binding-missing"
 
     def write_store(name: str, payload: object) -> Path:
         path = tmp_path / name
@@ -1439,6 +1442,18 @@ def test_canonical_binding_precedence_and_mixed_topology(
                         "deployment_stage": "paper",
                     },
                 },
+                persona_missing: {
+                    "persona_id": persona_missing,
+                    "name": "Missing Telemetry Persona",
+                    "lifecycle_state": "deployed",
+                    "status": "deployed",
+                    "created_at": "2026-07-13T00:00:00Z",
+                    "metadata": {
+                        "market_scope": ["US"],
+                        "capital_mode": "paper",
+                        "deployment_stage": "paper",
+                    },
+                },
             },
         ),
         "PANTHEON_BFF_PERSONA_SESSION_STORE": write_store("sessions.json", {}),
@@ -1449,6 +1464,13 @@ def test_canonical_binding_precedence_and_mixed_topology(
                     "binding_id": binding_canonical,
                     "persona_capital_binding_id": binding_canonical,
                     "persona_id": persona_test,
+                    "status": "active",
+                    "validity": "active",
+                },
+                binding_missing: {
+                    "binding_id": binding_missing,
+                    "persona_capital_binding_id": binding_missing,
+                    "persona_id": persona_missing,
                     "status": "active",
                     "validity": "active",
                 }
@@ -1478,6 +1500,14 @@ def test_canonical_binding_precedence_and_mixed_topology(
                     "runtime_id": rt_devloop,
                     "persona_capital_binding_id": "binding-devloop-unassigned",
                     "persona_id": "persona-us-equity",  # stale seed
+                    "deployment_mode": "paper",
+                    "status": "active",
+                },
+                "rb-missing": {
+                    "binding_id": "rb-missing",
+                    "runtime_id": rt_missing,
+                    "persona_capital_binding_id": binding_missing,
+                    "persona_id": None,
                     "deployment_mode": "paper",
                     "status": "active",
                 }
@@ -1585,4 +1615,17 @@ def test_canonical_binding_precedence_and_mixed_topology(
     # Absent persona-owned evidence on custom persona must not leak seed values
     assert fleet_rows[persona_test]["perf_delta"] is None
 
+    # Missing telemetry persona must have "unavailable" source in fleet
+    missing_perf = fleet_rows[persona_missing]["performance_summary"]
+    assert missing_perf["source"] == "unavailable"
+
     assert league_response.status_code == 200, league_response.text
+    ranking_rows = {
+        item["persona_id"]: item
+        for item in league_response.json()["data"]["items"][0]["items"]
+    }
+    assert ranking_rows[persona_missing]["eligible"] is False
+    assert ranking_rows[persona_missing]["metrics"]["telemetry_coverage_count"] == 0
+    
+    assert ranking_rows[persona_test]["eligible"] is True
+    assert ranking_rows[persona_test]["source_confidence"] == "formal"

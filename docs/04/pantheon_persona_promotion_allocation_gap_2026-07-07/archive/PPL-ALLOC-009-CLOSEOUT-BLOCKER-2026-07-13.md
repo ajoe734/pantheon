@@ -1,8 +1,54 @@
 # PPL-ALLOC-009 Closeout Evidence And Blocker - 2026-07-13
 
-Status: blocked after terminal-receipt repair and hosted dev recheck
+Status: PPL-ALLOC-011 execution S1 blockers resolved; PPL-ALLOC-009 remains
+blocked on the explicitly retained S2 review/security items below
 
-## Decision
+## PPL-ALLOC-011 Resolution Addendum - 2026-07-13
+
+PPL-ALLOC-011 has closed the three execution-plane S1 blockers and the BFF
+version-evidence gap recorded in this packet. The final guarded-admission repair
+merged in PR #3536 at
+`0e8c06603eb7ede8fd226837e439282e70fefc80`. Exact-SHA root deploy run
+`29268814057` and exact-SHA BFF restart run `29270122636` both succeeded.
+
+Hosted acceptance at that SHA proved:
+
+- an unapproved `live_running` apply remains HTTP 409;
+- two distinct operators, a bound approval, and a bound confirmation token
+  admit the apply, which reaches `executed/applied`;
+- proposal, receipt, audit references, and the Capital owner readback agree on
+  rebalance `rb-20260713-9e640fe8e883`, command
+  `cmd-29641b43c51241a0a4938a086ca3e180`, and target weight `0.0101`;
+- `authoritative_capital_readback=true`,
+  `authoritative_capital_state_applied=true`,
+  `canonical_write_authority=capital_service`, and
+  `live_capital_side_effects=false`;
+- the confirmation token is consumed atomically: the exact same idempotency key
+  safely replays the same command, while a new key reusing the token fails with
+  HTTP 428 `CONFIRM_TOKEN_INVALID`;
+- after the exact-SHA restart, the same proposal, command, receipt, allocation,
+  and redeemed-token identities remain readable and replay-safe;
+- the earlier safe containment command
+  `cmd-414820143c8240098d5eaceec8e923f9` remains terminal and the Persona remains
+  authoritatively frozen; promotion still fails HTTP 422 and freeze without a
+  confirmation token still fails HTTP 428; and
+- `/bff/version` reports the exact deployed source commit SHA.
+
+The sanitized evidence is archived in
+`PPL-ALLOC-011-HOSTED-EVIDENCE-2026-07-13.json` beside this document.
+
+This addendum clears only the execution/persistence/containment S1 rows and the
+runtime-version S3 row originally assigned to PPL-ALLOC-011. It does **not**
+clear the ranking-to-proposal join, frontend IA supersession review, dependency
+vulnerability, or unrelated QA/warning-debt items. PPL-ALLOC-009 therefore
+remains blocked pending those retained owners and review decisions.
+
+## Historical Decision (superseded for the PPL-ALLOC-011 scope)
+
+The following decision records the state before the resolution addendum above.
+Its apply/readback/restart/containment conclusions are retained as provenance,
+not as the current execution-plane verdict. The ranking, frontend IA, and
+dependency-security blockers remain current.
 
 The packet is not ready for `review` or `done`.
 
@@ -247,22 +293,22 @@ assertion described above after rendering the task persona.
 
 | Severity | Blocking | Risk | Owner | Objective expiry / recheck |
 | --- | --- | --- | --- | --- |
-| S1 | Yes | Terminal adapter receipt now reaches `executed`, but it reports no live capital side effect; proposal and Capital/Fleet reads do not show authoritative applied weights. | Capital Plane / Execution Plane | Implement the governed allocation write authority, then require proposal and Capital/Fleet reads to return the same applied weights and identities. |
-| S1 | Yes | The pre-deploy rebalance proposal returned 404 after BFF restart; the replacement proposal is served from degraded `local_snapshot`. | BFF / Capital Plane persistence | Move proposal authority to a restart-safe backend-owned store and prove the same proposal survives a BFF redeploy. |
-| S1 | Yes | Safe emergency freeze cannot be admitted without a distinct second authorized operator, so no containment receipt/post-state proof exists. | Human/Ops + Risk Owner | Re-run with two legitimate operators and preserve confirmation, signature, terminal receipt, and unchanged promotion/allocation readback. |
+| S1 | No — resolved by PPL-ALLOC-011 | Governed allocation write authority now reaches `executed/applied`, and proposal/Capital owner reads report the same authoritative applied weight and identities. | Capital Plane / Execution Plane | Recheck only if the owner API or command executor contract changes. |
+| S1 | No — resolved by PPL-ALLOC-011 | Proposal, command receipt, bound approval reference, allocation, and redeemed-token identities survived exact-SHA BFF redeploy and remained replay-safe. | BFF / Capital Plane persistence | Retain single-writer and host-volume caveats; add separate multi-replica/DR work before making broader guarantees. |
+| S1 | No — resolved by PPL-ALLOC-011 | A genuine distinct second operator admitted safe freeze; terminal receipt and authoritative frozen Persona state survived later deploys. | Human/Ops + Risk Owner | Recheck only if containment admission or owner mutation contracts change. |
 | S2 | Yes | Hosted ranking rows omit stage, current weight, and evidence fields needed for a response-derived ranking-to-proposal join. | BFF Allocation Read Model | Recheck after one immutable ranking response carries the complete allocation universe and proposal join fields. |
 | S2 | Yes | Original single Promotion & Allocation workbench contract was replaced by later IA redirects; the supersession needs explicit closeout reviewer acceptance. | Management Frontend + Claude | Resolve during PPL-ALLOC-009 review by accepting the newer canonical-center model or reopening the original route target. |
 | S2 | Yes | `npm ci` reports 1 critical and 12 high dependency vulnerabilities. | Frontend Platform / Security | Triage package-level reachability and remediation before this packet is declared production-ready. |
-| S3 | No | BFF does not expose deployed source SHA at runtime. | Platform Deployment | Add a deployment/version endpoint and recheck against the workflow SHA. |
+| S3 | No — resolved by PPL-ALLOC-011 | `/bff/version` exposes and was verified against the exact workflow target SHA. | Platform Deployment | Keep the deploy-time source-SHA assertion in the nonprod workflow. |
 | S3 | No | Linked-page hosted test hard-codes `Crypto-Alt-Hunter`. | Frontend QA | Replace with the selected live persona name and rerun against the task-created persona. |
 | S3 | No | Existing FastAPI, lint, Rollup/CSS, Browserslist, and chunk-size warnings remain. | BFF / Frontend Platform | Track in platform warning-debt backlog; focused gates remain green. |
 
-## Required Next Action
+## Current Required Next Action
 
-Keep `PPL-ALLOC-009` in progress. The terminal-receipt repair is merged,
-deployed, and proven. The Capital Plane / Execution Plane must now provide a
-restart-safe proposal authority plus governed allocation application and
-authoritative readback. Human/Ops and the Risk Owner must then execute the safe
-containment probe with a genuine second signer. After the ranking join and
-route supersession are reviewed, rerun the hosted journey and only then hand
-the task to Claude for formal review.
+Keep `PPL-ALLOC-009` in progress only for the retained S2 blockers. The BFF
+Allocation Read Model owner must provide the immutable ranking-to-proposal join;
+the Management Frontend reviewer must accept or reopen the IA supersession; and
+Frontend Platform/Security must triage the recorded dependency vulnerabilities.
+The execution, restart persistence, safe containment, and runtime-version work
+assigned to PPL-ALLOC-011 requires no further implementation unless its owner
+contracts change.
