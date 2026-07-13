@@ -1,9 +1,12 @@
 # EVOCHAIN-001 — Threshold-breach producer (telemetry -> incidents)
 
-Status: implemented, addressed Codex round-1 and round-2 reviews, pending
-re-review. One round-2 point (the deployed lineage-resolution blocker) is a
-confirmed platform gap this task cannot close by itself — see "Round-2
-review fixes" §1 below for what was actually verified and why.
+Status: implemented, addressed Codex round-1/round-2/round-3 reviews,
+pending re-review. The deployed lineage-resolution blocker (round-2 point 1,
+reaffirmed round-3 point 1) is a confirmed platform gap this task cannot
+close by itself; it is now materialized as its own dependency —
+`docs/decisions/LIN-003-live-lineage-write-path.md` — and this task remains
+blocked on it for that one acceptance criterion. See "Round-3 review fixes"
+below for what changed and why point 1 stays open.
 
 Owner: Claude
 Reviewer: Codex
@@ -53,7 +56,7 @@ postmortem -> evolution -> journal chain never fires from real data.
   service — no image rebuild. Own interval env
   (`EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS`, default `86400`); does not
   touch `EVOLUTION_SCHEDULER_INTERVAL_SECONDS` or any other existing cadence.
-- `services/evolution/test_threshold_sweep_worker.py` — 30 tests.
+- `services/evolution/test_threshold_sweep_worker.py` — 43 tests.
 
 ## Round-1 review fixes (Codex, PR #3509, 2026-07-13)
 
@@ -317,6 +320,111 @@ literal `True` (not merely truthy) before an entry is accepted. Covered by
 `test_load_thresholds_drops_unhashable_ratio_baseline_key_without_raising`,
 and `test_load_thresholds_drops_non_finite_threshold_value`.
 
+## Round-3 review fixes (Codex, PR #3509, 2026-07-13)
+
+Codex requested changes on 4 points at `52edbe771`; each is addressed below.
+
+### 1. Default compose path still cannot create an IncidentCase (confirmed platform gap, materialized as LIN-003)
+
+Investigated further per the review's explicit instruction: either close
+this or materialize the lineage-repair dependency and keep the task
+blocked. Went one level deeper than the round-2 diagnosis: even wiring
+`TelemetryIngestService.ingest()` to register a freshly-ingested event node
+would not be enough, because the static LIN-001A corpus's 4
+`runtime_bindings` are fixed demo IDs (none `paper` stage, none matching any
+real dev-deployed persona) — the *entire* upstream deployment-lineage chain
+(runtime_binding -> deployment_plan -> capital_pool -> persona_binding ->
+candidate_artifact -> ...) for a genuinely running binding is absent from
+the graph today, not just the terminal telemetry-event node. Closing this
+means live-wiring writes from `services/telemetry` **and**
+`services/runtime-manager` **and** `services/control-plane/governance` — a
+multi-service change shared by every current and future telemetry-derived
+incident producer, exactly the kind of cross-cutting lineage migration work
+`docs/decisions/LIN-002-lineage-ownership.md`'s "Phase 0: transitional
+coexistence" already anticipated as a separate initiative.
+
+Materialized this as `docs/decisions/LIN-003-live-lineage-write-path.md`
+with the exact exit evidence the review asked for (`telemetry ingest 202 ->
+incident 201 -> same replay 200` against the *default* unmocked validator
+and a live-deployed binding, no fake lookups). EVOCHAIN-001 remains blocked
+on LIN-003 for this one acceptance criterion; the pinning test
+(`test_consume_threshold_route_422s_against_default_deployed_reference_validator`)
+is unchanged and still accurately describes today's behavior.
+
+### 2. The producer laundered stale source metrics into fresh ones
+
+`evaluate_breaches()` cites the observed metric in its derived
+`drawdown_snapshot`/`pnl_snapshot` telemetry event so the event is
+schema/evidence-valid before being admitted through ingest. But
+`RuntimeSummaryProjectionStore.project_event()` re-projected *any* admitted
+event's `metrics` back into the summary, including this derived echo —
+re-stamping the metric's own `f"{field}_at"` as-of time to "now" every time
+the worker cited it. That defeated the round-2 staleness fix: a genuinely
+abandoned metric could never age past `metric_max_age_seconds`, because the
+worker's own breach evidence kept refreshing it, reproducing a candidate
+every day forever under fresh heartbeats alone.
+
+Fixed by marking the derived event with
+`metadata.derived_from_threshold_evaluation: true` (schema-legal;
+`metadata` is `additionalProperties: true`) and having `project_event()`
+skip the metric-projection step entirely when that marker is present, so a
+threshold-derived echo can never refresh the freshness signal it was itself
+evaluated against. Covered by
+`test_derived_threshold_evidence_does_not_refresh_stale_metric_across_days`
+(`services/evolution/test_threshold_sweep_worker.py`): seeds one genuine
+drawdown observation on day 0 plus a fresh heartbeat every day for a week
+with no new real drawdown value, and asserts candidates stop from day 3
+onward (`metric_max_age_seconds` default 2 days) instead of firing every
+day.
+
+### 3. Retry could make incident evidence disagree with the admitted telemetry event
+
+The dedupe-key-derived `event_id` is stable for a binding/metric/day, but
+`created_at` and the observed metric were rebuilt from the live summary on
+every call to `evaluate_breaches()`. If telemetry ingest succeeded (202,
+durably keeping that first payload per its own dedup-by-event_id contract)
+but the incident POST then failed, a later retry recomputed a *new* payload
+for the *same* `event_id` and posted that to incidents — which could
+diverge from what telemetry actually stored, since incidents only checks
+"does an incident already exist for this ID," not "does this payload match
+what telemetry has."
+
+Fixed with a small durable per-event-id evidence record
+(`EVOCHAIN_THRESHOLD_SWEEP_STATE_PATH`, default
+`/tmp/pantheon/evolution/threshold_sweep_state.json`, same durability class
+as the incident store's own `/tmp` state): the first time an `event_id` is
+admitted through telemetry ingest (202), `run_tick()` freezes that exact
+`telemetry_event`/`threshold_snapshot` payload; any later tick for the same
+`event_id` (same dedupe window) reuses the frozen payload verbatim instead
+of recomputing from a possibly-drifted live summary, so the content posted
+to incidents can never diverge from what telemetry already admitted.
+Entries for a prior dedupe window are pruned on load. Covered by
+`test_run_tick_retry_reuses_frozen_evidence_when_incident_post_previously_failed`.
+
+### 4. Fail-closed loading/orchestration still had uncaught inputs
+
+Two gaps:
+
+- A JSON integer with no fixed size (e.g. `10**1000`) is valid JSON and a
+  valid Python int, but `math.isfinite()` raises `OverflowError` converting
+  it to a float rather than returning `False`; `load_thresholds()` now
+  catches that and drops the entry fail-closed, same as any other malformed
+  value. Covered by
+  `test_load_thresholds_drops_huge_integer_threshold_value_without_raising`.
+- A 2xx response with a malformed JSON body raised `json.JSONDecodeError`
+  (a `ValueError` subclass) out of `default_admit_telemetry_event`/
+  `default_post_incident`, uncaught by `run_tick()`'s `except` clauses,
+  contradicting its documented "never raises" contract. Both call sites now
+  also catch `ValueError`. Covered by
+  `test_run_tick_fails_closed_when_telemetry_ingest_returns_malformed_json`
+  and `test_run_tick_fails_closed_when_post_incident_returns_malformed_json`.
+
+Also fixed in passing: `test_run_tick_creates_then_dedupes_on_rerun_via_real_consumer`
+now injects an isolated `state_path` (`tmp_path`) instead of relying on
+`DEFAULT_STATE_PATH`, so it cannot leak a write into the developer/runtime
+-shared state file (same class of hazard the round-2 review flagged for the
+incident store).
+
 ## Idempotency
 
 Dedupe key: `(binding_id, metric_name, threshold window, UTC day bucket)`.
@@ -372,19 +480,19 @@ Verified in `test_load_thresholds_missing_file_fails_closed`,
 
 ```sh
 python3 -m pytest services/evolution/test_threshold_sweep_worker.py -q
-# 38 passed (round-2: +8 new tests for the fixes below)
+# 43 passed (round-3: +5 new tests for the fixes below)
 
 python3 -m pytest services/evolution -q
-# 162 passed (no regression in the rest of the evolution service)
+# 167 passed (no regression in the rest of the evolution service)
 
 python3 -m pytest services/incidents -q
-# 47 passed (round-2: +1 dedupe_key evidence test; no other regression)
+# 50 passed (no regression)
 
 python3 -m pytest services/incident -q
 # 118 passed (no regression in the INC-001 domain layer)
 
 python3 -m pytest services/telemetry -q
-# 223 passed (round-2: per-metric `f"{field}_at"` timestamp addition in
+# 223 passed (round-3: derived-echo metadata-marker check in
 # runtime_summary.py is additive; no existing assertion touches it)
 
 docker compose config --quiet
@@ -396,6 +504,10 @@ docker compose config --services | grep evolution-threshold-sweep-producer
 ls /tmp/pantheon/incidents/incidents.json
 # No such file or directory — confirms the round-2 test-isolation fix (§3)
 # leaves the shared persistent incident store untouched.
+
+ls /tmp/pantheon/evolution/threshold_sweep_state.json
+# No such file or directory — the round-3 retry-evidence state file (§3) is
+# only ever written by tests through an isolated tmp_path, never the default.
 ```
 
 ## Acceptance mapping
@@ -403,7 +515,7 @@ ls /tmp/pantheon/incidents/incidents.json
 | Acceptance criterion | Where |
 |---|---|
 | producer evaluates live paper telemetry aggregates against governance-schema thresholds from live config | `threshold_sweep_worker.load_thresholds` + `evaluate_breaches`, config in `services/evolution/config/threshold_sweep_thresholds.json` + `threshold_sweep_baselines.json` |
-| breach POSTs canonical payload accepted by `ThresholdTelemetryIncidentConsumer` and creates an `IncidentCase` | proven end-to-end against the real consumer/store and the real route, and reference-shape-consistent with the real `CanonicalReferenceValidator`'s matching rules given canonical lineage/binding data. **Not yet proven against the *default* deployed `CanonicalReferenceValidator()`** — that always 422s today due to the confirmed platform gap in "Round-2 review fixes" §1 / "Residual risk" below, which this task cannot close by itself |
+| breach POSTs canonical payload accepted by `ThresholdTelemetryIncidentConsumer` and creates an `IncidentCase` | proven end-to-end against the real consumer/store and the real route, and reference-shape-consistent with the real `CanonicalReferenceValidator`'s matching rules given canonical lineage/binding data. **Not yet proven against the *default* deployed `CanonicalReferenceValidator()`** — that always 422s today due to the confirmed platform gap materialized as `docs/decisions/LIN-003-live-lineage-write-path.md` (round-2 point 1, reaffirmed round-3 point 1 / "Residual risk" below), which this task cannot close by itself |
 | re-runs do not duplicate open incidents for the same binding/metric/window (dedupe key recorded) | deterministic `event_id`/`incident_id`; `dedupe_key` in `threshold_snapshot.note`, preserved into the created `IncidentCase.evidence_summary` (round-2 fix §4) |
 | missing or ambiguous telemetry emits diagnostics and produces no incident | fail-closed paths above, including stage/staleness/baseline gates |
 | compose service ships with `EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS` default 86400 and its own logs | `docker-compose.yml` `evolution-threshold-sweep-producer`; `main()` prints one JSON line per tick to stdout |
@@ -419,21 +531,24 @@ ls /tmp/pantheon/incidents/incidents.json
   documents the drawdown multiplier). Owner: Human/Ops. To activate: set
   `enabled: true` and an approved `threshold_value` in the bind-mounted
   config, no code change needed.
-- **Platform gap, not owned by this task (confirmed structural, not a race,
-  on round-2 investigation):** `CanonicalReferenceValidator`'s telemetry
-  lineage lookup resolves against a static LIN-001A benchmark corpus loaded
-  once at telemetry `startup()`, not a live index of ingested events, and
-  nothing in this codebase writes a freshly-ingested event into that graph
-  — no amount of polling/waiting after ingest would resolve it. So no
-  producer's freshly-cited `telemetry_event_id` resolves through the
-  *default* validator today; `POST /api/incidents/consume-threshold` 422s
-  for every real breach against the default deployed config (pinned by
+- **Platform gap, not owned by this task (confirmed structural across two
+  independent investigations, round-2 and round-3):**
+  `CanonicalReferenceValidator`'s telemetry lineage lookup resolves against
+  a static LIN-001A benchmark corpus loaded once at telemetry `startup()`,
+  not a live index of ingested events or real deployment lineage, and
+  nothing in this codebase writes either a freshly-ingested event or a
+  real, live-deployed binding's upstream deployment chain into that graph —
+  no amount of polling/waiting after ingest resolves it. So no producer's
+  freshly-cited `telemetry_event_id` resolves through the *default*
+  validator today; `POST /api/incidents/consume-threshold` 422s for every
+  real breach against the default deployed config (pinned by
   `test_consume_threshold_route_422s_against_default_deployed_reference_validator`).
-  See "Round-2 review fixes" §1 above. Recommend a follow-up task (e.g.
-  LIN-003-style) to wire telemetry ingest into a live lineage projection (or
-  otherwise close this gap) before relying on
-  `CanonicalReferenceValidator()`'s default
-  construction in production for any threshold/drift producer.
+  See "Round-2 review fixes" §1 and "Round-3 review fixes" §1 above.
+  Materialized as `docs/decisions/LIN-003-live-lineage-write-path.md`;
+  **EVOCHAIN-001 is blocked on LIN-003 landing** for this one acceptance
+  criterion before relying on `CanonicalReferenceValidator()`'s default
+  construction in production for any threshold/drift producer. EVOCHAIN-010
+  (producer-chain live verifier) depends on both.
 - This task does not enable the daily sweep scheduler
   (`evolution-daily-sweep-scheduler` is still profile-gated) or deploy to
   dev; that is EVOCHAIN-002 and EVOCHAIN-011 respectively.

@@ -46,6 +46,14 @@ from typing import Any, Callable, Mapping, Sequence
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config", "threshold_sweep_thresholds.json")
 DEFAULT_BASELINES_PATH = os.path.join(os.path.dirname(__file__), "config", "threshold_sweep_baselines.json")
 
+# Durable record of the exact evidence payload admitted through telemetry
+# ingest for each dedupe-key event_id, keyed by event_id. Retried ticks reuse
+# this frozen payload instead of recomputing `created_at`/observed values from
+# a possibly-changed live summary, so the telemetry event content and the
+# incident evidence citing it can never diverge for the same event_id (see
+# EVOCHAIN-001-threshold-breach-producer.md round-3 review point 3).
+DEFAULT_STATE_PATH = "/tmp/pantheon/evolution/threshold_sweep_state.json"
+
 # (identity field on the built payload, candidate keys to read from a runtime summary)
 _IDENTITY_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("binding_id", ("binding_id", "runtime_binding_id")),
@@ -190,11 +198,17 @@ def load_thresholds(path: str | None = None) -> list[dict[str, Any]]:
         if not isinstance(comparator, str) or comparator not in _COMPARATORS:
             continue
         threshold_value = entry["threshold_value"]
-        if (
-            isinstance(threshold_value, bool)
-            or not isinstance(threshold_value, (int, float))
-            or not math.isfinite(threshold_value)
-        ):
+        if isinstance(threshold_value, bool) or not isinstance(threshold_value, (int, float)):
+            continue
+        try:
+            # A JSON integer with no fixed size (e.g. 10**1000) is valid JSON
+            # and a valid Python int, but math.isfinite() raises OverflowError
+            # converting it to a float rather than returning False: catch it
+            # here so a malformed-but-parseable live-config edit is dropped
+            # fail-closed instead of crash-looping the worker.
+            if not math.isfinite(threshold_value):
+                continue
+        except OverflowError:
             continue
         telemetry_event_type = entry["telemetry_event_type"]
         if not isinstance(telemetry_event_type, str) or telemetry_event_type not in _TELEMETRY_EVENT_TYPES:
@@ -429,6 +443,14 @@ def evaluate_breaches(
                         "trace_id": trace_id,
                         "target": {"strategy_id": identity["artifact_id"]},
                         "metrics": {metrics_key: observed_raw},
+                        # Marks this event as a threshold-derived echo of an
+                        # existing metric (admitted through ingest only to
+                        # prove it is schema/evidence-valid before being
+                        # cited as incident evidence). RuntimeSummaryProjectionStore
+                        # must not treat this as a fresh observation of the
+                        # metric, or a stale value could be laundered fresh by
+                        # the very sweep that cited it as a breach.
+                        "metadata": {"derived_from_threshold_evaluation": True},
                     },
                     "threshold_snapshot": {
                         "policy_source": threshold["policy_source"],
@@ -498,12 +520,53 @@ def default_post_incident(incidents_api_url: str, payload: Mapping[str, Any], *,
     return {"status": status, "body": json.loads(response_body) if response_body else {}}
 
 
+def _load_pending_evidence(path: str) -> dict[str, dict[str, Any]]:
+    """Load previously-admitted evidence payloads, keyed by event_id.
+
+    Fail-closed like the other live-config loaders: a missing, unreadable, or
+    malformed state file yields an empty mapping (the worker simply loses its
+    retry-immutability guarantee for this tick, it never crashes or
+    fabricates a breach).
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, Mapping):
+        return {}
+    valid: dict[str, dict[str, Any]] = {}
+    for event_id, record in data.items():
+        if (
+            isinstance(record, Mapping)
+            and isinstance(record.get("telemetry_event"), Mapping)
+            and isinstance(record.get("threshold_snapshot"), Mapping)
+            and isinstance(record.get("window_bucket"), str)
+        ):
+            valid[str(event_id)] = dict(record)
+    return valid
+
+
+def _save_pending_evidence(path: str, state: Mapping[str, dict[str, Any]]) -> None:
+    """Best-effort durable write; a failure here degrades to non-immutable
+    retry behavior next tick rather than raising (never crash the worker)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(dict(state), handle, sort_keys=True)
+        os.replace(tmp_path, path)
+    except OSError:
+        pass
+
+
 def run_tick(
     *,
     telemetry_api_url: str,
     incidents_api_url: str,
     config_path: str | None = None,
     baselines_path: str | None = None,
+    state_path: str | None = None,
     thresholds: Sequence[Mapping[str, Any]] | None = None,
     baselines: Mapping[str, Mapping[str, Any]] | None = None,
     timeout: float = 30.0,
@@ -553,15 +616,38 @@ def run_tick(
     result["candidates"] = len(candidates)
     result["diagnostics"].extend(diagnostics)
 
+    active_state_path = state_path if state_path is not None else DEFAULT_STATE_PATH
+    pending = _load_pending_evidence(active_state_path)
+    # Drop evidence recorded for a prior dedupe window: only the active
+    # window's event_ids can still legitimately retry.
+    state_dirty = any(record.get("window_bucket") != window_bucket for record in pending.values())
+    pending = {
+        event_id: record for event_id, record in pending.items() if record.get("window_bucket") == window_bucket
+    }
+
     for payload in candidates:
         event = payload["telemetry_event"]
+        event_id = event["event_id"]
+        frozen = pending.get(event_id)
+        if frozen is not None:
+            # This event_id was already admitted through telemetry ingest on
+            # an earlier tick. Reuse that exact evidence instead of the
+            # freshly recomputed `created_at`/observed values above, so a
+            # retry can never post different content under the same
+            # event_id than what telemetry already durably recorded.
+            payload = {
+                "telemetry_event": frozen["telemetry_event"],
+                "threshold_snapshot": frozen["threshold_snapshot"],
+            }
+            event = payload["telemetry_event"]
+
         try:
             admit_response = admit_telemetry_event(telemetry_api_url, event, timeout=timeout)
         except urllib.error.HTTPError as exc:
             result["errors"] += 1
             result["diagnostics"].append(f"telemetry ingest rejected derived event status={exc.code}")
             continue
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             result["errors"] += 1
             result["diagnostics"].append(f"telemetry ingest network error: {exc}")
             continue
@@ -574,13 +660,21 @@ def run_tick(
             )
             continue
 
+        if frozen is None:
+            pending[event_id] = {
+                "window_bucket": window_bucket,
+                "telemetry_event": event,
+                "threshold_snapshot": payload["threshold_snapshot"],
+            }
+            state_dirty = True
+
         try:
             response = post_incident(incidents_api_url, payload, timeout=timeout)
         except urllib.error.HTTPError as exc:
             result["errors"] += 1
             result["diagnostics"].append(f"post_incident rejected status={exc.code}")
             continue
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             result["errors"] += 1
             result["diagnostics"].append(f"post_incident network error: {exc}")
             continue
@@ -593,6 +687,9 @@ def run_tick(
         else:
             result["errors"] += 1
             result["diagnostics"].append(f"post_incident unexpected status={status}")
+
+    if state_dirty:
+        _save_pending_evidence(active_state_path, pending)
 
     return result
 
@@ -609,6 +706,7 @@ def main() -> int:
     )
     config_path = os.getenv("EVOCHAIN_THRESHOLD_SWEEP_CONFIG_PATH") or None
     baselines_path = os.getenv("EVOCHAIN_THRESHOLD_SWEEP_BASELINES_PATH") or None
+    state_path = os.getenv("EVOCHAIN_THRESHOLD_SWEEP_STATE_PATH") or DEFAULT_STATE_PATH
     interval_seconds = _env_int("EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS", 86400, minimum=1)
     max_ticks = _env_int("EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS", 0, minimum=0)
     metric_max_age_seconds = _env_int(
@@ -625,6 +723,7 @@ def main() -> int:
             incidents_api_url=incidents_api_url,
             config_path=config_path,
             baselines_path=baselines_path,
+            state_path=state_path,
             metric_max_age_seconds=metric_max_age_seconds,
         )
         print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)

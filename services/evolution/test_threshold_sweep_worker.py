@@ -32,8 +32,9 @@ from __future__ import annotations
 
 import json
 import sys
+import urllib.error
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -269,6 +270,18 @@ def test_load_thresholds_drops_non_finite_threshold_value(tmp_path):
     entry = dict(THRESHOLDS[0])
     entry["threshold_value"] = float("nan")
     cfg.write_text(json.dumps({"thresholds": [entry]}, allow_nan=True), encoding="utf-8")
+    assert load_thresholds(str(cfg)) == []
+
+
+def test_load_thresholds_drops_huge_integer_threshold_value_without_raising(tmp_path):
+    """A JSON integer with no fixed size (e.g. 10**1000) is valid JSON and a
+    valid Python int, but math.isfinite() raises OverflowError converting it
+    to a float; it must be dropped fail-closed here instead of crashing the
+    worker (round-3 review point 4)."""
+    cfg = tmp_path / "cfg.json"
+    entry = dict(THRESHOLDS[0])
+    entry["threshold_value"] = 10**1000
+    cfg.write_text(json.dumps({"thresholds": [entry]}), encoding="utf-8")
     assert load_thresholds(str(cfg)) == []
 
 
@@ -798,9 +811,13 @@ def test_run_tick_fails_closed_when_telemetry_ingest_rejects_derived_event():
     assert any("not citing unadmitted evidence" in d for d in result["diagnostics"])
 
 
-def test_run_tick_creates_then_dedupes_on_rerun_via_real_consumer():
+def test_run_tick_creates_then_dedupes_on_rerun_via_real_consumer(tmp_path):
     store = IncidentStore(path=None)
     consumer = ThresholdTelemetryIncidentConsumer(incident_store=store)
+    # Isolated per-test state path: the default path is a developer/runtime
+    # -shared file (same class of hazard the round-2 review flagged for the
+    # incident store), and must not leak writes across test runs.
+    state_path = str(tmp_path / "threshold_sweep_state.json")
 
     def fetch(*_args, **_kwargs):
         return [_summary()]
@@ -822,6 +839,7 @@ def test_run_tick_creates_then_dedupes_on_rerun_via_real_consumer():
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
         post_incident=post,
+        state_path=state_path,
         now=now,
     )
     assert first["incidents_created"] == 1
@@ -835,8 +853,232 @@ def test_run_tick_creates_then_dedupes_on_rerun_via_real_consumer():
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
         post_incident=post,
+        state_path=state_path,
         now=now,
     )
     assert second["incidents_created"] == 0
     assert second["incidents_deduped"] == 1
     assert len(store.find_open_incidents()) == 1
+
+
+# ---------------------------------------------------------------------------
+# run_tick — response parsing is fail-closed (round-3 review point 4)
+# ---------------------------------------------------------------------------
+
+def test_run_tick_fails_closed_when_telemetry_ingest_returns_malformed_json():
+    """A 2xx response with a malformed JSON body must not raise out of
+    run_tick, contradicting its "never raises" contract."""
+
+    def fetch(*_args, **_kwargs):
+        return [_summary()]
+
+    def admit(*_args, **_kwargs):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    def post(*_args, **_kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("post_incident must not be called when ingest response parsing fails")
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        now=_NOW,
+    )
+    assert result["incidents_created"] == 0
+    assert result["errors"] >= 1
+    assert any("telemetry ingest network error" in d for d in result["diagnostics"])
+
+
+def test_run_tick_fails_closed_when_post_incident_returns_malformed_json(tmp_path):
+    def fetch(*_args, **_kwargs):
+        return [_summary()]
+
+    def admit(*_args, **_kwargs):
+        return {"status": 202, "body": {}}
+
+    def post(*_args, **_kwargs):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=str(tmp_path / "state.json"),
+        now=_NOW,
+    )
+    assert result["incidents_created"] == 0
+    assert result["errors"] >= 1
+    assert any("post_incident network error" in d for d in result["diagnostics"])
+
+
+# ---------------------------------------------------------------------------
+# run_tick — retried evidence must never diverge from what telemetry already
+# durably admitted (round-3 review point 3)
+# ---------------------------------------------------------------------------
+
+def test_run_tick_retry_reuses_frozen_evidence_when_incident_post_previously_failed(tmp_path):
+    """Once telemetry has durably admitted an event_id (202), a later retry
+    for the same dedupe key/day must reuse that exact evidence rather than
+    posting different content under the same event_id to incidents — even
+    if the live summary drifted between the two attempts."""
+    state_path = str(tmp_path / "state.json")
+    admitted: dict[str, dict] = {}
+
+    def admit(_url, event, **_kwargs):
+        admitted.setdefault(event["event_id"], event)
+        return {"status": 202, "body": {}}
+
+    def fetch_first(*_args, **_kwargs):
+        return [_summary(drawdown=0.30)]
+
+    def post_fails(*_args, **_kwargs):
+        raise urllib.error.URLError("incidents unreachable")
+
+    first = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch_first,
+        admit_telemetry_event=admit,
+        post_incident=post_fails,
+        state_path=state_path,
+        now=_NOW,
+    )
+    assert first["incidents_created"] == 0
+    assert first["errors"] >= 1
+    first_admitted = dict(admitted)
+    assert first_admitted
+
+    # A later retry (same day/dedupe window): the live metric has since
+    # drifted to a different reading before the incident was ever created.
+    def fetch_second(*_args, **_kwargs):
+        return [_summary(drawdown=0.45)]
+
+    posted_payloads = []
+
+    def post_ok(_url, payload, **_kwargs):
+        posted_payloads.append(payload)
+        return {"status": 201, "body": {}}
+
+    second = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch_second,
+        admit_telemetry_event=admit,
+        post_incident=post_ok,
+        state_path=state_path,
+        now=_NOW,
+    )
+    assert second["incidents_created"] >= 1
+    drawdown_posted = next(
+        p for p in posted_payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
+    )
+    event_id = drawdown_posted["telemetry_event"]["event_id"]
+    assert drawdown_posted["telemetry_event"] == first_admitted[event_id]
+    assert drawdown_posted["threshold_snapshot"]["raw_observed_value"] == 0.30
+
+
+# ---------------------------------------------------------------------------
+# Derived evidence must not launder a stale metric fresh (round-3 review
+# point 2)
+# ---------------------------------------------------------------------------
+
+def test_derived_threshold_evidence_does_not_refresh_stale_metric_across_days(tmp_path):
+    """A threshold-derived echo (admitted through ingest only to prove it is
+    schema/evidence-valid) must not refresh the source metric's own as-of
+    time. Otherwise a genuinely abandoned drawdown value can keep
+    re-triggering a "fresh" breach every day forever under fresh heartbeats
+    alone — the exact six-day loop the round-3 review reproduced."""
+    projection_store = RuntimeSummaryProjectionStore(path=None)
+    state_path = str(tmp_path / "state.json")
+    day0 = datetime(2026, 7, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+    def _iso(dt: datetime) -> str:
+        return dt.isoformat().replace("+00:00", "Z")
+
+    identity = {
+        "runtime_id": "runtime-evochain-001",
+        "binding_id": "rb-evochain-001",
+        "deployment_stage": "paper",
+        "capital_pool_id": "pool-evochain-001",
+        "artifact_id": "artifact-evochain-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-evochain-001",
+        "persona_capital_binding_id": "pcb-evochain-001",
+    }
+
+    # The one genuine drawdown observation, seeded on day 0.
+    projection_store.project_event(
+        {
+            **identity,
+            "event_id": "evt-genuine-drawdown",
+            "event_type": "drawdown_snapshot",
+            "created_at": _iso(day0),
+            "metrics": {"drawdown_pct": 0.18},
+        }
+    )
+
+    candidates_by_day: dict[int, int] = {}
+    for day_offset in range(7):
+        moment = day0 + timedelta(days=day_offset)
+
+        # A fresh heartbeat every day, but never a new real drawdown value.
+        projection_store.project_event(
+            {
+                **identity,
+                "event_id": f"evt-heartbeat-{day_offset}",
+                "event_type": "heartbeat",
+                "created_at": _iso(moment),
+                "metadata": {"connectivity_status": "connected"},
+                "metrics": {"heartbeat": 1},
+            }
+        )
+
+        def fetch(*_args, **_kwargs):
+            return [projection_store.get("runtime-evochain-001", now=moment)]
+
+        def admit(_url, event, **_kwargs):
+            # Mirrors what the real telemetry ingest route does on accept:
+            # projects the admitted (derived) event into the same summary
+            # store the worker just read from.
+            dated_event = dict(event)
+            dated_event["created_at"] = _iso(moment)
+            projection_store.project_event(dated_event)
+            return {"status": 202, "body": {}}
+
+        def post(_url, _payload, **_kwargs):
+            return {"status": 201, "body": {}}
+
+        result = run_tick(
+            telemetry_api_url="http://telemetry.test",
+            incidents_api_url="http://incidents.test",
+            thresholds=THRESHOLDS,
+            baselines=BASELINES,
+            fetch_summaries=fetch,
+            admit_telemetry_event=admit,
+            post_incident=post,
+            state_path=state_path,
+            now=moment,
+        )
+        candidates_by_day[day_offset] = result["candidates"]
+
+    # Fresh for day offsets 0-2 (age <= metric_max_age_seconds default 2 days).
+    assert candidates_by_day[0] >= 1
+    assert candidates_by_day[1] >= 1
+    assert candidates_by_day[2] >= 1
+    # Stale from day offset 3 onward: without the fix, the worker's own
+    # derived echo would keep restamping drawdown_at fresh and this would
+    # incorrectly still be >= 1 every day.
+    assert candidates_by_day[3] == 0
+    assert candidates_by_day[6] == 0
