@@ -1347,6 +1347,7 @@ services:
       EVOCHAIN_TELEMETRY_API_URL: http://telemetry:8083
       EVOCHAIN_INCIDENTS_API_URL: http://incidents:8090
       EVOCHAIN_THRESHOLD_SWEEP_CONFIG_PATH: /workspace/services/evolution/config/threshold_sweep_thresholds.json
+      EVOCHAIN_THRESHOLD_SWEEP_BASELINES_PATH: /workspace/services/evolution/config/threshold_sweep_baselines.json
       EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}
       EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS: ${EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS:-0}
     volumes:

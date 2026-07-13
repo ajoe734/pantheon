@@ -1,6 +1,6 @@
 # EVOCHAIN-001 — Threshold-breach producer (telemetry -> incidents)
 
-Status: implemented, pending Codex review
+Status: implemented, addressed Codex round-1 review, pending re-review
 
 Owner: Claude
 Reviewer: Codex
@@ -26,31 +26,164 @@ postmortem -> evolution -> journal chain never fires from real data.
   `services/control-plane/bff/read_store.py` `_HTTP_DATASETS["telemetry_summaries"]`),
   evaluates them against live-config thresholds shaped like the governance
   `ThresholdSnapshot` schema (`services/control-plane/governance/evolution_decision.py`),
-  and POSTs any breach to `POST {incidents}/api/incidents/consume-threshold`
+  admits a schema-valid derived telemetry event through the real telemetry
+  ingest route (`POST {telemetry}/api/telemetry/ingest`), and only then POSTs
+  the breach to `POST {incidents}/api/incidents/consume-threshold`
   (`services/incidents/consumer.py::ThresholdTelemetryIncidentConsumer`).
   Talks to both services over HTTP only — no cross-service Python imports,
   per the Incident service's own write-authority rule.
 - `services/evolution/config/threshold_sweep_thresholds.json` — live config:
   the threshold list (`metric_name`, `signal_type`, `policy_source`,
-  `summary_field`, `comparator`, `threshold_value`, `window`). Ships with two
+  `summary_field`, `ratio_baseline_key`, `telemetry_event_type`,
+  `comparator`, `threshold_value`, `window`, `enabled`). Ships with two
   entries derived from `EVOLUTION_REVIEW_AND_THRESHOLDS.md` section 7.1:
-  `rolling_drawdown_multiple` (`drawdown` > 1.25) and `rolling_pnl_floor`
-  (`pnl` < -500.0, an operator-tunable placeholder — no absolute PnL floor is
-  documented in the v1 threshold spec, only the drawdown multiplier).
+  `rolling_drawdown_multiple` (`enabled: true`) and `rolling_pnl_floor`
+  (`enabled: false` — see "PnL floor is off by default" below).
+- `services/evolution/config/threshold_sweep_baselines.json` — live config:
+  per-`artifact_id` research-approved baseline values (e.g.
+  `expected_drawdown`), used to turn a raw runtime-summary metric into a
+  unit-consistent multiple before comparison. Ships empty.
 - `docker-compose.yml` — new `evolution-threshold-sweep-producer` service.
   Not gated behind a profile (default-on, like `reconciliation-drift-svc`).
   Bind-mounts `services/evolution/config` read-only so operators can retune
-  threshold values by editing the host file and restarting the one service —
-  no image rebuild. Own interval env
+  threshold/baseline values by editing the host files and restarting the one
+  service — no image rebuild. Own interval env
   (`EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS`, default `86400`); does not
   touch `EVOLUTION_SCHEDULER_INTERVAL_SECONDS` or any other existing cadence.
-- `services/evolution/test_threshold_sweep_worker.py` — 17 tests.
+- `services/evolution/test_threshold_sweep_worker.py` — 30 tests.
+
+## Round-1 review fixes (Codex, PR #3509, 2026-07-13)
+
+Codex requested changes on 4 points; each is addressed below.
+
+### 1. Generated threshold event was not canonical/ingested (422 on the real route)
+
+The original synthetic `tel-threshold-sweep-*` envelope did not satisfy
+`services/telemetry/telemetry_event.schema.json`: `event_type` wasn't in the
+schema's enum, `event_id` wasn't a real UUID, `runtime_binding_id`/
+`deployment_plan_id` aren't schema property names (schema wants `binding_id`/
+`plan_id`), and required `execution_mode`/`target` fields were missing, plus
+an undeclared `description` field violated `additionalProperties: false`.
+
+Fixed:
+
+- The derived `telemetry_event` envelope built in `evaluate_breaches()` is
+  now schema-valid: real `uuid5`-derived UUID `event_id`/`trace_id`, a
+  `telemetry_event_type` sourced from live config (validated at load time
+  against the schema's `event_type` enum — see `_TELEMETRY_EVENT_TYPES`),
+  schema-correct field names, and a `target.strategy_id`.
+- Before the incident is POSTed, `run_tick()` now admits this derived event
+  through the real telemetry ingest route
+  (`default_admit_telemetry_event` -> `POST {telemetry}/api/telemetry/ingest`).
+  If telemetry rejects it, the candidate incident is skipped entirely
+  (fail-closed) instead of being posted with unadmitted evidence.
+- `test_threshold_sweep_worker.py::test_derived_telemetry_event_is_schema_valid_and_ingest_admissible`
+  proves the derived event passes both `TelemetryIngestService._validate_event`
+  (schema) and `_validate_evidence_contract` (TEL-001A evidence checks) using
+  the real schema file and the real ingest service class — not a mock.
+  `test_original_synthetic_envelope_shape_would_have_failed_ingest` is a
+  regression guard proving the pre-fix shape would have failed the same
+  checks.
+- `test_consume_threshold_route_passes_real_canonical_reference_validator`
+  hits the real `/api/incidents/consume-threshold` FastAPI route with the
+  real (unmocked) `CanonicalReferenceValidator` — not the accept-all fake the
+  rest of `services/incidents/test_main_routes.py` uses — using injected fake
+  `binding_lookup`/`telemetry_lookup` doubles shaped exactly like what the
+  canonical `RuntimeBinding` store and telemetry lineage projection would
+  return for this binding/event (same pattern as
+  `services/incident/test_reference_validation.py`). This proves the
+  worker's payload is reference-shape-consistent with the real validator's
+  matching rules (identity fields, artifact ref, trace ids all line up) —
+  which is the part this task owns.
+
+  **Known platform gap (out of scope for this task):** the default
+  `CanonicalReferenceValidator()`'s telemetry lookup resolves through
+  `LineageReadService`, which is loaded once at startup from the static
+  LIN-001A benchmark corpus (`services/registry/lineage/
+  lin001a_benchmark_corpus.json`) — it is not a live index of ingested
+  telemetry events. No producer in this codebase (this one included) can
+  currently get a freshly-ingested `telemetry_event_id` to resolve through
+  the *default* unmocked validator, because nothing writes newly-ingested
+  events into that lineage graph. Every existing route test that exercises
+  `consume-threshold`/`consume-drift-report` in
+  `services/incidents/test_main_routes.py` works around this the same way:
+  the `clean_store` autouse fixture monkeypatches `reference_validator` to
+  an accept-all fake. Closing this for real (wiring telemetry ingest to a
+  live lineage index, or standing up a dynamic lineage service) is a
+  separate, cross-cutting platform task — recommended as a LIN-003-style
+  follow-up — not something a single producer task should special-case.
+
+### 2. Drawdown units did not match the governed threshold
+
+The runtime summary's `drawdown`/`drawdown_pct` field is a raw metric
+(telemetry projects it straight from `metrics.drawdown_pct`, see
+`services/telemetry/runtime_summary.py`), not a "current vs. research-expected
+baseline" ratio. Comparing it directly to `1.25` conflated a raw value with a
+multiple. `EVOLUTION_REVIEW_AND_THRESHOLDS.md` §7.1 requires drawdown to
+exceed the *research-expected interval* by 1.25x — that needs a real
+per-artifact baseline, which does not exist anywhere else in this codebase
+today (checked: no `expected_drawdown`/`max_drawdown`/baseline registry
+exists in `services/registry*`, `services/control-plane/governance`, or
+`services/research/*`).
+
+Fixed:
+
+- Added `services/evolution/config/threshold_sweep_baselines.json`: a live
+  config mapping `artifact_id -> {ratio_baseline_key: value}` for
+  research-approved baselines. Ships **empty** — no artifact has an approved
+  baseline yet.
+- `threshold_sweep_thresholds.json`'s `rolling_drawdown_multiple` entry
+  declares `"ratio_baseline_key": "expected_drawdown"`. In
+  `evaluate_breaches()`, the raw `summary_field` value is divided by the
+  matching artifact's baseline to produce a unit-consistent multiple, which
+  is what gets compared to `threshold_value` (and what is recorded in
+  `threshold_snapshot.observed_value`; `raw_observed_value` keeps the
+  untouched raw metric for evidence/audit).
+- Fail-closed: an artifact with no baseline entry (i.e. every artifact,
+  today) is skipped with a diagnostic instead of a fabricated comparison —
+  the drawdown-multiple threshold will not fire until an operator/researcher
+  populates a real baseline for that artifact_id.
+- Tests now seed the raw metric through the **real**
+  `RuntimeSummaryProjectionStore` (`test_evaluate_breaches_detects_drawdown_breach_from_real_projection`)
+  instead of hand-baking `drawdown=1.42` as if the multiple already existed,
+  and `test_evaluate_breaches_missing_baseline_is_diagnostic_only_fail_closed`
+  covers the no-baseline-registered fail-closed path.
+
+### 3. Scope and freshness were not fail-closed
+
+`evaluate_breaches()` previously accepted summaries from every deployment
+stage and ignored staleness/degraded state.
+
+Fixed: `evaluate_breaches()` now, per summary:
+
+- skips (diagnostic-only) any summary whose `deployment_stage != "paper"` —
+  this task's declared scope is the paper performance sweep; canary/live/
+  frozen each have their own deployment-stage-specific governance path.
+- skips (diagnostic-only) any summary that is stale/degraded/ambiguous:
+  `summary.get("staleness")` set, `state == "degraded"`, or
+  `connectivity_status in {"degraded", "disconnected"}` (all produced by
+  `RuntimeSummaryProjectionStore._apply_staleness`).
+- Covered by `test_evaluate_breaches_skips_non_paper_stage` and
+  `test_evaluate_breaches_skips_stale_summary` (the latter drives a real
+  `RuntimeSummaryProjectionStore` heartbeat + `now=` far in the future to
+  produce a genuinely stale projection, not a hand-set flag).
+
+### 4. Unapproved `-500` PnL placeholder was active in a default-on service
+
+Fixed: `threshold_sweep_thresholds.json`'s `rolling_pnl_floor` entry now
+ships with `"enabled": false`. `load_thresholds()` drops any entry with
+`enabled: false` (or missing) before the worker ever sees it — the compose
+service stays default-on (only the fail-closed, baseline-gated drawdown
+threshold is active), but the unapproved absolute PnL number cannot fire
+until an operator flips `enabled: true` with a governance-approved value.
+Covered by `test_load_thresholds_drops_disabled_entries` and
+`test_default_config_file_loads_only_enabled_thresholds`.
 
 ## Idempotency
 
 Dedupe key: `(binding_id, metric_name, threshold window, UTC day bucket)`.
-The worker hashes this key into a deterministic telemetry `event_id`
-(`tel-threshold-sweep-<uuid5>`). The incidents consumer already derives
+The worker hashes this key into a deterministic telemetry `event_id` (a real
+`uuid5`, RFC4122-format string). The incidents consumer already derives
 `incident_id` deterministically from `event_id` + `metric_name`
 (`services/incidents/consumer.py::_incident_id`), so a rerun within the same
 day for the same binding/metric resolves to the same `incident_id` and the
@@ -64,33 +197,56 @@ and `test_run_tick_creates_then_dedupes_on_rerun_via_real_consumer`.
 
 Nothing is ever fabricated as a breach:
 
-- live config missing/unreadable/malformed -> `load_thresholds` returns `[]`,
-  `run_tick` logs a diagnostic and skips the tick.
+- live config missing/unreadable/malformed -> `load_thresholds`/
+  `load_baselines` return `[]`/`{}`, `run_tick` logs a diagnostic and skips
+  the tick (or the affected threshold).
+- a threshold entry with an unknown comparator, an unknown/non-enum
+  `telemetry_event_type`, or `enabled: false` is dropped at load time.
 - telemetry unreachable -> `run_tick` logs a diagnostic and skips the tick
   (never calls `post_incident`).
-- a runtime summary missing any required identity field (`binding_id`,
-  `runtime_id`, `deployment_stage`, `deployment_plan_id`, `capital_pool_id`,
-  `persona_capital_binding_id`, `artifact_id`, `artifact_version`) is skipped
-  with a diagnostic.
+- a runtime summary missing any required identity field, on a non-paper
+  stage, or stale/degraded is skipped with a diagnostic.
 - a threshold's `summary_field` missing or non-numeric on a summary is
   skipped with a diagnostic.
+- a threshold that needs a per-artifact baseline and has none registered is
+  skipped with a diagnostic.
+- telemetry ingest rejects the derived event -> the candidate incident is
+  skipped entirely; the worker never cites unadmitted evidence.
 
 Verified in `test_load_thresholds_missing_file_fails_closed`,
 `test_load_thresholds_malformed_json_fails_closed`,
+`test_load_thresholds_drops_unknown_comparator`,
+`test_load_thresholds_drops_unknown_telemetry_event_type`,
+`test_load_thresholds_drops_disabled_entries`,
+`test_load_baselines_missing_file_fails_closed`,
+`test_load_baselines_malformed_json_fails_closed`,
 `test_evaluate_breaches_missing_identity_field_is_diagnostic_only`,
 `test_evaluate_breaches_missing_metric_field_is_diagnostic_only`,
 `test_evaluate_breaches_non_numeric_metric_is_diagnostic_only`,
+`test_evaluate_breaches_missing_baseline_is_diagnostic_only_fail_closed`,
+`test_evaluate_breaches_skips_non_paper_stage`,
+`test_evaluate_breaches_skips_stale_summary`,
 `test_run_tick_fails_closed_when_no_thresholds_configured`,
-`test_run_tick_fails_closed_when_telemetry_fetch_errors`.
+`test_run_tick_fails_closed_when_telemetry_fetch_errors`,
+`test_run_tick_fails_closed_when_telemetry_ingest_rejects_derived_event`.
 
 ## Local validation
 
 ```sh
 python3 -m pytest services/evolution/test_threshold_sweep_worker.py -q
-# 17 passed
+# 30 passed
+
+python3 -m pytest services/evolution -q
+# 153 passed (no regression in the rest of the evolution service)
 
 python3 -m pytest services/incidents -q
 # 46 passed (no regression in the consumer this producer drives)
+
+python3 -m pytest services/telemetry -q
+# 223 passed (no regression in ingest/lineage/runtime-summary projection)
+
+docker compose config --quiet
+# passed
 
 docker compose config --services | grep evolution-threshold-sweep-producer
 # evolution-threshold-sweep-producer
@@ -100,19 +256,31 @@ docker compose config --services | grep evolution-threshold-sweep-producer
 
 | Acceptance criterion | Where |
 |---|---|
-| producer evaluates live paper telemetry aggregates against governance-schema thresholds from live config | `threshold_sweep_worker.load_thresholds` + `evaluate_breaches`, config in `services/evolution/config/threshold_sweep_thresholds.json` |
-| breach POSTs canonical payload accepted by `ThresholdTelemetryIncidentConsumer` and creates an `IncidentCase` | `default_post_incident` -> `POST /api/incidents/consume-threshold`; proven end-to-end against the real consumer in tests |
+| producer evaluates live paper telemetry aggregates against governance-schema thresholds from live config | `threshold_sweep_worker.load_thresholds` + `evaluate_breaches`, config in `services/evolution/config/threshold_sweep_thresholds.json` + `threshold_sweep_baselines.json` |
+| breach POSTs canonical payload accepted by `ThresholdTelemetryIncidentConsumer` and creates an `IncidentCase` | schema-valid derived event admitted through real telemetry ingest, then `default_post_incident` -> `POST /api/incidents/consume-threshold`; proven end-to-end against the real consumer and the real route (with the real `CanonicalReferenceValidator`) in tests |
 | re-runs do not duplicate open incidents for the same binding/metric/window (dedupe key recorded) | deterministic `event_id`/`incident_id`; `dedupe_key` in `threshold_snapshot.note` |
-| missing or ambiguous telemetry emits diagnostics and produces no incident | fail-closed paths above |
+| missing or ambiguous telemetry emits diagnostics and produces no incident | fail-closed paths above, including stage/staleness/baseline gates |
 | compose service ships with `EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS` default 86400 and its own logs | `docker-compose.yml` `evolution-threshold-sweep-producer`; `main()` prints one JSON line per tick to stdout |
 
 ## Residual risk
 
-- The `rolling_pnl_floor` default (`-500.0`) is a placeholder, not a
-  governance-approved canonical number (the v1 threshold spec only documents
-  the drawdown multiplier). Owner: Human/Ops. Expiry: before EVOCHAIN-011
-  (dev deploy) enables this service against real capital-scale paper
-  runtimes — retune via the bind-mounted config, no code change needed.
+- No artifact has an approved `expected_drawdown` baseline yet
+  (`threshold_sweep_baselines.json` ships empty), so the drawdown-multiple
+  threshold — while now unit-correct and fail-closed — will not fire on any
+  real artifact until Research/Ops populates one. Owner: Research/Ops.
+- The `rolling_pnl_floor` threshold is `enabled: false` pending a
+  governance-approved absolute PnL number (the v1 threshold spec only
+  documents the drawdown multiplier). Owner: Human/Ops. To activate: set
+  `enabled: true` and an approved `threshold_value` in the bind-mounted
+  config, no code change needed.
+- **Platform gap, not owned by this task:** `CanonicalReferenceValidator`'s
+  telemetry lineage lookup resolves against a static LIN-001A benchmark
+  corpus, not a live index of ingested events, so no producer's freshly-cited
+  `telemetry_event_id` resolves through the *default* validator today. See
+  "Round-1 review fixes" §1 above. Recommend a follow-up task to wire
+  telemetry ingest into a live lineage projection (or otherwise close this
+  gap) before relying on `CanonicalReferenceValidator()`'s default
+  construction in production for any threshold/drift producer.
 - This task does not enable the daily sweep scheduler
   (`evolution-daily-sweep-scheduler` is still profile-gated) or deploy to
   dev; that is EVOCHAIN-002 and EVOCHAIN-011 respectively.
