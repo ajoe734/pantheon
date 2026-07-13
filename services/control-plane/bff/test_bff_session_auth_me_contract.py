@@ -163,6 +163,64 @@ def test_bff_me_public_browser_strict_jwt_does_not_inherit_dev_capabilities(monk
     assert response.json()["data"]["capabilities"] == []
 
 
+def test_bff_me_exact_public_browser_viewer_is_available_in_strict_mode(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv(
+        "PANTHEON_BFF_STUB_CAPABILITIES",
+        "assistant.kernel.debug,assistant.kernel.repair",
+    )
+
+    response = TestClient(bff_main.app).get(
+        "/bff/me",
+        headers={"Authorization": "Bearer pantheon-dev-browser:viewer"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["roles"] == ["viewer"]
+    assert data["capabilities"] == []
+    assert data["session"]["auth_mode"] == "public"
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "pantheon-dev-browser:viewer:mfa",
+        "pantheon-dev-browser:viewer,operator",
+        "pantheon-dev-browser:operator",
+        "another-dev-browser:viewer",
+    ],
+)
+def test_bff_me_strict_mode_rejects_public_viewer_near_matches(
+    monkeypatch,
+    token,
+) -> None:
+    _strict_auth_env(monkeypatch)
+
+    response = TestClient(bff_main.app).get(
+        "/bff/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code in {401, 403}, response.text
+
+
+@pytest.mark.parametrize("environment", ["staging-live", "production"])
+def test_bff_me_public_viewer_exception_is_forbidden_outside_dev(
+    monkeypatch,
+    environment,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", environment)
+
+    response = TestClient(bff_main.app).get(
+        "/bff/me",
+        headers={"Authorization": "Bearer pantheon-dev-browser:viewer"},
+    )
+
+    assert response.status_code in {401, 403}, response.text
+
+
 @pytest.mark.parametrize(
     "claim",
     [

@@ -1228,6 +1228,9 @@ def _extract_identity(
     mfa_token: Optional[str] = None,
     session_cookie: Optional[str] = None,
 ) -> OperatorIdentity:
+    public_browser_identity = _extract_exact_public_browser_viewer(authorization)
+    if public_browser_identity is not None:
+        return public_browser_identity
     if _bff_auth_stub_enabled():
         return _enforce_public_browser_identity(_extract_identity_stub(authorization))
     # Cookie session: treat cookie value as a bearer token when no Authorization header present.
@@ -1250,6 +1253,7 @@ def _resolve_session_kind(identity: OperatorIdentity) -> str:
 
 
 _PUBLIC_BROWSER_OPERATOR_ID = "pantheon-dev-browser"
+_PUBLIC_BROWSER_VIEWER_TOKEN = f"Bearer {_PUBLIC_BROWSER_OPERATOR_ID}:viewer"
 _PUBLIC_BROWSER_CAPABILITY_CLAIMS = (
     "capabilities",
     "capability",
@@ -1257,6 +1261,30 @@ _PUBLIC_BROWSER_CAPABILITY_CLAIMS = (
     "scp",
     "scope",
 )
+
+
+def _extract_exact_public_browser_viewer(
+    authorization: Optional[str],
+) -> Optional[OperatorIdentity]:
+    """Admit one explicitly public, capability-free read identity in strict mode."""
+
+    if (
+        _dev_login_forbidden_environment()
+        or str(authorization or "").strip() != _PUBLIC_BROWSER_VIEWER_TOKEN
+    ):
+        return None
+    return OperatorIdentity(
+        operator_id=_PUBLIC_BROWSER_OPERATOR_ID,
+        roles=["viewer"],
+        mfa_verified=False,
+        claims={
+            "sub": _PUBLIC_BROWSER_OPERATOR_ID,
+            "roles": ["viewer"],
+            "capabilities": [],
+            "token_use": "public-browser-viewer",
+        },
+        token_kind="public",
+    )
 
 
 def _enforce_public_browser_identity(identity: OperatorIdentity) -> OperatorIdentity:
