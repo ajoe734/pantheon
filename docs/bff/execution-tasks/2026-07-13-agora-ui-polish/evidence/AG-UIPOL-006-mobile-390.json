@@ -1,0 +1,88 @@
+{
+  "commit": "886e357f6861e835e95877f975f419872b4543b6",
+  "request_paths": [
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/events/stream"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/performance-attribution/by-strategy"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/events/stream"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/completeness",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/readiness",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/cards",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/events",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/stream",
+      "status": 200
+    }
+  ],
+  "task_id": "AG-UIPOL-006",
+  "viewport": {
+    "height": 844,
+    "name": "mobile-390",
+    "width": 390
+  }
+}

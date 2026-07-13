@@ -36665,6 +36665,16 @@ def _evolution_entry_text(item: Dict[str, Any]) -> str:
     evidence_str = ""
     if isinstance(evidence_refs, list):
         evidence_str = " ".join([json.dumps(ref) for ref in evidence_refs])
+    record_parts = []
+    if isinstance(record, dict):
+        for field in (
+            "artifact_id", "persona_id", "target_id", "runtime_id",
+            "runtime_binding_id", "persona_capital_binding_id", "incident_id", "incident_ref"
+        ):
+            val = record.get(field)
+            if val:
+                record_parts.append(str(val))
+    record_str = " ".join(record_parts)
 
     parts = [
         item.get("id"),
@@ -36676,6 +36686,7 @@ def _evolution_entry_text(item: Dict[str, Any]) -> str:
         item.get("action_type"),
         target_str,
         evidence_str,
+        record_str,
     ]
     return " ".join([str(p) for p in parts if p]).lower()
 
@@ -37413,17 +37424,32 @@ async def bff_management_evolution_journal(
         risk_level=risk_level,
     )
     if persona:
-        p_clean = persona.strip()
+        p_clean = persona.strip().lower()
         if p_clean:
-            filtered = [item for item in filtered if p_clean.lower() in _evolution_entry_text(item)]
+            filtered = [
+                item for item in filtered
+                if p_clean in _evolution_entry_text(item) or
+                any(
+                    str((item.get("record") or {}).get(field) or "").lower() == p_clean
+                    for field in ("artifact_id", "persona_id", "target_id", "runtime_id", "runtime_binding_id", "persona_capital_binding_id")
+                )
+            ]
     if mutation_review:
-        mr_clean = mutation_review.strip()
+        mr_clean = mutation_review.strip().lower()
         if mr_clean:
-            filtered = [item for item in filtered if mr_clean.lower() in _evolution_entry_text(item)]
+            filtered = [
+                item for item in filtered
+                if str(item.get("source_id") or "").lower() == mr_clean
+                and item.get("entry_type") in ("evolution_decision", "mutation_review")
+            ]
     if decision:
-        dec_clean = decision.strip()
+        dec_clean = decision.strip().lower()
         if dec_clean:
-            filtered = [item for item in filtered if dec_clean.lower() in _evolution_entry_text(item)]
+            filtered = [
+                item for item in filtered
+                if str(item.get("source_id") or "").lower() == dec_clean
+                and item.get("entry_type") in ("evolution_decision", "mutation_review")
+            ]
 
     total = len(filtered)
     page_items, next_page_token = _page_slice(filtered, page_token, page_size)
@@ -58533,24 +58559,52 @@ async def bff_v5_loop_inventory(
 
 
 async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]:
+    fs_available, fs_records, fs_source = _loop_health_store_records()
+    for r in fs_records:
+        if isinstance(r, dict):
+            r["_health_source"] = fs_source
+
     dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        return _loop_health_store_records()
-    try:
-        import importlib
-        loop_control = importlib.import_module("services.loop-control")
-        LoopControllerStore = loop_control.LoopControllerStore
-        project_controller_record_to_bff = loop_control.project_controller_record_to_bff
-        store = LoopControllerStore(dsn)
-        tenant_id = os.environ.get("PANTHEON_TENANT_ID", "default")
-        environment = os.environ.get("PANTHEON_ENV", "dev")
-        records = await store.list_records(tenant_id, environment)
-        if records:
-            projected = [project_controller_record_to_bff(r) for r in records]
-            return True, projected, "controller_store"
-    except Exception as e:
-        log.warning(f"Failed to load loop health from database: {e}. Falling back to file store.")
-    return _loop_health_store_records()
+    db_records = []
+    db_available = False
+    if dsn:
+        try:
+            import importlib
+            loop_control = importlib.import_module("services.loop-control")
+            LoopControllerStore = loop_control.LoopControllerStore
+            project_controller_record_to_bff = loop_control.project_controller_record_to_bff
+            store = LoopControllerStore(dsn)
+            tenant_id = os.environ.get("PANTHEON_TENANT_ID", "default")
+            environment = os.environ.get("PANTHEON_ENV", "dev")
+            records = await store.list_records(tenant_id, environment)
+            if records:
+                db_records = [project_controller_record_to_bff(r) for r in records]
+                for r in db_records:
+                    r["_health_source"] = "controller_store"
+                db_available = True
+        except Exception as e:
+            log.warning(f"Failed to load loop health from database: {e}. Falling back to file store.")
+
+    merged_records = []
+    seen_loops = set()
+
+    for r in db_records:
+        loop_id = r.get("loop_id") or r.get("id")
+        if loop_id:
+            merged_records.append(r)
+            seen_loops.add(str(loop_id).strip())
+
+    for r in fs_records:
+        loop_id = r.get("loop_id") or r.get("id")
+        if loop_id:
+            clean_id = str(loop_id).strip()
+            if clean_id not in seen_loops:
+                merged_records.append(r)
+
+    health_available = db_available or fs_available
+    health_source = "controller_store" if db_available else fs_source
+    return health_available, merged_records, health_source
+
 
 
 @app.get("/bff/v5/loop-health", response_model=LoopHealthListEnvelope)
