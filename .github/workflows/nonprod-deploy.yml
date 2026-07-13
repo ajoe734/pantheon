@@ -100,9 +100,9 @@ jobs:
       - name: Require dev short-lived auth qualification prerequisites
         if: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') }}
         env:
-          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
-          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
-          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_BFF_JWT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_JWT_SECRET || '' }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_OIDC_CLIENT_ID || '' }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_OIDC_CLIENT_SECRET || '' }}
         run: |
           if [[ ! "${DEV_BFF_JWT_SECRET}" =~ [^[:space:]] || ! "${DEV_BFF_OIDC_CLIENT_ID}" =~ [^[:space:]] || ! "${DEV_BFF_OIDC_CLIENT_SECRET}" =~ [^[:space:]] ]]; then
             echo "::error::Dev deployment is BLOCKED: dev-login GitHub secrets are not provisioned."
@@ -134,14 +134,14 @@ jobs:
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/code/pantheon' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
-          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
-          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
-          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_BFF_JWT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_JWT_SECRET || '' }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_OIDC_CLIENT_ID || '' }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_OIDC_CLIENT_SECRET || '' }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
-          DEV_MANAGEMENT_AI_DB_PASSWORD: ${{ secrets.DEV_MANAGEMENT_AI_DB_PASSWORD }}
-          DEV_MANAGEMENT_AI_DATABASE_URL: ${{ secrets.DEV_MANAGEMENT_AI_DATABASE_URL }}
+          DEV_MANAGEMENT_AI_DB_PASSWORD: ${{ env.TARGET_ENV == 'dev' && secrets.DEV_MANAGEMENT_AI_DB_PASSWORD || '' }}
+          DEV_MANAGEMENT_AI_DATABASE_URL: ${{ env.TARGET_ENV == 'dev' && secrets.DEV_MANAGEMENT_AI_DATABASE_URL || '' }}
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           STAGING_CONTROL_VM: ${{ vars.STAGING_CONTROL_VM || 'pantheon-lupin-staging-control' }}
@@ -249,9 +249,7 @@ jobs:
           login_response="$(mktemp)"
           trap 'rm -f "${login_request}" "${login_response}"' EXIT
           jq -n \
-            --arg client_id "${DEV_BFF_OIDC_CLIENT_ID}" \
-            --arg client_secret "${DEV_BFF_OIDC_CLIENT_SECRET}" \
-            '{grant_type:"client_credentials", client_id:$client_id, client_secret:$client_secret}' \
+            '{grant_type:"client_credentials", client_id:$ENV.DEV_BFF_OIDC_CLIENT_ID, client_secret:$ENV.DEV_BFF_OIDC_CLIENT_SECRET}' \
             > "${login_request}"
           curl -fsS -X POST "${DEV_BFF_URL}/bff/auth/dev-login" \
             -H 'Content-Type: application/json' \
@@ -259,11 +257,15 @@ jobs:
             > "${login_response}"
           bff_auth_token="$(jq -er '.access_token' "${login_response}")"
           unset DEV_BFF_OIDC_CLIENT_SECRET
+          auth_header="$(mktemp)"
+          chmod 0600 "${auth_header}"
+          printf 'Authorization: Bearer %s\n' "${bff_auth_token}" > "${auth_header}"
+          trap 'rm -f "${login_request}" "${login_response}" "${auth_header}"' EXIT
 
           idem="agora-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           workshop_id="$(
             curl -fsS -X POST "${DEV_BFF_URL}/bff/agora/workshops" \
-              -H "Authorization: Bearer ${bff_auth_token}" \
+              -H "@${auth_header}" \
               -H "Idempotency-Key: ${idem}" \
               -H 'Content-Type: application/json' \
               --data '{"initial_message":"Versioned dev restart-persistence smoke"}' \
@@ -278,7 +280,7 @@ jobs:
             if curl -fsS "${DEV_BFF_URL}/readyz" >/dev/null; then break; fi
             sleep 2
           done
-          test "$(curl -fsS "${DEV_BFF_URL}/bff/agora/workshops/${workshop_id}" -H "Authorization: Bearer ${bff_auth_token}" | jq -er '.data.workshop_id')" = "${workshop_id}"
+          test "$(curl -fsS "${DEV_BFF_URL}/bff/agora/workshops/${workshop_id}" -H "@${auth_header}" | jq -er '.data.workshop_id')" = "${workshop_id}"
           echo "Workshop ${workshop_id} survived operator-bff restart." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize auto-deploy

@@ -29,7 +29,25 @@ fi
 
 request_tmp="$(mktemp)"
 response_tmp="$(mktemp)"
-trap 'rm -f "${request_tmp}" "${response_tmp}"' EXIT
+activated="false"
+
+deactivate_control_mode() {
+  if [ "${activated}" = "true" ]; then
+    jq -n '{reason: "management_ai_control_mode_queue_smoke_cleanup"}' >"${request_tmp}"
+    curl -sS -o /dev/null --max-time 30 \
+      -X POST \
+      -H "Authorization: Bearer ${BFF_AUTH_TOKEN}" \
+      -H "Content-Type: application/json" \
+      --data @"${request_tmp}" \
+      "${BFF_BASE_URL}/bff/assistant/control-mode/deactivate" || true
+  fi
+}
+
+cleanup() {
+  deactivate_control_mode
+  rm -f "${request_tmp}" "${response_tmp}"
+}
+trap cleanup EXIT
 
 curl_json() {
   local method="$1"
@@ -104,6 +122,7 @@ if [ "${activate_code}" != "202" ]; then
   jq '{error:.error, meta:.meta}' "${response_tmp}" >&2 || cat "${response_tmp}" >&2
   exit 1
 fi
+activated="true"
 echo "control_mode=$(jq -r '.data.mode // "unknown"' "${response_tmp}")"
 
 jq -n \

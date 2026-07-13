@@ -30,8 +30,12 @@ BFF_AUTH_TOKEN='<short-lived privileged JWT>' \
 `BFF_AUTH_TOKEN` is required and has no tracked fallback. The exact public
 browser credential (`pantheon-dev-browser:viewer`) is capability-free and
 read-only, so the script rejects it before changing the compose service. The
-governed `PANTHEON_BFF_JWT_SECRET` and dev-login client credential variables
-must also be present so recreating `operator-bff` cannot erase its auth config.
+script also calls `/bff/me` before any container mutation and requires the
+supplied identity to carry `assistant.kernel.debug` or
+`assistant.kernel.repair`; an unreachable BFF or invalid/under-scoped token is
+a hard block. The governed `PANTHEON_BFF_JWT_SECRET` and dev-login client
+credential variables must also be present so recreating `operator-bff` cannot
+erase its auth config.
 
 The script defaults to the live dev compose project name:
 
@@ -56,6 +60,12 @@ If that file is absent, it falls back to the repo root where the script is run.
 Manual equivalent:
 
 ```bash
+# Obtain these existing values from the governed dev environment. Do not put
+# their literal values in shell history, source, logs, or this runbook.
+export PANTHEON_BFF_JWT_SECRET='<governed dev signing secret>'
+export PANTHEON_BFF_OIDC_CLIENT_ID='<governed dev-login client id>'
+export PANTHEON_BFF_OIDC_CLIENT_SECRET='<governed dev-login client secret>'
+
 PANTHEON_STATUS_ROOT_HOST=/home/lupin/code/pantheon \
 PANTHEON_ASSISTANT_KERNEL_ENABLED=true \
 PANTHEON_BFF_AUTH_STUB=false \
@@ -220,6 +230,8 @@ The smoke verifies:
 - a signed DevTaskPacket is queued into the supervisor inbox.
 - `/bff/assistant/orchestrator/status` reports supervisor/provider/dev-bridge
   readback after queueing.
+- the EXIT cleanup deactivates the control-mode session after success or any
+  post-activation failure.
 
 If the script fails with `invalid_passphrase`, the runtime is healthy but the
 operator did not provide the current passphrase. If it fails with

@@ -55,6 +55,53 @@ def _dry_run(**overrides: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _install_fake_gcloud(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    outputs = {
+        "args": tmp_path / "gcloud.args",
+        "env": tmp_path / "gcloud.env",
+        "stdin": tmp_path / "gcloud.stdin",
+    }
+    fake = bin_dir / "gcloud"
+    fake.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" > "${FAKE_GCLOUD_ARGS}"
+env | sort > "${FAKE_GCLOUD_ENV}"
+cat > "${FAKE_GCLOUD_STDIN}"
+""",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    return bin_dir, outputs
+
+
+def _non_dry_run(
+    *,
+    environment: str,
+    component: str,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            environment,
+            "--component",
+            component,
+            "--sha",
+            "strict-auth-contract",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_dev_compose_defaults_to_strict_capability_free_auth() -> None:
     compose_source = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     compose = yaml.safe_load(compose_source)
@@ -149,6 +196,101 @@ def test_dev_deploy_accepts_complete_dev_login_config_without_printing_secrets()
         assert secret not in result.stderr
 
 
+@pytest.mark.parametrize("component", ["auto", "root", "bff"])
+def test_non_dry_run_dev_without_credentials_fails_before_gcloud(
+    tmp_path: Path, component: str
+) -> None:
+    bin_dir, outputs = _install_fake_gcloud(tmp_path)
+    env = _deploy_env(
+        PATH=f"{bin_dir}:{os.environ['PATH']}",
+        FAKE_GCLOUD_ARGS=str(outputs["args"]),
+        FAKE_GCLOUD_ENV=str(outputs["env"]),
+        FAKE_GCLOUD_STDIN=str(outputs["stdin"]),
+    )
+
+    result = _non_dry_run(environment="dev", component=component, env=env)
+
+    assert result.returncode == 1
+    assert "dev deployment is blocked until JWT secret" in result.stderr
+    assert not outputs["args"].exists()
+
+
+def test_dev_credentials_use_ssh_stdin_and_never_gcloud_argv_or_environment(
+    tmp_path: Path,
+) -> None:
+    bin_dir, outputs = _install_fake_gcloud(tmp_path)
+    secrets = {
+        "DEV_BFF_JWT_SECRET": "sentinel-jwt-secret",
+        "DEV_BFF_OIDC_CLIENT_ID": "sentinel-client-id",
+        "DEV_BFF_OIDC_CLIENT_SECRET": "sentinel-client-secret",
+        "GITHUB_TOKEN": "sentinel-github-token",
+        "DEV_MANAGEMENT_AI_DB_PASSWORD": "sentinel-database-password",
+    }
+    ambient_secrets = {
+        "PANTHEON_BFF_JWT_SECRET": "sentinel-ambient-jwt",
+        "PANTHEON_BFF_OIDC_CLIENT_ID": "sentinel-ambient-client",
+        "PANTHEON_BFF_OIDC_CLIENT_SECRET": "sentinel-ambient-client-secret",
+        "PANTHEON_MANAGEMENT_AI_DB_PASSWORD": "sentinel-ambient-db-password",
+    }
+    env = _deploy_env(
+        **secrets,
+        **ambient_secrets,
+        PATH=f"{bin_dir}:{os.environ['PATH']}",
+        FAKE_GCLOUD_ARGS=str(outputs["args"]),
+        FAKE_GCLOUD_ENV=str(outputs["env"]),
+        FAKE_GCLOUD_STDIN=str(outputs["stdin"]),
+    )
+
+    result = _non_dry_run(environment="dev", component="bff", env=env)
+
+    assert result.returncode == 0, result.stderr
+    args = outputs["args"].read_text(encoding="utf-8")
+    child_env = outputs["env"].read_text(encoding="utf-8")
+    stdin = outputs["stdin"].read_text(encoding="utf-8")
+    assert "--command=bash -s" in args
+    for secret in secrets.values():
+        assert secret not in args
+        assert secret not in child_env
+        assert secret in stdin
+    for secret in ambient_secrets.values():
+        assert secret not in args
+        assert secret not in child_env
+        assert secret not in stdin
+
+
+@pytest.mark.parametrize("component", ["auto", "control", "exec", "all"])
+def test_staging_never_receives_exported_dev_credentials(
+    tmp_path: Path, component: str
+) -> None:
+    bin_dir, outputs = _install_fake_gcloud(tmp_path)
+    secrets = {
+        "DEV_BFF_JWT_SECRET": "staging-must-not-see-jwt",
+        "DEV_BFF_OIDC_CLIENT_ID": "staging-must-not-see-client",
+        "DEV_BFF_OIDC_CLIENT_SECRET": "staging-must-not-see-secret",
+        "DEV_MANAGEMENT_AI_DB_PASSWORD": "staging-must-not-see-db-password",
+        "DEV_MANAGEMENT_AI_DATABASE_URL": "staging-must-not-see-database-url",
+        "PANTHEON_BFF_JWT_SECRET": "staging-must-not-see-ambient-jwt",
+        "PANTHEON_BFF_OIDC_CLIENT_SECRET": "staging-must-not-see-ambient-client-secret",
+        "PANTHEON_MANAGEMENT_AI_DB_PASSWORD": "staging-must-not-see-ambient-db-password",
+    }
+    env = _deploy_env(
+        **secrets,
+        PATH=f"{bin_dir}:{os.environ['PATH']}",
+        FAKE_GCLOUD_ARGS=str(outputs["args"]),
+        FAKE_GCLOUD_ENV=str(outputs["env"]),
+        FAKE_GCLOUD_STDIN=str(outputs["stdin"]),
+    )
+
+    result = _non_dry_run(environment="staging-live", component=component, env=env)
+
+    assert result.returncode == 0, result.stderr
+    captured = "".join(
+        outputs[name].read_text(encoding="utf-8") for name in ("args", "env", "stdin")
+    )
+    for secret in secrets.values():
+        assert secret not in captured
+
+
 @pytest.mark.parametrize("script", PRIVILEGED_SCRIPTS)
 def test_privileged_management_scripts_require_explicit_auth_token(script: Path) -> None:
     env = os.environ.copy()
@@ -207,6 +349,58 @@ def test_kernel_enable_script_refuses_to_drop_runtime_auth_secrets() -> None:
     assert "requires governed JWT and dev-login client secrets" in result.stderr
 
 
+def test_kernel_enable_validates_privileged_identity_before_container_mutation() -> None:
+    source = (REPO_ROOT / "scripts" / "enable_management_ai_dev_kernel.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert source.index('"${BFF_BASE_URL}/bff/me"') < source.index("--force-recreate")
+    assert 'assistant.kernel.debug" or . == "assistant.kernel.repair' in source
+    assert '-H "@${auth_header}"' in source
+    assert '-H "Authorization: Bearer ${BFF_AUTH_TOKEN}"' not in source
+
+
+def test_kernel_enable_rejects_invalid_identity_before_docker(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_marker = tmp_path / "docker-called"
+    curl = bin_dir / "curl"
+    curl.write_text("#!/usr/bin/env bash\nexit 22\n", encoding="utf-8")
+    curl.chmod(0o755)
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\nprintf called > \"${DOCKER_MARKER}\"\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "DOCKER_MARKER": str(docker_marker),
+        "BFF_AUTH_TOKEN": "invalid-near-viewer-token",
+        "PANTHEON_BFF_AUTH_STUB": "false",
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_STUB_CAPABILITIES": "",
+        "PANTHEON_BFF_JWT_SECRET": "test-jwt-secret",
+        "PANTHEON_BFF_OIDC_CLIENT_ID": "test-client-id",
+        "PANTHEON_BFF_OIDC_CLIENT_SECRET": "test-client-secret",
+        "PANTHEON_STATUS_ROOT_HOST": str(tmp_path),
+    }
+
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "enable_management_ai_dev_kernel.sh")],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "rejected before operator-bff restart" in result.stderr
+    assert not docker_marker.exists()
+
+
 def test_privileged_management_scripts_contain_no_fallback_bearer() -> None:
     for script in PRIVILEGED_SCRIPTS:
         source = script.read_text(encoding="utf-8")
@@ -227,7 +421,24 @@ def test_nonprod_workflow_uses_dev_login_instead_of_a_tracked_privileged_token()
     assert "secrets.DEV_BFF_OIDC_CLIENT_SECRET" in workflow
     assert 'POST "${DEV_BFF_URL}/bff/auth/dev-login"' in workflow
     assert "bff_auth_token=\"$(jq -er '.access_token'" in workflow
-    assert 'Authorization: Bearer ${bff_auth_token}' in workflow
+    assert "printf 'Authorization: Bearer %s\\n' \"${bff_auth_token}\"" in workflow
+    assert '-H "@${auth_header}"' in workflow
+    assert '--arg client_secret "${DEV_BFF_OIDC_CLIENT_SECRET}"' not in workflow
+    assert "env.TARGET_ENV == 'dev'" in workflow
+    parsed = yaml.safe_load(workflow)
+    deploy_step = next(
+        step
+        for step in parsed["jobs"]["deploy-manual"]["steps"]
+        if step.get("name") == "Deploy requested VM stack"
+    )
+    for name in (
+        "DEV_BFF_JWT_SECRET",
+        "DEV_BFF_OIDC_CLIENT_ID",
+        "DEV_BFF_OIDC_CLIENT_SECRET",
+        "DEV_MANAGEMENT_AI_DB_PASSWORD",
+        "DEV_MANAGEMENT_AI_DATABASE_URL",
+    ):
+        assert "env.TARGET_ENV == 'dev'" in deploy_step["env"][name]
     assert "Require dev short-lived auth qualification prerequisites" in workflow
     assert "Dev deployment is BLOCKED" in workflow
     assert "No deployment was attempted" in workflow
@@ -272,6 +483,21 @@ def test_nonprod_workflow_missing_dev_login_is_a_hard_block(tmp_path: Path) -> N
     summary_text = summary.read_text(encoding="utf-8")
     assert "Outcome: **BLOCKED**" in summary_text
     assert "No deployment was attempted" in summary_text
+
+
+def test_kernel_runbook_manual_equivalent_preserves_strict_auth_secrets() -> None:
+    runbook = (
+        REPO_ROOT / "docs" / "deployment" / "management-ai-dev-kernel-control-mode.md"
+    ).read_text(encoding="utf-8")
+    manual = runbook.split("Manual equivalent:", 1)[1].split("```bash", 1)[1].split(
+        "```", 1
+    )[0]
+
+    assert "export PANTHEON_BFF_JWT_SECRET=" in manual
+    assert "export PANTHEON_BFF_OIDC_CLIENT_ID=" in manual
+    assert "export PANTHEON_BFF_OIDC_CLIENT_SECRET=" in manual
+    assert "calls `/bff/me` before any container mutation" in runbook
+    assert "EXIT cleanup deactivates the control-mode session" in runbook
 
 
 def test_strict_dev_still_exposes_only_the_exact_read_only_public_viewer() -> None:

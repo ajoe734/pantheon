@@ -78,6 +78,30 @@ fi
 
 cd "${REPO_ROOT}"
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq is required to validate the privileged identity before restart." >&2
+  exit 2
+fi
+
+auth_header="$(mktemp)"
+identity_body="$(mktemp)"
+chmod 0600 "${auth_header}" "${identity_body}"
+printf 'Authorization: Bearer %s\n' "${BFF_AUTH_TOKEN}" >"${auth_header}"
+trap 'rm -f "${auth_header}" "${identity_body}"' EXIT
+
+if ! curl -fsS --max-time 10 -H "@${auth_header}" \
+  "${BFF_BASE_URL}/bff/me" >"${identity_body}"; then
+  echo "ERROR: the supplied BFF_AUTH_TOKEN was rejected before operator-bff restart." >&2
+  exit 2
+fi
+if ! jq -e '
+  [(.data.capabilities // [])[]]
+  | any(. == "assistant.kernel.debug" or . == "assistant.kernel.repair")
+' "${identity_body}" >/dev/null; then
+  echo "ERROR: BFF_AUTH_TOKEN lacks assistant.kernel.debug or assistant.kernel.repair." >&2
+  exit 2
+fi
+
 echo "Enabling Management AI dev kernel control mode for operator-bff"
 echo "compose_project=${COMPOSE_PROJECT_NAME}"
 echo "compose_file=${COMPOSE_FILE}"
@@ -96,11 +120,10 @@ docker compose -p "${COMPOSE_PROJECT_NAME}" -f "${COMPOSE_FILE}" up -d --no-deps
 docker compose -p "${COMPOSE_PROJECT_NAME}" -f "${COMPOSE_FILE}" ps operator-bff
 
 mode_body="$(mktemp)"
-trap 'rm -f "${mode_body}"' EXIT
-auth_args=(-H "Authorization: Bearer ${BFF_AUTH_TOKEN}")
+trap 'rm -f "${auth_header}" "${identity_body}" "${mode_body}"' EXIT
 
 for attempt in $(seq 1 20); do
-  if curl -fsS --max-time 5 "${auth_args[@]}" "${BFF_BASE_URL}/bff/assistant/mode" >"${mode_body}"; then
+  if curl -fsS --max-time 5 -H "@${auth_header}" "${BFF_BASE_URL}/bff/assistant/mode" >"${mode_body}"; then
     if command -v jq >/dev/null 2>&1; then
       jq '{kernel_enabled:.data.kernel_enabled, control_mode:.data.control_mode}' "${mode_body}"
     else

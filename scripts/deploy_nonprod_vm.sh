@@ -130,8 +130,11 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || error "$1 is required"
 }
 
-shell_quote() {
-  printf "%q" "$1"
+emit_remote_export() {
+  local name="$1"
+  local value="$2"
+  [[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || error "invalid remote environment name"
+  printf 'export %s=%q\n' "$name" "$value"
 }
 
 append_csv_unique() {
@@ -281,6 +284,15 @@ case "$DEPLOY_ENV" in
       control|exec|all) ;;
       *) error "staging-live supports --component control, exec, or all" ;;
     esac
+    # Dev-only credentials must not be inherited by staging subprocesses or
+    # forwarded to a staging host, even when the caller exported them.
+    unset DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
+    unset DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DATABASE_URL
+    DEV_BFF_JWT_SECRET=""
+    DEV_BFF_OIDC_CLIENT_ID=""
+    DEV_BFF_OIDC_CLIENT_SECRET=""
+    DEV_MANAGEMENT_AI_DB_PASSWORD=""
+    DEV_MANAGEMENT_AI_DATABASE_URL=""
     ;;
   *)
     error "--environment must be dev or staging-live"
@@ -325,6 +337,19 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
+if [[ "$DEPLOY_ENV" == "dev" ]]; then
+  [[ -n "$DEV_BFF_JWT_SECRET" && -n "$DEV_BFF_OIDC_CLIENT_ID" && -n "$DEV_BFF_OIDC_CLIENT_SECRET" ]] \
+    || error "dev deployment is blocked until JWT secret, client id, and client secret are configured"
+fi
+
+# Keep deploy credentials in this shell only. Remote delivery uses the SSH
+# stdin stream below; gcloud never receives them in argv or its environment.
+export -n GITHUB_TOKEN DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET 2>/dev/null || true
+export -n PANTHEON_BFF_JWT_SECRET PANTHEON_BFF_OIDC_CLIENT_ID PANTHEON_BFF_OIDC_CLIENT_SECRET 2>/dev/null || true
+export -n DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DATABASE_URL 2>/dev/null || true
+export -n PANTHEON_MANAGEMENT_AI_DB_PASSWORD 2>/dev/null || true
+export -n MANAGEMENT_AI_STORE_DSN MANAGEMENT_AI_DATABASE_URL 2>/dev/null || true
+
 require_cmd gcloud
 
 ensure_management_ai_bucket() {
@@ -353,61 +378,54 @@ ssh_bash() {
   local zone="$2"
   local remote_dir="$3"
   local remote_component="$4"
-  local command_prefix
-
-  command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
-  command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
-  command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
-  command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
-  command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
-  command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
-  command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
-  command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
-  command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
-  command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
-  command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
-  command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
-  command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
-  command_prefix+=" PANTHEON_DEV_BFF_JWT_ISSUER=$(shell_quote "$DEV_BFF_JWT_ISSUER")"
-  command_prefix+=" PANTHEON_DEV_BFF_JWT_AUDIENCE=$(shell_quote "$DEV_BFF_JWT_AUDIENCE")"
-  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_ID=$(shell_quote "$DEV_BFF_OIDC_CLIENT_ID")"
-  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET=$(shell_quote "$DEV_BFF_OIDC_CLIENT_SECRET")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS=$(shell_quote "$DEV_BFF_DEV_LOGIN_TTL_SECONDS")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_ROLES=$(shell_quote "$DEV_BFF_DEV_LOGIN_ROLES")"
-  command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
-  command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
-  command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
-  command_prefix+=" PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}")"
-  command_prefix+=" PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}")"
-  command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-}")"
-  command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-}")"
-  command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-}")"
-  command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-}")"
-  command_prefix+=" PANTHEON_BFF_STUB_CAPABILITIES=$(shell_quote "${PANTHEON_BFF_STUB_CAPABILITIES:-}")"
-  command_prefix+=" PANTHEON_STATUS_ROOT_HOST=$(shell_quote "${PANTHEON_STATUS_ROOT_HOST:-}")"
-  command_prefix+=" PANTHEON_STATUS_ROOT_CONTAINER=$(shell_quote "${PANTHEON_STATUS_ROOT_CONTAINER:-}")"
-  command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-true}")"
-  command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}")"
-  command_prefix+=" MANAGEMENT_AI_STORE_BACKEND=$(shell_quote "${MANAGEMENT_AI_STORE_BACKEND:-}")"
-  command_prefix+=" MANAGEMENT_AI_STORE_SCHEMA=$(shell_quote "${MANAGEMENT_AI_STORE_SCHEMA:-}")"
-  command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
-  command_prefix+=" MANAGEMENT_AI_DATABASE_URL=$(shell_quote "${MANAGEMENT_AI_DATABASE_URL:-}")"
-  command_prefix+=" PANTHEON_MGMT_AI_ATTACH_BUCKET=$(shell_quote "${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}")"
-  command_prefix+=" PANTHEON_MGMT_AI_ATTACH_LOCATION=$(shell_quote "${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-}")"
-  command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_USER=$(shell_quote "${DEV_MANAGEMENT_AI_DB_USER:-}")"
-  command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_PASSWORD=$(shell_quote "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}")"
-  command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_NAME=$(shell_quote "${DEV_MANAGEMENT_AI_DB_NAME:-}")"
-  command_prefix+=" PANTHEON_MANAGEMENT_AI_APP_DB_USER=$(shell_quote "${DEV_APP_DB_USER:-pantheon_app}")"
-  command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "$STAGING_EXEC_HEALTH_URL")"
-  command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "$STAGING_BFF_CORS_ORIGINS")"
-  command_prefix+=" bash -s"
-
   info "ssh ${vm} (${zone}) component=${remote_component} sha=${DEPLOY_SHA}"
-  gcloud compute ssh "${REMOTE_USER}@${vm}" \
-    --project="${PROJECT_ID}" \
-    --zone="${zone}" \
-    --quiet \
-    --command="${command_prefix}" <<'REMOTE'
+  {
+    emit_remote_export PANTHEON_DEPLOY_ENV "$DEPLOY_ENV"
+    emit_remote_export PANTHEON_DEPLOY_COMPONENT "$remote_component"
+    emit_remote_export PANTHEON_DEPLOY_SHA "$DEPLOY_SHA"
+    emit_remote_export PANTHEON_DEPLOY_PROJECT_ID "$PROJECT_ID"
+    emit_remote_export PANTHEON_REMOTE_DIR "$remote_dir"
+    emit_remote_export PANTHEON_DEPLOY_WORKTREE_ROOT "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}"
+    emit_remote_export PANTHEON_GITHUB_TOKEN "${GITHUB_TOKEN:-}"
+    emit_remote_export PANTHEON_ALLOW_DIRTY_DEPLOY "$ALLOW_DIRTY"
+    emit_remote_export PANTHEON_ALLOW_EXAMPLE_ENV "$ALLOW_EXAMPLE_ENV"
+    emit_remote_export PANTHEON_DEV_BFF_CORS_ORIGINS "$DEV_BFF_CORS_ORIGINS"
+    emit_remote_export PANTHEON_DEV_BFF_AUTH_STUB "$DEV_BFF_AUTH_STUB"
+    emit_remote_export PANTHEON_DEV_BFF_AUTH_MODE "$DEV_BFF_AUTH_MODE"
+    emit_remote_export PANTHEON_DEV_BFF_JWT_SECRET "$DEV_BFF_JWT_SECRET"
+    emit_remote_export PANTHEON_DEV_BFF_JWT_ISSUER "$DEV_BFF_JWT_ISSUER"
+    emit_remote_export PANTHEON_DEV_BFF_JWT_AUDIENCE "$DEV_BFF_JWT_AUDIENCE"
+    emit_remote_export PANTHEON_DEV_BFF_OIDC_CLIENT_ID "$DEV_BFF_OIDC_CLIENT_ID"
+    emit_remote_export PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET "$DEV_BFF_OIDC_CLIENT_SECRET"
+    emit_remote_export PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS "$DEV_BFF_DEV_LOGIN_TTL_SECONDS"
+    emit_remote_export PANTHEON_DEV_BFF_DEV_LOGIN_ROLES "$DEV_BFF_DEV_LOGIN_ROLES"
+    emit_remote_export PANTHEON_DEV_BFF_TENANT_ID "$DEV_BFF_TENANT_ID"
+    emit_remote_export PANTHEON_DEV_BFF_ALLOWED_TENANTS "$DEV_BFF_ALLOWED_TENANTS"
+    emit_remote_export PANTHEON_ASSISTANT_KERNEL_ENABLED "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
+    emit_remote_export PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}"
+    emit_remote_export PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS "${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}"
+    emit_remote_export PANTHEON_ASSISTANT_REPAIR_REPO_URL "${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-}"
+    emit_remote_export PANTHEON_ASSISTANT_REPAIR_REMOTE_URL "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-}"
+    emit_remote_export PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS "${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-}"
+    emit_remote_export PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-}"
+    emit_remote_export PANTHEON_BFF_STUB_CAPABILITIES "${PANTHEON_BFF_STUB_CAPABILITIES:-}"
+    emit_remote_export PANTHEON_STATUS_ROOT_HOST "${PANTHEON_STATUS_ROOT_HOST:-}"
+    emit_remote_export PANTHEON_STATUS_ROOT_CONTAINER "${PANTHEON_STATUS_ROOT_CONTAINER:-}"
+    emit_remote_export PANTHEON_DEV_DOCKER_PRUNE "${PANTHEON_DEV_DOCKER_PRUNE:-true}"
+    emit_remote_export PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}"
+    emit_remote_export MANAGEMENT_AI_STORE_BACKEND "${MANAGEMENT_AI_STORE_BACKEND:-}"
+    emit_remote_export MANAGEMENT_AI_STORE_SCHEMA "${MANAGEMENT_AI_STORE_SCHEMA:-}"
+    emit_remote_export MANAGEMENT_AI_STORE_DSN "${MANAGEMENT_AI_STORE_DSN:-}"
+    emit_remote_export MANAGEMENT_AI_DATABASE_URL "${MANAGEMENT_AI_DATABASE_URL:-}"
+    emit_remote_export PANTHEON_MGMT_AI_ATTACH_BUCKET "${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
+    emit_remote_export PANTHEON_MGMT_AI_ATTACH_LOCATION "${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-}"
+    emit_remote_export PANTHEON_MANAGEMENT_AI_DB_USER "${DEV_MANAGEMENT_AI_DB_USER:-}"
+    emit_remote_export PANTHEON_MANAGEMENT_AI_DB_PASSWORD "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}"
+    emit_remote_export PANTHEON_MANAGEMENT_AI_DB_NAME "${DEV_MANAGEMENT_AI_DB_NAME:-}"
+    emit_remote_export PANTHEON_MANAGEMENT_AI_APP_DB_USER "${DEV_APP_DB_USER:-pantheon_app}"
+    emit_remote_export PANTHEON_STAGING_EXEC_HEALTH_URL "$STAGING_EXEC_HEALTH_URL"
+    emit_remote_export PANTHEON_STAGING_BFF_CORS_ORIGINS "$STAGING_BFF_CORS_ORIGINS"
+    cat <<'REMOTE'
 set -euo pipefail
 
 info() {
@@ -1176,6 +1194,12 @@ esac
 
 info "component ${PANTHEON_DEPLOY_COMPONENT} deployed"
 REMOTE
+  } | gcloud compute ssh "${REMOTE_USER}@${vm}" \
+    --project="${PROJECT_ID}" \
+    --zone="${zone}" \
+    --quiet \
+    --ssh-flag=-T \
+    --command="bash -s"
 }
 
 deploy_dev_root() {

@@ -25,6 +25,9 @@ def test_control_mode_queue_smoke_hits_closed_loop_endpoints() -> None:
 
     assert "/bff/assistant/mode" in source
     assert "/bff/assistant/control-mode/activate" in source
+    assert "/bff/assistant/control-mode/deactivate" in source
+    assert 'activated="true"' in source
+    assert "trap cleanup EXIT" in source
     assert "/bff/assistant/dev-docs/generate" in source
     assert "/bff/assistant/orchestrator/status" in source
     assert "kernel_repair" in source
