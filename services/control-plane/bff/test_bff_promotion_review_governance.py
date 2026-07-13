@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from typing import Iterator
@@ -135,7 +136,7 @@ def test_promotion_reviews_list_and_detail_are_readable_by_operator() -> None:
         assert detail_body["meta"]["live_capital_mutation"] is False
 
 
-def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item() -> None:
+def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item(monkeypatch) -> None:
     with _isolated_client() as client:
         review = _first_review(client)
         submit = _submit_review(client, review["review_id"], idem=_idem())
@@ -163,6 +164,19 @@ def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item() -
         assert detail_data["status"] == "pending_human_gate"
         assert detail_data["allowedActions"]["canApprove"] is True
 
+        def fail_if_ranking_is_rebuilt(*_args, **_kwargs):
+            raise AssertionError("Human Inbox must project the durable submission without rebuilding PM12")
+
+        monkeypatch.setattr(bff_main, "_promotion_review_find", fail_if_ranking_is_rebuilt)
+        monkeypatch.setattr(bff_main, "_build_persona_health_items", fail_if_ranking_is_rebuilt)
+        for method_name in (
+            "list_governance_review_queue_items",
+            "list_approval_queue_items",
+            "list_v5_interventions",
+            "list_sentinel_findings",
+        ):
+            monkeypatch.setattr(bff_main.read_store, method_name, fail_if_ranking_is_rebuilt)
+
         inbox = client.get(
             "/bff/management/human-inbox",
             headers=OPERATOR_HEADERS,
@@ -171,6 +185,7 @@ def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item() -
         assert inbox.status_code == 200, inbox.text
         inbox_items = inbox.json()["data"]["items"]
         assert any(item["promotion_review_id"] == review["review_id"] for item in inbox_items)
+        assert inbox.json()["meta"]["surfaces"]["promotion_reviews"]["source"] == "command_store"
 
         inbox_detail = client.get(
             f"/bff/management/human-inbox/{detail_data['human_inbox_id']}",
@@ -178,6 +193,37 @@ def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item() -
         )
         assert inbox_detail.status_code == 200, inbox_detail.text
         assert inbox_detail.json()["data"]["source_type"] == "promotion_review"
+
+
+def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch) -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        submit = _submit_review(client, review["review_id"], idem=_idem())
+        assert submit.status_code == 202, submit.text
+
+        monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.05")
+
+        def slow_persona_readiness(*_args, **_kwargs):
+            time.sleep(0.25)
+            return []
+
+        monkeypatch.setattr(bff_main, "_build_persona_health_items", slow_persona_readiness)
+        inbox = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"page_size": 20},
+        )
+
+        assert inbox.status_code == 200, inbox.text
+        body = inbox.json()
+        assert any(
+            item["promotion_review_id"] == review["review_id"]
+            for item in body["data"]["items"]
+            if item["source_type"] == "promotion_review"
+        )
+        assert body["meta"]["partial"] is True
+        assert body["meta"]["surfaces"]["human_inbox"]["status"] == "degraded"
+        assert body["meta"]["surfaces"]["persona_readiness"]["reason"] == "read_timeout"
 
 
 def test_promotion_review_decision_requires_prior_submit() -> None:
