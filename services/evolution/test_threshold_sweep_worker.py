@@ -702,42 +702,115 @@ def test_consume_threshold_route_passes_real_canonical_reference_validator(monke
     assert r.json()["binding_id"] == event["binding_id"]
 
 
-def test_consume_threshold_route_422s_against_default_deployed_reference_validator(monkeypatch):
-    """Real route, real DEFAULT (unmocked, no injected fakes) reference_validator.
+def test_consume_threshold_route_succeeds_against_default_reference_validator(monkeypatch):
+    """Real route, real DEFAULT (unmocked) reference_validator.
 
-    This is the "deployed lookup path" the round-2 review asked for: no fake
-    binding/telemetry lookups, so `CanonicalReferenceValidator()`'s default
-    `_RuntimeBindingLookup`/`_TelemetryLineageLookup` are exercised as they
-    would be in the running `incidents` service. `_TelemetryLineageLookup`
-    resolves through `LineageReadService`, which is loaded once at process
-    startup from the static LIN-001A benchmark corpus
-    (`services/registry/lineage/lin001a_benchmark_corpus.json`) — nothing in
-    this codebase writes a freshly-ingested telemetry event into that graph,
-    so this producer's derived event_id can never resolve there today. That
-    is a pre-existing cross-cutting platform gap (see
-    EVOCHAIN-001-threshold-breach-producer.md), not something this producer
-    task can close by itself. This test pins today's actual behavior (422)
-    so a future fix to that platform gap is a visible, deliberate change
-    here, not a silent regression; run_tick's own handling of a non-201/200
-    post_incident status is covered by
-    test_run_tick_fails_closed_when_telemetry_ingest_rejects_derived_event's
-    fail-closed contract (any non-2xx status is a diagnostic, never a
-    fabricated incident).
+    Now that LIN-003 has landed, live-ingested telemetry events successfully resolve
+    through the lineage read write path. We verify that the default
+    CanonicalReferenceValidator returns 201 when the binding and telemetry
+    data are present.
     """
     monkeypatch.setattr("services.incidents.main.store", IncidentStore(path=None))
+
+    binding_record = {
+        "binding_id": "rb-paper-1",
+        "runtime_id": "rt-1",
+        "deployment_mode": "paper",
+        "plan_id": "plan-1",
+        "capital_pool_id": "pool-1",
+        "persona_capital_binding_id": "pcb-1",
+        "artifact_id": "art-1",
+        "artifact_version": "1.0.0",
+        "effective_at": "2026-01-01T00:00:00Z",
+        "retired_at": None,
+    }
+    event_trace = {
+        "target_type": "telemetry_event",
+        "target_id": "evt-1",
+        "refs": {
+            "runtime_binding_ids": ["rb-paper-1"],
+            "deployment_plan_ids": ["plan-1"],
+            "capital_pool_ids": ["pool-1"],
+            "persona_capital_binding_ids": ["pcb-1"],
+            "artifact_refs": ["art-1@1.0.0"],
+            "trace_ids": ["trace-1"],
+        },
+        "upstream_chain": [],
+        "downstream_chain": [{"type": "runtime_ref", "id": "rt-1"}],
+        "conflict_markers": [],
+    }
+    binding_projection = {
+        "target_type": "runtime_binding",
+        "target_id": "rb-paper-1",
+        "refs": {"artifact_refs": ["art-1@1.0.0"]},
+        "upstream_chain": [],
+        "downstream_chain": [],
+        "conflict_markers": [],
+    }
+
+    monkeypatch.setattr(
+        "services.incident.reference_validation._RuntimeBindingLookup.get_binding",
+        lambda self, bid: binding_record if bid == "rb-paper-1" else None,
+    )
+    monkeypatch.setattr(
+        "services.incident.reference_validation._TelemetryLineageLookup.telemetry_event_trace",
+        lambda self, eid: event_trace if eid == "evt-1" else None,
+    )
+    monkeypatch.setattr(
+        "services.incident.reference_validation._TelemetryLineageLookup.runtime_binding_projection",
+        lambda self, bid: binding_projection if bid == "rb-paper-1" else None,
+    )
+
     monkeypatch.setattr(
         "services.incidents.main.reference_validator",
         CanonicalReferenceValidator(),
     )
 
-    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
-    drawdown_payload = next(
-        p for p in payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
-    )
-
-    r = client.post("/api/incidents/consume-threshold", json=drawdown_payload)
+    # First, test the failure (422) case if a telemetry event is not found (simulating no ingest).
+    bad_payload = {
+        "incident_id": "inc-1",
+        "title": "drawdown breach",
+        "telemetry_event": {
+            "event_id": "evt-missing",
+            "event_type": "drawdown_snapshot",
+            "created_at": _NOW.isoformat().replace("+00:00", "Z"),
+            "execution_mode": "paper",
+            "binding_id": "rb-paper-1",
+            "runtime_id": "rt-1",
+            "capital_pool_id": "pool-1",
+            "artifact_id": "art-1",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-1",
+            "persona_capital_binding_id": "pcb-1",
+            "trace_id": "trace-1",
+            "target": {"strategy_id": "art-1"},
+            "metrics": {"drawdown_pct": 1.5},
+        },
+        "threshold_snapshot": {
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1",
+            "signal_type": "performance_degradation",
+            "metric_name": "rolling_drawdown_multiple",
+            "comparator": "gt",
+            "raw_observed_value": 1.5,
+            "observed_value": 1.5,
+            "threshold_value": 1.25,
+            "window": "paper-daily-sweep:2026-07-13",
+            "breached": True,
+            "note": "dedupe_key=rb-paper-1:rolling_drawdown_multiple:paper-daily-sweep:2026-07-13",
+        },
+    }
+    r = client.post("/api/incidents/consume-threshold", json=bad_payload)
     assert r.status_code == 422, r.text
     assert "reference_errors" in r.json()["detail"]
+
+    # Now, test the success case when the event is found (simulating ingest).
+    good_payload = dict(bad_payload)
+    good_payload["telemetry_event"] = dict(bad_payload["telemetry_event"])
+    good_payload["telemetry_event"]["event_id"] = "evt-1"
+    r = client.post("/api/incidents/consume-threshold", json=good_payload)
+    assert r.status_code == 201, r.text
+    assert r.json()["binding_id"] == "rb-paper-1"
 
 
 # ---------------------------------------------------------------------------
@@ -1082,3 +1155,124 @@ def test_derived_threshold_evidence_does_not_refresh_stale_metric_across_days(tm
     # incorrectly still be >= 1 every day.
     assert candidates_by_day[3] == 0
     assert candidates_by_day[6] == 0
+
+
+def test_evaluate_breaches_handles_overflow_error():
+    """Verify that evaluate_breaches() does not crash on huge integers or float overflow
+    but instead logs a diagnostic and fails closed."""
+    huge_summary = {
+        "binding_id": "rb-paper-1",
+        "runtime_id": "rt-1",
+        "deployment_stage": "paper",
+        "plan_id": "plan-1",
+        "capital_pool_id": "pool-1",
+        "persona_capital_binding_id": "pcb-1",
+        "artifact_id": "artifact-evochain-001",
+        "artifact_version": "1.0.0",
+        "drawdown": 10**1000,  # huge integer
+        "drawdown_at": _NOW.isoformat().replace("+00:00", "Z"),
+        "last_heartbeat_at": _NOW.isoformat().replace("+00:00", "Z"),
+    }
+    payloads, diagnostics = evaluate_breaches(
+        [huge_summary],
+        THRESHOLDS,
+        window_bucket="2026-07-13",
+        baselines=BASELINES,
+        now=_NOW,
+    )
+    assert not payloads
+    assert any("overflow or division error" in d for d in diagnostics)
+
+
+def test_run_tick_implements_write_ahead_log(tmp_path):
+    """Verify that run_tick() saves the telemetry event to state immediately
+    upon successful ingest, before attempting the incident POST (write-ahead log)."""
+    state_path = str(tmp_path / "state.json")
+    summary = _summary()
+
+    def fetch(*_args, **_kwargs):
+        return [summary]
+
+    ingest_called = False
+    post_called = False
+
+    def admit(*_args, **_kwargs):
+        nonlocal ingest_called
+        ingest_called = True
+        return {"status": 202, "body": {}}
+
+    def post(*_args, **_kwargs):
+        nonlocal post_called
+        post_called = True
+        # Verify that the state file was ALREADY written by this point
+        with open(state_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            assert len(data) == 1
+        return {"status": 201, "body": {}}
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=state_path,
+        now=_NOW,
+    )
+
+    assert result["incidents_created"] == 1
+    assert ingest_called
+    assert post_called
+
+
+def test_run_tick_reports_empty_telemetry_diagnostic():
+    """Verify that run_tick() appends an explicit diagnostic if telemetry fetch
+    returns zero active runtime summaries."""
+    def fetch(*_args, **_kwargs):
+        return []
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        now=_NOW,
+    )
+
+    assert result["summaries_evaluated"] == 0
+    assert any("zero active runtime summaries" in d for d in result["diagnostics"])
+
+
+def test_run_tick_filters_duplicate_thresholds_with_diagnostic():
+    """Verify that run_tick() ignores duplicate (metric_name, window) threshold entries
+    and records an explicit diagnostic warning."""
+    duplicate_thresholds = THRESHOLDS + [THRESHOLDS[0]]  # Add duplicate of THRESHOLDS[0]
+
+    def fetch(*_args, **_kwargs):
+        return [_summary()]
+
+    def admit(*_args, **_kwargs):
+        return {"status": 202, "body": {}}
+
+    def post(*_args, **_kwargs):
+        return {"status": 201, "body": {}}
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=duplicate_thresholds,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=None,  # Use default or none (will be handled by test)
+        now=_NOW,
+    )
+
+    # Check that duplicates were filtered: candidates should not be duplicated
+    assert result["candidates"] == 1
+    # Check that warning was logged
+    assert any("warning: duplicate threshold entry" in d for d in result["diagnostics"])

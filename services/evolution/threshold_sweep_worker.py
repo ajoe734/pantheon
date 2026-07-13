@@ -52,7 +52,12 @@ DEFAULT_BASELINES_PATH = os.path.join(os.path.dirname(__file__), "config", "thre
 # a possibly-changed live summary, so the telemetry event content and the
 # incident evidence citing it can never diverge for the same event_id (see
 # EVOCHAIN-001-threshold-breach-producer.md round-3 review point 3).
-DEFAULT_STATE_PATH = "/tmp/pantheon/evolution/threshold_sweep_state.json"
+# Resolves to a persistent volume when EVOLUTION_DATA_DIR is set (e.g. inside
+# compose), fallback to /tmp/pantheon/evolution when run locally.
+DEFAULT_STATE_PATH = os.path.join(
+    os.getenv("EVOLUTION_DATA_DIR", "/tmp/pantheon/evolution"),
+    "threshold_sweep_state.json"
+)
 
 # (identity field on the built payload, candidate keys to read from a runtime summary)
 _IDENTITY_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -388,31 +393,50 @@ def evaluate_breaches(
                 )
                 continue
 
-            baseline_key = threshold.get("ratio_baseline_key")
-            if baseline_key:
-                artifact_baselines = active_baselines.get(identity["artifact_id"])
-                baseline_value = (
-                    artifact_baselines.get(baseline_key) if isinstance(artifact_baselines, Mapping) else None
-                )
-                if (
-                    isinstance(baseline_value, bool)
-                    or not isinstance(baseline_value, (int, float))
-                    or baseline_value <= 0
-                ):
+            try:
+                observed_raw_float = float(observed_raw)
+                if not math.isfinite(observed_raw_float):
                     diagnostics.append(
-                        f"skip {identity['binding_id']}/{metric_name}: no approved "
-                        f"{baseline_key!r} baseline for artifact_id={identity['artifact_id']!r} "
-                        "(fail-closed; add one to threshold_sweep_baselines.json)"
+                        f"skip {identity['binding_id']}/{metric_name}: observed raw value is not finite"
                     )
                     continue
-                observed = float(observed_raw) / float(baseline_value)
-            else:
-                baseline_value = None
-                observed = float(observed_raw)
 
-            comparator = str(threshold["comparator"])
-            threshold_value = float(threshold["threshold_value"])
-            if not _COMPARATORS[comparator](observed, threshold_value):
+                baseline_key = threshold.get("ratio_baseline_key")
+                if baseline_key:
+                    artifact_baselines = active_baselines.get(identity["artifact_id"])
+                    baseline_value = (
+                        artifact_baselines.get(baseline_key) if isinstance(artifact_baselines, Mapping) else None
+                    )
+                    if (
+                        isinstance(baseline_value, bool)
+                        or not isinstance(baseline_value, (int, float))
+                        or baseline_value <= 0
+                    ):
+                        diagnostics.append(
+                            f"skip {identity['binding_id']}/{metric_name}: no approved "
+                            f"{baseline_key!r} baseline for artifact_id={identity['artifact_id']!r} "
+                            "(fail-closed; add one to threshold_sweep_baselines.json)"
+                        )
+                        continue
+                    observed = observed_raw_float / float(baseline_value)
+                else:
+                    baseline_value = None
+                    observed = observed_raw_float
+
+                if not math.isfinite(observed):
+                    diagnostics.append(
+                        f"skip {identity['binding_id']}/{metric_name}: observed ratio/value is not finite"
+                    )
+                    continue
+
+                comparator = str(threshold["comparator"])
+                threshold_value = float(threshold["threshold_value"])
+                if not _COMPARATORS[comparator](observed, threshold_value):
+                    continue
+            except (OverflowError, ZeroDivisionError) as exc:
+                diagnostics.append(
+                    f"skip {identity['binding_id']}/{metric_name}: overflow or division error during evaluation: {exc}"
+                )
                 continue
 
             window_label = f"{threshold.get('window') or 'sweep'}:{window_bucket}"
@@ -596,6 +620,20 @@ def run_tick(
         result["diagnostics"].append("no valid thresholds loaded from live config; skipping tick (fail-closed)")
         return result
 
+    # Filter out duplicate (metric_name, window) entries to avoid silent collision on event_id.
+    seen_threshold_keys = set()
+    unique_thresholds = []
+    for t in active_thresholds:
+        key = (t.get("metric_name"), t.get("window"))
+        if key in seen_threshold_keys:
+            result["diagnostics"].append(
+                f"warning: duplicate threshold entry for metric_name={key[0]!r} window={key[1]!r} ignored"
+            )
+            continue
+        seen_threshold_keys.add(key)
+        unique_thresholds.append(t)
+    active_thresholds = unique_thresholds
+
     active_baselines = baselines if baselines is not None else load_baselines(baselines_path)
 
     try:
@@ -603,6 +641,9 @@ def run_tick(
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
         result["diagnostics"].append(f"telemetry fetch failed, skipping tick (fail-closed): {exc}")
         return result
+
+    if not summaries:
+        result["diagnostics"].append("telemetry fetch returned zero active runtime summaries; nothing to evaluate")
 
     result["summaries_evaluated"] = len(summaries)
     candidates, diagnostics = evaluate_breaches(
@@ -620,10 +661,12 @@ def run_tick(
     pending = _load_pending_evidence(active_state_path)
     # Drop evidence recorded for a prior dedupe window: only the active
     # window's event_ids can still legitimately retry.
-    state_dirty = any(record.get("window_bucket") != window_bucket for record in pending.values())
+    state_pruned = any(record.get("window_bucket") != window_bucket for record in pending.values())
     pending = {
         event_id: record for event_id, record in pending.items() if record.get("window_bucket") == window_bucket
     }
+    if state_pruned:
+        _save_pending_evidence(active_state_path, pending)
 
     for payload in candidates:
         event = payload["telemetry_event"]
@@ -666,7 +709,9 @@ def run_tick(
                 "telemetry_event": event,
                 "threshold_snapshot": payload["threshold_snapshot"],
             }
-            state_dirty = True
+            # Write-ahead log: immediately save state to disk before sending
+            # the incident payload to the incident consumer.
+            _save_pending_evidence(active_state_path, pending)
 
         try:
             response = post_incident(incidents_api_url, payload, timeout=timeout)
@@ -687,9 +732,6 @@ def run_tick(
         else:
             result["errors"] += 1
             result["diagnostics"].append(f"post_incident unexpected status={status}")
-
-    if state_dirty:
-        _save_pending_evidence(active_state_path, pending)
 
     return result
 

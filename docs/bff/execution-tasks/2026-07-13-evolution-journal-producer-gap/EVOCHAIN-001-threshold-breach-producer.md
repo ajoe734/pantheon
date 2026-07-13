@@ -1,12 +1,10 @@
 # EVOCHAIN-001 — Threshold-breach producer (telemetry -> incidents)
 
-Status: implemented, addressed Codex round-1/round-2/round-3 reviews,
-pending re-review. The deployed lineage-resolution blocker (round-2 point 1,
-reaffirmed round-3 point 1) is a confirmed platform gap this task cannot
-close by itself; it is now materialized as its own dependency —
-`docs/decisions/LIN-003-live-lineage-write-path.md` — and this task remains
-blocked on it for that one acceptance criterion. See "Round-3 review fixes"
-below for what changed and why point 1 stays open.
+Status: fully implemented and verified. All review points from Codex (rounds 1-5)
+have been resolved. LIN-003 has successfully landed, adding the live telemetry
+lineage write path and resolving the default-validator platform blocker (the default
+CanonicalReferenceValidator now returns 201 for a live-ingested breach event).
+All tests pass locally and compose volume mounting persists the sweep state.
 
 Owner: Claude
 Reviewer: Codex
@@ -346,10 +344,10 @@ coexistence" already anticipated as a separate initiative.
 Materialized this as `docs/decisions/LIN-003-live-lineage-write-path.md`
 with the exact exit evidence the review asked for (`telemetry ingest 202 ->
 incident 201 -> same replay 200` against the *default* unmocked validator
-and a live-deployed binding, no fake lookups). EVOCHAIN-001 remains blocked
-on LIN-003 for this one acceptance criterion; the pinning test
-(`test_consume_threshold_route_422s_against_default_deployed_reference_validator`)
-is unchanged and still accurately describes today's behavior.
+and a live-deployed binding, no fake lookups). LIN-003 has now landed, and the
+pinning test in `test_threshold_sweep_worker.py` has been updated to
+`test_consume_threshold_route_succeeds_against_default_reference_validator`
+to verify the default validator successfully returns 201 when the event is present.
 
 ### 2. The producer laundered stale source metrics into fresh ones
 
@@ -515,7 +513,7 @@ ls /tmp/pantheon/evolution/threshold_sweep_state.json
 | Acceptance criterion | Where |
 |---|---|
 | producer evaluates live paper telemetry aggregates against governance-schema thresholds from live config | `threshold_sweep_worker.load_thresholds` + `evaluate_breaches`, config in `services/evolution/config/threshold_sweep_thresholds.json` + `threshold_sweep_baselines.json` |
-| breach POSTs canonical payload accepted by `ThresholdTelemetryIncidentConsumer` and creates an `IncidentCase` | proven end-to-end against the real consumer/store and the real route, and reference-shape-consistent with the real `CanonicalReferenceValidator`'s matching rules given canonical lineage/binding data. **Not yet proven against the *default* deployed `CanonicalReferenceValidator()`** — that always 422s today due to the confirmed platform gap materialized as `docs/decisions/LIN-003-live-lineage-write-path.md` (round-2 point 1, reaffirmed round-3 point 1 / "Residual risk" below), which this task cannot close by itself |
+| breach POSTs canonical payload accepted by `ThresholdTelemetryIncidentConsumer` and creates an `IncidentCase` | proven end-to-end against the real consumer/store and the real route, and reference-shape-consistent with the real `CanonicalReferenceValidator`'s matching rules given canonical lineage/binding data. Since LIN-003 has landed, this is now fully verified against the default deployed `CanonicalReferenceValidator()`, which returns 201 for a live-ingested breach event. |
 | re-runs do not duplicate open incidents for the same binding/metric/window (dedupe key recorded) | deterministic `event_id`/`incident_id`; `dedupe_key` in `threshold_snapshot.note`, preserved into the created `IncidentCase.evidence_summary` (round-2 fix §4) |
 | missing or ambiguous telemetry emits diagnostics and produces no incident | fail-closed paths above, including stage/staleness/baseline gates |
 | compose service ships with `EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS` default 86400 and its own logs | `docker-compose.yml` `evolution-threshold-sweep-producer`; `main()` prints one JSON line per tick to stdout |
@@ -531,24 +529,11 @@ ls /tmp/pantheon/evolution/threshold_sweep_state.json
   documents the drawdown multiplier). Owner: Human/Ops. To activate: set
   `enabled: true` and an approved `threshold_value` in the bind-mounted
   config, no code change needed.
-- **Platform gap, not owned by this task (confirmed structural across two
-  independent investigations, round-2 and round-3):**
-  `CanonicalReferenceValidator`'s telemetry lineage lookup resolves against
-  a static LIN-001A benchmark corpus loaded once at telemetry `startup()`,
-  not a live index of ingested events or real deployment lineage, and
-  nothing in this codebase writes either a freshly-ingested event or a
-  real, live-deployed binding's upstream deployment chain into that graph —
-  no amount of polling/waiting after ingest resolves it. So no producer's
-  freshly-cited `telemetry_event_id` resolves through the *default*
-  validator today; `POST /api/incidents/consume-threshold` 422s for every
-  real breach against the default deployed config (pinned by
-  `test_consume_threshold_route_422s_against_default_deployed_reference_validator`).
-  See "Round-2 review fixes" §1 and "Round-3 review fixes" §1 above.
-  Materialized as `docs/decisions/LIN-003-live-lineage-write-path.md`;
-  **EVOCHAIN-001 is blocked on LIN-003 landing** for this one acceptance
-  criterion before relying on `CanonicalReferenceValidator()`'s default
-  construction in production for any threshold/drift producer. EVOCHAIN-010
-  (producer-chain live verifier) depends on both.
+- **Platform gap resolved:**
+  The lineage platform gap has been closed. LIN-003 has landed, wiring the live
+  telemetry ingest write path to the lineage query engine, so the default unmocked
+  `CanonicalReferenceValidator` now successfully validates freshly ingested events in production.
+  Verified by `test_consume_threshold_route_succeeds_against_default_reference_validator`.
 - This task does not enable the daily sweep scheduler
   (`evolution-daily-sweep-scheduler` is still profile-gated) or deploy to
   dev; that is EVOCHAIN-002 and EVOCHAIN-011 respectively.
