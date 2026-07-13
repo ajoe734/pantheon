@@ -9246,6 +9246,47 @@ class MaxConcurrentWorkersCapTests(unittest.TestCase):
             supervisor.dispatch_ready_tasks(config, state)
         start.assert_not_called()
 
+    def test_dispatch_wave_is_clamped_to_remaining_global_slots(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config["ready_dispatcher"]["max_concurrent_workers"] = 2
+        config["ready_dispatcher"]["max_dispatches_per_tick"] = 4
+        status = {
+            "tasks": [
+                {
+                    "id": f"CAP-{index}",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "depends_on": [],
+                    "last_update": f"2026-07-13T16:0{index}:00Z",
+                }
+                for index in range(1, 5)
+            ]
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "scan_live_worker_pids_by_agent",
+                return_value={"Codex": [101]},
+            ),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex"],
+            )
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        self.assertEqual(queue_delivery_event.call_args.args[1]["task_id"], "CAP-1")
+
 
 class PruneOrphanWorktreesTests(unittest.TestCase):
     def _stub_subprocess_run(self, results):
