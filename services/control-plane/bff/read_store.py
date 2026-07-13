@@ -11139,7 +11139,31 @@ class ReadSurfaceStore:
                 bindings_by_id,
                 ["runtime_id", "runtime_binding_id", "binding_id", "id"],
             )
-        bindings = [binding for key, binding in bindings_by_id.items() if key]
+        persona_by_capital_binding_id = {
+            str(binding.get("binding_id") or binding.get("id") or "").strip(): str(
+                binding.get("persona_id") or ""
+            ).strip()
+            for binding in self.list_bindings(
+                include_market_persona_defaults=include_market_persona_defaults,
+            )
+            if str(binding.get("binding_id") or binding.get("id") or "").strip()
+            and str(binding.get("persona_id") or "").strip()
+        }
+        bindings = []
+        for key, binding in bindings_by_id.items():
+            if not key:
+                continue
+            projected = json.loads(json.dumps(binding))
+            if not str(projected.get("persona_id") or "").strip():
+                persona_binding_id = str(
+                    projected.get("persona_capital_binding_id")
+                    or projected.get("binding_id")
+                    or ""
+                ).strip()
+                persona_id = persona_by_capital_binding_id.get(persona_binding_id)
+                if persona_id:
+                    projected["persona_id"] = persona_id
+            bindings.append(projected)
         if deployment_mode:
             bindings = [
                 b for b in bindings

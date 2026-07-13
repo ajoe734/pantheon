@@ -55794,15 +55794,17 @@ def _project_persona_fleet_list_row(
     )
     metrics = {**performance, **league_metrics}
     pool_id = (
-        league_entry.get("capital_pool_id")
-        or raw_metadata.get("capital_pool_id")
-        or context_metadata.get("capital_pool_id")
+        raw_metadata.get("capital_pool_id")
+        or raw_metadata.get("legacy_paper_capital_pool_id")
         or binding.get("capital_pool_id")
+        or league_entry.get("capital_pool_id")
+        or context_metadata.get("capital_pool_id")
     )
     runtime_id = (
-        league_entry.get("runtime_id")
+        raw_metadata.get("runtime_id")
         or runtime.get("runtime_id")
         or runtime.get("id")
+        or league_entry.get("runtime_id")
         or context_metadata.get("runtime_id")
         or context_metadata.get("runtime_binding_id")
         or raw_metadata.get("runtime_binding_id")
@@ -56174,12 +56176,18 @@ def _persona_fleet_slim_list_payload(
         for runtime in runtimes
         if str(runtime.get("persona_id") or "").strip()
     }
+    runtime_by_runtime_id = {
+        str(runtime.get("runtime_id") or "").strip(): runtime
+        for runtime in runtimes
+        if str(runtime.get("runtime_id") or "").strip()
+    }
     runtime_by_binding = {
         candidate: runtime
         for runtime in runtimes
         for candidate in (
             str(runtime.get("binding_id") or "").strip(),
             str(runtime.get("runtime_binding_id") or "").strip(),
+            str(runtime.get("persona_capital_binding_id") or "").strip(),
             str(runtime.get("id") or "").strip(),
         )
         if candidate
@@ -56199,12 +56207,17 @@ def _persona_fleet_slim_list_payload(
         league_entry = league_by_persona.get(persona_id, {})
         binding = _persona_fleet_first_binding_from_index(persona_id, bindings_by_persona)
         pool_id = (
-            league_entry.get("capital_pool_id")
-            or raw_metadata.get("capital_pool_id")
-            or context_metadata.get("capital_pool_id")
+            raw_metadata.get("capital_pool_id")
+            or raw_metadata.get("legacy_paper_capital_pool_id")
             or binding.get("capital_pool_id")
+            or league_entry.get("capital_pool_id")
+            or context_metadata.get("capital_pool_id")
         )
-        runtime = runtime_by_pool.get(str(pool_id or ""), {})
+        declared_runtime_id = str(raw_metadata.get("runtime_id") or "").strip()
+        declared_runtime_binding_id = str(raw_metadata.get("runtime_binding_id") or "").strip()
+        runtime = runtime_by_runtime_id.get(declared_runtime_id, {})
+        if not runtime:
+            runtime = runtime_by_binding.get(declared_runtime_binding_id, {})
         if not runtime:
             runtime = runtime_by_persona.get(persona_id, {})
         if not runtime and binding:
@@ -56212,6 +56225,8 @@ def _persona_fleet_slim_list_payload(
                 str(binding.get("binding_id") or binding.get("id") or "").strip(),
                 {},
             )
+        if not runtime:
+            runtime = runtime_by_pool.get(str(pool_id or ""), {})
         binding_ids = {
             str(binding.get("id") or binding.get("binding_id") or "").strip()
         }

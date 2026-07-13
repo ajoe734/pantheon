@@ -222,6 +222,73 @@ def test_management_persona_fleet_hydrates_live_persona_market_context() -> None
     assert us["current_work"] is None
 
 
+def test_management_persona_fleet_prefers_declared_runtime_identity_over_market_default() -> None:
+    persona_id = "persona-20260528-04688755"
+    runtime_id = f"runtime-{persona_id}-paper"
+    persona_binding_id = f"binding-{persona_id}-paper"
+    pool_id = f"pool-{persona_id}-paper"
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        store.create_persona(
+            persona_id=persona_id,
+            name="Crypto-Alt-Hunter",
+            actor_id="pantheon-dev-browser",
+            created_at="2026-05-28T00:00:00Z",
+            lifecycle_state="deployed",
+            metadata={
+                "capital_mode": "paper",
+                "deployment_stage": "paper",
+                "legacy_paper_capital_pool_id": pool_id,
+                "runtime_id": runtime_id,
+                "runtime_binding_id": persona_binding_id,
+            },
+        )
+        store.create_persona_binding(
+            binding_id=persona_binding_id,
+            persona_id=persona_id,
+            capital_pool_id=pool_id,
+            actor_id="pantheon-dev-browser",
+        )
+        store.create_runtime_binding(
+            runtime_id=runtime_id,
+            name="Crypto-Alt-Hunter paper runtime",
+            persona_id=persona_id,
+            binding_id=persona_binding_id,
+            deployment_plan_id=f"paper-plan-{persona_id}",
+            runtime_kind="paper",
+            actor_id="pantheon-dev-browser",
+            params={"capital_pool_id": pool_id},
+            state="active",
+        )
+
+        with _client_with_store(store) as client:
+            fleet_response = client.get(
+                "/bff/management/persona-fleet?page_size=100",
+                headers=HEADERS,
+            )
+            runtime_response = client.get("/bff/runtimes?page_size=200", headers=HEADERS)
+
+    assert fleet_response.status_code == 200, fleet_response.text
+    fleet_row = next(
+        item
+        for item in fleet_response.json()["data"]["items"]
+        if item["persona_id"] == persona_id
+    )
+    assert fleet_row["legacy_paper_capital_pool_id"] == pool_id
+    assert fleet_row["runtime_id"] == runtime_id
+    assert fleet_row["runtime_binding_id"] == persona_binding_id
+
+    assert runtime_response.status_code == 200, runtime_response.text
+    runtime_row = next(
+        item for item in runtime_response.json()["items"] if item["runtime_id"] == runtime_id
+    )
+    assert runtime_row["persona_id"] == persona_id
+    assert runtime_row["persona_capital_binding_id"] == persona_binding_id
+
+
 def test_persona_league_filters_and_requires_governance_for_rank_actions() -> None:
     with _fleet_client() as client:
         all_rows = client.get("/bff/persona-league", headers=HEADERS)
