@@ -893,6 +893,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         events = [ev for payload in published_payloads for ev in payload]
         stages = [ev["stage"] for ev in events]
         self.assertIn("signal_generation", stages)
+        self.assertIn("trade_decision", stages)
+        self.assertIn("order_submission", stages)
         self.assertIn("fill_management", stages)
 
         sig_gen = next(ev for ev in events if ev["stage"] == "signal_generation")
@@ -900,6 +902,26 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(sig_gen["signal_id"], "sig-12345")
         self.assertEqual(sig_gen["stage_status"], "succeeded")
         self.assertEqual(sig_gen["source"], "runtime")
+        self.assertEqual(sig_gen["sequence"], 1)
+
+        decision = next(ev for ev in events if ev["stage"] == "trade_decision")
+        self.assertEqual(decision["journey_id"], "tj-sig-12345")
+        self.assertEqual(decision["signal_id"], "sig-12345")
+        self.assertEqual(decision["sequence"], 2)
+
+        order = next(ev for ev in events if ev["stage"] == "order_submission")
+        self.assertEqual(order["journey_id"], "tj-sig-12345")
+        self.assertEqual(order["signal_id"], "sig-12345")
+        self.assertEqual(order["sequence"], 3)
+
+        fill = next(ev for ev in events if ev["stage"] == "fill_management")
+        self.assertEqual(fill["journey_id"], "tj-sig-12345")
+        self.assertEqual(fill["signal_id"], "sig-12345")
+        self.assertEqual(fill["sequence"], 4)
+
+        # Assert matching timestamps for the decision, order, fill chain
+        self.assertEqual(decision["occurred_at"], order["occurred_at"])
+        self.assertEqual(order["occurred_at"], fill["occurred_at"])
 
 
 class TestSubmitTaiwanBrokerOrder(unittest.TestCase):

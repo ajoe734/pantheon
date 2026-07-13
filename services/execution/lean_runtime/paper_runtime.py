@@ -8,6 +8,8 @@ import math
 import os
 import threading
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -1059,6 +1061,16 @@ class PaperRuntimeService:
         self._lock = threading.RLock()
         self._shutdown = threading.Event()
         self._thread: threading.Thread | None = None
+        self._outbox_path = os.getenv("PANTHEON_OUTBOX_PATH") or "/data/runtime/outbox.jsonl"
+        outbox_dir = os.path.dirname(self._outbox_path)
+        if outbox_dir:
+            try:
+                os.makedirs(outbox_dir, exist_ok=True)
+            except Exception:
+                self._outbox_path = os.path.join(tempfile.gettempdir(), "outbox.jsonl")
+        self._outbox_lock = threading.Lock()
+        self._outbox_event = threading.Event()
+        self._outbox_thread: threading.Thread | None = None
         self._started_at = _iso_now()
         self._synthetic_market = (
             SyntheticMarketData()
@@ -1080,14 +1092,29 @@ class PaperRuntimeService:
         if self._thread is not None:
             return
         self._emit_deploy_started()
+        
+        # Ensure outbox directory exists
+        outbox_dir = os.path.dirname(self._outbox_path)
+        if outbox_dir:
+            try:
+                os.makedirs(outbox_dir, exist_ok=True)
+            except Exception as exc:
+                log.warning("Failed to create outbox directory %s: %s", outbox_dir, exc)
+
+        self._outbox_thread = threading.Thread(target=self._outbox_loop, daemon=True, name="paper-runtime-outbox")
+        self._outbox_thread.start()
+
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="paper-runtime-loop")
         self._thread.start()
         self._emit_deploy_completed()
 
     def stop(self) -> None:
         self._shutdown.set()
+        self._outbox_event.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
+        if self._outbox_thread is not None:
+            self._outbox_thread.join(timeout=5)
 
     def drain_once(self) -> dict[str, Any]:
         with self._lock:
@@ -1189,10 +1216,11 @@ class PaperRuntimeService:
             tenant_id = binding.get("tenant_id") or "default"
             environment = binding.get("deployment_stage") or "paper"
             signal_id = event.metadata.get("signal_id")
+            journey_id = event.metadata.get("journey_id") or (f"tj-{signal_id}" if signal_id else f"tj-evt-{event.event_id}")
 
             journey_event = {
                 "event_id": f"sig-{signal_id}-generation",
-                "journey_id": f"tj-{signal_id}" if signal_id else f"tj-evt-{event.event_id}",
+                "journey_id": journey_id,
                 "tenant_id": tenant_id,
                 "environment": environment,
                 "occurred_at": event.metadata.get("timestamp") or event.created_at,
@@ -1205,6 +1233,7 @@ class PaperRuntimeService:
                 "order_type": event.metadata.get("order_type", "MARKET"),
                 "quantity": event.quantity,
                 "strategy_id": event.metadata.get("strategy_id"),
+                "sequence": 1,
             }
             self._publish_journey_events([journey_event])
             return
@@ -1267,43 +1296,187 @@ class PaperRuntimeService:
             }
         self._telemetry.emit(event.event_type, metrics, metadata=telemetry_metadata)
 
-        payload = (
-            self._telemetry.build_event(event.event_type, metrics, telemetry_metadata)
-            if hasattr(self._telemetry, "build_event")
-            else None
-        )
-        if payload:
-            try:
-                from services.trade_journey.telemetry_bridge import journey_events_from_telemetry
-                tenant_id = payload.get("correlation_envelope", {}).get("tenant_id") or "default"
-                journey_events = journey_events_from_telemetry(
-                    [(payload["event_type"], payload["created_at"], payload)],
-                    tenant_id=tenant_id
-                )
-                for j_ev in journey_events:
-                    j_ev["source"] = "runtime"
+        # Build first-class journey events directly with deterministic ordering and matching timestamps
+        try:
+            metadata = event.metadata or {}
+            envelope = metadata.get("correlation_envelope") or {}
+            signal_id = metadata.get("signal_id") or envelope.get("signal_id")
+            
+            binding = self._binding_resolver.resolve() or {}
+            tenant_id = metadata.get("tenant_id") or envelope.get("tenant_id") or binding.get("tenant_id") or "default"
+            environment = metadata.get("environment") or envelope.get("environment") or binding.get("deployment_stage") or "paper"
+            
+            journey_id = metadata.get("journey_id") or envelope.get("journey_id")
+            if not journey_id:
+                journey_id = f"tj-{signal_id}" if signal_id else f"tj-evt-{event.event_id}"
+
+            journey_events = []
+            occurred_at = event.created_at or _iso_now()
+            recorded_at = _iso_now()
+
+            # Sequence 2: trade_decision
+            if event.event_type in ("paper_fill_simulated", "paper_order_simulated", "order_rejection"):
+                journey_events.append({
+                    "event_id": f"sig-{signal_id}-decision" if signal_id else f"evt-{event.event_id}-decision",
+                    "journey_id": journey_id,
+                    "tenant_id": tenant_id,
+                    "environment": environment,
+                    "occurred_at": occurred_at,
+                    "recorded_at": recorded_at,
+                    "source": "runtime",
+                    "stage": "trade_decision",
+                    "stage_status": metadata.get("decision_status") or "succeeded",
+                    "signal_id": signal_id,
+                    "symbol": event.symbol,
+                    "sequence": 2,
+                    "correlation_envelope": envelope,
+                })
+
+            # Sequence 3: order_submission
+            if event.event_type in ("paper_fill_simulated", "paper_order_simulated", "order_rejection"):
+                stage_status = "submitted"
+                if event.event_type == "paper_order_simulated":
+                    stage_status = "noop"
+                elif event.event_type == "order_rejection":
+                    stage_status = "rejected"
+                
+                journey_events.append({
+                    "event_id": f"sig-{signal_id}-order" if signal_id else f"evt-{event.event_id}-order",
+                    "journey_id": journey_id,
+                    "tenant_id": tenant_id,
+                    "environment": environment,
+                    "occurred_at": occurred_at,
+                    "recorded_at": recorded_at,
+                    "source": "runtime",
+                    "stage": "order_submission",
+                    "stage_status": stage_status,
+                    "signal_id": signal_id,
+                    "symbol": event.symbol,
+                    "sequence": 3,
+                    "correlation_envelope": envelope,
+                })
+
+            # Sequence 4: fill_management
+            if event.event_type in ("paper_fill_simulated", "order_rejection"):
+                stage_status = "filled" if event.event_type == "paper_fill_simulated" else "failed"
+                fill_event = {
+                    "event_id": f"sig-{signal_id}-fill" if signal_id else f"evt-{event.event_id}-fill",
+                    "journey_id": journey_id,
+                    "tenant_id": tenant_id,
+                    "environment": environment,
+                    "occurred_at": occurred_at,
+                    "recorded_at": recorded_at,
+                    "source": "runtime",
+                    "stage": "fill_management",
+                    "stage_status": stage_status,
+                    "signal_id": signal_id,
+                    "symbol": event.symbol,
+                    "sequence": 4,
+                    "correlation_envelope": envelope,
+                }
+                if event.event_type == "paper_fill_simulated":
+                    fill_event["quantity"] = abs(event.quantity)
+                    fill_event["price"] = event.fill_price
+                    fill_event["side"] = "sell" if event.quantity < 0 else "buy"
+                journey_events.append(fill_event)
+
+            if journey_events:
                 self._publish_journey_events(journey_events)
-            except Exception as exc:
-                log.warning("Failed to map or publish journey events from telemetry: %s", exc)
+        except Exception as exc:
+            log.warning("Failed to map or publish journey events directly: %s", exc)
 
     def _publish_journey_events(self, events: list[dict[str, Any]]) -> None:
         if not events:
             return
+        if not self._outbox_thread or not self._outbox_thread.is_alive():
+            # Fallback to synchronous publish in tests or if the thread isn't running
+            self._send_to_bff(events)
+            return
+
+        with self._outbox_lock:
+            try:
+                outbox_dir = os.path.dirname(self._outbox_path)
+                if outbox_dir:
+                    os.makedirs(outbox_dir, exist_ok=True)
+                with open(self._outbox_path, "a", encoding="utf-8") as f:
+                    for event in events:
+                        f.write(json.dumps(event) + "\n")
+            except Exception as exc:
+                log.error("Failed to append events to outbox: %s", exc)
+        self._outbox_event.set()
+
+    def _outbox_loop(self) -> None:
+        while not self._shutdown.is_set():
+            self._outbox_event.wait(timeout=1.0)
+            self._outbox_event.clear()
+
+            events_to_send = []
+            with self._outbox_lock:
+                if os.path.exists(self._outbox_path):
+                    try:
+                        with open(self._outbox_path, "r", encoding="utf-8") as f:
+                            for line in f:
+                                if line.strip():
+                                    events_to_send.append(json.loads(line))
+                    except Exception as exc:
+                        log.error("Failed to read outbox file: %s", exc)
+
+            if not events_to_send:
+                continue
+
+            success = self._send_to_bff(events_to_send)
+            if success:
+                with self._outbox_lock:
+                    if os.path.exists(self._outbox_path):
+                        try:
+                            current_events = []
+                            with open(self._outbox_path, "r", encoding="utf-8") as f:
+                                for line in f:
+                                    if line.strip():
+                                        current_events.append(json.loads(line))
+                            sent_ids = {e["event_id"] for e in events_to_send}
+                            remaining = [e for e in current_events if e["event_id"] not in sent_ids]
+                            if remaining:
+                                tmp_path = self._outbox_path + ".tmp"
+                                with open(tmp_path, "w", encoding="utf-8") as f:
+                                    for e in remaining:
+                                        f.write(json.dumps(e) + "\n")
+                                os.replace(tmp_path, self._outbox_path)
+                            else:
+                                if os.path.exists(self._outbox_path):
+                                    os.remove(self._outbox_path)
+                        except Exception as exc:
+                            log.error("Failed to update outbox file: %s", exc)
+            else:
+                self._shutdown.wait(timeout=2.0)
+
+    def _send_to_bff(self, events: list[dict[str, Any]]) -> bool:
         bff_url = os.getenv("PANTHEON_BFF_URL", "http://operator-bff:8080").strip().rstrip("/")
         url = f"{bff_url}/bff/management/trade-journeys/events"
         body = json.dumps(events).encode("utf-8")
+        
+        token = os.getenv("PANTHEON_BFF_TOKEN") or os.getenv("BFF_TOKEN") or "op-dev:admin:mfa"
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
         req = urllib.request.Request(
             url,
             data=body,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
             timeout = int(os.getenv("PANTHEON_BFF_TIMEOUT_SECONDS", "5"))
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 resp.read()
+            return True
         except Exception as exc:
-            log.warning("Failed to publish journey events to BFF: %s", exc)
+            log.warning("Failed to publish outbox events to BFF (will retry): %s", exc)
+            return False
 
     def _maybe_emit_heartbeat(self) -> None:
         if not self._telemetry.enabled:
