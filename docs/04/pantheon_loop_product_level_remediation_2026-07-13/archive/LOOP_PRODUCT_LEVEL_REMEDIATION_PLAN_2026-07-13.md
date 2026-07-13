@@ -733,6 +733,9 @@ planning baseline for active execution, not a completion declaration.
 
 The execution-time audit linked above found safety and evidence gaps that were
 not represented by the original 36-task DAG. The additive packet raises the
-catalog to 44 tasks without rewriting already-dispatched task records.
+catalog to 45 tasks. It preserves existing record fields while applying two
+versioned, exact-preimage dependency patches to pristine baseline `todo` tasks
+in the same atomic write that creates the nine additive tasks.
 `LOOP-PROD-CLOSE-001` is retained as the original baseline checkpoint;
+`LOOP-PROD-SIGNOFF-001` installs protected Human/Ops transition enforcement;
 `LOOP-PROD-CLOSE-002` is the sole final completion authority for this program.

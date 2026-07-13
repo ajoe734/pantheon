@@ -4,6 +4,10 @@ Status: ready for fleet dispatch after dependencies are done
 
 Canonical catalog: `tasks.json`
 
+Canonical contract SHA-256: `64937b9652dfd2ad3df97d49517dc90e580d2cacc65c16cae1fce6a5a2a51cc8`
+The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+the prose sections below are explanatory renderings.
+
 Source addendum:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
 

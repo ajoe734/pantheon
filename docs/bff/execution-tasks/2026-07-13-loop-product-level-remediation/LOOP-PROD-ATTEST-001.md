@@ -4,6 +4,10 @@ Status: ready for fleet dispatch after dependencies are done
 
 Canonical catalog: `tasks.json`
 
+Canonical contract SHA-256: `e46fe78933e33193b57ed1b3e5067c5a7e75ed559adf12a3d30549cdad569930`
+The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+the prose sections below are explanatory renderings.
+
 Source addendum:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
 
@@ -23,7 +27,8 @@ Source addendum:
 ## Product outcome
 
 產品 evidence 的 trust root 由 protected controller 產生；candidate 只能提交原始
-結果，不能自寫 pass boolean 或 zero-count assertion。Attestation 必須綁定 exact
+結果，不能自寫 pass boolean 或 zero-count assertion。Attestation 必須以 candidate
+拿不到的 asymmetric key 或 platform-protected keyed identity 簽署，並綁定 exact
 FE/BFF SHA、run/job、target、lease、artifact digest 與 verification policy。
 
 ## Dependencies
@@ -47,7 +52,8 @@ FE/BFF SHA、run/job、target、lease、artifact digest 與 verification policy�
 
 ## Acceptance
 
-- protected controller derives assertions from immutable raw artifacts and signs or checksums a canonical manifest
+- protected controller derives assertions from immutable raw artifacts, canonicalizes the manifest, and authenticates it with an asymmetric signature or platform-protected keyed identity unavailable to candidate processes
+- unkeyed checksums are content-integrity digests inside the authenticated envelope and are never accepted as provenance or authorization
 - manifest binds repository, exact candidate/base/deployed SHAs, run/job/attempt, target, lease, policy version, artifact digests, timestamps, and expiry
 - candidate-controlled fields cannot override verdict, expected counts, policy, signer, or protected provenance
 - verifier fails closed on tamper, replay, omission, wrong SHA/run/job/lease/target, stale expiry, unknown key/policy, duplicate assertion, and contradicted evidence

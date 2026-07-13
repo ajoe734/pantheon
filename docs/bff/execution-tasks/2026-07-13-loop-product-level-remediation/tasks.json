@@ -1,11 +1,78 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "program_id": "loop-product-level-remediation-2026-07-13",
   "generated_at": "2026-07-13T00:00:00Z",
   "source_plan": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md",
   "planning_addenda": [
     "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md"
   ],
+  "additive_task_ids": [
+    "LOOP-PROD-WORKER-001",
+    "LOOP-PROD-LEASE-001",
+    "LOOP-PROD-FLEET-001",
+    "LOOP-PROD-ATTEST-001",
+    "LOOP-PROD-AUTH-OPS-001",
+    "LOOP-PROD-FE-EVID-001",
+    "LOOP-PROD-FE-BUILD-001",
+    "LOOP-PROD-SIGNOFF-001",
+    "LOOP-PROD-CLOSE-002"
+  ],
+  "task_doc_contract_source": "tasks.json",
+  "catalog_migrations": [
+    {
+      "id": "loop-product-gap-addendum-v2",
+      "from_catalog_sha256": "2b5183712e7e0d4dbdf21214aaa215b4d16fe186b8c83a7cea5420dea0022b91",
+      "required_live_task_patches": [
+        {
+          "task_id": "LOOP-PROD-AGORA-002",
+          "before_depends_on": [
+            "LOOP-PROD-CONS-001",
+            "LOOP-PROD-ALPHA-001",
+            "AG-GAP-005"
+          ],
+          "append_dependencies": [
+            "LOOP-PROD-ATTEST-001"
+          ]
+        },
+        {
+          "task_id": "LOOP-PROD-MAI-001",
+          "before_depends_on": [
+            "LOOP-PROD-AUTH-001",
+            "LOOP-PROD-001",
+            "LOOP-PROD-002",
+            "LOOP-PROD-REC-001",
+            "LOOP-PROD-TJ-001"
+          ],
+          "append_dependencies": [
+            "LOOP-PROD-WORKER-001"
+          ]
+        }
+      ]
+    }
+  ],
+  "completion_authority": {
+    "task_id": "LOOP-PROD-CLOSE-002",
+    "checkpoint_only_task_ids": [
+      "LOOP-PROD-CLOSE-001"
+    ],
+    "guard_install_task_id": "LOOP-PROD-SIGNOFF-001",
+    "requires_protected_human_ops_verdict": true,
+    "verdict_binding_fields": [
+      "program_id",
+      "catalog_sha256",
+      "closeout_manifest_sha256",
+      "target_environment",
+      "frontend_sha",
+      "bff_sha",
+      "attestation_policy",
+      "actor_id",
+      "actor_role",
+      "decision",
+      "issued_at",
+      "expires_at",
+      "nonce"
+    ]
+  },
   "packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/INDEX.md",
   "status": "ready_for_dispatch_after_merge",
   "merge_targets": {
@@ -52,7 +119,7 @@
     "reviewer must set review_file to the checksummed machine evidence manifest before approval",
     "deploy and verify exact target identity when the task changes a deployed capability"
   ],
-  "task_count": 44,
+  "task_count": 45,
   "tasks": [
     {
       "id": "LOOP-PROD-000",
@@ -3064,12 +3131,20 @@
         "LOOP-PROD-002"
       ],
       "artifacts": [
+        ".gitignore",
+        ".orchestrator/adapters/file_inbox.py",
+        ".orchestrator/dispatch_policy.py",
         ".orchestrator/runtime_state.py",
         ".orchestrator/supervisor.py",
+        ".orchestrator/templates/wakeup.txt",
         ".orchestrator/test_runtime_state.py",
         ".orchestrator/test_supervisor.py",
+        ".orchestrator/test_watch_events.py",
+        ".orchestrator/watch_events.py",
         "scripts/ai_status.py",
+        "scripts/planning_state.py",
         "scripts/test_ai_status.py",
+        "scripts/test_planning_state.py",
         "docs/deployment/evidence/loop-product-level/LOOP-PROD-WORKER-001"
       ],
       "acceptance": [
@@ -3227,14 +3302,15 @@
         "docs/deployment/evidence/loop-product-level/LOOP-PROD-FLEET-001"
       ],
       "acceptance": [
-        "ready owner and reviewer queues have deterministic age and fairness ordering with bounded priority aging",
-        "hot task and signature retries quarantine and cannot monopolize global or per-fleet reservations",
+        "eligible-ready age starts on the first cycle where dependencies are done, the required role and provider are enabled, quota is not paused, and compatible capacity exists; ineligible intervals do not accrue age",
+        "the oldest eligible task is admitted within two compatible-capacity admission opportunities and no task remains eligible for more than ten scheduler cycles or ten minutes, whichever occurs first",
+        "three failures of the same task, role, and payload signature within fifteen minutes quarantine that signature for thirty minutes; one canary retry is allowed after cooldown and a new failure doubles cooldown up to two hours",
         "owner, reviewer, and recovery reservations derive from controller truth and release exactly once",
         "quota reset hints suspend only the affected provider lane and cannot leave sticky cross-task pauses",
         "status exposes ready age, admission reason, retry quarantine, quota reset, and starvation SLO breaches",
-        "restart preserves age and circuit state without replaying stale admission",
+        "restart preserves the original eligibility clock, opportunity count, failure window, and cooldown without replaying stale admission",
         "deterministic mixed-fleet, hot-retry, saturation, quota, restart, cancellation, and corrupt-state tests pass",
-        "a live mutation-free trace serves old ready review work within the declared SLO"
+        "a live mutation-free trace proves the fixed eligibility, two-opportunity, ten-cycle, ten-minute, three-failure, and thirty-minute bounds"
       ],
       "next": "Build the fairness and retry-quarantine policy on the exact worker admission substrate and replay the observed starvation trace.",
       "wave": 1,
@@ -3285,7 +3361,7 @@
     {
       "id": "LOOP-PROD-ATTEST-001",
       "title": "Protected product attestation trust root",
-      "summary_zh": "Protected controller 從 immutable raw artifacts 產生 canonical signed/checksummed attestation；candidate 不可自寫 verdict、pass boolean 或 zero-count assertion。",
+      "summary_zh": "Protected controller 從 immutable raw artifacts 產生 canonical attestation，並以 candidate 無法取得的 asymmetric key 或 platform-protected keyed identity 簽署；unkeyed checksum 只可作為 signed envelope 內的內容摘要。",
       "phase": "Loop Product-Level Remediation / Addendum Wave 1",
       "owner": "Codex2",
       "reviewer": "Codex",
@@ -3303,7 +3379,8 @@
         "docs/deployment/evidence/loop-product-level/LOOP-PROD-ATTEST-001"
       ],
       "acceptance": [
-        "protected controller derives assertions from immutable raw artifacts and canonicalizes the manifest",
+        "protected controller derives assertions from immutable raw artifacts, canonicalizes the manifest, and authenticates it with an asymmetric signature or platform-protected keyed identity unavailable to candidate processes",
+        "unkeyed checksums are content-integrity digests inside the authenticated envelope and are never accepted as provenance or authorization",
         "manifest binds exact repository, candidate, base, deployed SHAs, run, job, attempt, target, lease, policy, digests, timestamps, and expiry",
         "candidate fields cannot override verdict, expected counts, policy, signer, or provenance",
         "tamper, replay, omission, wrong identity, stale expiry, unknown key or policy, duplicate, and contradicted evidence fail closed",
@@ -3450,13 +3527,20 @@
         "LOOP-PROD-MAI-002"
       ],
       "artifacts": [
+        "execute-plans/.github/workflows/pantheon-integration-gate.yml",
+        "execute-plans/.github/workflows/pantheon-dev-fe-deploy.yml",
+        "execute-plans/scripts/aggregate-release-gate.mjs",
+        "execute-plans/scripts/deploy-dev-vm.sh",
+        "execute-plans/scripts/release-identity.mjs",
         "execute-plans/scripts/release-gate-contract/evidence-contract.mjs",
         "execute-plans/scripts/release-gate-contract/schema.mjs",
         "execute-plans/src/test/release-gate-evidence-contract.test.ts",
         "execute-plans/docs/04/loop-product-level/LOOP-PROD-FE-EVID-001"
       ],
       "acceptance": [
-        "release gate consumes canonical protected attestation without a candidate override path",
+        "pantheon-integration-gate and pantheon-dev-fe-deploy both consume the protected attestation contract without candidate override before release or deployment",
+        "the candidate-side verifier only verifies provenance and bindings; it cannot mint the verdict, choose the protected signer or policy, or substitute a candidate-controlled artifact path",
+        "the protected Pantheon controller identity and immutable run, job, artifact, and digest are pinned at the workflow boundary",
         "exact FE and BFF SHAs, run, job, attempt, target, lease, digests, policy, signer, issued time, and expiry are mandatory",
         "tamper, replay, omission, wrong identity, stale, unknown signer or policy, duplicate, and extra assertion fail before deploy",
         "candidate-authored pass booleans, zero counters, fixtures, snapshots, and unsigned manifests are rejected",
@@ -3589,9 +3673,90 @@
       "requires_human_ops_signoff": false
     },
     {
+      "id": "LOOP-PROD-SIGNOFF-001",
+      "title": "Protected Human/Ops completion verdict enforcement",
+      "summary_zh": "在 final closeout 前安裝機器守門：所有 requires_human_ops_signoff 任務必須有受保護、可撤銷、不可重播且綁定 exact catalog、manifest、target 與部署 identity 的 Human/Ops 判決；fleet 不得自行簽發。",
+      "phase": "Loop Product-Level Remediation / Addendum Wave 4",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-CLOSE-001",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-ATTEST-001"
+      ],
+      "artifacts": [
+        "services/control-plane/governance/product_closeout_verdict.py",
+        "services/control-plane/governance/product_closeout_verdict.schema.json",
+        "services/control-plane/governance/test_product_closeout_verdict.py",
+        "services/control-plane/bff/product_closeout_verdict.py",
+        "services/control-plane/bff/test_product_closeout_verdict.py",
+        "scripts/loop_done_guardrail.py",
+        "scripts/test_loop_done_guardrail.py",
+        "scripts/ai_status.py",
+        "scripts/test_ai_status.py",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-SIGNOFF-001"
+      ],
+      "acceptance": [
+        "catalog validation requires a boolean requires_human_ops_signoff field on every task and names exactly one completion authority plus checkpoint-only tasks",
+        "a protected server-side verdict can be created only by an authenticated authorized Human or Ops actor and never by a candidate artifact, fleet worker, repository secret, or self-authored JSON file",
+        "each verdict binds program, exact catalog digest, task, protected closeout-manifest digest, target, FE and BFF identities, attestation policy, actor, role, decision, issued time, expiry, and nonce",
+        "review-approved to done and final program completion fail closed when any required verdict is missing, rejected, revoked, replayed, stale, unauthorized, or bound to another task, catalog, manifest, target, or deployment",
+        "the final authority re-verifies protected attestation and every task marked requires_human_ops_signoff, including already-completed baseline checkpoints",
+        "LOOP-PROD-CLOSE-001 is exposed only as a checkpoint and cannot become program completion authority",
+        "tamper, replay, wrong actor or role, wrong task or SHA, stale, revoked, rejection, duplicate nonce, concurrent decision, and direct state-edit negative tests pass",
+        "append-only audit records identify actor, authorization decision, exact bindings, revocation state, and stable redacted failure reason"
+      ],
+      "next": "Install and adversarially verify the protected Human or Ops verdict guard before the final completion authority can start.",
+      "wave": 4,
+      "fleet_lane": "protected-human-ops-signoff",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "bff_health_monitoring",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "signoff metadata exists but no protected transition-time enforcement consumes it",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "catalog completion-authority contract",
+        "protected Human or Ops verdict policy",
+        "transition-time product closeout guard"
+      ],
+      "actual_state_sources": [
+        "authenticated governance decision records",
+        "protected closeout manifests and attestations",
+        "task transition and revocation audit log"
+      ],
+      "proof_required": [
+        "schema, authorization, signature, binding, expiry, revocation, and concurrency tests",
+        "negative direct state-transition and candidate self-signing evidence",
+        "checkpoint-only and unique final-authority readback",
+        "merged PR, merge SHA, checks, independent review, and checksummed evidence"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "fleet workers may assemble a verdict request but cannot issue, approve, revoke, or forge the protected decision",
+        "missing Human or Ops authority remains an explicit blocker and never falls back to metadata or a candidate file",
+        "reviewer must prove every negative against the exact protected transition path"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SIGNOFF-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-SIGNOFF-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
       "id": "LOOP-PROD-CLOSE-002",
-      "title": "Additive final 44-task product closeout",
-      "summary_zh": "從 clean target-dev 重跑 baseline 四大 scenarios 與 additive safety matrix；44 個 primary tasks、protected evidence、strict auth ops、fleet fairness、worker/lease integrity 與 warning-free frontend 全部通過才完成。",
+      "title": "Additive final 45-task product closeout",
+      "summary_zh": "從 clean target-dev 重跑 baseline 四大 scenarios 與 additive safety matrix；其餘 44 個 primary tasks、protected evidence、strict auth ops、fleet fairness、worker/lease integrity、受保護簽核與 warning-free frontend 全部通過後，guarded finalization 才可完成第 45 個任務。",
       "phase": "Loop Product-Level Remediation / Wave 5",
       "owner": "Codex2",
       "reviewer": "Codex",
@@ -3604,14 +3769,15 @@
         "LOOP-PROD-ATTEST-001",
         "LOOP-PROD-AUTH-OPS-001",
         "LOOP-PROD-FE-EVID-001",
-        "LOOP-PROD-FE-BUILD-001"
+        "LOOP-PROD-FE-BUILD-001",
+        "LOOP-PROD-SIGNOFF-001"
       ],
       "artifacts": [
         "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/closeout",
         "docs/deployment/evidence/loop-product-level/LOOP-PROD-CLOSE-002"
       ],
       "acceptance": [
-        "all 44 primary tasks and required external dependencies are done with no weaker substitute outcome",
+        "the other 44 primary tasks and every required external dependency are done with no weaker substitute outcome; successful protected guarded finalization transitions the 45th task",
         "Knowledge, Execution, Human Interaction, and Management Repair scenarios pass from clean target-dev",
         "worker exact CAS, zero-member cleanup, environment lease, scheduler starvation, and corrupt-state matrices pass",
         "every accepted assertion verifies the protected trust root and exact FE, BFF, run, job, target, and lease identities",
@@ -3619,6 +3785,7 @@
         "final execute-plans build and hosted desktop and mobile qualification are warning-free and within explicit budgets",
         "twelve canonical loops plus OODA have fresh controller truth, terminal readback, recovery evidence, and no registry-only maturity",
         "exact deliveries, deployments, attestations, reviews, and residual risks are archived",
+        "the protected completion guard verifies an authenticated, current, non-revoked Human or Ops approval bound to the exact catalog, closeout manifest, target, and deployed identities",
         "independent Human or Ops accepts zero unresolved blocking product risk"
       ],
       "next": "Run the clean additive global product drill and close only after protected evidence and independent Human or Ops acceptance prove zero blocking risk.",
@@ -3645,7 +3812,7 @@
       "target_maturity": "product-level",
       "desired_state_sources": [
         "baseline master plan and additive gap addendum",
-        "all 44 primary and external task evidence",
+        "all other 44 primary and external task evidence",
         "clean target-dev scenario and additive adversarial specifications"
       ],
       "actual_state_sources": [

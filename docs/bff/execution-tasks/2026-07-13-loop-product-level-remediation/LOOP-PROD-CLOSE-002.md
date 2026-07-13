@@ -1,8 +1,12 @@
-# LOOP-PROD-CLOSE-002 — Additive final 44-task product closeout
+# LOOP-PROD-CLOSE-002 — Additive final 45-task product closeout
 
 Status: final program gate; starts only after every dependency is done
 
 Canonical catalog: `tasks.json`
+
+Canonical contract SHA-256: `d6d5ac4172b21c17dcb054f0ee7d773bd560db906167320217d9dee7a91ec330`
+The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+the prose sections below are explanatory renderings.
 
 Source addendum:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
@@ -23,10 +27,10 @@ Source addendum:
 
 ## Product outcome
 
-以 clean target-dev 重跑完整四大 scenarios 與 additive safety matrix；只有 44 個
+以 clean target-dev 重跑完整四大 scenarios 與 additive safety matrix；其餘 44 個
 primary tasks、所有 external dependencies、protected attestation、strict auth ops、
-fleet fairness、worker/lease integrity 與 warning-free frontend 全部通過，program
-才可宣告完成。
+fleet fairness、worker/lease integrity、受保護簽核與 warning-free frontend 全部
+通過後，guarded finalization 才可完成第 45 個任務並宣告 program 完成。
 
 ## Dependencies
 
@@ -38,6 +42,7 @@ fleet fairness、worker/lease integrity 與 warning-free frontend 全部通過�
 - `LOOP-PROD-AUTH-OPS-001`
 - `LOOP-PROD-FE-EVID-001`
 - `LOOP-PROD-FE-BUILD-001`
+- `LOOP-PROD-SIGNOFF-001`
 
 ## Loop scope
 
@@ -62,7 +67,7 @@ fleet fairness、worker/lease integrity 與 warning-free frontend 全部通過�
 
 ## Acceptance
 
-- all 44 primary tasks and every required external dependency are done; superseded, cancelled, missing, or weaker substitute outcomes fail
+- the other 44 primary tasks and every required external dependency are done with no weaker substitute outcome; successful protected guarded finalization transitions the 45th task
 - baseline Knowledge, Execution, Human Interaction, and Management Repair scenarios pass from a clean target-dev baseline
 - worker exact-CAS, process/payload zero-member, environment lease, scheduler starvation, and corrupt-state matrices pass
 - every accepted assertion verifies the protected trust root and exact FE/BFF/run/job/target/lease identities
@@ -70,6 +75,7 @@ fleet fairness、worker/lease integrity 與 warning-free frontend 全部通過�
 - final execute-plans build and hosted desktop/mobile qualification are warning-free and within explicit bundle/performance/accessibility budgets
 - twelve canonical loops plus OODA overlay have fresh controller truth, real terminal readback, restart/duplicate/failure evidence, and no registry-only maturity
 - exact PRs, checks, merge/deploy identities, manifests, attestations, reviewer verdicts, residual risks, owners, and expiries are archived
+- the protected completion guard verifies an authenticated, current, non-revoked Human or Ops approval bound to the exact catalog, closeout manifest, target, and deployed identities
 - independent Human/Ops accepts zero unresolved blocking product risk
 
 ## Required proof

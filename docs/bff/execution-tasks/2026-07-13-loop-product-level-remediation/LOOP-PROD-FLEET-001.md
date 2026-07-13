@@ -4,6 +4,10 @@ Status: ready for fleet dispatch after dependencies are done
 
 Canonical catalog: `tasks.json`
 
+Canonical contract SHA-256: `718504a73fe203e2e99acb524231d79475db0c6a6cedb61295c5ab2554d50812`
+The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+the prose sections below are explanatory renderings.
+
 Source addendum:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
 
@@ -45,14 +49,15 @@ loop work or make capacity telemetry lie.
 
 ## Acceptance
 
-- ready owner and reviewer queues have deterministic age/fairness ordering with bounded priority aging
-- hot task/signature retries trip a circuit breaker or quarantine and cannot monopolize global or per-fleet reservations
-- owner, reviewer, and recovery reservations are counted from controller truth and released exactly once
-- quota reset hints suspend only the affected provider/lane and resume without sticky pauses or cross-task mutation
-- status exposes ready age, admission reason, retry quarantine, quota reset, and starvation-SLO breach
-- restart preserves fairness age and circuit state without replaying a stale admission
-- deterministic tests cover hot retry, old review, saturated owner, quota pause, mixed fleets, restart, cancellation, and corrupt state
-- a live dry-run trace demonstrates an old ready review enters service within the declared SLO
+- eligible-ready age starts on the first cycle where dependencies are done, the required role and provider are enabled, quota is not paused, and compatible capacity exists; ineligible intervals do not accrue age
+- the oldest eligible task is admitted within two compatible-capacity admission opportunities and no task remains eligible for more than ten scheduler cycles or ten minutes, whichever occurs first
+- three failures of the same task, role, and payload signature within fifteen minutes quarantine that signature for thirty minutes; one canary retry is allowed after cooldown and a new failure doubles cooldown up to two hours
+- owner, reviewer, and recovery reservations derive from controller truth and release exactly once
+- quota reset hints suspend only the affected provider lane and cannot leave sticky cross-task pauses
+- status exposes ready age, admission reason, retry quarantine, quota reset, and starvation SLO breaches
+- restart preserves the original eligibility clock, opportunity count, failure window, and cooldown without replaying stale admission
+- deterministic mixed-fleet, hot-retry, saturation, quota, restart, cancellation, and corrupt-state tests pass
+- a live mutation-free trace proves the fixed eligibility, two-opportunity, ten-cycle, ten-minute, three-failure, and thirty-minute bounds
 
 ## Required proof
 

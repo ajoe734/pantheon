@@ -4,6 +4,10 @@ Status: ready for fleet dispatch after the additive packet is merged
 
 Canonical catalog: `tasks.json`
 
+Canonical contract SHA-256: `6d92e9ebe8b808450a4a6a863b77302814983817c53706c3853b853a52b01c42`
+The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+the prose sections below are explanatory renderings.
+
 Source addendum:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
 
@@ -43,12 +47,20 @@ Only `done` satisfies a dependency.
 
 ## Declared artifacts
 
+- `.gitignore`
+- `.orchestrator/adapters/file_inbox.py`
+- `.orchestrator/dispatch_policy.py`
 - `.orchestrator/runtime_state.py`
 - `.orchestrator/supervisor.py`
+- `.orchestrator/templates/wakeup.txt`
 - `.orchestrator/test_runtime_state.py`
 - `.orchestrator/test_supervisor.py`
+- `.orchestrator/test_watch_events.py`
+- `.orchestrator/watch_events.py`
 - `scripts/ai_status.py`
+- `scripts/planning_state.py`
 - `scripts/test_ai_status.py`
+- `scripts/test_planning_state.py`
 - `docs/deployment/evidence/loop-product-level/LOOP-PROD-WORKER-001`
 
 ## Acceptance

@@ -4,6 +4,10 @@ Status: requires ordinary fleet work plus authorized Human/Ops provisioning
 
 Canonical catalog: `tasks.json`
 
+Canonical contract SHA-256: `98a5b0d0d8428f35b63ee5db0484cd7dccddeb0584cc53c284f8c2f749b91dfa`
+The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+the prose sections below are explanatory renderings.
+
 Source addendum:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
 

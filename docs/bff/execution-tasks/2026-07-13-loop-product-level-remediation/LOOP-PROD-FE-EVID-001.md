@@ -4,6 +4,10 @@ Status: ready for fleet dispatch after dependencies are done
 
 Canonical catalog: `tasks.json`
 
+Canonical contract SHA-256: `37ccd7dc552c2635a03c581f4d5bc6220867a5dedd3f5b96c9c92001508075c1`
+The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+the prose sections below are explanatory renderings.
+
 Source addendum:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
 
@@ -40,6 +44,11 @@ execute-plans release gate 只接受 Pantheon protected controller attestation�
 
 ## Declared artifacts
 
+- `execute-plans/.github/workflows/pantheon-integration-gate.yml`
+- `execute-plans/.github/workflows/pantheon-dev-fe-deploy.yml`
+- `execute-plans/scripts/aggregate-release-gate.mjs`
+- `execute-plans/scripts/deploy-dev-vm.sh`
+- `execute-plans/scripts/release-identity.mjs`
 - `execute-plans/scripts/release-gate-contract/evidence-contract.mjs`
 - `execute-plans/scripts/release-gate-contract/schema.mjs`
 - `execute-plans/src/test/release-gate-evidence-contract.test.ts`
@@ -47,7 +56,9 @@ execute-plans release gate 只接受 Pantheon protected controller attestation�
 
 ## Acceptance
 
-- release gate consumes the canonical protected-attestation schema and verifier result without a candidate override path
+- pantheon-integration-gate and pantheon-dev-fe-deploy both consume the protected attestation contract without candidate override before release or deployment
+- the candidate-side verifier only verifies provenance and bindings; it cannot mint the verdict, choose the protected signer or policy, or substitute a candidate-controlled artifact path
+- the protected Pantheon controller identity and immutable run, job, artifact, and digest are pinned at the workflow boundary
 - exact FE SHA, BFF SHA, run/job/attempt, target, lease, artifact digest, policy, signer, issued time, and expiry are mandatory
 - tamper, replay, omission, wrong SHA/BFF/run/job/lease/target, stale, unknown signer/policy, duplicate assertion, and unexpected extra assertion fail before deploy
 - candidate-authored pass booleans, zero counters, fixtures, snapshots, and unsigned manifests are explicitly rejected

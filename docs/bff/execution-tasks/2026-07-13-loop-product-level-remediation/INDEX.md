@@ -18,7 +18,7 @@ Dispatcher tests:
 
 ## Product contract
 
-This packet contains 44 primary execution tasks. It is a build-and-proof DAG,
+This packet contains 45 primary execution tasks. It is a build-and-proof DAG,
 not a checklist that can be closed from component tests. The program remains
 active until the twelve canonical L1 loops plus the Per-Persona OODA composite
 overlay have default runtime ownership, real canonical effects or explicit
@@ -64,7 +64,7 @@ baseline.
 | G3 | duplicate/lease/timeout/DLQ/replay and worker/BFF/DB/full-stack recovery; controller truth, not registry metadata |
 | G4 | Knowledge, Execution, Human Interaction, and Management Repair target-dev paths |
 | G5 | authenticated desktop/mobile, strict performance, accessibility, SSE recovery, degraded/error, RBAC/tenant/MFA/two-person matrix |
-| G6 | checksummed machine evidence, exact PR/merge/deploy identities, independent review, evidence-derived maturity, zero blocking risk |
+| G6 | protected signed attestations with checksums only as in-envelope content digests, exact PR/merge/deploy identities, independent review, protected Human/Ops verdict, evidence-derived maturity, zero blocking risk |
 
 ## Primary DAG
 
@@ -127,7 +127,7 @@ baseline.
 
 | Task | Owner / reviewer | Repo | True dependencies | Outcome |
 | --- | --- | --- | --- | --- |
-| [LOOP-PROD-CLOSE-001](LOOP-PROD-CLOSE-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-002`<br>`LOOP-PROD-AUTH-001`<br>`LOOP-PROD-FE-001`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-VERIFY-KNOW-001`<br>`LOOP-PROD-VERIFY-EXEC-001`<br>`LOOP-PROD-VERIFY-HUMAN-001`<br>`LOOP-PROD-VERIFY-OODA-001`<br>`LOOP-PROD-PPL-001`<br>`LOOP-PROD-TJ-003`<br>`LOOP-PROD-PINT-001`<br>`LOOP-PROD-MAI-003` | Global 12-loop plus OODA product closeout |
+| [LOOP-PROD-CLOSE-001](LOOP-PROD-CLOSE-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-002`<br>`LOOP-PROD-AUTH-001`<br>`LOOP-PROD-FE-001`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-VERIFY-KNOW-001`<br>`LOOP-PROD-VERIFY-EXEC-001`<br>`LOOP-PROD-VERIFY-HUMAN-001`<br>`LOOP-PROD-VERIFY-OODA-001`<br>`LOOP-PROD-PPL-001`<br>`LOOP-PROD-TJ-003`<br>`LOOP-PROD-PINT-001`<br>`LOOP-PROD-MAI-003` | Baseline 12-loop plus OODA product checkpoint only |
 
 `LOOP-PROD-CLOSE-001` is retained because the baseline record may already be
 live. It is a checkpoint, not the final program verdict after this addendum.
@@ -149,11 +149,17 @@ live. It is a checkpoint, not the final program verdict after this addendum.
 | [LOOP-PROD-FE-EVID-001](LOOP-PROD-FE-EVID-001.md) | Codex2 / Codex | `execute-plans` | `LOOP-PROD-FE-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AGORA-003`<br>`LOOP-PROD-TJ-002`<br>`LOOP-PROD-MAI-002` | Fail-closed protected-attestation consumer |
 | [LOOP-PROD-FE-BUILD-001](LOOP-PROD-FE-BUILD-001.md) | Codex / Codex2 | `execute-plans` | `LOOP-PROD-FE-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-AGORA-003`<br>`LOOP-PROD-TJ-002`<br>`LOOP-PROD-MAI-002` | Warning-free, budgeted live/strict product build |
 
+### Addendum Wave 4 — Protected Human/Ops completion guard
+
+| Task | Owner / reviewer | Repo | True dependencies | Outcome |
+| --- | --- | --- | --- | --- |
+| [LOOP-PROD-SIGNOFF-001](LOOP-PROD-SIGNOFF-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-CLOSE-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-ATTEST-001` | Protected Human/Ops completion-verdict enforcement |
+
 ### Wave 5 — Additive final program closeout
 
 | Task | Owner / reviewer | Repo | True dependencies | Outcome |
 | --- | --- | --- | --- | --- |
-| [LOOP-PROD-CLOSE-002](LOOP-PROD-CLOSE-002.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-CLOSE-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-FLEET-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AUTH-OPS-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-FE-BUILD-001` | Sole final 44-task product verdict |
+| [LOOP-PROD-CLOSE-002](LOOP-PROD-CLOSE-002.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-CLOSE-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-FLEET-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AUTH-OPS-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-FE-BUILD-001`<br>`LOOP-PROD-SIGNOFF-001` | Sole final 45-task product verdict |
 
 Wave 1 deliberately carries additional delivery dependencies between tasks
 that share the root `docker-compose.yml` integration surface. Those edges
@@ -265,7 +271,11 @@ results, and residual risks. User-visible tasks additionally require hosted
 zero, keyboard/focus/reduced-motion, `FE_INT_GATE_PERF_STRICT=1`, and no
 unexpected console, CORS, chunk, or BFF errors.
 
+An unkeyed evidence checksum proves content integrity only. Program acceptance
+also requires the protected controller attestation: an asymmetric signature or
+platform-protected keyed identity over the bound manifest and its digests.
+
 The baseline `LOOP-PROD-CLOSE-001` checkpoint cannot declare program
 completion. The final `LOOP-PROD-CLOSE-002` task requires an independent
-Human/Ops verdict and zero unresolved blocking product risk across all 44
+Human/Ops verdict and zero unresolved blocking product risk across all 45
 tasks.

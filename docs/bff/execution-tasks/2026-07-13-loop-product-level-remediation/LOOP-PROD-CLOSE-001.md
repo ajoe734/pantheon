@@ -1,4 +1,8 @@
-# LOOP-PROD-CLOSE-001 — Global 12-loop plus OODA product closeout
+# LOOP-PROD-CLOSE-001 — Baseline 12-loop plus OODA product checkpoint
+
+> Program-control overlay: this preserved baseline task is checkpoint-only.
+> `LOOP-PROD-CLOSE-002` is the sole completion authority and cannot finish until
+> `LOOP-PROD-SIGNOFF-001` has installed protected Human/Ops verdict enforcement.
 
 Status: ready for fleet dispatch after the program packet is merged
 
@@ -22,6 +26,9 @@ Source plan:
 | Human/Ops final sign-off | required |
 
 ## Product outcome
+
+This task closes the original 36-task baseline evidence set only. Its `done`
+state is necessary but never sufficient for completion of the additive program.
 
 從 clean target-dev 重跑四大 scenarios；12 canonical loops 加 OODA overlay 全部要有 current controller records、無 registry-only truth，maturity 僅由 evidence 推導，並取得獨立 Human/Ops verdict。
 
@@ -121,6 +128,8 @@ checksummed machine evidence manifest under:
 - No live-capital or live-broker side effect
 
 ## Dispatch and closeout rules
+
+- publish only a baseline checkpoint verdict; never publish program completion
 
 - start only after every dependency is done; superseded does not satisfy a dependency
 - use one clean task worktree in the declared repository and merge to dev through a reviewed PR
