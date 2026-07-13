@@ -213,6 +213,14 @@ def _client(
     return TestClient(app)
 
 
+def _seq_timestamp(offset_seconds: int) -> str:
+    """Deterministic strictly-increasing ISO timestamp for pagination fixtures."""
+    hour = 9 + offset_seconds // 3600
+    minute = (offset_seconds % 3600) // 60
+    second = offset_seconds % 60
+    return f"2026-06-22T{hour:02d}:{minute:02d}:{second:02d}Z"
+
+
 def _ready_workshop_store(
     *,
     user_id: str = "user-001",
@@ -684,7 +692,8 @@ def _workspace_schema_validate(payload: dict) -> None:
     schema_path = Path(_WORKSPACE_SCHEMA_PATH).resolve()
     with schema_path.open() as f:
         schema = json.load(f)
-    chart_schema_path = schema_path.parent / "v2" / "chart_spec_v1.schema.json"
+    agora_dir = schema_path.parent if schema_path.parent.name != "v8" else schema_path.parent.parent
+    chart_schema_path = agora_dir / "v2" / "chart_spec_v1.schema.json"
     with chart_schema_path.open() as f:
         chart_schema = json.load(f)
     resolver = jsonschema.RefResolver(
@@ -908,6 +917,142 @@ def test_workspace_proposal_derives_full_from_real_scoped_workshop_session():
     print("✅ workspace proposal: real scoped workshop session for the caller's own tenant/user reports full")
 
 
+def test_workspace_proposal_forged_evidence_refs_are_ignored():
+    """AG-UIPOL-003 review round-3 item 1: a caller cannot forge `full`
+    availability by supplying evidenceRefs that don't correspond to any real
+    evidence ref in the scoped ready readiness assessment. Only evidence refs
+    that match a real `ref_id` on the ready session's assessment count."""
+    store = make_trading_room_store()
+    workshop_store = _ready_workshop_store()  # real evidence ref_id is ev-ws-ready-001
+    client = _client(store, workshop_store=workshop_store)
+
+    forged = client.post(
+        "/bff/agora/strategies/strat-ready-001/trading-room/proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
+        json={"strategyVersion": "V4", "evidenceRefs": ["totally-forged-ref-001", "another-forged-ref"]},
+    )
+    assert forged.status_code == 201, forged.text
+    forged_generator = forged.json()["meta"]["generator"]
+    assert forged_generator["dataFreshness"]["agora.research.evidence_refs"]["rowCount"] == 0
+
+    forged_proposal = forged.json()["data"]
+    evidence_widget = next(
+        widget
+        for view in forged_proposal["views"]
+        for widget in view["widgets"]
+        if widget["dataSource"] == "agora.research.evidence_refs"
+    )
+    assert evidence_widget["dataAvailability"] != "full"
+
+    genuine = client.post(
+        "/bff/agora/strategies/strat-ready-001/trading-room/proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
+        json={"strategyVersion": "V4", "evidenceRefs": ["ev-ws-ready-001", "totally-forged-ref-001"]},
+    )
+    assert genuine.status_code == 201, genuine.text
+    assert genuine.json()["meta"]["generator"]["dataFreshness"]["agora.research.evidence_refs"]["rowCount"] == 1
+    print("✅ workspace proposal: forged evidenceRefs are ignored; only real scoped evidence refs count")
+
+
+def test_workspace_proposal_non_ready_session_does_not_report_full_strategy_summary():
+    """AG-UIPOL-003 review round-3 item 1: a workshop session that exists for
+    the requested strategy_id but has not reached the trading_room readiness
+    gate must not report `agora.strategy.summary` as full. Existence alone is
+    not readiness."""
+    workshop_store = MemoryWorkshopStore()
+    workshop_store.create_session({
+        "workshop_id": "ws-not-ready-001",
+        "tenant_id": "tenant-001",
+        "user_id": "user-001",
+        "strategy_id": "strat-not-ready-001",
+        "status": "open",
+    })
+
+    store = make_trading_room_store()
+    client = _client(store, workshop_store=workshop_store)
+    resp = client.post(
+        "/bff/agora/strategies/strat-not-ready-001/trading-room/proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
+        json={"strategyVersion": "V4"},
+    )
+    assert resp.status_code == 201, resp.text
+    generator = resp.json()["meta"]["generator"]
+    assert generator["dataFreshness"]["agora.strategy.summary"]["rowCount"] == 0
+
+    proposal = resp.json()["data"]
+    strategy_summary_widget = next(
+        widget
+        for view in proposal["views"]
+        for widget in view["widgets"]
+        if widget["dataSource"] == "agora.strategy.summary"
+    )
+    assert strategy_summary_widget["dataAvailability"] != "full"
+    print("✅ workspace proposal: an existing-but-not-ready workshop session does not report full")
+
+
+def test_workspace_proposal_strategy_summary_paginates_across_all_sessions():
+    """AG-UIPOL-003 review round-3 item 1: a real ready session for the
+    requested strategy_id must be found even when it is not on the first
+    list_sessions() page.
+
+    Regression: `_workspace_data_freshness` previously called
+    `workshop_store.list_sessions(limit=100)` once and discarded
+    `next_cursor`, silently missing a real ready session beyond the first
+    page of an operator's sessions.
+    """
+    workshop_store = MemoryWorkshopStore()
+    for i in range(120):
+        workshop_store.create_session({
+            "workshop_id": f"ws-filler-{i:03d}",
+            "tenant_id": "tenant-001",
+            "user_id": "user-001",
+            "strategy_id": f"strat-filler-{i:03d}",
+            "status": "open",
+            "created_at": _seq_timestamp(i),
+        })
+    workshop_store.create_session({
+        "workshop_id": "ws-paged-ready-001",
+        "tenant_id": "tenant-001",
+        "user_id": "user-001",
+        "strategy_id": "strat-paged-ready-001",
+        "active_strategy_spec_registry_id": "strat-paged-ready-001",
+        "selected_version_id": "wv-paged-ready-001",
+        "status": "open",
+        "created_at": _seq_timestamp(500),
+    })
+    workshop_store.create_readiness_assessment({
+        "assessment_id": "ready-ws-paged-ready-001",
+        "workshop_id": "ws-paged-ready-001",
+        "strategy_id": "strat-paged-ready-001",
+        "workshop_version_id": "wv-paged-ready-001",
+        "strategy_spec_registry_id": "strat-paged-ready-001",
+        "assessment_version": 1,
+        "highest_ready_gate": "trading_room",
+        "gates": [
+            {"gate": "preliminary_research", "state": "ready", "requirements": []},
+            {"gate": "full_validation", "state": "ready", "requirements": []},
+            {"gate": "trading_room", "state": "ready", "requirements": []},
+        ],
+        "evidence_refs": [
+            {"ref_type": "evidence_bundle", "ref_id": "ev-ws-paged-ready-001", "summary": "Paged ready proof"},
+        ],
+        "assessed_at": "2026-06-22T09:59:00Z",
+    })
+
+    store = make_trading_room_store()
+    client = _client(store, workshop_store=workshop_store)
+    resp = client.post(
+        "/bff/agora/strategies/strat-paged-ready-001/trading-room/proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
+        json={"strategyVersion": "V4", "evidenceRefs": ["ev-ws-paged-ready-001"]},
+    )
+    assert resp.status_code == 201, resp.text
+    generator = resp.json()["meta"]["generator"]
+    assert generator["dataFreshness"]["agora.strategy.summary"]["rowCount"] == 1
+    assert generator["dataFreshness"]["agora.research.evidence_refs"]["rowCount"] == 1
+    print("✅ workspace proposal: strategy-summary/evidence-refs lookup paginates past the first list_sessions page")
+
+
 def test_workspace_proposal_get_and_accept_materializes_active_workspace():
     store = make_trading_room_store()
     client = _client(store)
@@ -996,6 +1141,66 @@ def test_workspace_layout_requires_etag_and_supports_remove_restore():
     assert overview["widgetCount"] == len(overview["widgets"])
     assert any(w["id"] == "overview_candidate_funnel_layout_copy" for w in overview["widgets"])
     print("✅ workspace layout: ETag, stale-write, remove, and restore semantics")
+
+
+def test_workspace_layout_add_registered_widget_requires_data_availability():
+    """AG-UIPOL-003 review round-3 item 2: the add_registered_widget layout
+    op must reject a widgetSpec with missing dataAvailability and normalize
+    legacy complete/unavailable values, instead of silently persisting
+    whatever the caller sent.
+
+    Regression: `_apply_workspace_layout_ops` previously appended the new
+    widget to the view without validating dataAvailability at all on this
+    path (HTTP 200 for a widget with no dataAvailability field).
+    """
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+    view_id = workspace["views"][0]["id"]
+
+    widget_no_availability = dict(workspace["views"][0]["widgets"][0])
+    widget_no_availability["id"] = "custom_layout_no_availability"
+    del widget_no_availability["dataAvailability"]
+    missing_resp = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/layout",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-layout-add-no-avail"},
+        json={
+            "operations": [
+                {
+                    "kind": "add_registered_widget",
+                    "payload": {"viewId": view_id, "widgetSpec": widget_no_availability},
+                }
+            ]
+        },
+    )
+    assert missing_resp.status_code == 422, missing_resp.text
+    assert "dataAvailability" in missing_resp.text
+
+    widget_legacy = dict(workspace["views"][0]["widgets"][0])
+    widget_legacy["id"] = "custom_layout_legacy_availability"
+    widget_legacy["dataAvailability"] = "unavailable"
+    legacy_resp = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/layout",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-layout-add-legacy-avail"},
+        json={
+            "operations": [
+                {
+                    "kind": "add_registered_widget",
+                    "payload": {"viewId": view_id, "widgetSpec": widget_legacy},
+                }
+            ]
+        },
+    )
+    assert legacy_resp.status_code == 200, legacy_resp.text
+    added = next(
+        w
+        for v in legacy_resp.json()["data"]["views"]
+        for w in v["widgets"]
+        if w["id"] == "custom_layout_legacy_availability"
+    )
+    assert added["dataAvailability"] == "missing"
+    print("✅ workspace layout add_registered_widget: dataAvailability required and legacy values normalized")
 
 
 def test_workspace_view_and_widget_mutations_are_registry_validated():
@@ -1090,6 +1295,57 @@ def test_workspace_widget_mutation_requires_and_normalizes_data_availability():
     )
     assert patched["dataAvailability"] == "full"
     print("✅ workspace widget mutation: dataAvailability required and legacy values normalized")
+
+
+def test_workspace_load_normalizes_legacy_availability_for_unrelated_mutations():
+    """AG-UIPOL-003 review round-3 item 3: a persisted pre-rename
+    complete/unavailable dataAvailability value on one widget must not 422 a
+    PATCH on a different, unrelated widget in the same workspace.
+
+    Regression: `_load_workspace_for_identity` previously returned the raw
+    stored record; a literal legacy value surviving into
+    `_validate_widget`'s full-widget revalidation on an unrelated PATCH
+    failed the current full/partial/missing enum check.
+    """
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+
+    legacy_widget_id = "overview_candidate_funnel"
+    other_widget_id = "overview_strategy_health"
+
+    raw = json.loads(json.dumps(workspace))
+    for widget in raw["views"][0]["widgets"]:
+        if widget["id"] == legacy_widget_id:
+            widget["dataAvailability"] = "complete"
+    store.upsert_workspace(raw, tenant_id="tenant-001", user_id="user-001")
+
+    fresh = client.get(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}",
+        headers={"Authorization": "Bearer test"},
+    )
+    assert fresh.status_code == 200, fresh.text
+    legacy_widget = next(
+        w for v in fresh.json()["data"]["views"] for w in v["widgets"] if w["id"] == legacy_widget_id
+    )
+    assert legacy_widget["dataAvailability"] == "full"
+
+    patch = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{other_widget_id}",
+        headers={
+            "Authorization": "Bearer test",
+            "If-Match": fresh.headers["etag"],
+            "Idempotency-Key": "idem-unrelated-legacy-patch",
+        },
+        json={"patch": {"title": "Renamed unrelated widget"}},
+    )
+    assert patch.status_code == 200, patch.text
+    patched_other = next(
+        w for v in patch.json()["data"]["views"] for w in v["widgets"] if w["id"] == other_widget_id
+    )
+    assert patched_other["title"] == "Renamed unrelated widget"
+    print("✅ workspace load: legacy dataAvailability normalizes so an unrelated widget PATCH does not 422")
 
 
 def test_workspace_rejects_servant_direct_patch_and_code_injection():
@@ -1245,6 +1501,72 @@ def test_widget_revision_proposal_normalizes_legacy_complete_unavailable_values(
     print("✅ widget revision: legacy complete/unavailable values normalize to full/missing")
 
 
+def test_widget_revision_accept_normalizes_legacy_availability_elsewhere_in_view():
+    """AG-UIPOL-003 review round-3 item 3: a legacy complete/unavailable
+    value persisted on a DIFFERENT widget in the same view must not 422 an
+    otherwise-unrelated widget-revision-proposal accept.
+
+    Regression: `accept_widget_revision_proposal` revalidates the whole
+    updated view; a sibling widget's raw pre-rename literal value failed the
+    full/partial/missing enum check even though the proposal never touched
+    that widget.
+    """
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+    widget = next(w for v in workspace["views"] for w in v["widgets"] if w["id"] == "overview_candidate_funnel")
+    sibling_widget_id = "overview_strategy_health"
+
+    proposed = _make_revised_widget(widget, title_suffix="Sibling-legacy-check")
+    create = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget['id']}/revision-proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": "idem-revision-legacy-sibling-create"},
+        json={
+            "instruction": "Check sibling legacy availability does not block accept.",
+            "proposedSpec": proposed,
+            "rationale": "Confirms load-time normalization applies to the whole view.",
+            "warnings": [],
+            "dataAvailability": "partial",
+        },
+    )
+    assert create.status_code == 201, create.text
+    proposal = create.json()["data"]
+
+    # Simulate a persisted pre-rename sibling widget in the same view.
+    raw = json.loads(json.dumps(workspace))
+    for view in raw["views"]:
+        for w in view.get("widgets") or []:
+            if w["id"] == sibling_widget_id:
+                w["dataAvailability"] = "unavailable"
+    store.upsert_workspace(raw, tenant_id="tenant-001", user_id="user-001")
+
+    fresh = client.get(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}",
+        headers={"Authorization": "Bearer test"},
+    )
+    assert fresh.status_code == 200, fresh.text
+
+    accept = client.post(
+        f"/bff/agora/trading-room/widget-revision-proposals/{proposal['id']}/accept",
+        headers={
+            "Authorization": "Bearer test",
+            "If-Match": fresh.headers["etag"],
+            "Idempotency-Key": "idem-revision-legacy-sibling-accept",
+        },
+        json={"acceptanceAction": "apply"},
+    )
+    assert accept.status_code == 200, accept.text
+    sibling = next(
+        w
+        for v in accept.json()["data"]["workspace"]["views"]
+        for w in v["widgets"]
+        if w["id"] == sibling_widget_id
+    )
+    assert sibling["dataAvailability"] == "missing"
+    print("✅ widget revision accept: legacy sibling widget dataAvailability normalizes instead of 422ing")
+
+
 def test_widget_revision_keep_original_adds_copy_and_rollback_creates_new_version():
     store = make_trading_room_store()
     client = _client(store)
@@ -1311,6 +1633,71 @@ def test_widget_revision_keep_original_adds_copy_and_rollback_creates_new_versio
     print("✅ widget revision: keep-original-copy and rollback are append-only versioned")
 
 
+def test_workspace_version_rollback_normalizes_legacy_availability():
+    """AG-UIPOL-003 review round-3 item 3: rolling back to a dashboard
+    version recorded before the full/partial/missing rename must not 422 on
+    the old complete/unavailable literal values that version stored.
+
+    Regression: `rollback_workspace_version` restored a version's raw
+    `views` straight from the store and revalidated them; a pre-rename
+    literal value failed the current full/partial/missing enum check.
+    """
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+
+    legacy_alias = {"full": "complete", "partial": "partial", "missing": "unavailable"}
+    legacy_views = json.loads(json.dumps(workspace["views"]))
+    for view in legacy_views:
+        if "dataAvailability" in view:
+            view["dataAvailability"] = legacy_alias.get(view["dataAvailability"], view["dataAvailability"])
+        for widget in view.get("widgets") or []:
+            if "dataAvailability" in widget:
+                widget["dataAvailability"] = legacy_alias.get(
+                    widget["dataAvailability"], widget["dataAvailability"]
+                )
+
+    legacy_version_id = "trdv_legacy_pretest"
+    store._workspace_versions.setdefault(workspace_id, []).append({
+        "id": legacy_version_id,
+        "userId": workspace["userId"],
+        "strategyId": workspace["strategyId"],
+        "strategyVersion": workspace["strategyVersion"],
+        "dashboardVersion": 0,
+        "generatedBy": "trading_servant",
+        "previousVersionId": None,
+        "changeSummary": "pre-rename legacy snapshot",
+        "views": legacy_views,
+        "createdAt": "2026-05-01T00:00:00Z",
+        "status": "superseded",
+        "changeLog": {
+            "changedAt": "2026-05-01T00:00:00Z",
+            "changedBy": "trading_servant",
+            "reason": "initial generation before full/partial/missing rename",
+            "affectedViews": [],
+            "affectedWidgets": [],
+            "effectEvaluation": "not_evaluated",
+            "rollbackAvailable": True,
+            "sourceRevisionProposalId": None,
+            "rollbackOfVersionId": None,
+        },
+    })
+
+    rollback = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/versions/{legacy_version_id}/rollback",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-rollback-legacy"},
+        json={"reason": "rollback to pre-rename snapshot"},
+    )
+    assert rollback.status_code == 200, rollback.text
+    rolled_views = rollback.json()["data"]["workspace"]["views"]
+    rolled_widgets = [w for v in rolled_views for w in v["widgets"]]
+    assert all(w["dataAvailability"] in {"full", "partial", "missing"} for w in rolled_widgets)
+    assert all(v["dataAvailability"] in {"full", "partial", "missing"} for v in rolled_views if "dataAvailability" in v)
+    assert not any(w["dataAvailability"] in {"complete", "unavailable"} for w in rolled_widgets)
+    print("✅ workspace version rollback: legacy complete/unavailable values normalize instead of 422ing")
+
+
 # ---------------------------------------------------------------------------
 # Regression: jsonschema compliance (Fix 1)
 # ---------------------------------------------------------------------------
@@ -1329,7 +1716,7 @@ _GOVERNED_HANDOFF_SCHEMA_PATH = os.path.join(
 )
 _WORKSPACE_SCHEMA_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "..", "..", "..", "specs", "agora", "trading_room_workspace.schema.json",
+    "..", "..", "..", "specs", "agora", "v8", "trading_room_workspace_v1_7.schema.json",
 )
 
 

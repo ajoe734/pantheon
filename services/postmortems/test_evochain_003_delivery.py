@@ -3,6 +3,7 @@ import os
 import httpx
 from pathlib import Path
 import pytest
+import asyncio
 from unittest.mock import MagicMock, patch
 
 # Allow import of parent package
@@ -10,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi.testclient import TestClient
 from services.incident.incident import IncidentCase, IncidentStatus
-from services.postmortems.main import app, store
+from services.postmortems.main import app, store, outbox_store, process_postmortems_outbox
 
 client = TestClient(app)
 
@@ -21,13 +22,23 @@ def clean_store(monkeypatch):
             return None
 
     monkeypatch.setattr("services.postmortems.main.reference_validator", _AcceptAllValidator())
-    monkeypatch.setattr("time.sleep", lambda s: None)
     
     store._incidents.clear()
     store._postmortems.clear()
+    # Clean outbox store
+    if hasattr(outbox_store.impl, "path") and outbox_store.impl.path.exists():
+        try:
+            outbox_store.impl.path.unlink()
+        except Exception:
+            pass
     yield
     store._incidents.clear()
     store._postmortems.clear()
+    if hasattr(outbox_store.impl, "path") and outbox_store.impl.path.exists():
+        try:
+            outbox_store.impl.path.unlink()
+        except Exception:
+            pass
 
 def _seed_incident(incident_id="inc-123"):
     from datetime import datetime, timezone
@@ -81,20 +92,26 @@ def test_publish_delivery_success():
     mock_response.status_code = 201
     mock_response.text = "Created"
     
-    with patch("httpx.post", return_value=mock_response) as mock_post:
-        r = client.post("/api/postmortems/pm-123/status", json={"status": "published"})
-        assert r.status_code == 200
-        
-        # Verify evolution proposals API was called
+    # 1. Status transition publishes postmortem and writes to outbox
+    r = client.post("/api/postmortems/pm-123/status", json={"status": "published"})
+    assert r.status_code == 200
+    
+    # Verify it is in outbox
+    records = outbox_store.list_pending_and_failed()
+    assert len(records) == 1
+    assert records[0].event.payload["postmortem_id"] == "pm-123"
+    assert "decision_id" in records[0].event.payload
+    assert "inc-123" in records[0].event.payload["decision_id"]
+    
+    # 2. Process outbox and verify httpx POST is made
+    with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
+        asyncio.run(process_postmortems_outbox())
         mock_post.assert_called_once()
         args, kwargs = mock_post.call_args
-        assert args[0] == "http://localhost:8093/api/evolution/proposals"
+        assert args[0] == "http://localhost:8093/api/evolution/proposals/from-postmortem-published"
         
-        # Verify payload mapping content
-        payload = kwargs["json"]
-        assert payload["linked_postmortem_id"] == "pm-123"
-        assert payload["linked_incident_id"] == "inc-123"
-        assert payload["action_type"] == "flag_for_review"
+        # Verify record is marked published
+        assert len(outbox_store.list_pending_and_failed()) == 0
 
 def test_publish_delivery_duplicate_success():
     _seed_incident()
@@ -104,20 +121,67 @@ def test_publish_delivery_duplicate_success():
     mock_response.status_code = 200
     mock_response.text = "OK"
     
-    with patch("httpx.post", return_value=mock_response) as mock_post:
-        r = client.post("/api/postmortems/pm-123/status", json={"status": "published"})
-        assert r.status_code == 200
+    r = client.post("/api/postmortems/pm-123/status", json={"status": "published"})
+    assert r.status_code == 200
+    
+    records = outbox_store.list_pending_and_failed()
+    assert len(records) == 1
+    
+    with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
+        asyncio.run(process_postmortems_outbox())
         mock_post.assert_called_once()
+        assert len(outbox_store.list_pending_and_failed()) == 0
 
 def test_publish_delivery_failure_retry_and_error():
     _seed_incident()
     _seed_postmortem()
     
+    r = client.post("/api/postmortems/pm-123/status", json={"status": "published"})
+    assert r.status_code == 200
+    
     # Simulate connection failure
-    with patch("httpx.post", side_effect=httpx.ConnectError("Connection refused")) as mock_post:
-        r = client.post("/api/postmortems/pm-123/status", json={"status": "published"})
-        assert r.status_code == 502
-        assert "Failed to publish postmortem" in r.json()["detail"]
-        
-        # Verify it retried 3 times
+    with patch("httpx.AsyncClient.post", side_effect=httpx.ConnectError("Connection refused")) as mock_post:
+        # First attempt
+        asyncio.run(process_postmortems_outbox())
+        assert mock_post.call_count == 1
+        records = outbox_store.list_pending_and_failed()
+        assert len(records) == 1
+        assert records[0].delivery_attempts == 1
+        assert records[0].status == "failed"
+
+        # Second attempt
+        asyncio.run(process_postmortems_outbox())
+        assert mock_post.call_count == 2
+        records = outbox_store.list_pending_and_failed()
+        assert len(records) == 1
+        assert records[0].delivery_attempts == 2
+
+        # Third attempt
+        asyncio.run(process_postmortems_outbox())
         assert mock_post.call_count == 3
+        # Should now be dead_lettered
+        records = outbox_store.list_pending_and_failed()
+        assert len(records) == 0
+
+        # Verify in complete list
+        all_payloads = outbox_store.impl.list_all()
+        assert len(all_payloads) == 1
+        assert all_payloads[0]["status"] == "dead_lettered"
+
+def test_publish_delivery_precondition_validation_failed():
+    _seed_incident()
+    pm = _seed_postmortem()
+    
+    # Use dataclasses.replace to modify frozen Postmortem instance
+    import dataclasses
+    invalid_pm = dataclasses.replace(pm, artifact_id="")
+    store._postmortems[pm.postmortem_id] = invalid_pm
+    
+    # Should fail synchronously with 422
+    r = client.post("/api/postmortems/pm-123/status", json={"status": "published"})
+    assert r.status_code == 422
+    assert "Bridge precondition validation failed" in r.json()["detail"]
+    
+    # Verify nothing was enqueued to outbox
+    records = outbox_store.list_pending_and_failed()
+    assert len(records) == 0
