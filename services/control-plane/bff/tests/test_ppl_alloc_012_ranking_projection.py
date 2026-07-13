@@ -1998,3 +1998,22 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
             assert inactive["eligible"] is False
         finally:
             bff_main.read_store = original_store
+
+
+def test_pm12_quarterly_rows_allocation_policy_compatibility() -> None:
+    from persona_allocation_policy import calculate_target_allocations
+    row = {
+        "persona_id": "persona-ppl-alloc-012-compat",
+        "stage": "live_running",
+        "tier": "s",
+        "overall_score": 85.0,
+        "current_weight": 0.04,
+    }
+    lines = calculate_target_allocations([row])
+    assert len(lines) == 1
+    line = lines[0]
+    assert line["rank_score"] == 85.0
+    assert line["target_weight"] == 0.05
+    assert line["delta"] == 0.01
+    assert "quarterly_increase_cap_25pct" in line["cap_reasons"]
+

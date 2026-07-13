@@ -57,15 +57,22 @@ def build_pm12_allocation_policy_input(row: Dict[str, Any]) -> Dict[str, Any]:
     components.
     """
     formula_version = str(row.get("formula_version") or "").strip()
+    if not formula_version and ("overall_score" in row or "score" in row):
+        formula_version = _PM12_FORMULA_VERSION
     if formula_version != _PM12_FORMULA_VERSION:
         raise ValueError(
             f"unsupported PM-12 formula_version: {formula_version or 'missing'}"
         )
     source_tier = str(row.get("tier") or row.get("tier_id") or "").strip().lower()
-    allocation_tier = _PM12_TIER_CROSSWALK.get(source_tier)
+    if source_tier in {"s", "a", "b", "watch"}:
+        allocation_tier = source_tier
+    else:
+        allocation_tier = _PM12_TIER_CROSSWALK.get(source_tier)
     if allocation_tier is None:
         raise ValueError(f"unsupported PM-12 tier: {source_tier or 'missing'}")
     raw_score = row.get("overall_score")
+    if raw_score is None:
+        raw_score = row.get("score")
     if isinstance(raw_score, bool):
         raise ValueError("PM-12 overall_score must be a finite number")
     try:
@@ -99,7 +106,15 @@ def build_pm12_allocation_policy_input(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def _allocation_policy_input(row: Dict[str, Any]) -> Dict[str, Any] | None:
     tier = str(row.get("tier") or row.get("tier_id") or "").strip().lower()
-    if "allocation_policy_input" in row or tier.startswith("tier-"):
+    formula_version = str(row.get("formula_version") or "").strip()
+    if (
+        "allocation_policy_input" in row
+        or tier.startswith("tier-")
+        or tier in {"s", "a", "b", "watch"}
+        or formula_version == _PM12_FORMULA_VERSION
+        or "overall_score" in row
+        or "score" in row
+    ):
         return build_pm12_allocation_policy_input(row)
     return None
 
