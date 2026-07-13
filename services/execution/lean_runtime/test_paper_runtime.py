@@ -861,6 +861,46 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertAlmostEqual(stop_leg["stop_price"], 98.0, places=4)
         self.assertAlmostEqual(tp_leg["limit_price"], 105.0, places=4)
 
+    def test_runtime_directly_publishes_journey_events_to_bff(self):
+        from unittest.mock import patch, MagicMock
+        signal = self._signal()
+        signal["signal_id"] = "sig-12345"
+        store = InMemoryPendingSignalStore([signal])
+        telemetry = RuntimeTelemetryEmitter(
+            self._identity(),
+            _FakeBindingResolver(self._binding())
+        )
+        service = PaperRuntimeService(
+            store=store,
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        published_payloads = []
+        def fake_urlopen(req, timeout=None):
+            body = req.data.decode("utf-8")
+            published_payloads.append(json.loads(body))
+            resp = MagicMock()
+            resp.read.return_value = b'{"status":"ok"}'
+            return resp
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            snapshot = service.drain_once()
+
+        events = [ev for payload in published_payloads for ev in payload]
+        stages = [ev["stage"] for ev in events]
+        self.assertIn("signal_generation", stages)
+        self.assertIn("fill_management", stages)
+
+        sig_gen = next(ev for ev in events if ev["stage"] == "signal_generation")
+        self.assertEqual(sig_gen["journey_id"], "tj-sig-12345")
+        self.assertEqual(sig_gen["signal_id"], "sig-12345")
+        self.assertEqual(sig_gen["stage_status"], "succeeded")
+        self.assertEqual(sig_gen["source"], "runtime")
+
 
 class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
     def _algo(self):

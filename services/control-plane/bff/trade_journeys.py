@@ -41,6 +41,11 @@ from services.trade_journey.materializer import (
     JourneyProjection,
     MaterializationError,
 )
+from services.trade_journey.telemetry_bridge import (
+    load_store_events,
+    merge_with_store,
+    write_store_atomic,
+)
 from services.trade_journey.slo_data_quality import (
     compute_data_quality_metrics,
     evaluate_data_quality,
@@ -1322,5 +1327,32 @@ def create_trade_journeys_router(
         detail["exists_at_as_of"] = True
         meta = _meta(snapshot_at, detail.get("read_state", "formal"), materializer)
         return {"data": detail, "meta": meta}
+
+    @router.post(
+        "/bff/management/trade-journeys/events",
+        response_model=dict,
+    )
+    async def bff_publish_trade_journey_events(
+        events: List[dict],
+    ):
+        """Append first-class journey events to the events store in real-time."""
+        for event in events:
+            if not isinstance(event, dict):
+                return _err(400, "VALIDATION_FAILED", "Each event must be a JSON object")
+            for field in ("event_id", "journey_id", "tenant_id", "environment", "occurred_at"):
+                if not event.get(field):
+                    return _err(400, "VALIDATION_FAILED", f"Event missing required field: {field}")
+
+        store_path_str = os.getenv(EVENTS_STORE_ENV, "")
+        if not store_path_str:
+            return _err(503, "STORE_UNCONFIGURED", "Events store path is not configured")
+        store_path = Path(store_path_str)
+        try:
+            existing = load_store_events(store_path)
+            merged = merge_with_store(existing, events)
+            write_store_atomic(store_path, merged)
+        except Exception as exc:
+            return _err(500, "WRITE_FAILED", f"Failed to write events to store: {exc}")
+        return {"status": "ok", "count": len(events)}
 
     return router
