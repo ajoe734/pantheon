@@ -73,6 +73,37 @@ npx tsc --noEmit -p tsconfig.app.json   # no TopBar-related errors; ~99 pre-exis
                                           # head for unrelated reasons)
 ```
 
+## EVOCHAIN-008 acceptance checklist (`ai-status.json`)
+
+1. "degraded live-composed responses render a live-degraded badge naming
+   the degraded surfaces" — met; unit-verified (`TopBar.test.tsx`, cases
+   for `bff_composed`/`service_client` degraded surfaces, the full-list
+   fallback recovery, and envelope-level degradation with a live source).
+2. "SNAPSHOT DATA appears only when data is actually served from a
+   snapshot source" — met; unit-verified (`local_snapshot` case, and the
+   new explicit-snapshot-source-dominates-status case).
+3. "zh-TW and en-US locales updated consistently" — the `live_degraded`
+   / `degradedSurfaces` locale keys already existed in both
+   `src/i18n/locales/en-US.ts` and `zh-TW.ts` before this task (added
+   alongside the original three-state classification, commit `2f23ce6`);
+   no locale drift between the two files. Not modified further by the
+   round-2 fix commit (`a690879`), which only touched classification
+   logic.
+4. "npm run audit:render passes and hosted evidence shows the new badge
+   on the Evolution Journal page" — **not yet satisfied, and cannot be
+   honestly satisfied before this PR merges**: `audit:render` and any
+   hosted screenshot both require a running deploy that already serves
+   this fix, and PR #298 is still open pending reviewer re-approval.
+   Faking this against a local mock-mode preview (no live BFF, no
+   degraded surfaces to actually observe) would not be the evidence the
+   criterion asks for. This is deliberately deferred, not skipped: once
+   PR #298 merges and dev redeploys, `npm run audit:render` against the
+   hosted dev FE base URL plus a screenshot of a genuinely
+   live-degraded Evolution Journal / shell badge closes this item. That
+   redeploy-and-verify step is exactly the work `EVOCHAIN-011` (dev
+   deploy + closeout, which depends on `EVOCHAIN-008` per `INDEX.md`)
+   already owns — see the dependency resolution below.
+
 ## EVOCHAIN-008 ↔ EVOCHAIN-011 acceptance/dependency resolution
 
 Per `INDEX.md`, `EVOCHAIN-011` (dev deploy + closeout) depends on
@@ -105,6 +136,14 @@ producer chain before it can close:
 
 ## Residual risk
 
-None new. `EVOCHAIN-008` remains blocked from `done` only on PR #298
-merging (owner cannot self-merge; awaiting reviewer re-approval per
-round-2 fixes above).
+- **Hosted evidence for acceptance item 4 is outstanding.** Owner:
+  `EVOCHAIN-011` (Codex2 / Human-Ops per `INDEX.md`). Expiry: at
+  `EVOCHAIN-011` closeout — that task cannot itself close without dev
+  redeployed and live curl/screenshot evidence archived, so this item
+  cannot silently expire unresolved. If `EVOCHAIN-011` closeout is
+  reached without a screenshot of the live-degraded badge specifically,
+  `EVOCHAIN-008`'s owner should be re-engaged before that closeout is
+  accepted.
+- `EVOCHAIN-008` remains blocked from `done` only on PR #298 merging
+  (owner cannot self-merge; awaiting reviewer re-approval per round-2
+  fixes above).
