@@ -141,9 +141,9 @@
     ]
   },
   "validation": {
-    "validated_base_sha": "1eab79a313b03cc4d7f0576ace97ed1cfd9d8b49",
-    "validated_head_sha": "f4230c3c9b8019a2dc3c0e3670b5f280db3460c0",
-    "validated_at": "2026-07-13T17:35:14Z",
+    "validated_base_sha": "ae1e3f2000c3fdef9c235e6f6dbac290269426da",
+    "validated_head_sha": "5e9c088420ba347c793279b8ec1a586214594df0",
+    "validated_at": "2026-07-13T17:49:31Z",
     "commands": [
       {
         "command": "python3 -m json.tool docs/deployment/loop-catalog.schema.json >/dev/null && python3 -m json.tool docs/deployment/loop-catalog.registry.json >/dev/null",
@@ -741,12 +741,12 @@
         }
       },
       "evidence_authoring_snapshot": {
-        "git_sha": "f4230c3c9b8019a2dc3c0e3670b5f280db3460c0",
+        "git_sha": "5e9c088420ba347c793279b8ec1a586214594df0",
         "artifacts": {
           "docs/deployment/loop-catalog.registry.json": "5a0531795104ace538bd4f4e5ec50141fedb198fde8d1d96b6c7a5e154f431b3",
           "docs/deployment/loop-catalog.schema.json": "696f5f9fef7e6bb65b755cdf3ac49c9b65c3aa2db0f2164889e823f3a1679fd3",
           "services/control-plane/bff/loop_inventory.py": "ac84d68630f6ac4f7b4deff452e138d53e7983e05f02965fdc95307687be3077",
-          "services/control-plane/bff/main.py": "860c3fb70efcc25d04dc6ce953c550b80157947fe22c177e809c3e9647e10e3b"
+          "services/control-plane/bff/main.py": "433b99a44b2f54a95e496bd7a6183a4a57280047d1e7eb3ad193f55c65919c4e"
         }
       }
     },
@@ -879,6 +879,31 @@
       "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
       "review_binding_rule": "Reviewer must cite the merged evidence PR SHA and the companion evidence.json SHA-256 from that merged tree.",
       "required_next_event": "independent_review_verdict"
+    },
+    {
+      "sequence": 12,
+      "recorded_at": "2026-07-13T17:49:31Z",
+      "kind": "latest_dev_merge_and_validation_completed",
+      "actor": "Codex",
+      "status": "pass",
+      "invalidated_review_request_sequence": 11,
+      "prior_manifest_sha256": "3c70775e4218469382805598ba1d33fe3de72cd817d6c31f073e1a3d8989a2cd",
+      "validated_base_sha": "ae1e3f2000c3fdef9c235e6f6dbac290269426da",
+      "validated_head_sha": "5e9c088420ba347c793279b8ec1a586214594df0",
+      "focused_tests": "26 passed",
+      "adjacent_tests": "10 passed",
+      "guardrail_tests": "26 passed"
+    },
+    {
+      "sequence": 13,
+      "recorded_at": "2026-07-13T17:49:31Z",
+      "kind": "evidence_ready_for_independent_review",
+      "actor": "Codex",
+      "status": "pending_follow_up_pr_merge",
+      "reviewer": "Codex2",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
+      "review_binding_rule": "Reviewer must cite the follow-up PR merge SHA and the companion evidence.json SHA-256 from that merged tree, then explicitly decide AC-06 and AC-09 scope splits.",
+      "required_next_event": "follow_up_pr_merged_then_independent_review_verdict"
     }
   ]
 }
