@@ -50,5 +50,5 @@ PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
   python3 scripts/ai_status.py sync
 ```
 
-The dispatcher is idempotent and preserves progress fields for tasks already
-started by a fleet worker.
+The dispatcher is idempotent, preserves an existing task record in full, and
+does not mutate supervisor-owned agent queues or execution frontier state.

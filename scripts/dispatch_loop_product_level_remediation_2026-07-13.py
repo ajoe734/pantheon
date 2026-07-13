@@ -465,41 +465,6 @@ def archived_primary_status(task_id: str) -> str | None:
     return status
 
 
-def find_agent(state: dict[str, Any], name: str) -> dict[str, Any]:
-    for agent in state.get("agents", []):
-        if isinstance(agent, dict) and agent.get("name") == name:
-            return agent
-    raise DispatchError(f"agent not found in live state: {name}")
-
-
-def assign_task_to_agent(
-    state: dict[str, Any],
-    owner: str,
-    task_id: str,
-) -> bool:
-    agent = find_agent(state, owner)
-    task_ids = agent.setdefault("current_task_ids", [])
-    if not isinstance(task_ids, list):
-        raise DispatchError(f"agent {owner} current_task_ids must be a list")
-    if task_id in task_ids:
-        return False
-    task_ids.append(task_id)
-    return True
-
-
-def remove_task_from_agents(state: dict[str, Any], task_id: str) -> bool:
-    changed = False
-    for agent in state.get("agents", []):
-        if not isinstance(agent, dict):
-            continue
-        task_ids = agent.get("current_task_ids")
-        if not isinstance(task_ids, list) or task_id not in task_ids:
-            continue
-        agent["current_task_ids"] = [item for item in task_ids if item != task_id]
-        changed = True
-    return changed
-
-
 def materialize(
     state: dict[str, Any],
     tasks: list[dict[str, Any]],
@@ -524,28 +489,17 @@ def materialize(
         archive_state = archived_primary_status(task_id)
         if archive_state is not None:
             archived.append(f"{task_id}:{archive_state}")
-            state_changed = remove_task_from_agents(state, task_id) or state_changed
             continue
 
         existing = active_by_id.get(task_id)
         if existing is not None:
             preserved.append(f"{task_id}:{existing.get('status', 'unknown')}")
-            if str(existing.get("status") or "") in TERMINAL_STATUSES:
-                state_changed = remove_task_from_agents(state, task_id) or state_changed
-            else:
-                state_changed = (
-                    assign_task_to_agent(state, str(existing.get("owner") or task["owner"]), task_id)
-                    or state_changed
-                )
             continue
 
         materialized = build_task(task, catalog, catalog_digest, timestamp)
         active_tasks.append(materialized)
         active_by_id[task_id] = materialized
         created.append(task_id)
-        state_changed = assign_task_to_agent(
-            state, materialized["owner"], task_id
-        ) or state_changed
         logs.append(
             {
                 "ts": timestamp,
