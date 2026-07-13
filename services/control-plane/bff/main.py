@@ -68,6 +68,7 @@ from services.foundation import (  # noqa: E402
     PolicyDecisionValue,
     TraceContext,
     foundation_id,
+    sha256_checksum,
 )
 from services.foundation.health import register_fastapi_health_routes  # noqa: E402
 from services.source_ingestion.replication_bridge import (  # noqa: E402
@@ -23443,7 +23444,7 @@ def _capital_bff_action_command(
     background_tasks: Optional[BackgroundTasks] = None,
 ) -> Dict[str, Any]:
     """Submit a resource action through the command store and return the receipt."""
-    request_hash = _stable_json_hash({
+    request_hash = sha256_checksum({
         "entity_type": entity_type.value,
         "entity_id": entity_id,
         "action_id": action_id,
@@ -24194,7 +24195,7 @@ async def bff_create_rebalance(
     _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/rebalances", "payload": payload})
+    request_hash = sha256_checksum({"route": "POST /bff/rebalances", "payload": payload})
     dry_run = _request_dry_run_requested()
     if not dry_run:
         durable = command_store.get_command_by_idempotency_key(

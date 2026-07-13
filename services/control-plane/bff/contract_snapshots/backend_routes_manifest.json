@@ -3,7 +3,7 @@
     "snapshot_date": "2026-07-05",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 608,
+    "total_routes": 609,
     "status_values": [
       "implemented",
       "alias",
@@ -2262,6 +2262,12 @@
     {
       "method": "GET",
       "path": "/bff/readyz",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/version",
       "family": "health",
       "status": "implemented"
     },
