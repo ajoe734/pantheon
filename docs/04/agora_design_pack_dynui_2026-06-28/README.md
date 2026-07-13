@@ -16,7 +16,11 @@ declared lost after a final documented search; see
 and the replacement parity baseline (closure pack specs + hosted screenshots
 pinned to a deploy SHA). Do not search for the archive again in future tasks.
 
-- Local design archive (lost, do not re-search):
+- Canonical design source (RECOVERED 2026-07-13, versioned in-repo —
+  supersedes the "lost" declaration below):
+  `docs/design/agora-trading-desk-design/` (see its INDEX.md for provenance)
+- Local design archive (historical reference; original untracked copy was
+  destroyed, owner re-supplied it on 2026-07-13):
   `/home/lupin/code/pantheon/AI Trading Desk Design.zip`
 - Frozen dynamic UI source/gap/invariant map:
   `docs/04/agora_design_pack_dynui_2026-06-28/source-map-and-gap-map.md`

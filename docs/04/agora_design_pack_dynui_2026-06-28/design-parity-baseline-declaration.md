@@ -105,3 +105,15 @@ prior baseline to diff against, not as a frozen pixel target.
 This declaration does not reopen or reimplement any UI. It does not change
 runtime behavior. It closes the open-ended "recover the zip" search and gives
 future design-parity tasks a verifiable, reproducible baseline.
+
+---
+
+## Superseded (2026-07-13)
+
+The owner re-supplied the design archive (`AI Trading Desk Design (1).zip`,
+sha256 `a9e18029d465ed4725bd1de09f170e29b65de8f3ac70b897d7a6735cca23d6de`).
+Its full contents are now versioned at `docs/design/agora-trading-desk-design/`.
+That directory is the parity target from this date forward; the closure-pack +
+hosted-screenshot baseline declared above remains only as a regression floor.
+Root cause of the loss: the zip was referenced by untracked/tmp paths and
+never committed — fixed by versioning the extracted contents.
