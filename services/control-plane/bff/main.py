@@ -41992,35 +41992,48 @@ def _pm12_binding_runtime_context(
             active_values={"active", "ready", "bound", "running", "idle"},
         )
     ]
-    declared_runtime_matches = [
+    declared_runtime_records = [
         record
-        for record in active_runtimes
+        for record in runtimes
         if str(record.get("runtime_id") or record.get("runtime_binding_id") or record.get("id") or "").strip()
         in declared_runtime_ids
     ]
+    declared_runtime_matches = [
+        record
+        for record in declared_runtime_records
+        if _pm12_record_lifecycle_is_active(
+            record,
+            fields=("status", "state"),
+            active_values={"active", "ready", "bound", "running", "idle"},
+        )
+    ]
     declared_runtime = declared_runtime_matches[0] if len(declared_runtime_matches) == 1 else {}
+    declared_runtime_identity_record = (
+        declared_runtime
+        or (declared_runtime_records[0] if len(declared_runtime_records) == 1 else {})
+    )
     declared_runtime_binding_id = str(
         _persona_fleet_record_value(
-            declared_runtime,
+            declared_runtime_identity_record,
             "persona_capital_binding_id",
             "binding_id",
         )
         or ""
     ).strip()
 
-    explicit_matches = [
+    all_explicit_matches = [
         record
-        for record in active_bindings
+        for record in bindings
         if {
             str(record.get("id") or "").strip(),
             str(record.get("binding_id") or "").strip(),
             str(record.get("persona_capital_binding_id") or "").strip(),
         }.intersection(declared_binding_ids)
     ]
-    if not explicit_matches and declared_sleeve_id:
-        explicit_matches = [
+    if not all_explicit_matches and declared_sleeve_id:
+        all_explicit_matches = [
             record
-            for record in active_bindings
+            for record in bindings
             if str(
                 _persona_fleet_record_value(
                     record,
@@ -42033,10 +42046,10 @@ def _pm12_binding_runtime_context(
             ).strip()
             == declared_sleeve_id
         ]
-    if not explicit_matches and declared_runtime_binding_id:
-        explicit_matches = [
+    if not all_explicit_matches and declared_runtime_binding_id:
+        all_explicit_matches = [
             record
-            for record in active_bindings
+            for record in bindings
             if declared_runtime_binding_id
             in {
                 str(record.get("id") or "").strip(),
@@ -42044,12 +42057,30 @@ def _pm12_binding_runtime_context(
                 str(record.get("persona_capital_binding_id") or "").strip(),
             }
         ]
-    if len(explicit_matches) == 1:
-        binding = explicit_matches[0]
-        binding_resolution = "explicit"
-    elif len(explicit_matches) > 1:
+    explicit_matches = [
+        record
+        for record in all_explicit_matches
+        if _pm12_record_lifecycle_is_active(
+            record,
+            fields=("status", "validity"),
+            active_values={"active", "ready", "bound"},
+        )
+    ]
+    binding_identity_declared = bool(
+        declared_binding_ids or declared_sleeve_id or declared_runtime_binding_id
+    )
+    if len(all_explicit_matches) > 1:
         binding = {}
         binding_resolution = "ambiguous"
+    elif len(all_explicit_matches) == 1 and len(explicit_matches) == 1:
+        binding = explicit_matches[0]
+        binding_resolution = "explicit"
+    elif all_explicit_matches:
+        binding = {}
+        binding_resolution = "inactive"
+    elif binding_identity_declared:
+        binding = {}
+        binding_resolution = "binding_mismatch"
     elif len(active_bindings) == 1:
         binding = active_bindings[0]
         binding_resolution = "single"
@@ -42099,6 +42130,12 @@ def _pm12_binding_runtime_context(
             for record in active_runtimes
             if str(record.get("persona_id") or "").strip() == persona_id
         ]
+
+    if (
+        len(declared_runtime_records) > len(declared_runtime_matches)
+        and "inactive" not in binding_resolution
+    ):
+        binding_resolution = f"{binding_resolution}_runtime_inactive"
 
     persona_runtime_candidates = [
         record
@@ -42619,7 +42656,7 @@ def _enrich_persona_item_with_bindings(
         binding_resolution = f"{binding_resolution}_stage_mismatch"
     identity_resolution_failed = not binding or any(
         token in binding_resolution
-        for token in ("ambiguous", "mismatch")
+        for token in ("ambiguous", "mismatch", "inactive")
     )
     if identity_resolution_failed:
         binding_for_weight = {}
@@ -43100,8 +43137,29 @@ def _promotion_review_item_from_recommendation(
     recommendation: Dict[str, Any],
 ) -> Dict[str, Any]:
     review_id = str(recommendation.get("recommendation_id") or recommendation.get("id") or "")
+    private_submission = _promotion_review_submission_projection(
+        review_id,
+        include_source_recommendation=True,
+    )
+    stored_source = (
+        private_submission.get("source_recommendation")
+        if isinstance(private_submission, dict)
+        else None
+    )
+    if isinstance(stored_source, dict):
+        recommendation = json.loads(json.dumps(stored_source))
+        recommendation["evidence_refs"] = []
+        recommendation["evidence_ref_ids"] = []
+    submission = (
+        {
+            key: value
+            for key, value in private_submission.items()
+            if key != "source_recommendation"
+        }
+        if isinstance(private_submission, dict)
+        else None
+    )
     action_id = str(recommendation.get("action_id") or "")
-    submission = _promotion_review_submission_projection(review_id)
     decision = _promotion_review_decision_projection(review_id)
     stage_path = _promotion_review_stage_path(recommendation)
     target_stage = str(stage_path.get("target_stage") or "governance_review")
@@ -43515,9 +43573,17 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         stored_ranking_snapshot_id = str(
             existing_submission.get("ranking_snapshot_id") or ""
         ).strip()
+        if not stored_ranking_snapshot_id:
+            raise _bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "submitted recommendation has no immutable ranking snapshot",
+                "A legacy submission cannot adopt a caller-provided snapshot during replay.",
+                precondition_failed="ranking_snapshot_id",
+                suggestion="Create a new governed recommendation submission from a current ranking snapshot.",
+            )
         if (
             requested_ranking_snapshot_id
-            and stored_ranking_snapshot_id
             and requested_ranking_snapshot_id != stored_ranking_snapshot_id
         ):
             raise _bff_error(
@@ -43532,7 +43598,7 @@ async def bff_management_quarterly_ranking_recommendation_submit(
             stored_source = {
                 "id": existing_submission.get("recommendation_id") or recommendation_id,
                 "recommendation_id": existing_submission.get("recommendation_id") or recommendation_id,
-                "ranking_snapshot_id": stored_ranking_snapshot_id or requested_ranking_snapshot_id,
+                "ranking_snapshot_id": stored_ranking_snapshot_id,
                 "quarter": existing_submission.get("quarter"),
                 "persona_id": existing_submission.get("persona_id"),
                 "action_id": existing_submission.get("recommendation_action_id"),
@@ -43555,7 +43621,6 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         replay_snapshot_id = str(
             stored_ranking_snapshot_id
             or already.get("ranking_snapshot_id")
-            or requested_ranking_snapshot_id
             or ""
         ).strip()
         already["ranking_snapshot_id"] = replay_snapshot_id
@@ -45184,11 +45249,11 @@ async def bff_management_quarterly_ranking(
             **source_surfaces,
         }.items()
     }
-    top_item = ranked_items[0] if ranked_items else None
+    top_item = filtered_items[0] if filtered_items else None
     summary = {
         "quarter": quarter_window["quarter"],
         "formula_version": formula["formula_version"],
-        "persona_count": len(enriched_items),
+        "persona_count": total,
         "ranking_universe_count": len(rows),
         "ranked_count": total,
         "returned_count": len(page_items),

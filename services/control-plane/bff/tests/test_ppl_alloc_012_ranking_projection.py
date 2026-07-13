@@ -304,7 +304,12 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
             filtered = client.get(
                 "/bff/management/quarterly-ranking",
                 headers=HEADERS,
-                params={"quarter": "2026-Q3", "q": "PPL Alloc Live", "page_size": 1},
+                params={
+                    "quarter": "2026-Q3",
+                    "personaId": LIVE_PERSONA_ID,
+                    "q": "PPL Alloc Live",
+                    "page_size": 1,
+                },
             )
             repeated = client.get(
                 "/bff/management/quarterly-ranking",
@@ -312,7 +317,18 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
                 params={"quarter": "2026-Q3", "page_size": 200},
             )
             assert filtered.status_code == repeated.status_code == 200
-            assert filtered.json()["data"]["ranking_snapshot_id"] == snapshot_id
+            filtered_body = filtered.json()
+            assert filtered_body["data"]["ranking_snapshot_id"] == snapshot_id
+            assert filtered_body["page_info"]["total"] == 1
+            assert len(filtered_body["data"]["items"]) == 1
+            assert filtered_body["data"]["items"][0]["persona_id"] == LIVE_PERSONA_ID
+            filtered_summary = filtered_body["data"]["summary"]
+            assert filtered_summary["top_persona_id"] == LIVE_PERSONA_ID
+            assert filtered_summary["persona_count"] == filtered_body["page_info"]["total"]
+            assert filtered_summary["ranked_count"] == filtered_body["page_info"]["total"]
+            assert filtered_summary["ranking_universe_count"] == len(
+                quarterly_body["data"]["items"]
+            )
             assert repeated.json()["data"]["ranking_snapshot_id"] == snapshot_id
             admin_view = client.get(
                 "/bff/management/quarterly-ranking",
@@ -735,6 +751,110 @@ def test_live_runtime_without_active_persona_binding_fails_closed() -> None:
             bff_main.read_store = original_store
 
 
+def test_declared_stopped_runtime_cannot_be_authoritative_despite_active_status() -> None:
+    persona_id = "persona-ppl-alloc-012-stopped-runtime"
+    binding_id = "binding-ppl-alloc-012-stopped-runtime"
+    runtime_id = "runtime-ppl-alloc-012-stopped-runtime"
+    binding = {
+        "id": binding_id,
+        "binding_id": binding_id,
+        "persona_id": persona_id,
+        "status": "active",
+        "validity": "active",
+        "metadata": {"capital_mode": "live", "current_weight": 0.05},
+    }
+    runtime = {
+        "id": runtime_id,
+        "runtime_id": runtime_id,
+        "persona_id": persona_id,
+        "binding_id": binding_id,
+        "status": "active",
+        "state": "stopped",
+        "runtime_kind": "live",
+    }
+    selected_binding, selected_runtime, resolution = bff_main._pm12_binding_runtime_context(
+        persona_id=persona_id,
+        item={"binding_id": binding_id, "runtime_ids": [runtime_id]},
+        bindings=[binding],
+        runtimes=[runtime],
+    )
+    assert selected_binding["binding_id"] == binding_id
+    assert selected_runtime == {}
+    assert "inactive" in resolution
+
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _client(td, fallback=False)
+            store = bff_main.read_store
+            assert isinstance(store, ReadSurfaceStore)
+            store.create_persona(
+                persona_id=persona_id,
+                name="PPL Stopped Runtime",
+                actor_id="Codex2",
+                lifecycle_state="live_running",
+                metadata={"capital_mode": "live", "deployment_stage": "live"},
+            )
+            store.create_persona_binding(
+                binding_id=binding_id,
+                persona_id=persona_id,
+                capital_pool_id="pool-stopped-runtime",
+                actor_id="Codex2",
+                validity="active",
+                metadata={
+                    "capital_mode": "live",
+                    "capital_sleeve_id": "sleeve-stopped-runtime",
+                    "current_weight": 0.05,
+                },
+            )
+            store.create_runtime_binding(
+                runtime_id=runtime_id,
+                name="PPL Stopped Runtime",
+                persona_id=persona_id,
+                binding_id=binding_id,
+                deployment_plan_id="plan-ppl-alloc-012-stopped-runtime",
+                runtime_kind="live",
+                actor_id="Codex2",
+                state="stopped",
+                params={
+                    "capital_pool_id": "pool-stopped-runtime",
+                    "capital_sleeve_id": "sleeve-stopped-runtime",
+                    "current_weight": 0.05,
+                },
+            )
+            original_list_runtime_bindings = store.list_runtime_bindings
+
+            def conflicting_runtime_bindings(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+                records = original_list_runtime_bindings(*args, **kwargs)
+                for record in records:
+                    if record.get("runtime_id") == runtime_id:
+                        record["status"] = "active"
+                        record["state"] = "stopped"
+                return records
+
+            store.list_runtime_bindings = conflicting_runtime_bindings  # type: ignore[method-assign]
+            _install_runtime_observations(
+                store,
+                persona_id=persona_id,
+                runtime_id=runtime_id,
+            )
+
+            response = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q3", "page_size": 200},
+            )
+            assert response.status_code == 200, response.text
+            row = _item_by_persona(response.json()["data"]["items"], persona_id)
+            assert row["stage"] == "live_running"
+            assert "inactive" in row["binding_resolution"]
+            assert row["current_weight"] is None
+            assert row["current_weight_source"] == "unavailable"
+            assert row["eligible"] is False
+        finally:
+            bff_main.read_store = original_store
+
+
 def test_invalid_binding_weights_never_serialize_or_become_eligible() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
@@ -874,6 +994,7 @@ def test_promotion_submit_replay_preserves_original_snapshot_after_ranking_mutat
             recommendation = recommendation_response.json()["data"]["items"][0]
             recommendation_id = recommendation["recommendation_id"]
             original_snapshot_id = recommendation["ranking_snapshot_id"]
+            original_current_weight = recommendation["current_weight"]
 
             submit = client.post(
                 f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
@@ -906,6 +1027,34 @@ def test_promotion_submit_replay_preserves_original_snapshot_after_ranking_mutat
                 if item["recommendation_id"] == recommendation_id
             )
             assert mutated_recommendation["ranking_snapshot_id"] != original_snapshot_id
+            assert mutated_recommendation["current_weight"] != original_current_weight
+
+            review_list = client.get(
+                "/bff/management/promotion-reviews",
+                headers=HEADERS,
+                params={"quarter": "2026-Q3", "page_size": 200},
+            )
+            review_detail = client.get(
+                f"/bff/management/promotion-reviews/{recommendation_id}",
+                headers=HEADERS,
+                params={"quarter": "2026-Q3"},
+            )
+            assert review_list.status_code == 200, review_list.text
+            assert review_detail.status_code == 200, review_detail.text
+            stored_list_review = next(
+                item
+                for item in review_list.json()["data"]["items"]
+                if item["recommendation_id"] == recommendation_id
+            )
+            for stored_review in (stored_list_review, review_detail.json()["data"]):
+                assert stored_review["ranking_snapshot_id"] == original_snapshot_id
+                assert stored_review["current_weight"] == original_current_weight
+                assert stored_review["source_recommendation"]["ranking_snapshot_id"] == (
+                    original_snapshot_id
+                )
+                assert stored_review["source_recommendation"]["current_weight"] == (
+                    original_current_weight
+                )
 
             replay = client.post(
                 f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
@@ -925,6 +1074,92 @@ def test_promotion_submit_replay_preserves_original_snapshot_after_ranking_mutat
             assert bff_main.command_store._get_all_commands()[0]["params"][
                 "ranking_snapshot_id"
             ] == original_snapshot_id
+        finally:
+            bff_main.read_store = original_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+
+
+def test_legacy_promotion_submit_cannot_adopt_caller_snapshot_on_replay() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        try:
+            client = _client(td)
+            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            store = bff_main.read_store
+            assert isinstance(store, ReadSurfaceStore)
+            _seed_live_persona(store)
+
+            recommendation_response = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={
+                    "quarter": "2026-Q3",
+                    "personaId": LIVE_PERSONA_ID,
+                    "page_size": 200,
+                },
+            )
+            assert recommendation_response.status_code == 200, recommendation_response.text
+            recommendation = recommendation_response.json()["data"]["items"][0]
+            recommendation_id = recommendation["recommendation_id"]
+            caller_snapshot_id = recommendation["ranking_snapshot_id"]
+
+            legacy_params = {
+                "quarter": "2026-Q3",
+                "recommendation_id": recommendation_id,
+                "recommendation_action_id": recommendation["action_id"],
+                "persona_id": LIVE_PERSONA_ID,
+                "live_capital_mutation": False,
+            }
+            bff_main.command_store.submit_command(
+                command_id="cmd-ppl-alloc-012-legacy-submit",
+                command_type=bff_main.CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+                target=bff_main.TargetObject(
+                    type=bff_main.ObjectType.RANKING,
+                    id=recommendation_id,
+                ),
+                submitted_at="2026-07-10T00:00:00Z",
+                params=legacy_params,
+                audit_context={
+                    "operator_id": "legacy-admin",
+                    "roles_at_submission": ["admin"],
+                    "timestamp": "2026-07-10T00:00:00Z",
+                },
+            )
+            commands_before = bff_main.command_store._get_all_commands()
+            assert len(commands_before) == 1
+            assert "ranking_snapshot_id" not in commands_before[0]["params"]
+            assert "source_type" not in commands_before[0]["params"]
+            assert "source_record_id" not in commands_before[0]["params"]
+            assert "source_recommendation" not in commands_before[0]["params"]
+
+            replay = client.post(
+                f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
+                headers={
+                    **HEADERS,
+                    "Idempotency-Key": "ppl-alloc-012-legacy-replay",
+                },
+                json={
+                    "quarter": "2026-Q3",
+                    "ranking_snapshot_id": caller_snapshot_id,
+                },
+            )
+            assert replay.status_code == 409, replay.text
+            assert replay.json()["error"]["code"] == "PRECONDITION_FAILED"
+            assert replay.json()["error"]["details"]["precondition_failed"] == (
+                "ranking_snapshot_id"
+            )
+
+            commands_after = bff_main.command_store._get_all_commands()
+            assert commands_after == commands_before
+            assert "ranking_snapshot_id" not in commands_after[0]["params"]
+            assert "source_type" not in commands_after[0]["params"]
+            assert "source_record_id" not in commands_after[0]["params"]
+            assert "source_recommendation" not in commands_after[0]["params"]
         finally:
             bff_main.read_store = original_store
             bff_main.command_store = original_command_store
@@ -1174,6 +1409,30 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
         },
         bindings=[conflicting_binding],
         runtimes=[conflicting_runtime],
+    )
+    assert selected_binding == {}
+    assert selected_runtime == {}
+    assert resolution == "inactive"
+
+    declared_expired_binding = {
+        "id": "binding-b-expired",
+        "binding_id": "binding-b-expired",
+        "persona_id": "persona-stale-declaration",
+        "validity": "expired",
+        "metadata": {"capital_mode": "live", "current_weight": 0.13},
+    }
+    unrelated_active_binding = {
+        "id": "binding-a-active",
+        "binding_id": "binding-a-active",
+        "persona_id": "persona-stale-declaration",
+        "validity": "active",
+        "metadata": {"capital_mode": "live", "current_weight": 0.05},
+    }
+    selected_binding, selected_runtime, resolution = bff_main._pm12_binding_runtime_context(
+        persona_id="persona-stale-declaration",
+        item={"binding_id": "binding-b-expired"},
+        bindings=[unrelated_active_binding, declared_expired_binding],
+        runtimes=[],
     )
     assert selected_binding == {}
     assert selected_runtime == {}
