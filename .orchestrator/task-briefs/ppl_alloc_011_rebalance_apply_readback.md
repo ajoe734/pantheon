@@ -58,10 +58,33 @@ frozen（或明確的 containment 狀態），且 receipt 帶 entity/audit 參�
 
 ## 驗收
 
-- [ ] contract tests：apply→terminal→readback、restart 重放（模擬 store 重啟）、
+- [x] contract tests：apply→terminal→readback、restart 重放（模擬 store 重啟）、
       無 approval 409、containment 不可增資，全綠。
-- [ ] merge dev + dev 部署後 live curl 證明：create proposal → approve →
+- [x] merge dev + dev 部署後 live curl 證明：create proposal → approve →
       apply → rebalance read `applied=true` → capital read 反映 target weight
       → 重啟後 proposal/receipt 仍可讀（babysit 規則：未經 live 驗證不得宣告完成）。
-- [ ] 證據歸檔 `docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive/`，
+- [x] 證據歸檔 `docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive/`，
       並在 PPL-ALLOC-009 標記此 blocker 已清。
+
+## Closeout evidence - 2026-07-13
+
+- Final guarded-admission repair: PR #3536, merge commit
+  `0e8c06603eb7ede8fd226837e439282e70fefc80`.
+- Exact-SHA dev root deployment: run `29268814057`, success.
+- Exact-SHA BFF restart: run `29270122636`, success; workflow log and public
+  `/bff/version` both verified the exact merge SHA.
+- Hosted governed apply: rebalance `rb-20260713-9e640fe8e883`, terminal command
+  `cmd-29641b43c51241a0a4938a086ca3e180`, authoritative target weight `0.0101`,
+  `live_capital_side_effects=false`.
+- Guarded token `ct-ppl011-final-0e8c0660` read back `redeemed`; same-key replay
+  preserved the command identity and a new-key reuse failed HTTP 428 before and
+  after restart.
+- Earlier apply and safe-containment evidence also survived both deployments;
+  their pre-auto-redeem tokens are correctly inferred as consumed after the
+  upgrade.
+- Sanitized evidence:
+  `docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive/PPL-ALLOC-011-HOSTED-EVIDENCE-2026-07-13.json`.
+
+The accepted boundary is the current single-writer dev runtime and durable host
+volume. This task does not claim multi-replica command-store coordination,
+host-volume disaster recovery, or real broker/capital execution.
