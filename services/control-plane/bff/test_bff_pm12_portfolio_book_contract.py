@@ -168,7 +168,7 @@ def _portfolio_store(
         },
     }
 
-    def list_capital_pools(status=None, risk_policy_ref=None):
+    def list_capital_pools(status=None, risk_policy_ref=None, *args, **kwargs):
         pools = list(capital_pools)
         if status:
             pools = [pool for pool in pools if pool.get("status") == status]
@@ -177,9 +177,9 @@ def _portfolio_store(
         return pools
 
     store.list_capital_pools = list_capital_pools
-    store.list_bindings = lambda persona_id=None, capital_pool_id=None, role=None, validity=None: bindings
-    store.list_deployment_plans = lambda status=None, capital_pool_id=None: deployment_plans
-    store.list_runtime_bindings = lambda deployment_mode=None, version=None: runtime_bindings
+    store.list_bindings = lambda *args, **kwargs: bindings
+    store.list_deployment_plans = lambda *args, **kwargs: deployment_plans
+    store.list_runtime_bindings = lambda *args, **kwargs: runtime_bindings
     store.get_telemetry_summary = lambda runtime_id: telemetry_records.get(runtime_id)
     store.get_paper_live_drift_report = lambda runtime_id: (drift_reports or {}).get(runtime_id)
     store.list_strategy_specs = lambda **_: list(strategy_specs or [])

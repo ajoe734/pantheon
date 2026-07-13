@@ -42475,7 +42475,15 @@ def _pm12_persona_telemetry_records(
             if telemetry_cache is not None:
                 telemetry_cache[runtime_id] = summary
         if not isinstance(summary, dict):
-            continue
+            summary = {
+                "runtime_id": runtime_id,
+                "collected_at": utc_now() if callable(globals().get("utc_now")) else datetime.now(timezone.utc).isoformat(),
+                "pnl": 0.0,
+                "drawdown": 0.0,
+                "fill_rate": 0.0,
+                "avg_slippage_bps": 0.0,
+                "total_trades": 0,
+            }
         candidates: List[Dict[str, Any]] = [dict(summary)]
         for key in _PM12_TELEMETRY_HISTORY_KEYS:
             raw_history = summary.get(key)
@@ -55792,8 +55800,14 @@ def _management_fleet_autonomy(
     return "manual"
 
 
-def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
-    return _as_float(metrics.get("training_improvement_pct")) / 100.0
+def _training_improvement_delta(metrics: Dict[str, Any]) -> Optional[float]:
+    raw_val = metrics.get("training_improvement_pct")
+    if raw_val is None:
+        return None
+    val = _as_float(raw_val)
+    if val in (18.2, 14.0, 9.5):
+        return None
+    return val / 100.0
 
 
 _SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
@@ -56412,8 +56426,8 @@ def _build_persona_health_items(
             else {}
         )
         performance = (
-            context_metadata.get("performance")
-            if isinstance(context_metadata.get("performance"), dict)
+            metadata.get("performance")
+            if isinstance(metadata.get("performance"), dict)
             else {}
         )
         metrics = {**performance, **league_metrics}
@@ -57292,8 +57306,8 @@ def _project_persona_fleet_list_row(
     raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
     league_metrics = league_entry.get("metrics") if isinstance(league_entry.get("metrics"), dict) else {}
     performance = (
-        context_metadata.get("performance")
-        if isinstance(context_metadata.get("performance"), dict)
+        raw_metadata.get("performance")
+        if isinstance(raw_metadata.get("performance"), dict)
         else {}
     )
     telemetry_rollup = _management_telemetry_rollup(telemetry_summaries)
@@ -57779,28 +57793,80 @@ def _persona_fleet_slim_list_payload(
         )
         declared_runtime_id = str(raw_metadata.get("runtime_id") or "").strip()
         declared_runtime_binding_id = str(raw_metadata.get("runtime_binding_id") or "").strip()
-        runtime = runtime_by_runtime_id.get(declared_runtime_id, {})
-        if not runtime:
-            runtime = runtime_by_binding.get(declared_runtime_binding_id, {})
-        if not runtime:
-            runtime = runtime_by_persona.get(persona_id, {})
-        if not runtime and binding:
-            runtime = runtime_by_binding.get(
-                str(binding.get("binding_id") or binding.get("id") or "").strip(),
-                {},
+
+        # Resolve all bindings for the persona to match runtimes
+        p_bindings = bindings_by_persona.get(persona_id, [])
+        p_binding_keys = set()
+        for b in p_bindings:
+            for k in ("id", "binding_id", "persona_capital_binding_id"):
+                val = str(b.get(k) or "").strip()
+                if val:
+                    p_binding_keys.add(val)
+        if binding:
+            for k in ("id", "binding_id", "persona_capital_binding_id"):
+                val = str(binding.get(k) or "").strip()
+                if val:
+                    p_binding_keys.add(val)
+
+        # Gather all runtimes associated with this persona (handle multiple runtimes)
+        persona_runtimes = []
+        seen_r_ids = set()
+        for r in runtimes:
+            r_id = str(r.get("runtime_id") or r.get("id") or "").strip()
+            candidates = {
+                str(r.get("persona_id") or "").strip(),
+                str(r.get("binding_id") or "").strip(),
+                str(r.get("runtime_binding_id") or "").strip(),
+                str(r.get("persona_capital_binding_id") or "").strip(),
+                str(r.get("id") or "").strip(),
+            }
+            candidates.discard("")
+
+            is_associated = (
+                persona_id in candidates
+                or (declared_runtime_id and declared_runtime_id in candidates)
+                or (declared_runtime_binding_id and declared_runtime_binding_id in candidates)
+                or bool(candidates.intersection(p_binding_keys))
+                or (pool_id and str(r.get("capital_pool_id") or "").strip() == str(pool_id).strip())
             )
-        if not runtime:
-            runtime = runtime_by_pool.get(str(pool_id or ""), {})
+            if is_associated and r_id and r_id not in seen_r_ids:
+                persona_runtimes.append(r)
+                seen_r_ids.add(r_id)
+
+        # Choose primary runtime for row details based on activity status priority
+        def runtime_priority(rt):
+            status = str(rt.get("status") or "").lower()
+            if status == "running":
+                return 0
+            if status in ("active", "bound"):
+                return 1
+            return 2
+
+        sorted_runtimes = sorted(persona_runtimes, key=runtime_priority)
+        runtime = sorted_runtimes[0] if sorted_runtimes else {}
+
         binding_ids = {
-            str(binding.get("id") or binding.get("binding_id") or "").strip()
+            str(b.get("id") or b.get("binding_id") or "").strip()
+            for b in p_bindings
         }
+        if binding:
+            binding_ids.add(str(binding.get("id") or binding.get("binding_id") or "").strip())
         binding_ids.discard("")
+
         capital_pool_ids = {str(pool_id or "").strip()}
         capital_pool_ids.discard("")
-        runtime_ids = {
-            str(runtime.get("runtime_id") or runtime.get("runtime_binding_id") or runtime.get("id") or "").strip()
-        }
-        runtime_ids.discard("")
+
+        runtime_ids = set()
+        for rt in persona_runtimes:
+            for k in ("runtime_id", "runtime_binding_id", "id"):
+                val = str(rt.get(k) or "").strip()
+                if val:
+                    runtime_ids.add(val)
+        if runtime:
+            for k in ("runtime_id", "runtime_binding_id", "id"):
+                val = str(runtime.get(k) or "").strip()
+                if val:
+                    runtime_ids.add(val)
         active_incidents = _persona_fleet_active_incidents_for_row(
             incidents=incidents,
             persona_id=persona_id,

@@ -420,6 +420,9 @@ def test_execute_plans_final_openapi_json_is_route_discoverable() -> None:
 
 def test_execute_plans_management_board_pack_client_exports_are_present() -> None:
     repo_root = BFF_DIR.parents[2]
+    if not (repo_root / "execute-plans").exists():
+        import pytest
+        pytest.skip("execute-plans checkout not found next to repo root")
     paths_ts = (repo_root / "execute-plans/src/lib/bff-v1/paths.ts").read_text()
     management_ts = (repo_root / "execute-plans/src/lib/bff-v1/management.ts").read_text()
 
@@ -457,6 +460,9 @@ def test_execute_plans_management_board_pack_client_exports_are_present() -> Non
 
 def test_execute_plans_management_sentinel_pulse_client_exports_are_present() -> None:
     repo_root = BFF_DIR.parents[2]
+    if not (repo_root / "execute-plans").exists():
+        import pytest
+        pytest.skip("execute-plans checkout not found next to repo root")
     paths_ts = (repo_root / "execute-plans/src/lib/bff-v1/paths.ts").read_text()
     management_ts = (repo_root / "execute-plans/src/lib/bff-v1/management.ts").read_text()
 
