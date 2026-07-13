@@ -26,11 +26,13 @@ def test_dev_management_ai_kernel_overlay_is_explicitly_dev_only() -> None:
     env = _read_env_file(DEV_KERNEL_ENV)
 
     assert env["PANTHEON_ENV"] == "dev"
+    assert env["PANTHEON_DEPLOYMENT_STAGE"] == "dev"
     assert env["PANTHEON_ASSISTANT_ENABLED"] == "true"
     assert env["PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED"] == "true"
     assert env["PANTHEON_ASSISTANT_KERNEL_ENABLED"] == "true"
     assert env["PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH"] == "/data/bff/assistant-control-mode.json"
     assert env["PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS"] == "300"
+    assert env["PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH"] == ""
     assert env["PANTHEON_STATUS_ROOT_HOST"] == "/home/lupin/code/pantheon"
     assert env["PANTHEON_STATUS_ROOT_CONTAINER"] == "/workspace/status-root"
     assert env["PANTHEON_ASSISTANT_REPAIR_REPO_URL"] == "/workspace/status-root"
@@ -40,12 +42,18 @@ def test_dev_management_ai_kernel_overlay_is_explicitly_dev_only() -> None:
     assert env["PANTHEON_BFF_AUTH_STUB"] == "false"
     assert env["PANTHEON_BFF_AUTH_MODE"] == "strict"
     assert env["PANTHEON_BFF_STUB_CAPABILITIES"] == ""
+    assert env["PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS"] == ""
     assert env["PANTHEON_BFF_JWT_SECRET"] == ""
     assert env["PANTHEON_BFF_JWT_ISSUER"] == "pantheon-dev"
     assert env["PANTHEON_BFF_JWT_AUDIENCE"] == "bff-operators"
     assert env["PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON"] == ""
-    assert env["PANTHEON_BFF_OIDC_CLIENT_ID"] == ""
-    assert env["PANTHEON_BFF_OIDC_CLIENT_SECRET"] == ""
+    assert env["PANTHEON_BFF_JWKS_URI"] == ""
+    assert env["PANTHEON_BFF_OIDC_DISCOVERY_URL"] == ""
+    assert env["PANTHEON_BFF_OIDC_ISSUER"] == ""
+    assert env["PANTHEON_BFF_OIDC_AUDIENCE"] == ""
+    assert env["PANTHEON_BFF_DEFAULT_ROLE"] == "viewer"
+    assert "PANTHEON_BFF_OIDC_CLIENT_ID" not in env
+    assert "PANTHEON_BFF_OIDC_CLIENT_SECRET" not in env
 
     prod_env = _read_env_file(PROD_CONTROL_ENV)
     assert prod_env["PANTHEON_ENV"] == "staging-live"
@@ -69,12 +77,19 @@ def test_enable_management_ai_dev_kernel_script_targets_only_operator_bff() -> N
     assert "docker inspect --format '{{json .Config.Env}}'" in script
     assert "set_policy_if_unset PANTHEON_BFF_JWT_ISSUER" in script
     assert "set_policy_if_unset PANTHEON_BFF_JWT_AUDIENCE" in script
+    assert "set_policy_if_unset PANTHEON_BFF_JWKS_URI" in script
+    assert "set_policy_if_unset PANTHEON_BFF_OIDC_DISCOVERY_URL" in script
+    assert "set_policy_if_unset PANTHEON_BFF_OIDC_ISSUER" in script
+    assert "set_policy_if_unset PANTHEON_BFF_OIDC_AUDIENCE" in script
+    assert "set_policy_if_unset PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH" in script
     assert "set_policy_if_unset PANTHEON_BFF_TENANT_ID" in script
     assert "set_policy_if_unset PANTHEON_BFF_ALLOWED_TENANTS" in script
     assert "set_policy_if_unset PANTHEON_BFF_ROLE_CLAIMS" in script
     assert "set_policy_if_unset PANTHEON_BFF_MFA_REQUIRED" in script
     assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED must be exactly true' in script
     assert "restore_previous_policy" in script
+    assert "dev_auth_validation.py compare-env" in script
+    assert "dev_auth_validation.py rollback-http" in script
     assert 'and .data.control_mode.configured == true' in script
     assert 'and .data.control_mode.active == false' in script
     assert "--no-deps --force-recreate operator-bff" in script
@@ -113,8 +128,8 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
         in script
     )
     assert 'DEV_BFF_JWT_SECRET="${DEV_BFF_JWT_SECRET:-}"' in script
-    assert 'DEV_BFF_OIDC_CLIENT_ID="${DEV_BFF_OIDC_CLIENT_ID:-}"' in script
-    assert 'DEV_BFF_OIDC_CLIENT_SECRET="${DEV_BFF_OIDC_CLIENT_SECRET:-}"' in script
+    assert 'DEV_BFF_OIDC_CLIENT_ID="${DEV_BFF_OIDC_CLIENT_ID:-}"' not in script
+    assert 'DEV_BFF_OIDC_CLIENT_SECRET="${DEV_BFF_OIDC_CLIENT_SECRET:-}"' not in script
     assert 'DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON="${DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON:-}"' in script
     assert (
         'DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES-}"'
@@ -152,8 +167,10 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
     assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \\' in script
     assert script.count('PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \\') == 2
     assert script.count('PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \\') == 2
-    assert script.count('PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \\') == 2
-    assert script.count('PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \\') == 2
+    assert 'emit_remote_export PANTHEON_DEV_BFF_OIDC_CLIENT_ID' not in script
+    assert 'emit_remote_export PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET' not in script
+    assert 'PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \\' not in script
+    assert 'PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \\' not in script
     assert script.count('PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON="${PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" \\') == 2
     assert 'PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \\' in script
     assert 'PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \\' in script

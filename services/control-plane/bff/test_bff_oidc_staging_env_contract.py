@@ -101,7 +101,7 @@ def test_dev_compose_forwards_strict_profiled_bff_auth_env() -> None:
     assert "PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}" in block
     assert "PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}" in block
     assert "PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}" in block
-    assert "PANTHEON_BFF_DEFAULT_ROLE: ${PANTHEON_BFF_DEFAULT_ROLE:-operator}" in block
+    assert "PANTHEON_BFF_DEFAULT_ROLE: ${PANTHEON_BFF_DEFAULT_ROLE:-viewer}" in block
     assert "PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}" in block
 
     for key in (
@@ -124,4 +124,10 @@ def test_dev_compose_forwards_strict_profiled_bff_auth_env() -> None:
         "PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS",
     ):
         assert f"{key}: ${{{key}:-" in block
+    for retired_key in (
+        "PANTHEON_BFF_OIDC_CLIENT_ID:",
+        "PANTHEON_BFF_OIDC_CLIENT_SECRET:",
+        "PANTHEON_BFF_DEV_LOGIN_ROLES:",
+    ):
+        assert retired_key not in block
     assert "${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:rw" in block

@@ -29,7 +29,10 @@ BFF_AUTH_TOKEN='<short-lived privileged JWT>' \
 
 `BFF_AUTH_TOKEN` is required and has no tracked fallback. The exact public
 browser credential (`pantheon-dev-browser:viewer`) is capability-free and
-read-only, so the script rejects it before changing the compose service. The
+read-only, so the script rejects it before changing the compose service. That
+fixed public credential is a temporary compatibility blocker, not an accepted
+AUTH end state: while it exists, no review or rollout may claim the dev AUTH
+loop complete even though it cannot write or acquire capabilities. The
 script also calls `/bff/me` before any container mutation and requires an
 operator/admin identity with MFA plus `assistant.kernel.debug` or
 `assistant.kernel.repair`. It then reads `/bff/assistant/mode` and refuses to
@@ -37,12 +40,22 @@ restart while that actor has an active or session-bound control mode. An
 unreachable BFF or invalid/under-scoped token is a hard block.
 
 Before recreation, the script captures the running container's auth and policy
-environment in a mode-0600 temporary file. Unspecified issuer, audience,
-tenant/allowed-tenant, role mapping, MFA policy, login profile, and signing
-settings are preserved from that snapshot. A failed recreate or failed exact
-postcondition automatically recreates `operator-bff` with the captured policy.
-The success postcondition is exactly kernel enabled, passphrase configured, and
-control mode inactive with no management session.
+environment in a mode-0600 temporary file. JWT issuer/audience/signing secret,
+JWKS URI, OIDC discovery URL/issuer/audience, environment markers, the
+control-passphrase hash (never the cleartext passphrase),
+tenant/allowed-tenant, role claims/map/default, MFA policy, login profiles, and
+stub-deny settings are taken from that authoritative snapshot rather than an
+ambient shell. A failed recreate or failed exact postcondition automatically
+recreates `operator-bff` with the captured policy. Rollback is successful only
+after a fresh `docker inspect` proves every captured key's presence and exact
+value and the original credential still returns matching `/bff/me` and inactive
+`/bff/assistant/mode` results. Failed rollback proof is a hard failure. The
+enable success postcondition is exactly kernel enabled, passphrase configured,
+and control mode inactive with no management session, plus a fresh container
+inspection proving every auth/trust value is unchanged.
+If the running container predates this strict Compose contract and lacks any
+named trust key, the script stops before mutation; deploy the strict BFF
+contract first instead of attempting an unverifiable recreation.
 
 The script defaults to the live dev compose project name:
 
@@ -57,6 +70,7 @@ PANTHEON_ASSISTANT_KERNEL_ENABLED=true
 PANTHEON_BFF_AUTH_STUB=false
 PANTHEON_BFF_AUTH_MODE=strict
 PANTHEON_BFF_STUB_CAPABILITIES=
+PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS=
 ```
 
 When `PANTHEON_STATUS_ROOT_HOST` is not supplied, the script first tries to read
@@ -112,9 +126,11 @@ kernel overlay during root stack deployment:
 - `PANTHEON_ASSISTANT_KERNEL_ENABLED=true`
 - `PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=/data/bff/assistant-control-mode.json`
 - `PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS=300`
+- `PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH=<preserve existing governed hash>`
 - `PANTHEON_BFF_AUTH_STUB=false`
 - `PANTHEON_BFF_AUTH_MODE=strict`
 - `PANTHEON_BFF_STUB_CAPABILITIES=`
+- `PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS=`
 - `PANTHEON_STATUS_ROOT_HOST=<dev remote repo root by default>`
 - `PANTHEON_STATUS_ROOT_CONTAINER=/workspace/status-root`
 
@@ -127,32 +143,57 @@ The BFF and GitHub environment still need independently provisioned dev-login
 client profiles and a JWT signing secret. Those secrets are not created or
 rotated by this repository. `PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON` is a
 server-side map: each client fixes a unique subject, roles, tenant and allowed
-tenants, capabilities, and MFA state. The login request cannot request or
-override those claims. Duplicate subjects and invalid/cross-tenant profiles
-fail closed. Kernel operator profiles may carry `assistant.kernel.*`; the Agora
+tenants, capabilities, and MFA state. Every profile contains exactly `secret`,
+`subject`, `roles`, `tenant_id`, `allowed_tenants`, `capabilities`, and
+`mfa_verified`; secrets are at least 32 UTF-8 bytes with no whitespace or
+control characters. The canonical validator rejects duplicate JSON keys,
+subjects, or secrets and rejects the whole map when any unselected extra
+profile is invalid. The login request cannot request or override claims and raw
+client id/secret whitespace is not trimmed. Issued profile tenant scope and
+capabilities are authoritative and do not inherit global tenant/capability
+fallbacks. Kernel operator profiles may carry
+`assistant.kernel.*`; `risk_owner` is supported as a governed role. The Agora
 deploy CI profile must be the distinct subject `pantheon-dev-ci-agora`, role
-`operator` only, tenant `tenant-dev` only, no kernel capability, and no MFA
-assertion. Do not restore structured-token or stub-capability fallbacks.
+`operator` only, tenant `tenant-dev` only, capabilities exactly `[]`, and
+`mfa_verified=false`. Do not restore a shared OIDC dev-login client, role/MFA
+defaults, structured-token fallback, or stub-capability fallback.
+Any two-person operator/approval proof must use separately provisioned A/B
+profiles with distinct client secrets and subjects; their roles, tenant scope,
+MFA state, and capabilities come only from their respective profile.
+The dev-login endpoint also requires at least one explicit environment marker,
+and every configured `PANTHEON_ENV`/`PANTHEON_DEPLOYMENT_STAGE` value must be
+exactly one of `dev`, `local`, `test`, or `testing`. Empty-only, staging,
+staging-live, QA, production, mixed, whitespace-padded, and unknown values fail
+closed.
 
 The external GitHub environment must provide `DEV_BFF_JWT_SECRET`,
 `DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON`, `DEV_BFF_CI_CLIENT_ID`, and
-`DEV_BFF_CI_CLIENT_SECRET`. The deploy script rejects partial, whitespace-only,
-or malformed profile configuration and streams secrets through SSH stdin; they
-are absent from gcloud argv and its environment. A local dry-run may omit them
+`DEV_BFF_CI_CLIENT_SECRET`. The BFF, direct deploy script, and GitHub preflight
+use the same standalone full-map/JWT validator. The deploy script validates via
+mode-0600 files before cloud authentication, rejects partial,
+whitespace/control, short-secret, or malformed profile configuration, and
+streams secrets through SSH stdin; they are absent from gcloud argv and its
+environment. A local dry-run may omit them
 to inspect the safe configuration, but the governed GitHub workflow blocks
 every dev root/BFF deployment until all four exist.
 
 The non-prod workflow treats missing GitHub dev-login credentials as a hard
 `BLOCKED` outcome before cloud authentication or deployment. When credentials
-exist, it exchanges the CI credential through `/bff/auth/dev-login`, validates
-the response as a bounded compact bearer JWT, verifies `/bff/me` is the exact
-least-role/single-tenant CI identity, and uses only that short-lived JWT for the
-restart-persistence smoke.
+exist, it exchanges the CI credential through `/bff/auth/dev-login`. Raw
+responses are first written to protected files; the validator rejects
+token-type/JWT/workshop-id whitespace, control characters, duplicate JSON
+fields, and malformed values before shell use. It then verifies `/bff/me` has
+capabilities exactly `[]`, MFA false, and the exact least-role/single-tenant CI
+identity, and uses only that short-lived JWT for the restart-persistence smoke.
 
 Repository support is not the live completion claim. Until the governed profile
 JSON, distinct CI credential, JWT signing secret, and a separate MFA-backed
 kernel-operator credential are provisioned and the authenticated hosted smokes
-pass, dev auth/kernel qualification remains `BLOCKED`, not done.
+pass, dev auth/kernel qualification remains `BLOCKED`, not done. The hosted dev
+BFF must also expose the deployed commit with strict auth and preserve its real
+IdP/JWKS trust configuration; repository tests cannot prove those external
+facts. Separately, removal or replacement of the temporary fixed public viewer
+remains required before the AUTH loop itself can be marked complete.
 
 ## Verify
 

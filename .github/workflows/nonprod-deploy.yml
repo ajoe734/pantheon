@@ -105,32 +105,36 @@ jobs:
           DEV_BFF_CI_CLIENT_ID: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_CI_CLIENT_ID || '' }}
           DEV_BFF_CI_CLIENT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_CI_CLIENT_SECRET || '' }}
         run: |
-          if [[ ! "${DEV_BFF_JWT_SECRET}" =~ [^[:space:]] || ! "${DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" =~ [^[:space:]] || ! "${DEV_BFF_CI_CLIENT_ID}" =~ [^[:space:]] || ! "${DEV_BFF_CI_CLIENT_SECRET}" =~ [^[:space:]] ]]; then
-            echo "::error::Dev deployment is BLOCKED: governed dev-login profile and CI credential secrets are not provisioned."
+          set -euo pipefail
+          auth_validation_dir="$(mktemp -d)"
+          chmod 0700 "${auth_validation_dir}"
+          trap 'rm -rf "${auth_validation_dir}"' EXIT
+          profiles_file="${auth_validation_dir}/profiles.json"
+          jwt_secret_file="${auth_validation_dir}/jwt-secret"
+          ci_secret_file="${auth_validation_dir}/ci-secret"
+          (umask 077; printf '%s' "${DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" >"${profiles_file}")
+          (umask 077; printf '%s' "${DEV_BFF_JWT_SECRET}" >"${jwt_secret_file}")
+          (umask 077; printf '%s' "${DEV_BFF_CI_CLIENT_SECRET}" >"${ci_secret_file}")
+          export -n DEV_BFF_JWT_SECRET DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON DEV_BFF_CI_CLIENT_SECRET
+          if ! python3 services/control-plane/bff/dev_auth_validation.py profiles \
+            --profiles-file "${profiles_file}" \
+            --jwt-secret-file "${jwt_secret_file}" \
+            --require-ci-profile \
+            --ci-client-id "${DEV_BFF_CI_CLIENT_ID}" \
+            --ci-client-secret-file "${ci_secret_file}"; then
+            echo "::error::Dev deployment is BLOCKED: governed dev-login configuration or exact least-role CI profile is invalid."
             {
               echo "## Dev auth qualification"
               echo "- Outcome: **BLOCKED**"
-              echo "- Reason: JWT/profile configuration and/or the least-role CI client credential are not provisioned"
+              echo "- Reason: canonical full-map/JWT/CI profile validation failed"
               echo "- No deployment was attempted"
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          if ! jq -e '
-            .[$ENV.DEV_BFF_CI_CLIENT_ID] as $profile
-            | ($profile | type == "object")
-            and $profile.secret == $ENV.DEV_BFF_CI_CLIENT_SECRET
-            and $profile.subject == "pantheon-dev-ci-agora"
-            and ($profile.roles | sort == ["operator"])
-            and $profile.tenant_id == "tenant-dev"
-            and $profile.allowed_tenants == ["tenant-dev"]
-            and (($profile.capabilities // []) | all(startswith("assistant.kernel.") | not))
-            and ($profile.mfa_verified == false)
-          ' <<<"${DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" >/dev/null; then
-            echo "::error::Dev deployment is BLOCKED: CI client is not a distinct least-role governed profile."
-            echo "- Dev auth qualification profile: **BLOCKED** (invalid CI actor/role/tenant/capability policy)" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          echo "- Dev auth qualification prerequisites: configured" >> "$GITHUB_STEP_SUMMARY"
+          DEV_BFF_JWT_SECRET=""
+          DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON=""
+          DEV_BFF_CI_CLIENT_SECRET=""
+          echo "- Dev auth qualification prerequisites: canonical validation passed" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Authenticate to Google Cloud via Workload Identity Federation
         uses: google-github-actions/auth@v2
@@ -260,10 +264,21 @@ jobs:
             exit 1
           fi
 
-          login_request="$(mktemp)"
-          login_response="$(mktemp)"
-          trap 'rm -f "${login_request}" "${login_response}"' EXIT
-          chmod 0600 "${login_request}" "${login_response}"
+          smoke_dir="$(mktemp -d)"
+          chmod 0700 "${smoke_dir}"
+          trap 'rm -rf "${smoke_dir}"' EXIT
+          login_request="${smoke_dir}/login-request.json"
+          login_response="${smoke_dir}/login-response.json"
+          bff_auth_token_file="${smoke_dir}/access-token"
+          auth_header="${smoke_dir}/authorization-header"
+          ci_identity="${smoke_dir}/ci-identity.json"
+          workshop_response="${smoke_dir}/workshop-response.json"
+          workshop_id_file="${smoke_dir}/workshop-id"
+          workshop_readback_response="${smoke_dir}/workshop-readback-response.json"
+          workshop_readback_id_file="${smoke_dir}/workshop-readback-id"
+          touch "${login_request}" "${login_response}" "${auth_header}" "${ci_identity}" \
+            "${workshop_response}" "${workshop_readback_response}"
+          chmod 0600 "${smoke_dir}"/*
           jq -n \
             '{grant_type:"client_credentials", client_id:$ENV.DEV_BFF_CI_CLIENT_ID, client_secret:$ENV.DEV_BFF_CI_CLIENT_SECRET}' \
             > "${login_request}"
@@ -273,27 +288,21 @@ jobs:
             -H 'Content-Type: application/json' \
             --data @"${login_request}" \
             > "${login_response}"
-          token_type="$(jq -er '.token_type | select(type == "string")' "${login_response}")"
-          [[ "${token_type,,}" == "bearer" ]] || { echo "::error::Dev login returned a non-bearer token type."; exit 1; }
-          bff_auth_token="$(jq -er '.access_token | select(type == "string")' "${login_response}")"
-          if (( ${#bff_auth_token} < 32 || ${#bff_auth_token} > 8192 )) \
-            || [[ ! "${bff_auth_token}" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
-            echo "::error::Dev login returned a malformed compact JWT."
+          if ! python3 services/control-plane/bff/dev_auth_validation.py login-response \
+            --input-file "${login_response}" --token-file "${bff_auth_token_file}"; then
+            echo "::error::Dev login returned an invalid token_type or malformed compact JWT."
             exit 1
           fi
-          auth_header="$(mktemp)"
+          { printf 'Authorization: Bearer '; cat "${bff_auth_token_file}"; printf '\n'; } >"${auth_header}"
           chmod 0600 "${auth_header}"
-          printf 'Authorization: Bearer %s\n' "${bff_auth_token}" > "${auth_header}"
-          trap 'rm -f "${login_request}" "${login_response}" "${auth_header}"' EXIT
 
-          ci_identity="$(mktemp)"
-          chmod 0600 "${ci_identity}"
-          trap 'rm -f "${login_request}" "${login_response}" "${auth_header}" "${ci_identity}"' EXIT
           curl -fsS "${DEV_BFF_URL}/bff/me" -H "@${auth_header}" > "${ci_identity}"
           jq -e '
             .data.currentUser.id == "pantheon-dev-ci-agora"
             and ((.data.roles // []) | sort == ["operator"])
-            and ((.data.capabilities // []) | all(startswith("assistant.kernel.") | not))
+            and .data.capabilities == []
+            and .data.session.mfa_verified == false
+            and .data.currentUser.mfa_verified == false
             and .data.tenant.id == "tenant-dev"
             and .data.tenant.allowed_ids == ["tenant-dev"]
           ' "${ci_identity}" >/dev/null || {
@@ -302,18 +311,19 @@ jobs:
           }
 
           idem="agora-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          workshop_id="$(
-            curl -fsS -X POST "${DEV_BFF_URL}/bff/agora/workshops" \
-              -H "@${auth_header}" \
-              -H "Idempotency-Key: ${idem}" \
-              -H 'Content-Type: application/json' \
-              --data '{"initial_message":"Versioned dev restart-persistence smoke"}' \
-              | jq -er '.data.workshop_id'
-          )"
-          if [[ ! "${workshop_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+          curl -fsS -X POST "${DEV_BFF_URL}/bff/agora/workshops" \
+            -H "@${auth_header}" \
+            -H "Idempotency-Key: ${idem}" \
+            -H 'Content-Type: application/json' \
+            --data '{"initial_message":"Versioned dev restart-persistence smoke"}' \
+            >"${workshop_response}"
+          if ! python3 services/control-plane/bff/dev_auth_validation.py workshop-response \
+            --input-file "${workshop_response}" --workshop-id-file "${workshop_id_file}"; then
             echo "::error::Agora smoke returned an invalid workshop id."
             exit 1
           fi
+          mapfile -t workshop_ids <"${workshop_id_file}"
+          workshop_id="${workshop_ids[0]:-}"
           gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
             --zone "${DEV_ZONE}" \
             --project "${GCP_DEPLOY_PROJECT_ID}" \
@@ -323,7 +333,15 @@ jobs:
             if curl -fsS "${DEV_BFF_URL}/readyz" >/dev/null; then break; fi
             sleep 2
           done
-          test "$(curl -fsS "${DEV_BFF_URL}/bff/agora/workshops/${workshop_id}" -H "@${auth_header}" | jq -er '.data.workshop_id')" = "${workshop_id}"
+          curl -fsS "${DEV_BFF_URL}/bff/agora/workshops/${workshop_id}" \
+            -H "@${auth_header}" >"${workshop_readback_response}"
+          python3 services/control-plane/bff/dev_auth_validation.py workshop-response \
+            --input-file "${workshop_readback_response}" \
+            --workshop-id-file "${workshop_readback_id_file}"
+          cmp -s "${workshop_id_file}" "${workshop_readback_id_file}" || {
+            echo "::error::Agora workshop id changed after restart."
+            exit 1
+          }
           echo "Workshop ${workshop_id} survived operator-bff restart." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize auto-deploy
