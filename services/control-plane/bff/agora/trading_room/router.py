@@ -889,6 +889,7 @@ def _workspace_data_freshness(
     strategy_id: str,
     evidence_refs: List[str],
     reported: Dict[str, Any],
+    workshop_store: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Combine caller source-health evidence with locally queryable surfaces."""
     resolved = copy.deepcopy(reported)
@@ -915,14 +916,42 @@ def _workspace_data_freshness(
             "reason": "workspace generation evidence refs",
         },
     )
+    has_strategy = False
+    if workshop_store is not None and hasattr(workshop_store, "list_sessions"):
+        try:
+            sessions, _ = workshop_store.list_sessions(limit=100)
+            if any(str(s.get("strategy_id") or "").strip() == strategy_id for s in sessions):
+                has_strategy = True
+        except Exception:
+            pass
     resolved.setdefault(
         "agora.strategy.summary",
         {
             "wired": True,
-            "rowCount": 1,
+            "rowCount": 1 if has_strategy else 0,
             "reason": "ready StrategySpec version used for workspace generation",
         },
     )
+    all_known_sources = {
+        "agora.candidate.members",
+        "winner_branch.score_breakdown",
+        "winner_branch.branch_flow_daily",
+        "winner_branch.branch_profitability",
+        "winner_branch.identity_probability",
+        "winner_branch.related_branch_flow",
+        "winner_branch.event_lead",
+        "agora.positions.summary",
+        "agora.shadow.outcomes",
+    }
+    for source in all_known_sources:
+        resolved.setdefault(
+            source,
+            {
+                "wired": False,
+                "rowCount": 0,
+                "reason": f"source {source} is not wired in current BFF deployment",
+            }
+        )
     return resolved
 
 
@@ -2047,6 +2076,7 @@ def create_trading_room_router(
             strategy_id=strategy_id,
             evidence_refs=evidence_refs,
             reported=data_freshness,
+            workshop_store=workshop_store,
         )
         generation = _generate_workspace_proposal(
             strategy_id=strategy_id,
@@ -2580,8 +2610,8 @@ def create_trading_room_router(
             errors.append("instruction is required")
         if not rationale:
             errors.append("rationale is required")
-        if data_availability not in {"complete", "partial", "unavailable"}:
-            errors.append("dataAvailability must be complete, partial, or unavailable")
+        if data_availability not in {"full", "partial", "missing"}:
+            errors.append("dataAvailability must be full, partial, or missing")
         if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
             errors.append("warnings must be an array of strings")
         if not isinstance(proposed_spec, dict):
