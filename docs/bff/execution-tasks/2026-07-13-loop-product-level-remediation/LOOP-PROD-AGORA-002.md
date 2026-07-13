@@ -32,6 +32,7 @@ Next action: Implement the six canonical operations and close contract, governan
 - `LOOP-PROD-CONS-001`
 - `LOOP-PROD-ALPHA-001`
 - `AG-GAP-005`
+- `LOOP-PROD-ATTEST-001`
 
 Only `done` satisfies a dependency. `superseded`, `cancelled`, missing,
 or merely submitted work does not.

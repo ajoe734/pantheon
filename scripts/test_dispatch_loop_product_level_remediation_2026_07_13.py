@@ -115,8 +115,9 @@ def test_catalog_validates_and_has_complete_task_documents() -> None:
     assert result.returncode == 0, result.stderr
     catalog = load_catalog()
     packet_index = (CATALOG.parent / "INDEX.md").read_text(encoding="utf-8")
-    assert catalog["task_count"] == len(catalog["tasks"]) == 36
-    assert len({task["id"] for task in catalog["tasks"]}) == 36
+    assert catalog["task_count"] == len(catalog["tasks"]) == 44
+    assert len({task["id"] for task in catalog["tasks"]}) == 44
+    assert catalog["tasks"][-1]["id"] == "LOOP-PROD-CLOSE-002"
     for task in catalog["tasks"]:
         task_doc = ROOT / task["task_doc"]
         assert task_doc.is_file(), task_doc
@@ -142,7 +143,7 @@ def test_dry_run_is_zero_write() -> None:
         result = run_dispatch(root, "--dry-run")
 
         assert result.returncode == 0, result.stderr
-        assert "summary create=36" in result.stdout
+        assert "summary create=44" in result.stdout
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
         assert not list(root.glob(".ai-status.json.*.tmp"))
@@ -176,13 +177,13 @@ def test_dispatch_is_idempotent_and_preserves_supervisor_agent_queues() -> None:
 
         state = json.loads(state_after_first)
         tasks = program_tasks(state)
-        assert len(tasks) == 36
+        assert len(tasks) == 44
         assert all(task["auto_created_by"].startswith("dispatch_loop_product") for task in tasks)
         assert all(task["loop_ids"] for task in tasks)
         assert all(task["proof_required"] for task in tasks)
         assert all(task["product_level_required"] is True for task in tasks)
         assert state["agents"] == agents_before
-        assert len(log_after_first.decode("utf-8").splitlines()) == 36
+        assert len(log_after_first.decode("utf-8").splitlines()) == 44
 
         second = run_dispatch(root)
         assert second.returncode == 0, second.stderr
@@ -215,12 +216,12 @@ def test_archived_terminal_primary_id_is_never_resurrected() -> None:
         assert "SKIP-ARCHIVED LOOP-PROD-000:done" in result.stdout
         state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
         assert "LOOP-PROD-000" not in {task["id"] for task in program_tasks(state)}
-        assert len(program_tasks(state)) == 35
-        assert len((root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()) == 35
+        assert len(program_tasks(state)) == 43
+        assert len((root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()) == 43
 
         second = run_dispatch(root)
         assert second.returncode == 0, second.stderr
-        assert len(program_tasks(json.loads((root / "ai-status.json").read_text()))) == 35
+        assert len(program_tasks(json.loads((root / "ai-status.json").read_text()))) == 43
 
 
 def test_existing_non_todo_task_record_is_preserved_in_full() -> None:

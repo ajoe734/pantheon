@@ -34,6 +34,7 @@ Next action: Prove the complete hosted Management AI repair and dev-bridge lifec
 - `LOOP-PROD-002`
 - `LOOP-PROD-REC-001`
 - `LOOP-PROD-TJ-001`
+- `LOOP-PROD-WORKER-001`
 
 Only `done` satisfies a dependency. `superseded`, `cancelled`, missing,
 or merely submitted work does not.

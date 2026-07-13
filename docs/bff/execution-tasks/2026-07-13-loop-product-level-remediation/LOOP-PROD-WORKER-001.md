@@ -1,0 +1,90 @@
+# LOOP-PROD-WORKER-001 — Exact-CAS worker outcome and forced termination integrity
+
+Status: ready for fleet dispatch after the additive packet is merged
+
+Canonical catalog: `tasks.json`
+
+Source addendum:
+`docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
+
+## Assignment
+
+| Field | Value |
+| --- | --- |
+| Owner | Codex |
+| Reviewer | Codex2 |
+| Wave | 1 |
+| Fleet lane | `worker-outcome-integrity` |
+| Repository | `pantheon` |
+| Merge target | `dev` |
+| Current maturity | partial guards with reproduced restart and post-launch races |
+| Target maturity | proven-live |
+
+## Product outcome
+
+任何 worker 只有在 task、event、owner、reviewer、run、attempt 與 payload
+signature 全部仍相符時才能 launch、retry、resume 或寫 terminal outcome；失去
+admission 的 process group 與 file-inbox payload 必須被確認清除。
+
+Next action: close the exact-head adversarial findings in the worker outcome
+guard and prove restart-safe RPO=0 behavior.
+
+## Dependencies
+
+- `LOOP-PROD-001`
+- `LOOP-PROD-002`
+
+Only `done` satisfies a dependency.
+
+## Loop scope
+
+- `bff_health_monitoring`
+- `per_persona_ooda`
+
+## Declared artifacts
+
+- `.orchestrator/runtime_state.py`
+- `.orchestrator/supervisor.py`
+- `.orchestrator/test_runtime_state.py`
+- `.orchestrator/test_supervisor.py`
+- `scripts/ai_status.py`
+- `scripts/test_ai_status.py`
+- `docs/deployment/evidence/loop-product-level/LOOP-PROD-WORKER-001`
+
+## Acceptance
+
+- boot, poll, self-claim, planning materialization, approval resume, retry, and final outcome share one exact admission/CAS invariant
+- task-state and runtime-state whole-file RMW paths use compatible shared locks and cannot stale-overwrite a newer guard, assignment, worker, or failure streak
+- a started same-run recovery is re-admitted after restart instead of being skipped by equality shortcuts
+- supersede/reassign/done after launch terminates the complete process group, escalates after grace, waits for zero members, and deletes file-inbox payloads before terminal publication
+- auth/provider pause and retry mutations occur only after final admission; stale attempts cannot leave quota or blocked-until state
+- malformed retry snapshots and corrupt failure timestamps are quarantined with an observable reason and cannot crash or permanently bias the supervisor cycle
+- deterministic interleavings, SIGTERM-ignoring children, restart, duplicate, and corrupt-state tests pass
+- exact PR, merge SHA, checks, reviewer verdict, and checksummed evidence are archived
+
+## Required proof
+
+- focused and full supervisor/runtime-state validation
+- deterministic race and restart fixtures
+- process-group and payload zero-member evidence
+- merged PR and merge SHA
+- independent exact-head review and residual-risk owner/expiry
+
+Reviewer approval must set `review_file` under:
+
+`docs/deployment/evidence/loop-product-level/LOOP-PROD-WORKER-001/`
+
+## Non-goals
+
+- No panel-only closure
+- No seed fixture as live proof
+- No approval gate bypass
+- No synthetic receipt as terminal execution proof
+- No live-capital or live-broker side effect
+
+## Dispatch and closeout rules
+
+- use a clean task worktree and never commit generated runtime state
+- preserve unrelated live supervisor state and restore test-generated tracked artifacts
+- do not close from unit tests alone; exercise real subprocess termination and restart
+- reviewer verifies every reproduced finding against the exact proposed head

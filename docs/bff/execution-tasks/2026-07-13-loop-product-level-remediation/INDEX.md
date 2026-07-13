@@ -5,6 +5,9 @@ Status: ready for fleet dispatch after merge
 Primary planning baseline:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md`
 
+Additive execution audit:
+`docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
+
 Machine task catalog: [tasks.json](tasks.json)
 
 Dispatcher:
@@ -15,7 +18,7 @@ Dispatcher tests:
 
 ## Product contract
 
-This packet contains 36 primary execution tasks. It is a build-and-proof DAG,
+This packet contains 44 primary execution tasks. It is a build-and-proof DAG,
 not a checklist that can be closed from component tests. The program remains
 active until the twelve canonical L1 loops plus the Per-Persona OODA composite
 overlay have default runtime ownership, real canonical effects or explicit
@@ -86,7 +89,7 @@ baseline.
 | [LOOP-PROD-TEACH-001](LOOP-PROD-TEACH-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-SRC-001`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-ALPHA-001` | Fail-closed Persona Teaching on authoritative data |
 | [LOOP-PROD-AGORA-001](LOOP-PROD-AGORA-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-001`<br>`LOOP-PROD-002`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-TEACH-001`<br>`LOOP-PROD-AUTH-001`<br>`AG-GAP-014` | Durable Agora evidence, dataset, and handoff worker |
 | [LOOP-PROD-CONS-001](LOOP-PROD-CONS-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-001`<br>`LOOP-PROD-002`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-AGORA-001` | Real-participant Consultation workflow |
-| [LOOP-PROD-AGORA-002](LOOP-PROD-AGORA-002.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-CONS-001`<br>`LOOP-PROD-ALPHA-001`<br>`AG-GAP-005` | Implement six deferred Strategy Workshop operations |
+| [LOOP-PROD-AGORA-002](LOOP-PROD-AGORA-002.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-CONS-001`<br>`LOOP-PROD-ALPHA-001`<br>`AG-GAP-005`<br>`LOOP-PROD-ATTEST-001` | Implement six deferred Strategy Workshop operations |
 | [LOOP-PROD-AGORA-003](LOOP-PROD-AGORA-003.md) | Codex2 / Codex | `execute-plans` | `LOOP-PROD-AGORA-002`<br>`LOOP-PROD-FE-001`<br>`AG-GAP-013`<br>`AG-GAP-014`<br>`OPS-EP-DEV-MAIN-RECONCILE-001` | Hosted Strategy Workshop generated client and actions |
 | [LOOP-PROD-IMIT-001](LOOP-PROD-IMIT-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-AGORA-001`<br>`LOOP-PROD-TEACH-001`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-CONS-001`<br>`LOOP-PROD-AGORA-002` | Default Human Imitation and shadow evaluation chain |
 | [LOOP-PROD-DEP-001](LOOP-PROD-DEP-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-001`<br>`LOOP-PROD-002`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-IMIT-001` | Canonical deployment dispatcher and RuntimeBinding readback |
@@ -104,7 +107,7 @@ baseline.
 | [LOOP-PROD-PER-001](LOOP-PROD-PER-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-DEP-001`<br>`LOOP-PROD-CAP-001`<br>`LOOP-PROD-OODA-001`<br>`PPL-ALLOC-010`<br>`PPL-ALLOC-011` | Persona provisioning through binding and first-evaluation readback |
 | [LOOP-PROD-TJ-001](LOOP-PROD-TJ-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-DEP-001`<br>`LOOP-PROD-CAP-001`<br>`LOOP-PROD-TEL-002`<br>`LOOP-PROD-EVO-001`<br>`LOOP-PROD-AUTH-001`<br>`TJ-E2E-014`<br>`LOOP-PROD-PER-001` | Canonical Trade Journey governed action backend |
 | [LOOP-PROD-TJ-002](LOOP-PROD-TJ-002.md) | Codex / Codex2 | `execute-plans` | `LOOP-PROD-TJ-001`<br>`LOOP-PROD-FE-001`<br>`MGMT-SSE-001`<br>`OPS-EP-DEV-MAIN-RECONCILE-001`<br>`LOOP-PROD-AGORA-003` | Hosted Trade Journey action controls |
-| [LOOP-PROD-MAI-001](LOOP-PROD-MAI-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-AUTH-001`<br>`LOOP-PROD-001`<br>`LOOP-PROD-002`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-TJ-001` | Hosted Management AI repair and dev-bridge backend proof |
+| [LOOP-PROD-MAI-001](LOOP-PROD-MAI-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-AUTH-001`<br>`LOOP-PROD-001`<br>`LOOP-PROD-002`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-TJ-001`<br>`LOOP-PROD-WORKER-001` | Hosted Management AI repair and dev-bridge backend proof |
 | [LOOP-PROD-MAI-002](LOOP-PROD-MAI-002.md) | Codex / Codex2 | `execute-plans` | `LOOP-PROD-MAI-001`<br>`LOOP-PROD-FE-001`<br>`MGMT-SSE-001`<br>`OPS-EP-DEV-MAIN-RECONCILE-001`<br>`LOOP-PROD-TJ-002` | Hosted Management AI repair product UI |
 | [LOOP-PROD-VERIFY-KNOW-001](LOOP-PROD-VERIFY-KNOW-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-SRC-001`<br>`LOOP-PROD-DIST-001`<br>`LOOP-PROD-ALPHA-001`<br>`LOOP-PROD-TEACH-001`<br>`LOOP-PROD-AGORA-001`<br>`LOOP-PROD-AGORA-002`<br>`LOOP-PROD-AGORA-003`<br>`LOOP-PROD-CONS-001`<br>`LOOP-PROD-IMIT-001`<br>`LOOP-PROD-BFF-001` | Target-dev Knowledge spine product verifier |
 | [LOOP-PROD-VERIFY-EXEC-001](LOOP-PROD-VERIFY-EXEC-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-PER-001`<br>`LOOP-PROD-DEP-001`<br>`LOOP-PROD-CAP-001`<br>`LOOP-PROD-TEL-001`<br>`LOOP-PROD-TEL-002`<br>`LOOP-PROD-EVO-001`<br>`LOOP-PROD-BFF-001`<br>`PPL-ALLOC-012` | Target-dev Execution spine product verifier |
@@ -120,11 +123,37 @@ baseline.
 | [LOOP-PROD-PINT-001](LOOP-PROD-PINT-001.md) | Codex2 / Codex | `pantheon` | `OPS-EP-DEV-MAIN-RECONCILE-001`<br>`PINT-010-R2`<br>`LOOP-PROD-AGORA-003`<br>`LOOP-PROD-VERIFY-HUMAN-001`<br>`LOOP-PROD-FE-001` | Persona Interaction reconciled hosted product closeout |
 | [LOOP-PROD-MAI-003](LOOP-PROD-MAI-003.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-MAI-001`<br>`LOOP-PROD-MAI-002`<br>`LOOP-PROD-VERIFY-OODA-001` | Management AI/OpenClaw product closeout |
 
-### Wave 4 — Global product closeout
+### Wave 4 — Baseline global product checkpoint
 
 | Task | Owner / reviewer | Repo | True dependencies | Outcome |
 | --- | --- | --- | --- | --- |
 | [LOOP-PROD-CLOSE-001](LOOP-PROD-CLOSE-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-002`<br>`LOOP-PROD-AUTH-001`<br>`LOOP-PROD-FE-001`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-VERIFY-KNOW-001`<br>`LOOP-PROD-VERIFY-EXEC-001`<br>`LOOP-PROD-VERIFY-HUMAN-001`<br>`LOOP-PROD-VERIFY-OODA-001`<br>`LOOP-PROD-PPL-001`<br>`LOOP-PROD-TJ-003`<br>`LOOP-PROD-PINT-001`<br>`LOOP-PROD-MAI-003` | Global 12-loop plus OODA product closeout |
+
+`LOOP-PROD-CLOSE-001` is retained because the baseline record may already be
+live. It is a checkpoint, not the final program verdict after this addendum.
+
+### Addendum Wave 1 — Worker, lease, fairness, attestation, and auth operations
+
+| Task | Owner / reviewer | Repo | True dependencies | Outcome |
+| --- | --- | --- | --- | --- |
+| [LOOP-PROD-WORKER-001](LOOP-PROD-WORKER-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-001`<br>`LOOP-PROD-002` | Exact-CAS worker outcome and forced termination integrity |
+| [LOOP-PROD-LEASE-001](LOOP-PROD-LEASE-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-AUTH-001`<br>`LOOP-PROD-WORKER-001` | Protected shared-dev mutation lease and payload isolation |
+| [LOOP-PROD-FLEET-001](LOOP-PROD-FLEET-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-WORKER-001` | Fair, quota-aware, starvation-bounded fleet admission |
+| [LOOP-PROD-ATTEST-001](LOOP-PROD-ATTEST-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-002`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001` | Protected product attestation trust root |
+| [LOOP-PROD-AUTH-OPS-001](LOOP-PROD-AUTH-OPS-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-AUTH-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-ATTEST-001` | Governed dev credential and privileged-capability lifecycle |
+
+### Addendum Wave 3 — Final execute-plans evidence and build qualification
+
+| Task | Owner / reviewer | Repo | True dependencies | Outcome |
+| --- | --- | --- | --- | --- |
+| [LOOP-PROD-FE-EVID-001](LOOP-PROD-FE-EVID-001.md) | Codex2 / Codex | `execute-plans` | `LOOP-PROD-FE-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AGORA-003`<br>`LOOP-PROD-TJ-002`<br>`LOOP-PROD-MAI-002` | Fail-closed protected-attestation consumer |
+| [LOOP-PROD-FE-BUILD-001](LOOP-PROD-FE-BUILD-001.md) | Codex / Codex2 | `execute-plans` | `LOOP-PROD-FE-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-AGORA-003`<br>`LOOP-PROD-TJ-002`<br>`LOOP-PROD-MAI-002` | Warning-free, budgeted live/strict product build |
+
+### Wave 5 — Additive final program closeout
+
+| Task | Owner / reviewer | Repo | True dependencies | Outcome |
+| --- | --- | --- | --- | --- |
+| [LOOP-PROD-CLOSE-002](LOOP-PROD-CLOSE-002.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-CLOSE-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-FLEET-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AUTH-OPS-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-FE-BUILD-001` | Sole final 44-task product verdict |
 
 Wave 1 deliberately carries additional delivery dependencies between tasks
 that share the root `docker-compose.yml` integration surface. Those edges
@@ -236,5 +265,7 @@ results, and residual risks. User-visible tasks additionally require hosted
 zero, keyboard/focus/reduced-motion, `FE_INT_GATE_PERF_STRICT=1`, and no
 unexpected console, CORS, chunk, or BFF errors.
 
-The final `LOOP-PROD-CLOSE-001` task cannot close without an independent
-Human/Ops verdict and zero unresolved blocking product risk.
+The baseline `LOOP-PROD-CLOSE-001` checkpoint cannot declare program
+completion. The final `LOOP-PROD-CLOSE-002` task requires an independent
+Human/Ops verdict and zero unresolved blocking product risk across all 44
+tasks.
