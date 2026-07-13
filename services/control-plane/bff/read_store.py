@@ -2319,7 +2319,7 @@ class CanonicalSnapshotAdapter:
             "filenames": ("capital_allocation_authority.json",),
             "keys": ["rebalance_id", "id"],
             "snapshot_key": "rebalances",
-            "envelope_key": "proposals",
+            "envelope_key": "rebalances",
         },
         "capital_allocations": {
             "env": "PANTHEON_BFF_CAPITAL_ALLOCATION_STORE",
@@ -2397,6 +2397,7 @@ class CanonicalSnapshotAdapter:
         "capital_allocations": {
             "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
             "list_path": "/api/allocations",
+            "list_key": "items",
         },
         "containments": {
             "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
@@ -11642,7 +11643,6 @@ class ReadSurfaceStore:
             for item in authoritative:
                 if str(item.get("rebalance_id") or item.get("id") or "") == str(rebalance_id):
                     return json.loads(json.dumps(item))
-            return None
         overlay = self._local_overlay_records("rebalances").get(rebalance_id)
         if overlay is not None:
             return overlay

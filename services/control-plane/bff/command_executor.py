@@ -1107,8 +1107,14 @@ def _execute_emergency_containment_authority(
         }
     )
     body = _post_json(_capital_url("/api/containments"), payload)
-    if body.get("containment_state") != "frozen":
-        raise RuntimeError("Capital authority did not confirm frozen containment state")
+    containment_state = str(
+        body.get("containment_state") or body.get("state") or ""
+    ).strip()
+    if (
+        containment_state not in {"frozen", "suspended", "risk_off", "retired"}
+        or body.get("authoritative_containment_readback") is not True
+    ):
+        raise RuntimeError("Capital authority did not confirm terminal containment state")
     return {
         **body,
         "command_id": command_id,
@@ -1118,6 +1124,7 @@ def _execute_emergency_containment_authority(
         "entity_type": str(params.get("entity_type") or "Runtime"),
         "entity_id": str(params.get("entity_id") or ""),
         "containment": True,
+        "containment_state": containment_state,
         "risk_direction": "decrease_only",
         "live_capital_side_effects": False,
     }

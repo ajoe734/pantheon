@@ -20848,6 +20848,8 @@ async def submit_command(
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
     stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
+    stored_params["idempotency_key"] = x_idempotency_key
+    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
 
     duplicate = command_store.get_command_by_idempotency_key(
         foundation_context["idempotency_record"].idempotency_key,
@@ -21042,6 +21044,10 @@ def _submit_final_command_admission(
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
     stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
+    stored_params["idempotency_key"] = resolved_key
+    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
+    for evidence_key, evidence_value in precondition_evidence.items():
+        stored_params.setdefault(evidence_key, evidence_value)
 
     duplicate = command_store.get_command_by_idempotency_key(
         foundation_context["idempotency_record"].idempotency_key,
@@ -23583,6 +23589,8 @@ async def bff_list_capital_pools(
     pools = read_store.list_capital_pools(status=status, risk_policy_ref=risk_policy_ref)
     bindings = read_store.list_bindings() or []
     allocations = read_store.list_capital_allocations()
+    allocation_source = read_store.dataset_source("capital_allocations")
+    allocation_source_authoritative = allocation_source in {"service_client", "canonical"}
     bindings_by_pool: Dict[str, List[Dict[str, Any]]] = {}
     for binding in bindings:
         pool_id = str(binding.get("capital_pool_id") or "").strip()
@@ -23663,7 +23671,8 @@ async def bff_list_capital_pools(
             "persona_binding_summaries": summaries,
             "persona_binding_count": len(summaries),
             "authoritative_capital_readback": bool(pool_allocations)
-            and all(item.get("authoritative_capital_readback") is True for item in pool_allocations),
+            and allocation_source_authoritative
+            and all(item.get("authoritative_capital_readback", True) is True for item in pool_allocations),
         })
     total = len(normalized_pools)
     page_items, next_page_token = _page_slice(normalized_pools, page_token, page_size)
@@ -23772,9 +23781,14 @@ async def bff_get_capital_pool(
     data = dict(pool)
     data["bindings"] = bindings
     data["allocations"] = allocations
-    data["authoritative_capital_readback"] = bool(allocations) and all(
-        allocation.get("authoritative_capital_readback") is True
-        for allocation in allocations
+    allocation_source = read_store.dataset_source("capital_allocations")
+    data["authoritative_capital_readback"] = (
+        bool(allocations)
+        and allocation_source in {"service_client", "canonical"}
+        and all(
+            allocation.get("authoritative_capital_readback", True) is True
+            for allocation in allocations
+        )
     )
     meta = _read_surface_meta(
         "capital_pools",
