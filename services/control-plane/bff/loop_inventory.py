@@ -177,6 +177,7 @@ def _controller_heartbeat_is_current(value: Any) -> bool:
 def _runtime_controller_record_qualified(
     record: Dict[str, Any],
     health_source: str,
+    expected_controller_name: Any,
 ) -> bool:
     if not record or health_source not in _ACCEPTED_RUNTIME_HEALTH_SOURCES:
         return False
@@ -196,6 +197,7 @@ def _runtime_controller_record_qualified(
         or raw_health.get("name")
         or ""
     ).strip()
+    expected_name = str(expected_controller_name or "").strip()
     heartbeat = str(
         raw_health.get("last_heartbeat_at")
         or record.get("last_heartbeat_at")
@@ -203,7 +205,8 @@ def _runtime_controller_record_qualified(
     ).strip()
     return bool(
         reported_status in _ACCEPTED_CONTROLLER_HEALTH_STATUSES
-        and controller_name
+        and expected_name
+        and controller_name == expected_name
         and _controller_heartbeat_is_current(heartbeat)
         and _health_record_refs(record)
     )
@@ -215,6 +218,7 @@ def _truth_source_from_profile(
     health_record: Dict[str, Any],
     health_source: str,
     eligible_live_truth_levels: set[str],
+    expected_controller_name: Any,
 ) -> Dict[str, Any]:
     evidence = evidence_profile.get(level) if isinstance(evidence_profile.get(level), dict) else {}
     health_truth_level = _health_record_truth_level(health_record)
@@ -243,6 +247,7 @@ def _truth_source_from_profile(
     runtime_record_qualified = _runtime_controller_record_qualified(
         health_record,
         health_source,
+        expected_controller_name,
     )
     evidence_basis = _health_record_evidence_basis(health_record)
     accepted_as_live = (
@@ -300,6 +305,7 @@ def _truth_sources(
     health_record: Dict[str, Any],
     health_source: str,
     eligible_live_truth_levels: set[str],
+    expected_controller_name: Any,
 ) -> List[Dict[str, Any]]:
     return [
         _truth_source_from_profile(
@@ -308,6 +314,7 @@ def _truth_sources(
             health_record,
             health_source,
             eligible_live_truth_levels,
+            expected_controller_name,
         )
         for level in _TRUTH_LEVEL_ORDER
     ]
@@ -592,6 +599,7 @@ def _project_controller_health(
     runtime_record_qualified = _runtime_controller_record_qualified(
         health_record,
         health_source,
+        controller.get("controller_name"),
     )
     contract_accepts_runtime_record = contract_status in {"implemented", "proven_live"}
     heartbeat = raw_health.get("last_heartbeat_at") or health_record.get("last_heartbeat_at")
@@ -624,7 +632,22 @@ def _project_controller_health(
             else (
                 "catalog controller contract is not implemented"
                 if not contract_accepts_runtime_record
-                else "record lacks accepted current controller-runtime provenance"
+                else (
+                    "runtime controller identity does not match catalog contract"
+                    if str(
+                        raw_health.get("controller_name")
+                        or raw_health.get("name")
+                        or ""
+                    ).strip()
+                    and str(controller.get("controller_name") or "").strip()
+                    and str(
+                        raw_health.get("controller_name")
+                        or raw_health.get("name")
+                        or ""
+                    ).strip()
+                    != str(controller.get("controller_name") or "").strip()
+                    else "record lacks accepted current controller-runtime provenance"
+                )
             )
         ),
         "controller_contract_status": contract_status,
@@ -690,6 +713,7 @@ def _project_evidence_packet(
         health_record,
         health_source,
         eligible_live_levels,
+        controller.get("controller_name"),
     )
     highest = _highest_present_truth_source(truth_sources)
     operator_truth = _operator_truth_source(truth_sources, highest)
@@ -698,7 +722,16 @@ def _project_evidence_packet(
         if isinstance(evidence, dict) and isinstance(evidence.get("refs"), list):
             profile_refs.extend(evidence["refs"])
     refs = _dedupe_strings(profile_refs + _health_record_refs(health_record))
-    accepted_live_liveness = any(source.get("accepted_as_live") for source in truth_sources)
+    accepted_live_sources = [
+        source
+        for source in truth_sources
+        if source.get("status") == "present" and source.get("accepted_as_live")
+    ]
+    accepted_live_levels = {
+        str(source.get("truth_level") or "")
+        for source in accepted_live_sources
+    }
+    accepted_live_liveness = bool(accepted_live_sources)
     return {
         "id": packet.get("id") or packet.get("packet_id") or f"loop-health-{loop_id}",
         "packet_id": packet.get("packet_id") or packet.get("id") or f"loop-health-{loop_id}",
@@ -712,6 +745,7 @@ def _project_evidence_packet(
         "runtime_controller_record_qualified": _runtime_controller_record_qualified(
             health_record,
             health_source,
+            controller.get("controller_name"),
         ),
         "archived_task_completion_accepted": False,
         "highest_truth_level": highest.get("truth_level"),
@@ -719,12 +753,14 @@ def _project_evidence_packet(
         "accepted_live_liveness": accepted_live_liveness,
         "operator_truth": operator_truth,
         "can_claim_reconciled": (
-            accepted_live_liveness
-            and int(highest.get("rank") or -1) >= _TRUTH_LEVEL_RANKS["reconciled_live_proof"]
+            any(
+                int(source.get("rank") or -1)
+                >= _TRUTH_LEVEL_RANKS["reconciled_live_proof"]
+                for source in accepted_live_sources
+            )
         ),
         "can_claim_proven_live": (
-            accepted_live_liveness
-            and highest.get("truth_level") == "proven_live_evidence"
+            "proven_live_evidence" in accepted_live_levels
         ),
         "captured_at": packet.get("captured_at") or health_record.get("captured_at") or health_record.get("updated_at"),
         "refs": refs,
