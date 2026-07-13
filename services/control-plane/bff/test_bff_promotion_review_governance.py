@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import sys
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from typing import Iterator
 
+import httpx
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from command_queue import CommandStore
-from models import ObjectType
+from models import CommandStatus, CommandType, ObjectType, TargetObject
 from read_store import ReadSurfaceStore
 
 
@@ -98,6 +102,51 @@ def _submit_review(
     )
 
 
+def _legacy_promotion_submission_params(
+    recommendation_id: str,
+    *,
+    persona_id: str,
+) -> dict:
+    return {
+        "quarter": "2026-Q3",
+        "review_id": recommendation_id,
+        "promotion_review_id": recommendation_id,
+        "recommendation_id": recommendation_id,
+        "recommendationId": recommendation_id,
+        "recommendation_action_id": "promote_to_canary_candidate",
+        "recommendationActionId": "promote_to_canary_candidate",
+        "persona_id": persona_id,
+        "stage_from": "paper",
+        "stage_to": "canary_candidate",
+        "review_kind": "paper_to_canary_review",
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "direct_live_capital_mutation": False,
+        "runtime_mutation": False,
+    }
+
+
+def _append_command(
+    *,
+    command_id: str,
+    command_type: CommandType,
+    target_type: ObjectType,
+    target_id: str,
+    params: dict,
+    status: CommandStatus = CommandStatus.SUBMITTED,
+) -> None:
+    bff_main.command_store.submit_command(
+        command_id=command_id,
+        command_type=command_type,
+        target=TargetObject(type=target_type, id=target_id),
+        submitted_at="2026-07-13T00:00:00Z",
+        params=params,
+        audit_context={"operator_id": "op-promo", "reason": "PPL-ALLOC-015 regression fixture"},
+    )
+    if status != CommandStatus.SUBMITTED:
+        assert bff_main.command_store.update_status(command_id, status)
+
+
 def test_promotion_reviews_list_and_detail_are_readable_by_operator() -> None:
     with _isolated_client() as client:
         list_response = client.get(
@@ -135,7 +184,7 @@ def test_promotion_reviews_list_and_detail_are_readable_by_operator() -> None:
         assert detail_body["meta"]["live_capital_mutation"] is False
 
 
-def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item() -> None:
+def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item(monkeypatch) -> None:
     with _isolated_client() as client:
         review = _first_review(client)
         submit = _submit_review(client, review["review_id"], idem=_idem())
@@ -163,6 +212,19 @@ def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item() -
         assert detail_data["status"] == "pending_human_gate"
         assert detail_data["allowedActions"]["canApprove"] is True
 
+        def fail_if_ranking_is_rebuilt(*_args, **_kwargs):
+            raise AssertionError("Human Inbox must project the durable submission without rebuilding PM12")
+
+        monkeypatch.setattr(bff_main, "_promotion_review_find", fail_if_ranking_is_rebuilt)
+        monkeypatch.setattr(bff_main, "_build_persona_health_items", fail_if_ranking_is_rebuilt)
+        for method_name in (
+            "list_governance_review_queue_items",
+            "list_approval_queue_items",
+            "list_v5_interventions",
+            "list_sentinel_findings",
+        ):
+            monkeypatch.setattr(bff_main.read_store, method_name, fail_if_ranking_is_rebuilt)
+
         inbox = client.get(
             "/bff/management/human-inbox",
             headers=OPERATOR_HEADERS,
@@ -171,6 +233,7 @@ def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item() -
         assert inbox.status_code == 200, inbox.text
         inbox_items = inbox.json()["data"]["items"]
         assert any(item["promotion_review_id"] == review["review_id"] for item in inbox_items)
+        assert inbox.json()["meta"]["surfaces"]["promotion_reviews"]["source"] == "command_store"
 
         inbox_detail = client.get(
             f"/bff/management/human-inbox/{detail_data['human_inbox_id']}",
@@ -178,6 +241,456 @@ def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item() -
         )
         assert inbox_detail.status_code == 200, inbox_detail.text
         assert inbox_detail.json()["data"]["source_type"] == "promotion_review"
+
+
+def test_quarterly_recommendation_submit_ignores_caller_source_snapshot() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        authoritative = review["source_recommendation"]
+        forged = {
+            **authoritative,
+            "name": "FORGED VIEWER TITLE",
+            "rationale": "FORGED VIEWER RATIONALE",
+            "priority": "critical",
+            "evidence_refs": [
+                {
+                    "ref_id": "private-evidence",
+                    "source_document": "FORGED PRIVATE EVIDENCE",
+                }
+            ],
+            "evidence_ref_ids": ["private-evidence"],
+        }
+        submit = client.post(
+            f"/bff/management/quarterly-ranking/recommendations/{review['review_id']}/submit",
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
+            json={"quarter": "2026-Q1", "source_recommendation": forged},
+        )
+
+        assert submit.status_code == 202, submit.text
+        records = bff_main.command_store._get_all_commands()
+        stored = records[0]["params"]["source_recommendation"]
+        assert stored["name"] == authoritative["name"]
+        assert stored.get("rationale") == authoritative.get("rationale")
+        assert stored.get("priority") == authoritative.get("priority")
+        assert stored["evidence_refs"] == []
+        assert stored["evidence_ref_ids"] == []
+
+        inbox = client.get(
+            "/bff/management/human-inbox",
+            headers={"Authorization": "Bearer promotion-viewer:viewer"},
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+
+        assert inbox.status_code == 200, inbox.text
+        item = next(
+            item
+            for item in inbox.json()["data"]["items"]
+            if item["promotion_review_id"] == review["review_id"]
+        )
+        serialized = json.dumps(item, sort_keys=True)
+        assert "FORGED VIEWER TITLE" not in serialized
+        assert "FORGED VIEWER RATIONALE" not in serialized
+        assert "FORGED PRIVATE EVIDENCE" not in serialized
+
+
+def test_generic_command_does_not_block_trusted_semantic_submission() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        generic = client.post(
+            "/bff/v1/commands",
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
+            json={
+                "command": "QuarterlyRankingRecommendationSubmit",
+                "target": {"type": "Ranking", "id": review["recommendation_id"]},
+                "params": {
+                    "quarter": review["quarter"],
+                    "recommendation_id": review["recommendation_id"],
+                    "recommendation_action_id": review["action_id"],
+                    "persona_id": review["persona_id"],
+                    "stage_from": review["promotion_path"]["from_stage"],
+                    "stage_to": review["promotion_path"]["target_stage"],
+                    "review_kind": review["review_kind"],
+                    "requires_human_gate_decision": True,
+                    "live_capital_mutation": False,
+                    "direct_live_capital_mutation": False,
+                    "runtime_mutation": False,
+                },
+                "audit_context": {
+                    "reason": "Regression: generic command cannot impersonate semantic submit"
+                },
+            },
+        )
+        assert generic.status_code == 202, generic.text
+
+        before_detail = client.get(
+            f"/bff/management/promotion-reviews/{review['review_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert before_detail.status_code == 200, before_detail.text
+        assert before_detail.json()["data"]["submitted"] is False
+        before_inbox = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+        assert before_inbox.status_code == 200, before_inbox.text
+        assert before_inbox.json()["data"]["items"] == []
+
+        semantic = _submit_review(client, review["review_id"], idem=_idem())
+        assert semantic.status_code == 202, semantic.text
+        records = bff_main.command_store._get_all_commands()
+        assert len(records) == 2
+        assert not bff_main._human_inbox_trusted_promotion_submission(records[0])
+        assert bff_main._human_inbox_trusted_promotion_submission(records[1])
+
+        after_detail = client.get(
+            f"/bff/management/promotion-reviews/{review['review_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert after_detail.status_code == 200, after_detail.text
+        assert after_detail.json()["data"]["submitted"] is True
+        after_inbox = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+        assert after_inbox.status_code == 200, after_inbox.text
+        items = after_inbox.json()["data"]["items"]
+        assert [item["promotion_review_id"] for item in items] == [review["review_id"]]
+
+
+def test_human_inbox_ignores_decision_with_mismatched_target_aliases() -> None:
+    with _isolated_client() as client:
+        response = client.get(
+            "/bff/management/promotion-reviews",
+            headers=OPERATOR_HEADERS,
+            params={
+                "quarter": "2026-Q1",
+                "page_size": 10,
+                "action_id": "promote_to_canary_candidate",
+            },
+        )
+        assert response.status_code == 200, response.text
+        reviews = response.json()["data"]["items"]
+        assert len(reviews) >= 2
+        target_review, aliased_review = reviews[:2]
+        for review in (target_review, aliased_review):
+            submit = _submit_review(client, review["review_id"], idem=_idem())
+            assert submit.status_code == 202, submit.text
+
+        target_id = f"promotion_review:{target_review['review_id']}"
+        mismatch = client.post(
+            "/bff/v1/commands",
+            headers={**APPROVER_HEADERS, "Idempotency-Key": _idem()},
+            json={
+                "command": "HumanGateApprove",
+                "target": {"type": "HumanGateItem", "id": target_id},
+                "params": {
+                    "human_gate_item_id": target_id,
+                    "decision": "approve",
+                    "review_id": aliased_review["review_id"],
+                    "promotion_review_id": aliased_review["review_id"],
+                    "recommendation_id": aliased_review["recommendation_id"],
+                    "rationale": "Mismatched aliases must not move either review.",
+                },
+                "audit_context": {
+                    "reason": "Regression: Human Gate target and aliases must agree"
+                },
+            },
+        )
+        assert mismatch.status_code == 202, mismatch.text
+        record = bff_main.command_store._get_all_commands()[-1]
+        assert bff_main._human_inbox_decision_recommendation_id(record) == ""
+        assert bff_main._human_inbox_decision_projection_from_record(record) is None
+
+        for review in (target_review, aliased_review):
+            detail = client.get(
+                f"/bff/management/promotion-reviews/{review['review_id']}",
+                headers=OPERATOR_HEADERS,
+            )
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["data"]["decision_status"] == "pending"
+
+        inbox = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+        assert inbox.status_code == 200, inbox.text
+        projected = {
+            item["promotion_review_id"]: item["status"]
+            for item in inbox.json()["data"]["items"]
+        }
+        assert projected[target_review["review_id"]] == "pending"
+        assert projected[aliased_review["review_id"]] == "pending"
+
+
+def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch) -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        submit = _submit_review(client, review["review_id"], idem=_idem())
+        assert submit.status_code == 202, submit.text
+
+        monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.05")
+
+        def slow_persona_readiness(*_args, **_kwargs):
+            time.sleep(1.0)
+            return []
+
+        monkeypatch.setattr(bff_main, "_build_persona_health_items", slow_persona_readiness)
+        async def bounded_request() -> tuple[httpx.Response, float]:
+            transport = httpx.ASGITransport(app=bff_main.app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+            ) as async_client:
+                started_at = time.monotonic()
+                response = await async_client.get(
+                    "/bff/management/human-inbox",
+                    headers=OPERATOR_HEADERS,
+                    params={"page_size": 20},
+                )
+                return response, time.monotonic() - started_at
+
+        inbox, elapsed = asyncio.run(bounded_request())
+
+        assert inbox.status_code == 200, inbox.text
+        assert elapsed < 0.5
+        body = inbox.json()
+        assert any(
+            item["promotion_review_id"] == review["review_id"]
+            for item in body["data"]["items"]
+            if item["source_type"] == "promotion_review"
+        )
+        assert body["meta"]["partial"] is True
+        assert body["meta"]["surfaces"]["human_inbox"]["status"] == "degraded"
+        assert body["meta"]["surfaces"]["persona_readiness"]["reason"] == "read_timeout"
+
+
+def test_human_inbox_filtered_local_snapshot_empty_remains_degraded(monkeypatch) -> None:
+    with _isolated_client() as client:
+        monkeypatch.setattr(
+            bff_main.read_store,
+            "list_approval_queue_items",
+            lambda **_: [
+                {
+                    "decision_id": "approval-local-snapshot",
+                    "decision_type": "DeploymentPlan",
+                    "decision_state": "pending",
+                    "risk_level": "high",
+                    "submitted_at": "2026-07-13T00:00:00Z",
+                }
+            ],
+        )
+        original_dataset_source = bff_main.read_store.dataset_source
+
+        def local_snapshot_source(dataset: str, **kwargs):
+            if dataset == "approval_queue_items":
+                return "local_snapshot"
+            return original_dataset_source(dataset, **kwargs)
+
+        monkeypatch.setattr(bff_main.read_store, "dataset_source", local_snapshot_source)
+
+        response = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "approval", "status": "no-such-status"},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["data"]["items"] == []
+        approval_surface = body["meta"]["surfaces"]["approval_queue"]
+        assert approval_surface["source"] == "local_snapshot"
+        assert approval_surface["status"] == "degraded"
+        assert body["meta"]["surfaces"]["human_inbox"]["status"] == "degraded"
+
+
+def test_hiq_backlog_remains_available_after_human_inbox_surface_extension(monkeypatch) -> None:
+    with _isolated_client() as client:
+        monkeypatch.setattr(bff_main.read_store, "list_governance_review_queue_items", lambda **_: [])
+        monkeypatch.setattr(bff_main.read_store, "list_approval_queue_items", lambda **_: [])
+        monkeypatch.setattr(bff_main.read_store, "list_v5_interventions", lambda **_: [])
+        monkeypatch.setattr(bff_main.read_store, "list_sentinel_findings", lambda **_: (True, []))
+        monkeypatch.setattr(
+            bff_main,
+            "_build_persona_health_items",
+            lambda *_args, **_kwargs: [],
+        )
+
+        response = client.get(
+            "/bff/management/hiq-backlog",
+            headers=OPERATOR_HEADERS,
+            params={"page_size": 10},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["id"] == "management-hiq-backlog"
+
+
+def test_human_inbox_promotion_projection_reads_command_log_once(monkeypatch) -> None:
+    with _isolated_client() as client:
+        recommendation_ids = [
+            "pm12-2026-q3-persona-alpha-promote_to_canary_candidate",
+            "pm12-2026-q3-persona-beta-promote_to_canary_candidate",
+        ]
+        for index, recommendation_id in enumerate(recommendation_ids, start=1):
+            _append_command(
+                command_id=f"cmd-promotion-submit-{index}",
+                command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+                target_type=ObjectType.RANKING,
+                target_id=recommendation_id,
+                params=_legacy_promotion_submission_params(
+                    recommendation_id,
+                    persona_id=f"persona-{'alpha' if index == 1 else 'beta'}",
+                ),
+            )
+        _append_command(
+            command_id="cmd-promotion-decision-1",
+            command_type=CommandType.HUMAN_GATE_APPROVE,
+            target_type=ObjectType.HUMAN_GATE_ITEM,
+            target_id=f"promotion_review:{recommendation_ids[0]}",
+            params={
+                "review_id": recommendation_ids[0],
+                "recommendation_id": recommendation_ids[0],
+                "decision": "approve",
+                "rationale": "Single-pass projection fixture.",
+            },
+            status=CommandStatus.EXECUTED,
+        )
+
+        original_get_all_commands = bff_main.command_store._get_all_commands
+        command_log_reads = 0
+
+        def counted_get_all_commands():
+            nonlocal command_log_reads
+            command_log_reads += 1
+            return original_get_all_commands()
+
+        monkeypatch.setattr(
+            bff_main.command_store,
+            "_get_all_commands",
+            counted_get_all_commands,
+        )
+
+        response = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+
+        assert response.status_code == 200, response.text
+        assert {
+            item["promotion_review_id"] for item in response.json()["data"]["items"]
+        } == set(recommendation_ids)
+        assert command_log_reads == 1
+
+
+def test_human_inbox_omits_inconsistent_generic_snapshot_and_private_evidence() -> None:
+    with _isolated_client() as client:
+        recommendation_id = "pm12-2026-q3-persona-forged-promote_to_canary_candidate"
+        params = _legacy_promotion_submission_params(
+            recommendation_id,
+            persona_id="persona-forged",
+        )
+        params.update(
+            {
+                "ranking_snapshot_id": "ranking-quarter-authoritative",
+                "source_recommendation": {
+                    "id": recommendation_id,
+                    "recommendation_id": recommendation_id,
+                    "ranking_snapshot_id": "ranking-quarter-attacker-controlled",
+                    "quarter": "2026-Q3",
+                    "persona_id": "persona-forged",
+                    "name": "Forged Persona",
+                    "action_id": "promote_to_canary_candidate",
+                    "state": "paper",
+                    "evidence_refs": [
+                        {
+                            "ref_id": "private-evidence",
+                            "source_document": "viewer-only-secret",
+                        }
+                    ],
+                },
+            }
+        )
+        _append_command(
+            command_id="cmd-promotion-forged-snapshot",
+            command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+            target_type=ObjectType.RANKING,
+            target_id=recommendation_id,
+            params=params,
+        )
+
+        response = client.get(
+            "/bff/management/human-inbox",
+            headers={"Authorization": "Bearer promotion-viewer:viewer"},
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["items"] == []
+        assert "viewer-only-secret" not in response.text
+
+
+def test_human_inbox_legacy_snapshotless_submission_is_safe_and_minimal() -> None:
+    with _isolated_client() as client:
+        recommendation_id = "pm12-2026-q3-persona-legacy-promote_to_canary_candidate"
+        params = _legacy_promotion_submission_params(
+            recommendation_id,
+            persona_id="persona-legacy",
+        )
+        params["source_document"] = "must-not-be-projected"
+        _append_command(
+            command_id="cmd-promotion-legacy",
+            command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+            target_type=ObjectType.RANKING,
+            target_id=recommendation_id,
+            params=params,
+        )
+
+        response = client.get(
+            "/bff/management/human-inbox",
+            headers={"Authorization": "Bearer promotion-viewer:viewer"},
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+
+        assert response.status_code == 200, response.text
+        items = response.json()["data"]["items"]
+        assert len(items) == 1
+        item = items[0]
+        assert item["promotion_review_id"] == recommendation_id
+        assert item["persona_id"] == "persona-legacy"
+        assert item["promotion_review"]["evidence_refs"] == []
+        assert item["promotion_review"]["source_recommendation"]["recommendation_id"] == (
+            recommendation_id
+        )
+        assert "must-not-be-projected" not in json.dumps(item, sort_keys=True)
+
+
+def test_human_inbox_omits_failed_promotion_submission() -> None:
+    with _isolated_client() as client:
+        recommendation_id = "pm12-2026-q3-persona-failed-promote_to_canary_candidate"
+        _append_command(
+            command_id="cmd-promotion-failed",
+            command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+            target_type=ObjectType.RANKING,
+            target_id=recommendation_id,
+            params=_legacy_promotion_submission_params(
+                recommendation_id,
+                persona_id="persona-failed",
+            ),
+            status=CommandStatus.FAILED,
+        )
+
+        response = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["items"] == []
 
 
 def test_promotion_review_decision_requires_prior_submit() -> None:
