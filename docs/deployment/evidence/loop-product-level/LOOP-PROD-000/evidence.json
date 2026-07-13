@@ -19,8 +19,8 @@
     "title": "Canonical loop inventory and OODA overlay truth",
     "phase": "Loop Product-Level Remediation / Wave 0",
     "repository": "ajoe734/pantheon",
-    "owner": "Codex",
-    "reviewer": "Codex2",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
     "task_branch": "task/LOOP-PROD-000",
     "base_branch": "dev",
     "target_environment": "dev",
@@ -133,6 +133,113 @@
         "event": "pull_request",
         "run_id": 29259972657,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/29259972657",
+        "jobs": {
+          "Forward to orchestrator": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "run_id": 29272220822,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29272220822",
+        "head_sha": "f0abfb5bb9fb6b320ec9af14d2277764039b1fa2",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Orchestrator Sync",
+        "event": "pull_request",
+        "run_id": 29272311609,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29272311609",
+        "head_sha": "f0abfb5bb9fb6b320ec9af14d2277764039b1fa2",
+        "jobs": {
+          "Forward to orchestrator": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "push",
+        "run_id": 29272312085,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29272312085",
+        "head_sha": "623bfe7b9d656cbbc89a66bfc75b1852a717c5c2",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Orchestrator Sync",
+        "event": "push",
+        "run_id": 29272312418,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29272312418",
+        "head_sha": "623bfe7b9d656cbbc89a66bfc75b1852a717c5c2",
+        "jobs": {
+          "Forward to orchestrator": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "run_id": 29275135091,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29275135091",
+        "head_sha": "db0e38bdc4114fd2df89fa42291ceb775c16e60d",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Orchestrator Sync",
+        "event": "pull_request",
+        "run_id": 29275135151,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29275135151",
+        "head_sha": "db0e38bdc4114fd2df89fa42291ceb775c16e60d",
+        "jobs": {
+          "Forward to orchestrator": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Orchestrator Sync",
+        "event": "pull_request",
+        "run_id": 29275134852,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29275134852",
+        "head_sha": "db0e38bdc4114fd2df89fa42291ceb775c16e60d",
+        "jobs": {
+          "Forward to orchestrator": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "push",
+        "run_id": 29275282010,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29275282010",
+        "head_sha": "b8d0afdd2087b22608e867deaa54e6d79e5608f4",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Orchestrator Sync",
+        "event": "push",
+        "run_id": 29275282639,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29275282639",
+        "head_sha": "b8d0afdd2087b22608e867deaa54e6d79e5608f4",
         "jobs": {
           "Forward to orchestrator": "success"
         },
@@ -593,7 +700,7 @@
       "id": "AC-05",
       "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
       "status": "pending_independent_review",
-      "blocking_until": "The follow-up PR containing f2e9d5eb3 and this manifest passes required checks, merges to dev, and Codex2 records a verdict against its merged SHA and companion evidence checksum.",
+      "blocking_until": "Claude records a verdict against the dev branch merged HEAD (commit b8d0afdd2087b22608e867deaa54e6d79e5608f4) and this manifest's companion checksum.",
       "evidence_refs": [
         "implementation_delivery",
         "residual_risks",
@@ -604,7 +711,7 @@
       "id": "AC-06",
       "statement": "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not authoritative capture-time success",
       "status": "pending_independent_provenance_and_scope_split_acceptance",
-      "blocking_until": "Codex2 explicitly accepts the normalized-only capture as data-contract evidence, without treating it as strict hosted auth or independently reproducible raw-response proof.",
+      "blocking_until": "Claude explicitly accepts the normalized-only capture as data-contract evidence, without treating it as strict hosted auth or independently reproducible raw-response proof.",
       "evidence_refs": [
         "hosted_readback.pre_deploy",
         "hosted_readback.capture_time_hosted_readback",
@@ -635,7 +742,7 @@
       "id": "AC-09",
       "statement": "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
       "status": "pending_independent_auth_scope_split_acceptance",
-      "blocking_until": "Codex2 explicitly accepts closure of canonical inventory truth before LOOP-PROD-AUTH-001, while strict hosted auth remains mandatory for global product close.",
+      "blocking_until": "Claude explicitly accepts closure of canonical inventory truth before LOOP-PROD-AUTH-001, while strict hosted auth remains mandatory for global product close.",
       "evidence_refs": [
         "security_and_safety"
       ]
@@ -707,7 +814,7 @@
       "containment": "The artifact records redacted request recipes, exact runtime and image identity, semantic jq programs, per-read hashes, and the normalized payload. Independent review must treat it as capture-time evidence and must not infer fields omitted by normalization.",
       "owner": "LOOP-PROD-002",
       "expiry": "2026-07-20T00:00:00Z",
-      "clear_when": "Codex2 explicitly accepts this task's normalized-only capture limitation against the merged manifest checksum; future tasks remain subject to the stronger LOOP-PROD-002 schema.",
+      "clear_when": "Claude explicitly accepts this task's normalized-only capture limitation against the merged manifest checksum; future tasks remain subject to the stronger LOOP-PROD-002 schema.",
       "recheck_trigger": "The formal evidence schema should require redacted raw-response retention or an independently signed capture receipt for future loop tasks."
     }
   },
@@ -747,6 +854,15 @@
           "docs/deployment/loop-catalog.schema.json": "696f5f9fef7e6bb65b755cdf3ac49c9b65c3aa2db0f2164889e823f3a1679fd3",
           "services/control-plane/bff/loop_inventory.py": "ac84d68630f6ac4f7b4deff452e138d53e7983e05f02965fdc95307687be3077",
           "services/control-plane/bff/main.py": "433b99a44b2f54a95e496bd7a6183a4a57280047d1e7eb3ad193f55c65919c4e"
+        }
+      },
+      "dev_merged_head": {
+        "git_sha": "b8d0afdd2087b22608e867deaa54e6d79e5608f4",
+        "artifacts": {
+          "docs/deployment/loop-catalog.registry.json": "5a0531795104ace538bd4f4e5ec50141fedb198fde8d1d96b6c7a5e154f431b3",
+          "docs/deployment/loop-catalog.schema.json": "06a714ff27b12ed6d8ba5cf78b040b67d4f6a6f0c3476a13054c0361550e7eac",
+          "services/control-plane/bff/loop_inventory.py": "5881f7d683291982aa9f369642da6e30769741a15de8b19b9666c611452a89bd",
+          "services/control-plane/bff/main.py": "2787602ca7884e7cbc001df8623727d2ee54c63e06e65195af8eb72e4e22c000"
         }
       }
     },
@@ -904,6 +1020,48 @@
       "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
       "review_binding_rule": "Reviewer must cite the follow-up PR merge SHA and the companion evidence.json SHA-256 from that merged tree, then explicitly decide AC-06 and AC-09 scope splits.",
       "required_next_event": "follow_up_pr_merged_then_independent_review_verdict"
+    },
+    {
+      "sequence": 14,
+      "recorded_at": "2026-07-13T17:54:26Z",
+      "kind": "implementation_merged",
+      "actor": "Codex",
+      "status": "pass",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3543",
+      "sha": "623bfe7b9d656cbbc89a66bfc75b1852a717c5c2"
+    },
+    {
+      "sequence": 15,
+      "recorded_at": "2026-07-13T18:38:42Z",
+      "kind": "implementation_merged",
+      "actor": "Codex",
+      "status": "pass",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3551",
+      "sha": "b8d0afdd2087b22608e867deaa54e6d79e5608f4"
+    },
+    {
+      "sequence": 16,
+      "recorded_at": "2026-07-13T19:35:38Z",
+      "kind": "latest_dev_merge_and_validation_completed",
+      "actor": "Antigravity",
+      "status": "pass",
+      "invalidated_review_request_sequence": 13,
+      "prior_manifest_sha256": "696639f85aea4667c8c02c9030bab634d63db6b184a9f604b043ff37ce0c833e",
+      "validated_base_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "validated_head_sha": "b8d0afdd2087b22608e867deaa54e6d79e5608f4",
+      "focused_tests": "40 passed",
+      "adjacent_tests": "10 passed",
+      "guardrail_tests": "26 passed"
+    },
+    {
+      "sequence": 17,
+      "recorded_at": "2026-07-13T19:36:00Z",
+      "kind": "evidence_ready_for_independent_review",
+      "status": "pending_independent_review",
+      "reviewer": "Claude",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
+      "review_binding_rule": "Reviewer must cite the dev branch merged HEAD (commit b8d0afdd2087b22608e867deaa54e6d79e5608f4) and the companion evidence.json SHA-256 from that merged tree, then explicitly decide AC-06 and AC-09 scope splits.",
+      "required_next_event": "independent_review_verdict"
     }
   ]
 }

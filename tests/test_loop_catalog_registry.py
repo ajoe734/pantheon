@@ -87,6 +87,75 @@ def test_loop_catalog_registry_matches_schema() -> None:
     assert _validation_errors(_registry()) == []
 
 
+def test_schema_rejects_duplicate_canonical_loop_identity() -> None:
+    mutated = copy.deepcopy(_registry())
+    mutated["loops"][1]["loop_id"] = mutated["loops"][0]["loop_id"]
+
+    errors = _validation_errors(mutated)
+
+    assert len(errors) == 1
+    assert errors[0].startswith("None of ")
+
+
+def test_schema_rejects_missing_canonical_loop_identity() -> None:
+    mutated = copy.deepcopy(_registry())
+    mutated["loops"].pop()
+
+    errors = _validation_errors(mutated)
+
+    assert any("is too short" in error for error in errors)
+
+
+def test_schema_rejects_replacement_canonical_loop_identity() -> None:
+    mutated = copy.deepcopy(_registry())
+    mutated["loops"][-1]["loop_id"] = "replacement_loop"
+
+    errors = _validation_errors(mutated)
+
+    assert len(errors) == 1
+    assert errors[0].startswith("None of ")
+
+
+def test_schema_rejects_wrong_composite_overlay_identity() -> None:
+    mutated = copy.deepcopy(_registry())
+    mutated["composite_overlays"][0]["loop_id"] = "persona_ooda"
+
+    errors = _validation_errors(mutated)
+
+    assert "'per_persona_ooda' was expected" in errors
+
+
+@pytest.mark.parametrize(
+    ("composition", "expected_error_fragment"),
+    [
+        pytest.param(
+            EXPECTED_OODA_COMPOSITION[:-1],
+            "is too short",
+            id="missing-member",
+        ),
+        pytest.param(
+            EXPECTED_OODA_COMPOSITION[:-1] + [EXPECTED_OODA_COMPOSITION[0]],
+            "has non-unique elements",
+            id="duplicate-member",
+        ),
+        pytest.param(
+            EXPECTED_OODA_COMPOSITION[:-1] + ["capital_pool_execution"],
+            "is not one of",
+            id="excluded-canonical-loop",
+        ),
+    ],
+)
+def test_schema_rejects_invalid_ooda_composition(
+    composition: list[str], expected_error_fragment: str
+) -> None:
+    mutated = copy.deepcopy(_registry())
+    mutated["composite_overlays"][0]["composed_of"] = composition
+
+    errors = _validation_errors(mutated)
+
+    assert any(expected_error_fragment in error for error in errors)
+
+
 def test_registry_has_one_stable_id_for_each_l1_policy_loop() -> None:
     policy_titles = re.findall(r"^### 3\.\d+ (.+)$", POLICY_PATH.read_text(encoding="utf-8"), flags=re.MULTILINE)
     registry = _registry()

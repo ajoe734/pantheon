@@ -28,9 +28,11 @@ def _create_proposal(
     payload: dict | None = None,
 ):
     assert harness.client is not None
+    request_payload = payload or rebalance_payload()
+    harness.admit_rebalance_payload(request_payload)
     response = harness.client.post(
         "/bff/rebalances",
-        json=payload or rebalance_payload(),
+        json=request_payload,
         headers={**HEADERS, "Idempotency-Key": key},
     )
     assert response.status_code == 202, response.text
@@ -1253,9 +1255,11 @@ def test_emergency_proposal_rejects_increase_and_accepts_containment(
 ) -> None:
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         assert harness.client is not None
+        rejected_payload = rebalance_payload(emergency=True)
+        harness.admit_rebalance_payload(rejected_payload)
         rejected = harness.client.post(
             "/bff/rebalances",
-            json=rebalance_payload(emergency=True),
+            json=rejected_payload,
             headers={**HEADERS, "Idempotency-Key": "rb-emergency-increase"},
         )
         assert rejected.status_code == 422, rejected.text

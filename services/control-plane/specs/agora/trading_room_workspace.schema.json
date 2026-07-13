@@ -39,13 +39,8 @@
           "items": {"$ref": "#/definitions/TradingRoomViewSpec"}
         },
         "rationale": {"type": "string", "minLength": 1},
-        "rationaleKey": {"type": "string", "minLength": 1},
         "dataAvailability": {"$ref": "#/definitions/DataAvailabilitySummary"},
         "warnings": {
-          "type": "array",
-          "items": {"type": "string"}
-        },
-        "warningCodes": {
           "type": "array",
           "items": {"type": "string"}
         },
@@ -92,23 +87,15 @@
       "required": ["id", "title", "purpose", "order", "layoutTemplate", "widgetCount", "widgets"],
       "properties": {
         "id": {"type": "string", "minLength": 1},
-        "viewKind": {"type": "string", "minLength": 1},
         "title": {"type": "string", "minLength": 1},
-        "titleKey": {"type": "string", "minLength": 1},
         "purpose": {"type": "string", "minLength": 1},
-        "purposeKey": {"type": "string", "minLength": 1},
         "order": {"type": "integer", "minimum": 1},
         "layoutTemplate": {"type": "string", "minLength": 1},
         "thumbnailRef": {"type": "string"},
         "widgetCount": {"type": "integer", "minimum": 0},
         "rationale": {"type": "string"},
-        "rationaleKey": {"type": "string", "minLength": 1},
-        "dataAvailability": {"enum": ["full", "partial", "missing"]},
+        "dataAvailability": {"enum": ["complete", "partial", "unavailable"]},
         "warnings": {
-          "type": "array",
-          "items": {"type": "string"}
-        },
-        "warningCodes": {
           "type": "array",
           "items": {"type": "string"}
         },
@@ -140,17 +127,13 @@
         "id": {"type": "string", "minLength": 1},
         "widgetType": {"type": "string", "minLength": 1},
         "title": {"type": "string", "minLength": 1},
-        "titleKey": {"type": "string", "minLength": 1},
         "purpose": {"type": "string", "minLength": 1},
-        "purposeKey": {"type": "string", "minLength": 1},
         "whyIncluded": {"type": "string", "minLength": 1},
-        "whyIncludedKey": {"type": "string", "minLength": 1},
         "dataSource": {
           "type": "string",
           "minLength": 1,
           "description": "Logical allowlisted data-source ID; arbitrary URLs are forbidden."
         },
-        "dataAvailability": {"enum": ["full", "partial", "missing"]},
         "query": {
           "type": "object",
           "required": ["filters"],
@@ -203,7 +186,7 @@
       "type": "object",
       "required": ["status", "sources"],
       "properties": {
-        "status": {"enum": ["full", "partial", "missing"]},
+        "status": {"enum": ["complete", "partial", "unavailable"]},
         "sources": {
           "type": "array",
           "items": {
@@ -211,8 +194,7 @@
             "required": ["dataSource", "status"],
             "properties": {
               "dataSource": {"type": "string", "minLength": 1},
-              "status": {"enum": ["full", "partial", "missing"]},
-              "reasonCode": {"type": "string", "minLength": 1},
+              "status": {"enum": ["complete", "partial", "unavailable"]},
               "reason": {"type": "string"}
             },
             "additionalProperties": false
@@ -288,7 +270,7 @@
           "type": "array",
           "items": {"type": "string"}
         },
-        "dataAvailability": {"enum": ["full", "partial", "missing"]},
+        "dataAvailability": {"enum": ["complete", "partial", "unavailable"]},
         "status": {"enum": ["preview", "accepted", "rejected", "superseded"]}
       },
       "additionalProperties": false

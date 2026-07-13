@@ -63,19 +63,118 @@
       "minItems": 12,
       "maxItems": 12,
       "items": {
-        "allOf": [
-          {
-            "$ref": "#/definitions/LoopCatalogEntry"
-          },
-          {
+        "$ref": "#/definitions/CanonicalLoopCatalogEntry"
+      },
+      "allOf": [
+        {
+          "contains": {
             "properties": {
-              "classification": {
-                "const": "canonical"
+              "loop_id": {
+                "const": "source_ingestion"
               }
             }
           }
-        ]
-      }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "strategy_distillation"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "alpha_replication"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "persona_teaching"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "agora_interaction_evidence"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "human_imitation_shadow_evaluation"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "consultation"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "promotion_deployment"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "capital_pool_execution"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "telemetry_reconciliation"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "evolution"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "loop_id": {
+                "const": "bff_health_monitoring"
+              }
+            }
+          }
+        }
+      ]
     },
     "composite_overlays": {
       "type": "array",
@@ -88,8 +187,14 @@
           },
           {
             "properties": {
+              "loop_id": {
+                "const": "per_persona_ooda"
+              },
               "classification": {
                 "const": "composite_overlay"
+              },
+              "composed_of": {
+                "$ref": "#/definitions/PerPersonaOodaComposition"
               }
             }
           }
@@ -134,6 +239,41 @@
         "historical",
         "not_applicable"
       ]
+    },
+    "CanonicalLoopCatalogEntry": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/LoopCatalogEntry"
+        },
+        {
+          "properties": {
+            "classification": {
+              "const": "canonical"
+            }
+          }
+        }
+      ]
+    },
+    "PerPersonaOodaComposition": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "source_ingestion",
+          "strategy_distillation",
+          "alpha_replication",
+          "persona_teaching",
+          "agora_interaction_evidence",
+          "human_imitation_shadow_evaluation",
+          "consultation",
+          "promotion_deployment",
+          "telemetry_reconciliation",
+          "evolution"
+        ]
+      }
     },
     "CatalogDecisions": {
       "type": "object",

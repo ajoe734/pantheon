@@ -37,7 +37,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from datetime import datetime, timezone
+from fastapi import FastAPI, HTTPException, Query, Body
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -287,6 +288,62 @@ def list_rollbacks(
 )
 def get_rollback(rollback_id: str) -> Dict[str, Any]:
     return _record_or_404(rollback_store, rollback_id, label="Rollback")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+# ---------------------------------------------------------------------------
+# Routes — freeze-order and rollback write models
+# ---------------------------------------------------------------------------
+
+@app.post(
+    "/api/governance/freeze-orders",
+    response_model=Dict[str, Any],
+    status_code=201,
+    summary="Record or update a canonical freeze order",
+)
+def record_freeze_order(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Create or update a FreezeOrder in the canonical store."""
+    freeze_order_id = body.get("freeze_order_id") or body.get("id")
+    if not freeze_order_id:
+        freeze_order_id = f"freeze-{uuid.uuid4().hex[:12]}"
+        body["freeze_order_id"] = freeze_order_id
+        body["id"] = freeze_order_id
+
+    if not body.get("created_at") and not body.get("issued_at"):
+        body["created_at"] = _utc_now()
+        body["issued_at"] = body["created_at"]
+
+    freeze_order_store.put(body)
+    log.info("Recorded freeze order %s: %s", freeze_order_id, body)
+    return body
+
+
+@app.post(
+    "/api/governance/rollbacks",
+    response_model=Dict[str, Any],
+    status_code=201,
+    summary="Record or update a canonical rollback record",
+)
+def record_rollback(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Create or update a Rollback record in the canonical store."""
+    rollback_id = body.get("rollback_id") or body.get("id")
+    if not rollback_id:
+        rollback_id = f"rollback-{uuid.uuid4().hex[:12]}"
+        body["rollback_id"] = rollback_id
+        body["id"] = rollback_id
+
+    if not body.get("created_at") and not body.get("initiated_at"):
+        body["created_at"] = _utc_now()
+        body["initiated_at"] = body["created_at"]
+        body["requested_at"] = body["created_at"]
+
+    rollback_store.put(body)
+    log.info("Recorded rollback %s: %s", rollback_id, body)
+    return body
+
 
 # ---------------------------------------------------------------------------
 # Routes — proposals

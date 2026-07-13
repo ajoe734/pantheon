@@ -189,6 +189,7 @@ services:
       PORT: "8090"
       INCIDENTS_DATA_DIR: /data/incidents
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      POSTMORTEMS_URL: http://postmortems:8091
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
@@ -227,6 +228,7 @@ services:
       POSTMORTEMS_DATA_DIR: /data/incidents
       INCIDENTS_DATA_DIR: /data/incidents
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      EVOLUTION_URL: http://evolution:8093
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
       # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
@@ -607,11 +609,16 @@ services:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
       INCIDENT_DATA_DIR: /data/incidents
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-postgres}
+      POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-postgres}
     volumes:
       - evolution-data:/data/evolution
       - incident-data:/data/incidents
     depends_on:
       incidents:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     ports:
       - "${EVOLUTION_PORT:-38093}:8093"
