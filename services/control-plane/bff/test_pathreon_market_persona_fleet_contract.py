@@ -249,13 +249,7 @@ def test_management_persona_fleet_prefers_declared_runtime_identity_over_market_
                 "runtime_binding_id": persona_binding_id,
             },
         )
-        store.create_persona_binding(
-            binding_id=persona_binding_id,
-            persona_id=persona_id,
-            capital_pool_id=pool_id,
-            actor_id="pantheon-dev-browser",
-        )
-        store.create_runtime_binding(
+        runtime_record = store.create_runtime_binding(
             runtime_id=runtime_id,
             name="Crypto-Alt-Hunter paper runtime",
             persona_id=persona_id,
@@ -266,6 +260,8 @@ def test_management_persona_fleet_prefers_declared_runtime_identity_over_market_
             params={"capital_pool_id": pool_id},
             state="active",
         )
+        runtime_record["persona_id"] = None
+        store._save()
 
         with _client_with_store(store) as client:
             fleet_response = client.get(

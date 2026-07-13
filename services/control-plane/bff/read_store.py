@@ -11153,7 +11153,6 @@ class ReadSurfaceStore:
             for binding in persona_capital_bindings
             if str(binding.get("binding_id") or binding.get("id") or "").strip()
         }
-
         # Legacy paper runtimes predate the explicit persona_id column.  Reconcile
         # only through typed, exact identity references.  A canonical
         # persona-capital binding owner is authoritative even when the runtime
