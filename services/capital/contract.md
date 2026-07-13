@@ -110,19 +110,25 @@ underlying JSON stores directly.
    a non-empty `(capital_pool_id, capital_sleeve_id)` pair is globally unique in
    the binding owner store.
 10. Rebalance proposals persist their normalized allocation lines but do not
-   create or mutate allocation state. Sleeve lines must match a durable
-   persona/pool/sleeve binding; pending and active bindings inside their
-   effective window are accepted, while suspended, revoked, expired, or
-   out-of-window bindings are rejected. First apply revalidates the durable
-   binding identity; a successful command receipt remains replayable after a
-   later binding lifecycle change. Binding lifecycle mutations and the first
-   apply owner commit share an in-process critical section so a revoke cannot
-   interleave after validation. Apply uses only those server-owned lines.
+   create or mutate allocation state. Every risk-increasing line must name a
+   non-empty capital sleeve and exactly match a durable persona/pool/sleeve
+   binding. Its stage (including the corresponding `*_candidate` and
+   `*_running` aliases) maps to `paper`, `canary`, or `live`, and both the binding
+   role ceiling and `allowed_deployment_scope` must authorize that mapped scope.
+   Pending and active bindings inside their effective window are accepted,
+   while suspended, revoked, expired, or out-of-window bindings are rejected.
+   First apply revalidates those conditions; a successful command receipt
+   remains replayable after a later binding or pool lifecycle change. Binding
+   lifecycle mutations, pool status mutations, and the first apply owner commit
+   share an in-process critical section so a revoke or suspend cannot interleave
+   after validation. Apply uses only those server-owned lines.
 11. Apply verifies every persisted `current_weight` against authoritative state
     before changing any allocation. A stale line fails the proposal without a
     partial allocation mutation. Apply may bootstrap a missing sleeve allocation
-    only when the persisted expected `current_weight` is exactly zero.
-12. A live-running allocation increase requires an approval reference. The
+    only when the persisted expected `current_weight` is exactly zero. Any
+    risk-increasing proposal and its first apply require an `active` CapitalPool;
+    risk-decreasing exits may proceed while the pool is suspended or archived.
+12. A live-scoped allocation increase requires an approval reference. The
     service derives that requirement from the persisted proposal; non-live and
     risk-decreasing proposals do not require approval.
 13. `idempotency_key`, `request_hash`, the server-computed payload hash, and

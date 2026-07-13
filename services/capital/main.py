@@ -139,8 +139,19 @@ class CapitalBoundaryService:
     # lock therefore protects the complete reservation/check/create sequence
     # across those facades inside the one supported Capital writer process.
     _OWNER_CREATE_LOCK = RLock()
-    _BINDING_APPLY_LOCK = RLock()
+    _CAPITAL_STATE_APPLY_LOCK = RLock()
     _REBALANCE_BINDING_STATUSES = frozenset({"pending", "active"})
+    _STAGE_DEPLOYMENT_SCOPE = {
+        "paper": "paper",
+        "paper_candidate": "paper",
+        "paper_running": "paper",
+        "canary": "canary",
+        "canary_candidate": "canary",
+        "canary_running": "canary",
+        "live": "live",
+        "live_candidate": "live",
+        "live_running": "live",
+    }
 
     def __init__(
         self,
@@ -277,7 +288,8 @@ class CapitalBoundaryService:
 
     def update_pool_status(self, pool_id: str, body: UpdateCapitalPoolStatusRequest) -> CapitalPool:
         self._authorize("CapitalPool", "update_status", body.actor_role)
-        updated = self.pool_store.update_status(pool_id, body.status)
+        with self._CAPITAL_STATE_APPLY_LOCK:
+            updated = self.pool_store.update_status(pool_id, body.status)
         self._emit(
             event_type="capital_pool_status_updated",
             resource_type="CapitalPool",
@@ -377,7 +389,7 @@ class CapitalBoundaryService:
 
     def activate_binding(self, binding_id: str, body: ActivateBindingRequest) -> PersonaCapitalBinding:
         self._authorize("PersonaCapitalBinding", "activate", body.actor_role)
-        with self._BINDING_APPLY_LOCK:
+        with self._CAPITAL_STATE_APPLY_LOCK:
             binding = self.binding_store.require(binding_id)
             pool = self.pool_store.require(binding.capital_pool_id)
             if pool.status != "active":
@@ -401,7 +413,7 @@ class CapitalBoundaryService:
         body: UpdateBindingStatusRequest,
     ) -> PersonaCapitalBinding:
         self._authorize("PersonaCapitalBinding", "update_status", body.actor_role)
-        with self._BINDING_APPLY_LOCK:
+        with self._CAPITAL_STATE_APPLY_LOCK:
             if body.status == "active":
                 raise CapitalServiceError(
                     "Use POST /api/bindings/{binding_id}/activate to activate bindings"
@@ -420,6 +432,23 @@ class CapitalBoundaryService:
     @staticmethod
     def _normalized_sleeve_id(value: Any) -> str | None:
         return str(value or "").strip() or None
+
+    @staticmethod
+    def _line_value(line: Any, field: str) -> Any:
+        if isinstance(line, dict):
+            return line.get(field)
+        return getattr(line, field, None)
+
+    @classmethod
+    def _line_increases_risk(cls, line: Any) -> bool:
+        return float(cls._line_value(line, "target_weight") or 0) > float(
+            cls._line_value(line, "current_weight") or 0
+        )
+
+    @classmethod
+    def _line_deployment_scope(cls, line: Any) -> str | None:
+        stage = str(cls._line_value(line, "stage") or "").strip().lower()
+        return cls._STAGE_DEPLOYMENT_SCOPE.get(stage)
 
     def _binding_is_rebalance_eligible(
         self,
@@ -441,6 +470,7 @@ class CapitalBoundaryService:
         capital_pool_id: str,
         persona_id: Any,
         capital_sleeve_id: Any,
+        required_scope: str | None = None,
     ) -> bool:
         return (
             binding.persona_id == str(persona_id or "").strip()
@@ -448,6 +478,25 @@ class CapitalBoundaryService:
             and self._normalized_sleeve_id(binding.capital_sleeve_id)
             == self._normalized_sleeve_id(capital_sleeve_id)
             and self._binding_is_rebalance_eligible(binding)
+            and (
+                required_scope is None
+                or binding.permits_scope_ceiling(required_scope)
+            )
+        )
+
+    def _binding_identity_matches_rebalance_line(
+        self,
+        binding: PersonaCapitalBinding,
+        *,
+        capital_pool_id: str,
+        persona_id: Any,
+        capital_sleeve_id: Any,
+    ) -> bool:
+        return (
+            binding.persona_id == str(persona_id or "").strip()
+            and binding.capital_pool_id == capital_pool_id
+            and self._normalized_sleeve_id(binding.capital_sleeve_id)
+            == self._normalized_sleeve_id(capital_sleeve_id)
         )
 
     def _validate_persisted_rebalance_bindings(
@@ -456,9 +505,23 @@ class CapitalBoundaryService:
     ) -> None:
         pool_id = str(proposal.get("capital_pool_id") or "").strip()
         for line in proposal.get("lines") or []:
+            if not self._line_increases_risk(line):
+                continue
+            pool = self.pool_store.require(pool_id)
+            if pool.status != "active":
+                raise AllocationAuthorityConflict(
+                    f"CapitalPool {pool_id!r} must be active for a risk-increasing rebalance"
+                )
             sleeve_id = self._normalized_sleeve_id(line.get("capital_sleeve_id"))
             if sleeve_id is None:
-                continue
+                raise AllocationAuthorityConflict(
+                    "A risk-increasing rebalance line requires capital_sleeve_id"
+                )
+            required_scope = self._line_deployment_scope(line)
+            if required_scope is None:
+                raise AllocationAuthorityConflict(
+                    f"Unsupported risk-increasing rebalance stage: {line.get('stage')!r}"
+                )
             binding_id = str(line.get("binding_id") or "").strip()
             if not binding_id:
                 raise AllocationAuthorityConflict(
@@ -476,6 +539,7 @@ class CapitalBoundaryService:
                 capital_pool_id=pool_id,
                 persona_id=line.get("persona_id"),
                 capital_sleeve_id=sleeve_id,
+                required_scope=required_scope,
             ):
                 raise AllocationAuthorityConflict(
                     "Persisted rebalance binding is no longer eligible or no longer matches "
@@ -485,35 +549,70 @@ class CapitalBoundaryService:
 
     def create_rebalance(self, body: CreateRebalanceRequest) -> Dict[str, Any]:
         self._authorize("Rebalance", "create", body.actor_role)
-        self.pool_store.require(body.capital_pool_id)
-        payload = body.model_dump(mode="json")
-        for index, line in enumerate(body.lines):
-            sleeve_id = str(line.capital_sleeve_id or "").strip()
-            if not sleeve_id:
-                continue
-            candidates = self.binding_store.list(
-                persona_id=line.persona_id,
-                capital_pool_id=body.capital_pool_id,
-            )
-            matching = [
-                binding
-                for binding in candidates
-                if self._binding_matches_rebalance_line(
-                    binding,
-                    capital_pool_id=body.capital_pool_id,
-                    persona_id=line.persona_id,
-                    capital_sleeve_id=line.capital_sleeve_id,
-                )
-            ]
-            if len(matching) != 1:
+        with self._CAPITAL_STATE_APPLY_LOCK:
+            pool = self.pool_store.require(body.capital_pool_id)
+            if any(self._line_increases_risk(line) for line in body.lines) and pool.status != "active":
                 raise CapitalServiceError(
-                    "Exactly one eligible PersonaCapitalBinding must match "
-                    f"persona={line.persona_id!r}, pool={body.capital_pool_id!r}, "
-                    f"sleeve={sleeve_id!r}"
+                    f"CapitalPool {pool.pool_id!r} must be active for a risk-increasing rebalance"
                 )
-            payload["lines"][index]["binding_state"] = matching[0].status
-            payload["lines"][index]["binding_id"] = matching[0].binding_id
-        record, replayed = self.allocation_store.create_rebalance(payload)
+            payload = body.model_dump(mode="json")
+            for index, line in enumerate(body.lines):
+                increases_risk = self._line_increases_risk(line)
+                sleeve_id = self._normalized_sleeve_id(line.capital_sleeve_id)
+                if increases_risk and sleeve_id is None:
+                    raise CapitalServiceError(
+                        "A risk-increasing rebalance line requires capital_sleeve_id"
+                    )
+                if sleeve_id is None:
+                    continue
+                candidates = self.binding_store.list(
+                    persona_id=line.persona_id,
+                    capital_pool_id=body.capital_pool_id,
+                )
+                identity_matches = [
+                    binding
+                    for binding in candidates
+                    if self._binding_identity_matches_rebalance_line(
+                        binding,
+                        capital_pool_id=body.capital_pool_id,
+                        persona_id=line.persona_id,
+                        capital_sleeve_id=sleeve_id,
+                    )
+                ]
+                if increases_risk:
+                    required_scope = self._line_deployment_scope(line)
+                    if required_scope is None:
+                        raise CapitalServiceError(
+                            f"Unsupported risk-increasing rebalance stage: {line.stage!r}"
+                        )
+                    matching = [
+                        binding
+                        for binding in identity_matches
+                        if self._binding_matches_rebalance_line(
+                            binding,
+                            capital_pool_id=body.capital_pool_id,
+                            persona_id=line.persona_id,
+                            capital_sleeve_id=sleeve_id,
+                            required_scope=required_scope,
+                        )
+                    ]
+                    if len(matching) != 1:
+                        raise CapitalServiceError(
+                            "Exactly one eligible PersonaCapitalBinding must match the "
+                            f"risk-increasing {required_scope} line for "
+                            f"persona={line.persona_id!r}, pool={body.capital_pool_id!r}, "
+                            f"sleeve={sleeve_id!r}"
+                        )
+                else:
+                    if len(identity_matches) > 1:
+                        raise CapitalServiceError(
+                            "Multiple PersonaCapitalBindings match a risk-decreasing line"
+                        )
+                    matching = identity_matches
+                if matching:
+                    payload["lines"][index]["binding_state"] = matching[0].status
+                    payload["lines"][index]["binding_id"] = matching[0].binding_id
+            record, replayed = self.allocation_store.create_rebalance(payload)
         if not replayed:
             self._emit_nonfatal(
                 event_type="rebalance_proposal_created",
@@ -552,7 +651,7 @@ class CapitalBoundaryService:
         body: ApplyRebalanceRequest,
     ) -> Dict[str, Any]:
         self._authorize("Rebalance", "apply", body.actor_role)
-        with self._BINDING_APPLY_LOCK:
+        with self._CAPITAL_STATE_APPLY_LOCK:
             try:
                 self.allocation_store.get_rebalance_receipt(body.command_id)
             except AllocationAuthorityNotFound:

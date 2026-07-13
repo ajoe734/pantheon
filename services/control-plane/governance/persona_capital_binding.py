@@ -200,6 +200,10 @@ class PersonaCapitalBinding:
         """
         if not self.is_active or not self.is_within_effective_window():
             return False
+        return self.permits_scope_ceiling(target_scope)
+
+    def permits_scope_ceiling(self, target_scope: str) -> bool:
+        """Check role and declared-scope ceilings independent of lifecycle status."""
         target = DeploymentScope(target_scope)
         role_ceiling = _ROLE_SCOPE_CEILING[self.role]
         if not role_ceiling.permits(target):

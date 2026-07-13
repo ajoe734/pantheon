@@ -479,7 +479,8 @@ class AllocationAuthorityStore:
             if proposal.get("applied"):
                 raise AllocationAuthorityConflict(f"Rebalance {rebalance_id!r} was already applied")
             increases_live = any(
-                str(line.get("stage") or "") == "live_running"
+                str(line.get("stage") or "").strip().lower()
+                in {"live", "live_candidate", "live_running"}
                 and float(line.get("target_weight") or 0) > float(line.get("current_weight") or 0)
                 for line in proposal.get("lines") or []
             )

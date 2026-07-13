@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -68,7 +69,7 @@ def _binding_payload(**overrides):
         "capital_pool_id": "pool-001",
         "capital_sleeve_id": "sleeve-alpha",
         "role": "live_owner",
-        "allowed_deployment_scope": "canary",
+        "allowed_deployment_scope": "live",
     }
     payload.update(overrides)
     return payload
@@ -410,7 +411,10 @@ def test_binding_lifecycle_and_admissibility_read_path(client):
     test_client, data_dir = client
     assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
 
-    create = test_client.post("/api/bindings", json=_binding_payload())
+    create = test_client.post(
+        "/api/bindings",
+        json=_binding_payload(allowed_deployment_scope="canary"),
+    )
     assert create.status_code == 201, create.text
     assert create.json()["status"] == "pending"
 
@@ -673,12 +677,20 @@ def test_rebalance_proposal_receipt_and_allocations_survive_store_restart(client
 def test_nonzero_missing_allocation_baseline_fails_terminal(client, nonzero_baseline):
     test_client, _ = client
     assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert test_client.post(
+        "/api/bindings",
+        json=_binding_payload(
+            persona_id="persona-missing",
+            capital_sleeve_id="sleeve-missing",
+        ),
+    ).status_code == 201
     line = [
         {
             "persona_id": "persona-missing",
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-missing",
             "current_weight": nonzero_baseline,
             "target_weight": 0.20,
             "delta": 0.20 - nonzero_baseline,
@@ -758,6 +770,307 @@ def test_rebalance_binding_must_be_in_effective_window(client):
     assert "eligible PersonaCapitalBinding" in proposal.json()["detail"]
 
 
+def test_risk_increasing_rebalance_requires_capital_sleeve(client):
+    test_client, _ = client
+    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    line = [
+        {
+            "persona_id": "persona-alpha",
+            "stage": "live_running",
+            "capital_scope": "pool",
+            "capital_pool_id": "pool-001",
+            "current_weight": 0.0,
+            "target_weight": 0.10,
+            "delta": 0.10,
+        }
+    ]
+    response = test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-no-sleeve", lines=line),
+    )
+    assert response.status_code == 400
+    assert "requires capital_sleeve_id" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("role", "allowed_scope"),
+    [
+        ("live_owner", "canary"),
+        ("paper_owner", "paper"),
+        ("advisor", "none"),
+    ],
+)
+def test_binding_scope_and_role_ceiling_deny_live_increase(
+    client,
+    role,
+    allowed_scope,
+):
+    test_client, _ = client
+    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    binding = test_client.post(
+        "/api/bindings",
+        json=_binding_payload(role=role, allowed_deployment_scope=allowed_scope),
+    )
+    assert binding.status_code == 201, binding.text
+    proposal = test_client.post("/api/rebalances", json=_rebalance_payload())
+    assert proposal.status_code == 400
+    assert "risk-increasing live line" in proposal.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("role", "allowed_scope", "stage"),
+    [
+        ("paper_owner", "paper", "paper"),
+        ("paper_owner", "paper", "paper_candidate"),
+        ("live_owner", "canary", "canary"),
+        ("live_owner", "canary", "canary_candidate"),
+        ("live_owner", "live", "live_running"),
+        ("live_owner", "live", "live_candidate"),
+    ],
+)
+def test_stage_map_accepts_authorized_risk_increase(
+    client,
+    role,
+    allowed_scope,
+    stage,
+):
+    test_client, _ = client
+    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    binding = test_client.post(
+        "/api/bindings",
+        json=_binding_payload(role=role, allowed_deployment_scope=allowed_scope),
+    )
+    assert binding.status_code == 201, binding.text
+    line = [
+        {
+            "persona_id": "persona-alpha",
+            "stage": stage,
+            "capital_scope": "pool",
+            "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-alpha",
+            "current_weight": 0.0,
+            "target_weight": 0.10,
+            "delta": 0.10,
+        }
+    ]
+    proposal = test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id=f"rb-stage-{stage}", lines=line),
+    )
+    assert proposal.status_code == 201, proposal.text
+
+
+def test_unknown_stage_fails_closed_for_risk_increase(client):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    line = [
+        {
+            "persona_id": "persona-alpha",
+            "stage": "experimental_running",
+            "capital_scope": "pool",
+            "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-alpha",
+            "current_weight": 0.0,
+            "target_weight": 0.10,
+            "delta": 0.10,
+        }
+    ]
+    proposal = test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-unknown-stage", lines=line),
+    )
+    assert proposal.status_code == 400
+    assert "Unsupported risk-increasing rebalance stage" in proposal.json()["detail"]
+
+
+def test_live_candidate_increase_requires_approval(client):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    line = [
+        {
+            "persona_id": "persona-alpha",
+            "stage": "live_candidate",
+            "capital_scope": "pool",
+            "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-alpha",
+            "current_weight": 0.0,
+            "target_weight": 0.10,
+            "delta": 0.10,
+        }
+    ]
+    assert test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-live-candidate", lines=line),
+    ).status_code == 201
+    denied = test_client.post(
+        "/api/rebalances/rb-live-candidate/apply",
+        json=_apply_payload(
+            rebalance_id="rb-live-candidate",
+            command_id="cmd-live-candidate",
+            approval_ref=None,
+        ),
+    )
+    assert denied.status_code == 409
+    assert "approval reference" in denied.json()["detail"]
+
+
+@pytest.mark.parametrize("pool_status", ["suspended", "archived"])
+def test_inactive_pool_rejects_risk_increase_at_proposal(client, pool_status):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    status = test_client.patch(
+        "/api/capital-pools/pool-001/status",
+        json={
+            "actor_id": "capital-admin-1",
+            "actor_role": "capital.admin",
+            "status": pool_status,
+        },
+    )
+    assert status.status_code == 200, status.text
+    proposal = test_client.post("/api/rebalances", json=_rebalance_payload())
+    assert proposal.status_code == 400
+    assert "must be active" in proposal.json()["detail"]
+
+
+def test_first_apply_revalidates_pool_and_receipt_replay_survives_suspend(client):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    assert test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-pool-revalidate"),
+    ).status_code == 201
+    apply_payload = _apply_payload(
+        rebalance_id="rb-pool-revalidate",
+        command_id="cmd-pool-revalidate",
+    )
+    assert test_client.patch(
+        "/api/capital-pools/pool-001/status",
+        json={
+            "actor_id": "capital-admin-1",
+            "actor_role": "capital.admin",
+            "status": "suspended",
+        },
+    ).status_code == 200
+    blocked = test_client.post(
+        "/api/rebalances/rb-pool-revalidate/apply",
+        json=apply_payload,
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert "must be active" in blocked.json()["detail"]
+
+    assert test_client.patch(
+        "/api/capital-pools/pool-001/status",
+        json={
+            "actor_id": "capital-admin-1",
+            "actor_role": "capital.admin",
+            "status": "active",
+        },
+    ).status_code == 200
+    applied = test_client.post(
+        "/api/rebalances/rb-pool-revalidate/apply",
+        json=apply_payload,
+    )
+    assert applied.status_code == 200, applied.text
+    assert test_client.patch(
+        "/api/capital-pools/pool-001/status",
+        json={
+            "actor_id": "capital-admin-1",
+            "actor_role": "capital.admin",
+            "status": "suspended",
+        },
+    ).status_code == 200
+    replay = test_client.post(
+        "/api/rebalances/rb-pool-revalidate/apply",
+        json=apply_payload,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["idempotent_replay"] is True
+
+
+def test_first_apply_revalidates_binding_stage_scope(client):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    assert test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-scope-revalidate"),
+    ).status_code == 201
+    module = importlib.import_module("services.capital.main")
+    with module.binding_store._lock:
+        binding = module.binding_store.require("binding-001")
+        module.binding_store._bindings["binding-001"] = replace(
+            binding,
+            allowed_deployment_scope="canary",
+        )
+    blocked = test_client.post(
+        "/api/rebalances/rb-scope-revalidate/apply",
+        json=_apply_payload(
+            rebalance_id="rb-scope-revalidate",
+            command_id="cmd-scope-revalidate",
+        ),
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert "no longer eligible" in blocked.json()["detail"]
+
+
+def test_pool_status_change_cannot_interleave_first_apply(client, monkeypatch):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    assert test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-pool-lock"),
+    ).status_code == 201
+    module = importlib.import_module("services.capital.main")
+    original_apply = module.allocation_authority_store.apply_rebalance
+    owner_apply_entered = threading.Event()
+    release_owner_apply = threading.Event()
+
+    def delayed_apply(rebalance_id, payload):
+        owner_apply_entered.set()
+        assert release_owner_apply.wait(timeout=5)
+        return original_apply(rebalance_id, payload)
+
+    monkeypatch.setattr(
+        module.allocation_authority_store,
+        "apply_rebalance",
+        delayed_apply,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        apply_future = executor.submit(
+            test_client.post,
+            "/api/rebalances/rb-pool-lock/apply",
+            json=_apply_payload(
+                rebalance_id="rb-pool-lock",
+                command_id="cmd-pool-lock",
+            ),
+        )
+        assert owner_apply_entered.wait(timeout=5)
+        status_future = executor.submit(
+            test_client.patch,
+            "/api/capital-pools/pool-001/status",
+            json={
+                "actor_id": "capital-admin-1",
+                "actor_role": "capital.admin",
+                "status": "suspended",
+            },
+        )
+        time.sleep(0.1)
+        assert status_future.done() is False
+        release_owner_apply.set()
+        applied = apply_future.result(timeout=5)
+        status = status_future.result(timeout=5)
+    assert applied.status_code == 200, applied.text
+    assert status.status_code == 200, status.text
+    replay = test_client.post(
+        "/api/rebalances/rb-pool-lock/apply",
+        json=_apply_payload(
+            rebalance_id="rb-pool-lock",
+            command_id="cmd-pool-lock",
+        ),
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["idempotent_replay"] is True
+
+
 def test_first_apply_revalidates_binding_but_successful_replay_survives_revoke(client):
     test_client, _ = client
     _create_default_pool_and_binding(test_client)
@@ -834,13 +1147,22 @@ def test_first_apply_revalidates_binding_but_successful_replay_survives_revoke(c
 
 def test_stale_rebalance_fails_terminal_without_partial_allocation_update(client):
     test_client, _ = client
-    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    _create_default_pool_and_binding(test_client)
+    assert test_client.post(
+        "/api/bindings",
+        json=_binding_payload(
+            binding_id="binding-beta",
+            persona_id="persona-beta",
+            capital_sleeve_id="sleeve-beta",
+        ),
+    ).status_code == 201
     initial_lines = [
         {
             "persona_id": "persona-alpha",
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-alpha",
             "current_weight": 0.0,
             "target_weight": 0.15,
             "delta": 0.15,
@@ -850,6 +1172,7 @@ def test_stale_rebalance_fails_terminal_without_partial_allocation_update(client
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-beta",
             "current_weight": 0.0,
             "target_weight": 0.25,
             "delta": 0.25,
@@ -870,6 +1193,7 @@ def test_stale_rebalance_fails_terminal_without_partial_allocation_update(client
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-alpha",
             "current_weight": 0.15,
             "target_weight": 0.16,
             "delta": 0.01,
@@ -879,6 +1203,7 @@ def test_stale_rebalance_fails_terminal_without_partial_allocation_update(client
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-beta",
             "current_weight": 0.20,
             "target_weight": 0.21,
             "delta": 0.01,
@@ -912,13 +1237,14 @@ def test_stale_rebalance_fails_terminal_without_partial_allocation_update(client
 
 def test_risk_decreasing_rebalance_does_not_require_approval(client):
     test_client, _ = client
-    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    _create_default_pool_and_binding(test_client)
     bootstrap_line = [
         {
             "persona_id": "persona-alpha",
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-alpha",
             "current_weight": 0.0,
             "target_weight": 0.10,
             "delta": 0.10,
@@ -935,12 +1261,21 @@ def test_risk_decreasing_rebalance_does_not_require_approval(client):
             command_id="cmd-decrease-bootstrap",
         ),
     ).status_code == 200
+    assert test_client.patch(
+        "/api/capital-pools/pool-001/status",
+        json={
+            "actor_id": "capital-admin-1",
+            "actor_role": "capital.admin",
+            "status": "suspended",
+        },
+    ).status_code == 200
     decrease_line = [
         {
             "persona_id": "persona-alpha",
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-alpha",
             "current_weight": 0.10,
             "target_weight": 0.05,
             "delta": -0.05,
@@ -965,13 +1300,14 @@ def test_risk_decreasing_rebalance_does_not_require_approval(client):
 
 def test_containment_is_durable_frozen_and_cannot_promote_or_increase(client):
     test_client, _ = client
-    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    _create_default_pool_and_binding(test_client)
     flat_line = [
         {
             "persona_id": "persona-alpha",
             "stage": "live_running",
             "capital_scope": "pool",
             "capital_pool_id": "pool-001",
+            "capital_sleeve_id": "sleeve-alpha",
             "current_weight": 0.0,
             "target_weight": 0.10,
             "delta": 0.10,
