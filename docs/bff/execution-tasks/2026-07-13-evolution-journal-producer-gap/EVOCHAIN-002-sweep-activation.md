@@ -1,6 +1,6 @@
 # EVOCHAIN-002 — Evolution Daily Sweep Activation
 
-Status: implementation anchored; live dev proof pending
+Status: implementation and live dev proof complete; review pending
 
 - Owner: Codex
 - Reviewer: Claude
@@ -88,25 +88,90 @@ Results:
 
 ## Dev Tick And Proposal Evidence
 
-Pending the task-ref dev root deployment. Before review handoff, replace this
-paragraph with:
+The task-ref dev root deployment completed successfully:
 
-- GitHub Actions deployment run URL and deployed commit SHA;
-- raw `evolution-daily-sweep-scheduler` tick JSON from the deploy log;
-- `/api/evolution/sweep-status` success payload;
-- proposal readback for `evo-sweep-inc-87c655c3e3c9`;
-- authenticated BFF journal readback for the linked formal entry.
+- GitHub Actions run:
+  [Pantheon Nonprod Deploy #29255933370](https://github.com/ajoe734/pantheon/actions/runs/29255933370)
+- Requested, checked-out, and remotely prepared commit:
+  `a71c35337578af6bdb599cc76a30de49c24a6d08`
+- Job window: `2026-07-13T14:05:26Z` through
+  `2026-07-13T14:25:20Z`; conclusion `success`.
+- The VM deploy, OpenClaw live smoke, public BFF smoke, and Agora restart
+  persistence smoke all passed.
 
-The expected successful first-tick item is:
+At `2026-07-13T14:23:31Z`, the deployment proof gate printed the scheduler's
+first successful tick verbatim:
 
-```text
-incident_id=inc-87c655c3e3c9
-decision_id=evo-sweep-inc-87c655c3e3c9
-status=created
-decision_state=proposed
-metadata.source=evolution_daily_sweep
-metadata.proposal_only=true
+```json
+{"result":{"cooldown_blocked":0,"created_decisions":1,"existing_decisions":0,"items":[{"action_type":"flag_for_review","active_decision_id":null,"decision_id":"evo-sweep-inc-87c655c3e3c9","incident_id":"inc-87c655c3e3c9","reason":null,"status":"created","target_id":"artifact-rescue-0260531-1715d8d2","target_type":"candidate_artifact"}],"scanned_incidents":1,"scheduler_attach":{"compose_profile":"evolution-daily-sweep-scheduler","route":"POST /api/evolution/daily-sweep","worker_module":"services.evolution.scheduler_worker"},"skipped_incidents":0,"sweep_id":"scheduled-daily"},"tick":1}
 ```
+
+The same proof gate read `/api/evolution/sweep-status`:
+
+```json
+{"last_success_at":"2026-07-13T14:21:43Z","last_success_proposal_count":1,"last_failure_at":null,"last_failure_reason":null,"total_sweeps_run":1,"total_proposals_created":1,"scheduler_attach":{"route":"POST /api/evolution/daily-sweep","worker_module":"services.evolution.scheduler_worker","compose_service":"evolution-daily-sweep-scheduler","compose_profile":"evolution-daily-sweep-scheduler"}}
+```
+
+An authenticated public BFF readback after deployment found the incident still
+open, as expected for a proposal-only producer, and found both formal journal
+projections. This is the minimal non-secret projection of the response at
+`2026-07-13T14:26:15Z`:
+
+```json
+{
+  "incident": {
+    "incident_id": "inc-87c655c3e3c9",
+    "status": "open",
+    "artifact_id": "artifact-rescue-0260531-1715d8d2",
+    "artifact_version": "1.0.0",
+    "deployment_stage": "paper"
+  },
+  "journal": {
+    "total_items": 4,
+    "new_entries": [
+      {
+        "id": "mutation_review:evo-sweep-inc-87c655c3e3c9",
+        "entry_type": "mutation_review",
+        "status": "proposed",
+        "action_type": "flag_for_review",
+        "created_at": "2026-07-13T14:21:43Z"
+      },
+      {
+        "id": "evolution_decision:evo-sweep-inc-87c655c3e3c9",
+        "entry_type": "evolution_decision",
+        "status": "proposed",
+        "action_type": "flag_for_review",
+        "created_at": "2026-07-13T14:21:43Z"
+      }
+    ],
+    "evolution_decisions_source": "ok",
+    "mutation_review_source": "ok"
+  },
+  "decision": {
+    "decision_id": "evo-sweep-inc-87c655c3e3c9",
+    "linked_incident_id": "inc-87c655c3e3c9",
+    "target_type": "candidate_artifact",
+    "target_id": "artifact-rescue-0260531-1715d8d2",
+    "target_version": "1.0.0",
+    "target_stage": "paper",
+    "created_by_id": "evolution-daily-sweep",
+    "metadata": {
+      "source": "evolution_daily_sweep",
+      "proposal_only": true,
+      "live_mutation_allowed": false,
+      "runtime_binding_mutation_allowed": false,
+      "broker_order_allowed": false,
+      "capital_binding_mutation_allowed": false
+    }
+  }
+}
+```
+
+The journal grew from two baseline items to four: one mutation-review and one
+evolution-decision projection were added for the deterministic decision. The
+aggregate remains degraded only because the unrelated freeze-order and
+rollback sources are unavailable; both producer surfaces used by this task
+reported `ok`.
 
 ## Intentional Disable And Re-enable
 
@@ -138,9 +203,9 @@ below one second.
 
 | Criterion | Evidence | State |
 |---|---|---|
-| Default dev `docker compose up -d` starts the scheduler | Rendered compose service list + contract test | Passed locally |
-| Scheduler tick recorded from dev | Deployment proof gate output | Pending deploy |
-| Open seed incident becomes a proposal | Direct proposal and BFF journal readback | Pending deploy |
+| Default dev `docker compose up -d` starts the scheduler | Rendered compose service list + contract test + task-ref root deployment | Passed |
+| Scheduler tick recorded from dev | Run `29255933370` proof-gate tick and sweep-status output | Passed |
+| Open seed incident becomes a proposal | Direct proposal and authenticated BFF journal readback | Passed |
 | Intentional disable is documented | Commands above | Passed |
 
 ## Residual Risks
@@ -165,3 +230,5 @@ below one second.
 - Required checks: pending
 - Merge SHA: pending
 - Reviewer decision: pending
+- Dev proof: run `29255933370`, commit
+  `a71c35337578af6bdb599cc76a30de49c24a6d08`, passed
