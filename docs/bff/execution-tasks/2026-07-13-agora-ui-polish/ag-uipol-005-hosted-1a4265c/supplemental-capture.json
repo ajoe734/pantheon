@@ -1,0 +1,101 @@
+{
+  "capturedAt": "2026-07-13T12:56:13.370Z",
+  "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+  "results": [
+    {
+      "consoleErrors": [],
+      "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+      "failedRequests": [],
+      "fullPagePath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/performance-desktop.png",
+      "name": "performance-desktop",
+      "path": "/agora/strategy-performance",
+      "surfaceReady": false,
+      "title": "Pantheon Management Console",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-performance?nocache=1a4265c770825818396badbdf960ec2deaa44763",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "viewportPath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/performance-desktop-viewport.png",
+      "workshopId": null
+    },
+    {
+      "consoleErrors": [
+        "EventSource's response has a MIME type (\"text/html\") that is not \"text/event-stream\". Aborting the connection.",
+        "TypeError: Cannot read properties of undefined (reading 'title')\n    at SN (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/agora-hmtOqAgF.js:11:6182)\n    at ih (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:39:16998)\n    at Ed (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:3139)\n    at Ew (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:44737)\n    at kw (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39727)\n    at LS (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39655)\n    at Nl (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39508)\n    at Nd (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:35875)\n    at sm (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:36678)\n    at Cr (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:39:3274)",
+        "[ErrorBoundary] Agora shell route chunk TypeError: Cannot read properties of undefined (reading 'title')\n    at SN (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/agora-hmtOqAgF.js:11:6182)\n    at ih (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:39:16998)\n    at Ed (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:3139)\n    at Ew (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:44737)\n    at kw (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39727)\n    at LS (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39655)\n    at Nl (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39508)\n    at Nd (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:35875)\n    at sm (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:36678)\n    at Cr (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:39:3274) {componentStack: \n    at SN (https://pantheon-lupin-dev-fe.35.201.2…p.io/assets/index-DMayK3Y-.js:41:84906)\n    at x2}"
+      ],
+      "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+      "failedRequests": [
+        {
+          "failure": "net::ERR_ABORTED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream"
+        }
+      ],
+      "fullPagePath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/servant-drawer-desktop.png",
+      "name": "servant-drawer-desktop",
+      "path": "/agora/strategy-workshop/b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+      "surfaceReady": true,
+      "title": "Pantheon Management Console",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-workshop/b888fb96-12b4-46e1-8def-ffe4f29b5ad7?nocache=1a4265c770825818396badbdf960ec2deaa44763",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "viewportPath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/servant-drawer-desktop-viewport.png",
+      "workshopId": "b888fb96-12b4-46e1-8def-ffe4f29b5ad7"
+    },
+    {
+      "consoleErrors": [],
+      "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+      "failedRequests": [],
+      "fullPagePath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/performance-narrow.png",
+      "name": "performance-narrow",
+      "path": "/agora/strategy-performance",
+      "surfaceReady": true,
+      "title": "Pantheon Management Console",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-performance?nocache=1a4265c770825818396badbdf960ec2deaa44763",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "viewportPath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/performance-narrow-viewport.png",
+      "workshopId": null
+    },
+    {
+      "consoleErrors": [
+        "EventSource's response has a MIME type (\"text/html\") that is not \"text/event-stream\". Aborting the connection.",
+        "Failed to load resource: net::ERR_NETWORK_CHANGED",
+        "TypeError: Cannot read properties of undefined (reading 'title')\n    at SN (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/agora-hmtOqAgF.js:11:6182)\n    at ih (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:39:16998)\n    at Ed (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:3139)\n    at Ew (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:44737)\n    at kw (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39727)\n    at LS (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39655)\n    at Nl (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39508)\n    at Nd (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:35875)\n    at sm (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:36678)\n    at Cr (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:39:3274)",
+        "[ErrorBoundary] Agora shell route chunk TypeError: Cannot read properties of undefined (reading 'title')\n    at SN (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/agora-hmtOqAgF.js:11:6182)\n    at ih (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:39:16998)\n    at Ed (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:3139)\n    at Ew (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:44737)\n    at kw (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39727)\n    at LS (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39655)\n    at Nl (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:39508)\n    at Nd (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:35875)\n    at sm (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:41:36678)\n    at Cr (https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-DMayK3Y-.js:39:3274) {componentStack: \n    at SN (https://pantheon-lupin-dev-fe.35.201.2…p.io/assets/index-DMayK3Y-.js:41:84906)\n    at x2}"
+      ],
+      "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+      "failedRequests": [
+        {
+          "failure": "net::ERR_ABORTED",
+          "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/stream"
+        },
+        {
+          "failure": "net::ERR_NETWORK_CHANGED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream"
+        },
+        {
+          "failure": "net::ERR_ABORTED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream?lastEventId=evt-bff-1783947352-92f1661b"
+        }
+      ],
+      "fullPagePath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/servant-drawer-narrow.png",
+      "name": "servant-drawer-narrow",
+      "path": "/agora/strategy-workshop/b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+      "surfaceReady": true,
+      "title": "Pantheon Management Console",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-workshop/b888fb96-12b4-46e1-8def-ffe4f29b5ad7?nocache=1a4265c770825818396badbdf960ec2deaa44763",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "viewportPath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/servant-drawer-narrow-viewport.png",
+      "workshopId": "b888fb96-12b4-46e1-8def-ffe4f29b5ad7"
+    }
+  ]
+}

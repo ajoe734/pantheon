@@ -1,0 +1,152 @@
+{
+  "auth_actor": "pantheon-dev-browser",
+  "bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "card_types": [
+    "user_strategy_description",
+    "completeness_update",
+    "readiness_gate"
+  ],
+  "evidence_screenshots": [
+    "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/ag-dynui-full-006-01-live-ready-workshop-mobile.png",
+    "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/ag-dynui-full-006-02-live-workspace-proposal-mobile.png",
+    "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/ag-dynui-full-006-03-live-workspace-accepted-mobile.png",
+    "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/ag-dynui-full-006-04-live-grid-unsaved-mobile.png",
+    "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/ag-dynui-full-006-05-live-grid-saved-v2-mobile.png",
+    "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/ag-dynui-full-006-06-live-widget-revision-preview-mobile.png",
+    "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/ag-dynui-full-006-07-live-widget-revision-v3-mobile.png",
+    "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/ag-dynui-full-006-08-live-version-history-mobile.png",
+    "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/ag-dynui-full-006-09-live-rollback-applied-mobile.png"
+  ],
+  "fe_base_url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "readiness_highest_gate": "trading_room",
+  "request_paths": [
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/completeness",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/readiness",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/cards",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/events",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/stream",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/strategies/full003-postdeploy-1783268578-f4b6f0/trading-room/proposals",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/strategies/full003-postdeploy-1783268578-f4b6f0/trading-room/proposals/trp_a49a5f81c465/accept",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_16aab15fe9f6/versions",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/trw_16aab15fe9f6/layout",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_16aab15fe9f6/versions",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_16aab15fe9f6/versions",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/trw_16aab15fe9f6/widgets/overview_candidate_funnel/revision-proposals",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/widget-revision-proposals/wrp_d5d1c20d451d/accept",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_16aab15fe9f6/versions",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_16aab15fe9f6/versions",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/trw_16aab15fe9f6/versions/trdv_trw_16aab15fe9f6_v1/rollback",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_16aab15fe9f6/versions"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_16aab15fe9f6/versions"
+    }
+  ],
+  "strategy_id": "full003-postdeploy-1783268578-f4b6f0",
+  "strategy_version": "full003-postdeploy-1783268578-f4b6f0",
+  "task_id": "AG-DYNUI-FULL-006",
+  "tenant_id": "pantheon-dev",
+  "workflow": [
+    "live workshop readiness/cards",
+    "Strategy Workshop Add to Trading Room handoff",
+    "workspace proposal",
+    "proposal accept",
+    "grid edit save",
+    "widget revision keep-copy",
+    "version history",
+    "rollback"
+  ],
+  "workshop_id": "b888fb96-12b4-46e1-8def-ffe4f29b5ad7"
+}
