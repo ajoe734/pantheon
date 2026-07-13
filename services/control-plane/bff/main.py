@@ -44618,23 +44618,21 @@ def _ops_read_model_entry_for_persona(
             f"Persona {persona_id} has no persona-fleet row to source a fallback summary from.",
         ))
 
-    # `performance_summary` values are produced by `_as_float(..., 0.0)` in the
-    # fleet composer, so a bare 0.0 does not distinguish "no evidence" from a
-    # real zero. Use identity/ranking evidence instead: a fleet row only
-    # counts as a usable fallback source once it is actually bound to a
-    # runtime, a capital pool, or a league ranking.
-    fallback_has_signal = bool(
-        fleet_row.get("runtime_binding_id")
-        or fleet_row.get("capital_pool_id")
-        or fleet_row.get("league_rank") is not None
+    # Fleet now preserves missing persona-owned performance as null and exposes
+    # explicit provenance.  The row itself is still a useful fallback identity
+    # surface, but an unavailable performance source must never be promoted to
+    # formal evidence or replaced with same-market seed values.
+    fallback_has_signal = bool(fleet_row) and _is_persona_lifecycle_operational(
+        persona.get("lifecycle_state") or persona.get("status")
     )
     is_fallback = not has_formal_attribution and not has_partial_attribution and fallback_has_signal
     if is_fallback:
         diagnostics.append(ops_read_model_diagnostic(
             "persona_fleet_summary",
             "FORMAL_ATTRIBUTION_MISSING_USING_FLEET_FALLBACK",
-            "Performance is synthesized from the persona-fleet summary because no formal "
-            "attribution or holdings row matched this persona; treat as fallback, not formal evidence.",
+            "The persona-fleet row is the only persona-scoped summary because no formal "
+            "attribution or holdings row matched this persona; preserve unavailable values "
+            "and treat the row as fallback, not formal evidence.",
         ))
 
     has_degraded_source = any(source.source_status == SourceState.DEGRADED for source in sources)

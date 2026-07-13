@@ -41,6 +41,11 @@ performance fields and labels the selected source. A persona with no telemetry
 and no own performance evidence reports unavailable values rather than zeroed
 market-seed performance.
 
+An operational persona may still appear as a fallback identity row in the
+Operations read model when formal attribution is absent, but its unavailable
+performance remains null. Draft personas with no bound evidence remain
+unavailable rather than being promoted to fallback confidence.
+
 ## Hosted baseline evidence (2026-07-13 UTC)
 
 - Persona Fleet exposed 23 personas with 0 formal and 23 informal attribution
