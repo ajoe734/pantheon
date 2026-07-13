@@ -105,3 +105,16 @@ lint.
   seed-origin item is deferred to `EVOCHAIN-011` (dev deploy + closeout),
   once `EVOCHAIN-007` has landed.
 - Owner: Claude. Reviewer: Codex2.
+
+## Review And Delivery
+
+- `execute-plans` PR: [#301](https://github.com/ajoe734/execute-plans/pull/301),
+  `task/EVOCHAIN-009` into `dev`. Auto-merge could not be enabled by this
+  worker (self-merge on `execute-plans` PRs is governance-blocked for AI
+  agents); a human must enable merge or merge it directly.
+- `pantheon` PR: [#3527](https://github.com/ajoe734/pantheon/pull/3527),
+  `task/EVOCHAIN-009` into `dev`, docs-only, auto-merge enabled.
+- Task brief reviewer for this dispatch: `Antigravity` (auto-reassigned from
+  `Codex2` per `.orchestrator/task-briefs/evochain_009.md`); `INDEX.md`'s
+  static wave table still lists `Codex2` — the task-brief reassignment is
+  the fresher instruction and was used for commit trailers.
