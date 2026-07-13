@@ -21,6 +21,8 @@ from read_store import ReadSurfaceStore
 
 AUTHORITY_URL = "http://capital-authority.test"
 HEADERS = {"Authorization": "Bearer op-2:operator"}
+APPROVER_HEADERS = {"Authorization": "Bearer op-approval:approver"}
+SECOND_OPERATOR_HEADERS = {"Authorization": "Bearer op-3:operator"}
 
 
 def rebalance_payload(**overrides: Any) -> Dict[str, Any]:
@@ -75,8 +77,9 @@ class CapitalBffAuthorityHarness:
         "PANTHEON_PERSISTENCE_POSTURE",
     )
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, seed_allocation: bool = True) -> None:
         self.root = Path(root)
+        self.seed_allocation = seed_allocation
         self.capital_data_dir = self.root / "capital"
         self.read_path = self.root / "bff-read-surfaces.json"
         self.command_path = self.root / "bff-commands.jsonl"
@@ -92,6 +95,7 @@ class CapitalBffAuthorityHarness:
         self._original_read_store = bff_main.read_store
         self._original_command_store = bff_main.command_store
         self._original_post_json = command_executor._post_json
+        self._original_get_json = command_executor._get_json
         self._original_http_json_get = read_store_module._http_json_get
         self._capital_idempotency = dict(bff_main._CAPITAL_BFF_IDEMPOTENCY)
         self._command_auth_context = dict(bff_main._COMMAND_AUTH_CONTEXT)
@@ -115,23 +119,44 @@ class CapitalBffAuthorityHarness:
         self.capital_module = importlib.import_module("services.capital.main")
         self.capital_client = TestClient(self.capital_module.app)
         command_executor._post_json = self._post_json
+        command_executor._get_json = self._get_json
         read_store_module._http_json_get = self._http_json_get
         self._reset_bff_process_state()
 
-        response = self.capital_client.post(
-            "/api/capital-pools",
+        assert self.client is not None
+        response = self.client.post(
+            "/bff/capital-pools",
             json={
-                "actor_id": "capital-admin-1",
-                "actor_role": "capital.admin",
                 "pool_id": "pool-real",
                 "name": "Regression Pool",
                 "owner_id": "fund-real",
                 "owner_type": "fund",
-                "status": "active",
                 "risk_policy_ref": "risk-main",
             },
+            headers={**HEADERS, "Idempotency-Key": "create-pool-real"},
         )
         assert response.status_code == 201, response.text
+        assert response.json()["pool_id"] == "pool-real"
+        assert response.json()["status"] == "active"
+
+        response = self.client.post(
+            "/api/v1/bindings",
+            json={
+                "binding_id": "binding-live",
+                "persona_id": "p-live",
+                "capital_pool_id": "pool-real",
+                "capital_sleeve_id": "sleeve-live",
+                "role": "live_owner",
+                "allowed_deployment_scope": "live",
+            },
+            headers={**HEADERS, "Idempotency-Key": "create-binding-live"},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["binding_id"] == "binding-live"
+        assert response.json()["capital_sleeve_id"] == "sleeve-live"
+        assert response.json()["status"] == "pending"
+        if self.seed_allocation:
+            self._seed_authoritative_allocation()
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
@@ -141,6 +166,7 @@ class CapitalBffAuthorityHarness:
             self.capital_client.close()
 
         command_executor._post_json = self._original_post_json
+        command_executor._get_json = self._original_get_json
         read_store_module._http_json_get = self._original_http_json_get
         bff_main.read_store = self._original_read_store
         bff_main.command_store = self._original_command_store
@@ -194,6 +220,104 @@ class CapitalBffAuthorityHarness:
             strategy_family="momentum",
         )
 
+    def _seed_authoritative_allocation(self) -> None:
+        """Owner-only fixture bootstrap; product apply paths still enter via BFF."""
+        assert self.capital_client is not None
+        created = self.capital_client.post(
+            "/api/rebalances",
+            json={
+                "actor_id": "op-2",
+                "actor_role": "operator",
+                "idempotency_key": "seed-allocation-proposal",
+                "request_hash": "seed-allocation-proposal-v1",
+                "rebalance_id": "rb-seed-allocation",
+                "capital_pool_id": "pool-real",
+                "ranking_snapshot_id": "rank-seed",
+                "reason": "Seed authoritative test baseline",
+                "lines": [
+                    {
+                        "persona_id": "p-live",
+                        "stage": "live_running",
+                        "capital_scope": "pool",
+                        "capital_pool_id": "pool-real",
+                        "capital_sleeve_id": "sleeve-live",
+                        "current_weight": 0.0,
+                        "target_weight": 0.10,
+                        "delta": 0.10,
+                    }
+                ],
+            },
+        )
+        assert created.status_code == 201, created.text
+        applied = self.capital_client.post(
+            "/api/rebalances/rb-seed-allocation/apply",
+            json={
+                "actor_id": "op-2",
+                "actor_role": "operator",
+                "idempotency_key": "seed-allocation-apply",
+                "request_hash": "seed-allocation-apply-v1",
+                "command_id": "cmd-seed-allocation",
+                "approval_ref": "approval-seed-allocation",
+            },
+        )
+        assert applied.status_code == 200, applied.text
+        assert applied.json()["allocation_readback"][0]["current_weight"] == 0.10
+
+    def apply_evidence(
+        self,
+        rebalance_id: str,
+        *,
+        suffix: str,
+    ) -> tuple[Dict[str, Any], Dict[str, str]]:
+        """Create restart-safe approval, confirm-token, and two-man evidence."""
+        assert self.client is not None
+        approval_id = f"approval-{suffix}"
+        signature_id = f"tms-{suffix}"
+        token_id = f"ct-{suffix}"
+
+        approved = self.client.post(
+            f"/bff/rebalances/{rebalance_id}/approve",
+            json={"approval_decision_id": approval_id, "memo": "Regression approval"},
+            headers={**APPROVER_HEADERS, "Idempotency-Key": f"approve-{suffix}"},
+        )
+        assert approved.status_code == 201, approved.text
+
+        confirmed = self.client.post(
+            "/bff/confirm-tokens",
+            json={
+                "tokenId": token_id,
+                "command": "ApprovedApply",
+                "target": {"type": "Rebalance", "id": rebalance_id},
+                "operator_id": "op-2",
+                "reason": "Confirm authoritative rebalance apply",
+            },
+            headers={**HEADERS, "Idempotency-Key": f"confirm-{suffix}"},
+        )
+        assert confirmed.status_code == 201, confirmed.text
+
+        first = self.client.post(
+            f"/bff/rebalances/{rebalance_id}/two-man-sign",
+            json={"two_man_signature_id": signature_id},
+            headers={**HEADERS, "Idempotency-Key": f"sign-first-{suffix}"},
+        )
+        assert first.status_code == 202, first.text
+        assert first.json()["data"]["complete"] is False
+        second = self.client.post(
+            f"/bff/rebalances/{rebalance_id}/two-man-sign",
+            json={"two_man_signature_id": signature_id},
+            headers={**SECOND_OPERATOR_HEADERS, "Idempotency-Key": f"sign-second-{suffix}"},
+        )
+        assert second.status_code == 202, second.text
+        assert second.json()["data"]["complete"] is True
+
+        return (
+            {
+                "approval_decision_id": approval_id,
+                "two_man_signature_id": signature_id,
+            },
+            {**HEADERS, "X-Confirm-Token": token_id},
+        )
+
     def _post_json(
         self,
         url: str,
@@ -214,6 +338,29 @@ class CapitalBffAuthorityHarness:
                 response.headers,
                 BytesIO(response.content),
             )
+        return response.json()
+
+    def _get_json(
+        self,
+        url: str,
+        auth_token: Optional[str] = None,
+        mfa_token: Optional[str] = None,
+    ) -> Any:
+        del auth_token, mfa_token
+        assert self.capital_client is not None
+        parsed = urlsplit(url)
+        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        response = self.capital_client.get(path)
+        if response.status_code >= 400:
+            raise HTTPError(
+                url,
+                response.status_code,
+                response.reason_phrase,
+                response.headers,
+                BytesIO(response.content),
+            )
+        if not response.content:
+            return None
         return response.json()
 
     def _http_json_get(

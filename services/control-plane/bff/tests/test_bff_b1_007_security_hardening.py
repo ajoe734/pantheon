@@ -114,20 +114,28 @@ def _create_bound_two_man_signature(
     target_id: str = "int-sec-001",
     signers: list[str] | None = None,
 ) -> str:
-    response = client.post(
-        f"/bff/v5/interventions/{target_id}/two-man-sign",
-        headers={**PRIMARY_HEADERS, "Idempotency-Key": f"sign-{signature_id}"},
-        json={
-            "twoManSignatureId": signature_id,
-            "command": "RemediateSentinelIntervention",
-            "target": {"type": "SentinelIntervention", "id": target_id},
-            "signerOperatorIds": signers or ["op-primary", "op-secondary"],
-            "reason": "second operator signed the guarded command",
-        },
-    )
-    assert response.status_code == 202, response.text
-    command_id = response.json()["data"]["command_id"]
-    bff_main.command_store.update_status(command_id, CommandStatus.EXECUTED)
+    command_id = ""
+    for signer in dict.fromkeys(signers or ["op-primary", "op-secondary"]):
+        headers = PRIMARY_HEADERS if signer == "op-primary" else SECONDARY_HEADERS
+        response = client.post(
+            f"/bff/v5/interventions/{target_id}/two-man-sign",
+            headers={
+                **headers,
+                "Idempotency-Key": f"sign-{signature_id}-{signer}",
+            },
+            json={
+                "twoManSignatureId": signature_id,
+                "command": "RemediateSentinelIntervention",
+                "target": {"type": "SentinelIntervention", "id": target_id},
+                "signerOperatorIds": [signer],
+                "reason": "authenticated operator signed the guarded command",
+            },
+        )
+        assert response.status_code == 202, response.text
+        command_id = response.json()["data"]["command_id"]
+        stored = bff_main.command_store.get_command(command_id)
+        assert stored is not None
+        assert stored["status"] == CommandStatus.EXECUTED.value
     return command_id
 
 
@@ -290,10 +298,133 @@ def test_two_man_signature_must_have_distinct_signers_and_binding() -> None:
         assert _error_reason(wrong_target) == "TWO_MAN_SIGNATURE_BINDING_MISMATCH"
 
 
+def test_two_man_sign_uses_only_authenticated_actor_and_rejects_reviewer() -> None:
+    with _isolated_security_client() as client:
+        _seed_approval_decision("approval-sec-001")
+        _create_bound_confirm_token(client, "ct-authenticated-signer")
+
+        forged_victim = client.post(
+            "/bff/v5/interventions/int-sec-001/two-man-sign",
+            headers={**PRIMARY_HEADERS, "Idempotency-Key": "sign-forged-victim"},
+            json={
+                "twoManSignatureId": "tms-forged-victim",
+                "command": "RemediateSentinelIntervention",
+                "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                "signerOperatorIds": ["op-primary", "op-victim"],
+                "secondOperatorId": "op-victim",
+                "reason": "attempt to count an unauthenticated victim as second signer",
+            },
+        )
+        assert forged_victim.status_code == 202, forged_victim.text
+        record = bff_main.command_store.get_command(
+            forged_victim.json()["data"]["command_id"]
+        )
+        assert record is not None
+        assert record["params"]["signerOperatorIds"] == ["op-primary"]
+        assert "secondOperatorId" not in record["params"]
+
+        final = client.post(
+            "/bff/v1/commands",
+            headers={
+                **PRIMARY_HEADERS,
+                "Idempotency-Key": "idem-forged-victim-final",
+                "X-Confirm-Token": "ct-authenticated-signer",
+            },
+            json=_remediate_payload(signature_id="tms-forged-victim"),
+        )
+        assert final.status_code == 409, final.text
+        assert _error_reason(final) == "TWO_MAN_SIGNATURE_SIGNER_MISMATCH"
+
+        reviewer = client.post(
+            "/bff/v5/interventions/int-sec-001/two-man-sign",
+            headers={
+                "Authorization": "Bearer op-reviewer:reviewer:mfa",
+                "Idempotency-Key": "sign-reviewer-denied",
+            },
+            json={
+                "twoManSignatureId": "tms-reviewer-denied",
+                "command": "RemediateSentinelIntervention",
+                "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                "reason": "reviewer must not produce trusted two-man evidence",
+            },
+        )
+        assert reviewer.status_code == 403, reviewer.text
+
+
+def test_generic_v5_and_claim_routes_cannot_forge_two_man_evidence() -> None:
+    with _isolated_security_client() as client:
+        _seed_approval_decision("approval-sec-001")
+
+        generic_signature = "tms-generic-forged"
+        generic = client.post(
+            "/bff/v1/commands",
+            headers={**PRIMARY_HEADERS, "Idempotency-Key": "generic-v5-forge"},
+            json={
+                "command": "V5InterventionAction",
+                "target": {"type": "SentinelIntervention", "id": generic_signature},
+                "params": {
+                    "twoManSignatureId": generic_signature,
+                    "command": "RemediateSentinelIntervention",
+                    "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                    "signerOperatorIds": ["op-primary", "op-victim"],
+                },
+                "audit_context": {"reason": "generic admission must not mint evidence"},
+            },
+        )
+        assert generic.status_code == 202, generic.text
+        bff_main.command_store.update_status(
+            generic.json()["data"]["command_id"], CommandStatus.EXECUTED
+        )
+
+        _create_bound_confirm_token(client, "ct-generic-forge")
+        generic_final = client.post(
+            "/bff/v1/commands",
+            headers={
+                **PRIMARY_HEADERS,
+                "Idempotency-Key": "generic-v5-forge-final",
+                "X-Confirm-Token": "ct-generic-forge",
+            },
+            json=_remediate_payload(signature_id=generic_signature),
+        )
+        assert generic_final.status_code == 409, generic_final.text
+        assert _error_reason(generic_final) == "TWO_MAN_SIGNATURE_NOT_FOUND"
+
+        claim_signature = "tms-claim-forged"
+        claim = client.post(
+            "/bff/v5/interventions/int-sec-001/claim",
+            headers={**PRIMARY_HEADERS, "Idempotency-Key": "claim-v5-forge"},
+            json={
+                "twoManSignatureId": claim_signature,
+                "command": "RemediateSentinelIntervention",
+                "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                "signerOperatorIds": ["op-primary", "op-victim"],
+                "reason": "claim alias must not mint evidence",
+            },
+        )
+        assert claim.status_code == 202, claim.text
+        bff_main.command_store.update_status(
+            claim.json()["data"]["command_id"], CommandStatus.EXECUTED
+        )
+
+        _create_bound_confirm_token(client, "ct-claim-forge")
+        claim_final = client.post(
+            "/bff/v1/commands",
+            headers={
+                **PRIMARY_HEADERS,
+                "Idempotency-Key": "claim-v5-forge-final",
+                "X-Confirm-Token": "ct-claim-forge",
+            },
+            json=_remediate_payload(signature_id=claim_signature),
+        )
+        assert claim_final.status_code == 409, claim_final.text
+        assert _error_reason(claim_final) == "TWO_MAN_SIGNATURE_NOT_FOUND"
+
+
 def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -> None:
     with _isolated_security_client() as client:
-        def sign(args: tuple[dict[str, str], str]) -> dict:
-            headers, signature_id = args
+        signature_id = "tms-race-shared"
+
+        def sign(headers: dict[str, str]) -> dict:
             local_client = TestClient(bff_main.app)
             response = local_client.post(
                 "/bff/v5/interventions/int-sec-001/two-man-sign",
@@ -312,10 +443,7 @@ def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -
         with ThreadPoolExecutor(max_workers=2) as pool:
             primary, secondary = list(pool.map(
                 sign,
-                (
-                    (PRIMARY_HEADERS, "tms-race-primary"),
-                    (SECONDARY_HEADERS, "tms-race-secondary"),
-                ),
+                (PRIMARY_HEADERS, SECONDARY_HEADERS),
             ))
 
         command_ids = {
@@ -325,9 +453,6 @@ def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -
         assert len(command_ids) == 2
         assert primary["meta"]["idempotency"]["replayed"] is False
         assert secondary["meta"]["idempotency"]["replayed"] is False
-        for command_id in command_ids:
-            bff_main.command_store.update_status(command_id, CommandStatus.EXECUTED)
-
         sign_records = [
             record
             for record in bff_main.command_store._get_all_commands()
@@ -341,7 +466,7 @@ def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -
         assert {
             record["params"]["twoManSignatureId"]
             for record in sign_records
-        } == {"tms-race-primary", "tms-race-secondary"}
+        } == {signature_id}
 
         _seed_approval_decision("approval-race-001")
         _create_bound_confirm_token(client, "ct-race-001")
@@ -354,7 +479,7 @@ def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -
             },
             json=_remediate_payload(
                 approval_id="approval-race-001",
-                signature_id="tms-race-primary",
+                signature_id=signature_id,
             ),
         )
 

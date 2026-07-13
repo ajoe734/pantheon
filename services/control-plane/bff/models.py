@@ -93,6 +93,8 @@ class CommandType(str, Enum):
     DEMOTE = "Demote"
     PROMOTE_CANDIDATE = "PromoteCandidate"
     REBALANCE_PROPOSAL = "RebalanceProposal"
+    REBALANCE_APPROVAL = "RebalanceApproval"
+    REBALANCE_TWO_MAN_SIGN = "RebalanceTwoManSign"
     APPROVED_APPLY = "ApprovedApply"
     EMERGENCY_CONTAINMENT = "EmergencyContainment"
 

@@ -78,6 +78,59 @@ class CommandStore:
         self._save_command(record)
         return record
 
+    def submit_terminal_command(
+        self,
+        command_id: str,
+        command_type: CommandType,
+        target: TargetObject,
+        submitted_at: str,
+        params: Dict[str, Any],
+        audit_context: Dict[str, Any],
+        foundation_context: Optional[Dict[str, Any]] = None,
+        result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Append one already-complete command record without a crash window."""
+        record = {
+            "command_id": command_id,
+            "type": command_type.value,
+            "target": target.model_dump(),
+            "submitted_at": submitted_at,
+            "status": CommandStatus.EXECUTED.value,
+            "params": params,
+            "audit": audit_context,
+            "foundation": foundation_context,
+            "result": result,
+            "error": None,
+        }
+        self._save_command(record)
+        return record
+
+    def submit_terminal_command_if_no_active_target(
+        self,
+        command_id: str,
+        command_type: CommandType,
+        target: TargetObject,
+        submitted_at: str,
+        params: Dict[str, Any],
+        audit_context: Dict[str, Any],
+        foundation_context: Optional[Dict[str, Any]] = None,
+        result: Optional[Dict[str, Any]] = None,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        with self._lock:
+            active = self.get_active_commands_for_target(target.type.value, target.id)
+            if active:
+                return None, active[0]
+            return self.submit_terminal_command(
+                command_id,
+                command_type,
+                target,
+                submitted_at,
+                params,
+                audit_context,
+                foundation_context,
+                result,
+            ), None
+
     def submit_command_if_no_active_target(
         self,
         command_id: str,
@@ -153,10 +206,18 @@ class CommandStore:
             for i, cmd in enumerate(commands):
                 if cmd["command_id"] == command_id:
                     commands[i]["status"] = status.value
-                    if result:
+                    if result is not None:
                         commands[i]["result"] = result
-                    if error:
+                    if error is not None:
                         commands[i]["error"] = error
+                    elif status in {
+                        CommandStatus.SUBMITTED,
+                        CommandStatus.PROCESSING,
+                        CommandStatus.EXECUTED,
+                    }:
+                        # A retry must not retain the terminal error from its
+                        # previous attempt after it is re-queued or succeeds.
+                        commands[i]["error"] = None
                     if audit:
                         # Merge audit updates into existing audit record
                         existing = commands[i].get("audit") or {}
