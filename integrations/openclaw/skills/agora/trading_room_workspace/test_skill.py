@@ -117,9 +117,16 @@ def test_generator_preserves_evidence_freshness_and_filters_unsafe_personalizati
     assert result.status == "completed"
     assert result.proposal is not None
     proposal = result.proposal
+    assert proposal["rationaleKey"] == "agora.tradingRoom.proposal.rationale"
+    assert proposal["warningCodes"] == [
+        "decision_support_only",
+        "statistical_association_only",
+        "unsafe_personalization_ignored",
+    ]
     assert proposal["personalizationApplied"]["items"] == [{"key": "density", "value": "compact"}]
     assert "Unsafe personalization hints ignored" in proposal["warnings"][-1]
     source = proposal["dataAvailability"]["sources"][0]
+    assert source["reasonCode"] == "strategy_projection_freshness"
     assert source["status"] == "complete"
     assert "ev-001" in source["reason"]
     assert "2026-06-28T23:00:00Z" in source["reason"]
