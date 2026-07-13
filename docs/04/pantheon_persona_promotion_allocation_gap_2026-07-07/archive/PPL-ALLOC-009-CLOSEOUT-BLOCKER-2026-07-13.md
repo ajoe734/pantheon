@@ -1,6 +1,6 @@
 # PPL-ALLOC-009 Closeout Evidence And Blocker - 2026-07-13
 
-Status: blocked after hosted dev acceptance
+Status: blocked after terminal-receipt repair and hosted dev recheck
 
 ## Decision
 
@@ -41,10 +41,24 @@ in the execution params. Its regression test proves the command reaches
 `executed` with an adapter receipt that explicitly reports
 `live_capital_side_effects=false`.
 
-This is not hosted evidence and does not claim authoritative allocation
-application. It must merge, deploy, and pass a hosted terminal-receipt recheck;
-the Capital Pool / Execution Plane write contract and post-apply allocation
-readback remain separate blocking evidence.
+PR #3493 merged this repair at
+`276eb9c0312871aeb2ebb2f14545720da040e46a`. Dev deploy run `29225028783`
+succeeded, including VM deployment, public BFF smoke, and Agora restart
+persistence smoke.
+
+A hosted recheck then created proposal `rb-20260713-002`. Apply without an
+approval reference remained fail-closed with HTTP 409. Apply with the dev
+approval reference returned HTTP 202 and command
+`a729a21d-2d92-40ad-a8f4-95cf767cbac7` reached `executed`. Its result preserved
+`action_id=apply`, `entity_type=Rebalance`, `entity_id=rb-20260713-002`, and
+`live_capital_side_effects=false`. This closes the stuck terminal-receipt gap.
+
+It does not prove authoritative allocation application. Proposal readback
+remained `status=pending`, `applied=false`, and explicitly degraded from
+`local_snapshot`. The pre-deploy proposal `rb-20260713-001` also returned 404
+after the BFF restart, exposing a separate proposal-persistence gap. The
+Capital Pool / Execution Plane write contract, restart-safe proposal authority,
+and post-apply allocation readback remain blocking evidence.
 
 ## Dependency And PR Ledger
 
@@ -233,7 +247,8 @@ assertion described above after rendering the task persona.
 
 | Severity | Blocking | Risk | Owner | Objective expiry / recheck |
 | --- | --- | --- | --- | --- |
-| S1 | Yes | Hosted approved rebalance command remains `submitted`; a local processor-queue repair passes tests but is not merged/deployed, and no authoritative applied-weight readback exists. | Control Plane / Execution Plane | Merge/deploy the repair, recheck terminal receipt, then require Capital/Fleet reads to return the same applied weights and identities. |
+| S1 | Yes | Terminal adapter receipt now reaches `executed`, but it reports no live capital side effect; proposal and Capital/Fleet reads do not show authoritative applied weights. | Capital Plane / Execution Plane | Implement the governed allocation write authority, then require proposal and Capital/Fleet reads to return the same applied weights and identities. |
+| S1 | Yes | The pre-deploy rebalance proposal returned 404 after BFF restart; the replacement proposal is served from degraded `local_snapshot`. | BFF / Capital Plane persistence | Move proposal authority to a restart-safe backend-owned store and prove the same proposal survives a BFF redeploy. |
 | S1 | Yes | Safe emergency freeze cannot be admitted without a distinct second authorized operator, so no containment receipt/post-state proof exists. | Human/Ops + Risk Owner | Re-run with two legitimate operators and preserve confirmation, signature, terminal receipt, and unchanged promotion/allocation readback. |
 | S2 | Yes | Hosted ranking rows omit stage, current weight, and evidence fields needed for a response-derived ranking-to-proposal join. | BFF Allocation Read Model | Recheck after one immutable ranking response carries the complete allocation universe and proposal join fields. |
 | S2 | Yes | Original single Promotion & Allocation workbench contract was replaced by later IA redirects; the supersession needs explicit closeout reviewer acceptance. | Management Frontend + Claude | Resolve during PPL-ALLOC-009 review by accepting the newer canonical-center model or reopening the original route target. |
@@ -244,10 +259,10 @@ assertion described above after rendering the task persona.
 
 ## Required Next Action
 
-Keep `PPL-ALLOC-009` in progress. First publish and deploy the local
-terminal-receipt repair, then recheck the apply command on hosted dev. The
-Control Plane / Execution Plane must still expose authoritative allocation
-readback. Human/Ops and the Risk Owner must then execute the safe containment
-probe with a genuine second signer. After the ranking join and route
-supersession are reviewed, rerun the hosted journey and only then hand the task
-to Claude for formal review.
+Keep `PPL-ALLOC-009` in progress. The terminal-receipt repair is merged,
+deployed, and proven. The Capital Plane / Execution Plane must now provide a
+restart-safe proposal authority plus governed allocation application and
+authoritative readback. Human/Ops and the Risk Owner must then execute the safe
+containment probe with a genuine second signer. After the ranking join and
+route supersession are reviewed, rerun the hosted journey and only then hand
+the task to Claude for formal review.
