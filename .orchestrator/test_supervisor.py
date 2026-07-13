@@ -4876,6 +4876,69 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
             )
         )
 
+    def test_startup_recovery_does_not_preempt_still_live_worker(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["codex"]["worker_slots"] = ["codex1_1"]
+        config["agents"]["codex1_1"] = {
+            "id": "codex1_1",
+            "display_name": "Codex",
+            "dispatch_slot_for": "codex",
+            "provider": "codex1-1",
+        }
+        worker = {
+            "run_id": "recovered-run",
+            "task_id": "LOOP-PROD-000",
+            "agent_id": "codex1_1",
+            "logical_agent_id": "codex",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_ready_dispatch"},
+        }
+        state = {
+            "supervisor": {
+                "started_at": "2026-07-13T16:03:43Z",
+                "last_successful_loop_at": None,
+            },
+            "queue": {"events": {}},
+            "workers": {"recovered-run": worker},
+        }
+        task_map = {
+            "LOOP-PROD-000": {
+                "id": "LOOP-PROD-000",
+                "status": "in_progress",
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "depends_on": [],
+            },
+            "URGENT-REVIEW": {
+                "id": "URGENT-REVIEW",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+        state["supervisor"]["last_successful_loop_at"] = "2026-07-13T16:04:30Z"
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
     def test_slotted_worker_is_not_preempted_for_non_urgent_owned_backlog(self) -> None:
         config = json.loads(json.dumps(self.config))
         config["agents"]["codex"]["worker_slots"] = ["codex1_1", "codex1_2", "codex1_3", "codex1_4"]
@@ -5794,11 +5857,15 @@ class ChairReviewDispatchTests(unittest.TestCase):
             ),
             mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "console_log") as console_log,
         ):
             changed = supervisor.dispatch_chair_review(self.config, state, planning_state=None)
 
         self.assertFalse(changed)
         self.assertEqual(supervisor.load_event_queue(self.config), [])
+        self.assertTrue(
+            any("max_concurrent_workers 2" in call.args[0] for call in console_log.call_args_list)
+        )
 
     def test_dispatch_chair_review_falls_through_busy_candidate(self) -> None:
         state = {
@@ -8413,9 +8480,9 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
     def test_scan_groups_pids_by_agent_marker(self) -> None:
         proc = self._make_fake_proc(
             {
-                111: "codex exec -C /tmp/wt 你的 auto worker 身分是：Codex 。 Task ID: T1",
-                222: "codex exec -C /tmp/wt2 你的 auto worker 身分是：Codex2 。 Task ID: T2",
-                333: "codex exec -C /tmp/wt3 你的 auto worker 身分是：Codex 。 Task ID: T3",
+                111: "python3 .orchestrator/worker_runner.py --run-id run-1 --heartbeat-path h1 --status-path s1 -- codex exec -C /tmp/wt 你的 auto worker 身分是：Codex 。 Task ID: T1",
+                222: "python3 .orchestrator/worker_runner.py --run-id run-2 --heartbeat-path h2 --status-path s2 -- codex exec -C /tmp/wt2 你的 auto worker 身分是：Codex2 。 Task ID: T2",
+                333: "python3 .orchestrator/worker_runner.py --run-id run-3 --heartbeat-path h3 --status-path s3 -- codex exec -C /tmp/wt3 你的 auto worker 身分是：Codex 。 Task ID: T3",
                 444: "vim",
                 555: None,
             }
@@ -8427,9 +8494,27 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
 
     def test_scan_skips_self_pid(self) -> None:
         proc = self._make_fake_proc(
-            {os.getpid(): "auto worker 身分是：Codex"}
+            {os.getpid(): "--run-id run-1 -- auto worker 身分是：Codex"}
         )
         self.assertEqual(supervisor.scan_live_worker_pids_by_agent(proc_root=proc), {})
+
+    def test_scan_dedupes_one_run_worth_of_wrapper_and_child_pids(self) -> None:
+        # A single worker run spawns ~3 processes sharing the same wakeup
+        # prompt in their cmdline: the worker_runner.py wrapper, a node CLI
+        # shim, and the real CLI binary underneath it. Only the wrapper's
+        # cmdline names worker_runner.py, so only it should be counted --
+        # otherwise live_total is ~3x actual worker runs
+        # (OPS-DISPATCH-PIDCOUNT-001).
+        proc = self._make_fake_proc(
+            {
+                111: "python3 .orchestrator/worker_runner.py --run-id run-abc --heartbeat-path h --status-path s -- claude --print 你的 auto worker 身分是：Claude 。 Task ID: T1",
+                222: "claude --print 你的 auto worker 身分是：Claude 。 Task ID: T1",
+                333: "node /opt/claude/cli.js --print 你的 auto worker 身分是：Claude 。 Task ID: T1",
+            }
+        )
+        result = supervisor.scan_live_worker_pids_by_agent(proc_root=proc)
+        self.assertEqual(result["Claude"], [111])
+        self.assertEqual(sum(len(pids) for pids in result.values()), 1)
 
     def test_block_reason_flags_live_duplicate(self) -> None:
         config = {
@@ -9126,11 +9211,15 @@ class MaxConcurrentWorkersCapTests(unittest.TestCase):
             mock.patch.object(supervisor, "helper_claim_settings", return_value={}),
             mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
             mock.patch.object(supervisor, "start_worker_for_request") as start,
+            mock.patch.object(supervisor, "console_log") as console_log,
         ):
             changed = supervisor.dispatch_ready_tasks(config, state)
         scan.assert_called()
         start.assert_not_called()
         self.assertFalse(changed)
+        self.assertTrue(
+            any("live worker count 3 >= max_concurrent_workers 2" in call.args[0] for call in console_log.call_args_list)
+        )
 
     def test_dispatch_ready_tasks_proceeds_when_under_cap(self) -> None:
         config = self._base_config()
@@ -9156,6 +9245,47 @@ class MaxConcurrentWorkersCapTests(unittest.TestCase):
         ):
             supervisor.dispatch_ready_tasks(config, state)
         start.assert_not_called()
+
+    def test_dispatch_wave_is_clamped_to_remaining_global_slots(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config["ready_dispatcher"]["max_concurrent_workers"] = 2
+        config["ready_dispatcher"]["max_dispatches_per_tick"] = 4
+        status = {
+            "tasks": [
+                {
+                    "id": f"CAP-{index}",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "depends_on": [],
+                    "last_update": f"2026-07-13T16:0{index}:00Z",
+                }
+                for index in range(1, 5)
+            ]
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "scan_live_worker_pids_by_agent",
+                return_value={"Codex": [101]},
+            ),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex"],
+            )
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        self.assertEqual(queue_delivery_event.call_args.args[1]["task_id"], "CAP-1")
 
 
 class PruneOrphanWorktreesTests(unittest.TestCase):

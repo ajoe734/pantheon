@@ -225,6 +225,7 @@ def test_quarterly_ranking_recommendation_submit_uses_command_response_without_l
         assert record["params"]["recommendation_action_id"] == item["action_id"]
         assert record["params"]["ranking_snapshot_id"] == item["ranking_snapshot_id"]
         assert record["params"]["action_id"] == "submit_recommendation"
+        assert record["params"]["actionId"] == "submit_recommendation"
         assert record["params"]["audit_event"] == "quarterly_ranking.recommendation_submitted"
         assert record["audit"]["receipt_dual_write"]["command_receipt"]["command"] == (
             "QuarterlyRankingRecommendationSubmit"

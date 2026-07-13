@@ -107,6 +107,70 @@ def test_evolution_journal_supports_filters_and_pagination() -> None:
             bff_main.read_store = original_store
 
 
+def test_evolution_journal_server_side_filtering_and_origin() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+
+            # 1. Test filtering by persona (which should match targets or substrings)
+            # In read_surfaces.json:
+            # - evo-dec-88f3a2c1 target_id is "artifact-44d7e9b0"
+            resp = client.get(
+                "/bff/management/evolution-journal?persona=artifact-44d7e9b0",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            items = body["data"]["items"]
+            assert len(items) > 0
+            for item in items:
+                assert "artifact-44d7e9b0" in str(item).lower()
+
+            # 2. Test filtering by decision
+            resp = client.get(
+                "/bff/management/evolution-journal?decision=evo-dec-88f3a2c1",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            items = body["data"]["items"]
+            assert len(items) > 0
+            for item in items:
+                assert "evo-dec-88f3a2c1" in str(item).lower()
+
+            # 3. Test filtering by mutation_review
+            resp = client.get(
+                "/bff/management/evolution-journal?mutation_review=evo-dec-88f3a2c1",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            items = body["data"]["items"]
+            assert len(items) > 0
+            for item in items:
+                assert item["entry_type"] in ("mutation_review", "evolution_decision")
+                assert "evo-dec-88f3a2c1" in str(item).lower()
+
+            # 4. Verify origin field in response is set correctly (seed/live)
+            # Since our default read_surfaces has mock data, most should be tagged "seed"
+            resp = client.get(
+                "/bff/management/evolution-journal",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            items = resp.json()["data"]["items"]
+            assert len(items) > 0
+            for item in items:
+                assert "origin" in item
+                # evo-vslice-1, btc-drift, etc., are mock/seed data
+                if "vslice" in str(item).lower() or "btc-drift" in str(item).lower():
+                    assert item["origin"] == "seed"
+
+        finally:
+            bff_main.read_store = original_store
+
+
 def test_evolution_journal_requires_read_authentication() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store

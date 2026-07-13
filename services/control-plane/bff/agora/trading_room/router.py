@@ -439,6 +439,26 @@ _LAYOUT_OPS = frozenset({
     "update_widget_query",
 })
 
+_DATA_AVAILABILITY_VALUES = frozenset({"full", "partial", "missing"})
+
+# Widget-revision preview vocabulary used before the full/partial/missing
+# rename; persisted proposals or an out-of-date caller may still send these.
+_LEGACY_DATA_AVAILABILITY_ALIASES = {
+    "complete": "full",
+    "unavailable": "missing",
+}
+
+
+def _normalize_data_availability_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _LEGACY_DATA_AVAILABILITY_ALIASES.get(value.strip().lower(), value)
+    return value
+
+
+def _normalize_widget_data_availability(widget: Dict[str, Any]) -> None:
+    if "dataAvailability" in widget:
+        widget["dataAvailability"] = _normalize_data_availability_value(widget["dataAvailability"])
+
 
 def _stable_hash(payload: Any) -> str:
     return hashlib.sha256(
@@ -791,7 +811,13 @@ def _validate_placement(value: Any) -> List[str]:
     return errors
 
 
-def _validate_widget(widget: Any, *, now: str, path: str = "widget") -> List[str]:
+def _validate_widget(
+    widget: Any,
+    *,
+    now: str,
+    path: str = "widget",
+    require_data_availability: bool = False,
+) -> List[str]:
     if not isinstance(widget, dict):
         return [f"{path} must be an object"]
     errors: List[str] = []
@@ -813,6 +839,8 @@ def _validate_widget(widget: Any, *, now: str, path: str = "widget") -> List[str
         )
         if key not in widget
     ]
+    if require_data_availability and "dataAvailability" not in widget:
+        missing.append("dataAvailability")
     if missing:
         errors.append(f"{path} missing required fields: {missing}")
     extra = set(widget) - _WIDGET_ALLOWED_FIELDS
@@ -820,6 +848,8 @@ def _validate_widget(widget: Any, *, now: str, path: str = "widget") -> List[str
         errors.append(f"{path} has unsupported fields: {sorted(extra)}")
     if any(isinstance(widget.get(key), str) and not widget.get(key).strip() for key in ("id", "widgetType", "title")):
         errors.append(f"{path}.id/widgetType/title must be non-empty")
+    if "dataAvailability" in widget and widget.get("dataAvailability") not in _DATA_AVAILABILITY_VALUES:
+        errors.append(f"{path}.dataAvailability must be one of {sorted(_DATA_AVAILABILITY_VALUES)}")
     errors.extend(_validate_placement(widget.get("placement")))
     errors.extend(_validate_size_object(widget.get("minSize"), path=f"{path}.minSize"))
     errors.extend(_validate_size_object(widget.get("maxSize"), path=f"{path}.maxSize"))
@@ -835,7 +865,13 @@ def _validate_widget(widget: Any, *, now: str, path: str = "widget") -> List[str
     return errors
 
 
-def _validate_view(view: Any, *, now: str, path: str = "view") -> List[str]:
+def _validate_view(
+    view: Any,
+    *,
+    now: str,
+    path: str = "view",
+    require_data_availability: bool = False,
+) -> List[str]:
     if not isinstance(view, dict):
         return [f"{path} must be an object"]
     errors: List[str] = []
@@ -843,6 +879,8 @@ def _validate_view(view: Any, *, now: str, path: str = "view") -> List[str]:
         key for key in ("id", "title", "purpose", "order", "layoutTemplate", "widgets")
         if key not in view
     ]
+    if require_data_availability and "dataAvailability" not in view:
+        missing.append("dataAvailability")
     if missing:
         errors.append(f"{path} missing required fields: {missing}")
     extra = set(view) - _VIEW_ALLOWED_FIELDS
@@ -850,12 +888,21 @@ def _validate_view(view: Any, *, now: str, path: str = "view") -> List[str]:
         errors.append(f"{path} has unsupported fields: {sorted(extra)}")
     if "order" in view and (not isinstance(view.get("order"), int) or view["order"] < 1):
         errors.append(f"{path}.order must be a positive integer")
+    if "dataAvailability" in view and view.get("dataAvailability") not in _DATA_AVAILABILITY_VALUES:
+        errors.append(f"{path}.dataAvailability must be one of {sorted(_DATA_AVAILABILITY_VALUES)}")
     widgets = view.get("widgets") or []
     if not isinstance(widgets, list):
         errors.append(f"{path}.widgets must be an array")
     else:
         for index, widget in enumerate(widgets):
-            errors.extend(_validate_widget(widget, now=now, path=f"{path}.widgets[{index}]"))
+            errors.extend(
+                _validate_widget(
+                    widget,
+                    now=now,
+                    path=f"{path}.widgets[{index}]",
+                    require_data_availability=require_data_availability,
+                )
+            )
         if "widgetCount" in view and view.get("widgetCount") != len(widgets):
             errors.append(f"{path}.widgetCount must equal widgets length")
     return errors
@@ -873,11 +920,14 @@ def _normalize_view(view: Dict[str, Any]) -> Dict[str, Any]:
         "warningCodes",
         [f"{normalized['id']}.warning.{index + 1}" for index, _ in enumerate(normalized.get("warnings") or [])],
     )
+    if "dataAvailability" in normalized:
+        normalized["dataAvailability"] = _normalize_data_availability_value(normalized["dataAvailability"])
     for widget in widgets:
         widget_key = f"agora.tradingRoom.widgets.{widget['id']}"
         widget.setdefault("titleKey", f"{widget_key}.title")
         widget.setdefault("purposeKey", f"{widget_key}.purpose")
         widget.setdefault("whyIncludedKey", f"{widget_key}.whyIncluded")
+        _normalize_widget_data_availability(widget)
     normalized["widgetCount"] = len(widgets)
     normalized.setdefault("warnings", [])
     return normalized
@@ -889,9 +939,18 @@ def _workspace_data_freshness(
     strategy_id: str,
     evidence_refs: List[str],
     reported: Dict[str, Any],
+    tenant_id: str,
+    user_id: str,
     workshop_store: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """Combine caller source-health evidence with locally queryable surfaces."""
+    """Combine caller source-health evidence with locally queryable surfaces.
+
+    The three keys the BFF can verify itself (decision events, evidence refs,
+    and workshop-store strategy summary) are always assigned from that local
+    truth, never from ``reported`` -- a caller cannot forge ``full`` for a
+    surface the BFF already knows how to check. Sources the BFF has no local
+    signal for still take the caller-reported value via ``setdefault``.
+    """
     resolved = copy.deepcopy(reported)
     events = store.list_decision_events(page_size=10_000).get("items") or []
     strategy_events = [
@@ -900,39 +959,35 @@ def _workspace_data_freshness(
         if str((event.get("subject") or {}).get("strategy_id") or event.get("strategy_id") or "")
         == strategy_id
     ]
-    resolved.setdefault(
-        "agora.trading.events",
-        {
-            "wired": True,
-            "rowCount": len(strategy_events),
-            "reason": "scoped TradingRoomStore decision-event query",
-        },
-    )
-    resolved.setdefault(
-        "agora.research.evidence_refs",
-        {
-            "wired": True,
-            "rowCount": len(evidence_refs),
-            "reason": "workspace generation evidence refs",
-        },
-    )
+    resolved["agora.trading.events"] = {
+        "wired": True,
+        "rowCount": len(strategy_events),
+        "reason": "scoped TradingRoomStore decision-event query",
+    }
+    resolved["agora.research.evidence_refs"] = {
+        "wired": True,
+        "rowCount": len(evidence_refs),
+        "reason": "workspace generation evidence refs",
+    }
     has_strategy = True
     if workshop_store is not None and hasattr(workshop_store, "list_sessions"):
         has_strategy = False
         try:
-            sessions, _ = workshop_store.list_sessions(limit=100)
+            sessions, _ = workshop_store.list_sessions(
+                user_id=user_id,
+                tenant_id=tenant_id,
+                status=None,
+                limit=100,
+            )
             if any(str(s.get("strategy_id") or "").strip() == strategy_id for s in sessions):
                 has_strategy = True
         except Exception:
             pass
-    resolved.setdefault(
-        "agora.strategy.summary",
-        {
-            "wired": True,
-            "rowCount": 1 if has_strategy else 0,
-            "reason": "ready StrategySpec version used for workspace generation",
-        },
-    )
+    resolved["agora.strategy.summary"] = {
+        "wired": True,
+        "rowCount": 1 if has_strategy else 0,
+        "reason": "ready StrategySpec version used for workspace generation",
+    }
     all_known_sources = {
         "agora.candidate.members",
         "winner_branch.score_breakdown",
@@ -1509,6 +1564,7 @@ def _apply_workspace_layout_ops(
             if not isinstance(widget_spec, dict):
                 errors.append(f"operations[{index}].payload.widgetSpec must be an object")
                 continue
+            _normalize_widget_data_availability(widget_spec)
             target_view.setdefault("widgets", []).append(widget_spec)
 
         elif op_name == "replace_chart_spec":
@@ -2072,11 +2128,14 @@ def create_trading_room_router(
             _validation_failed(["tradingRoomReady must be a boolean"], status_code=400)
 
         now = utc_now()
+        scope = _workspace_scope(identity)
         resolved_data_freshness = _workspace_data_freshness(
             store=store,
             strategy_id=strategy_id,
             evidence_refs=evidence_refs,
             reported=data_freshness,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
             workshop_store=workshop_store,
         )
         generation = _generate_workspace_proposal(
@@ -2105,7 +2164,6 @@ def create_trading_room_router(
         if errors:
             _validation_failed(errors)
 
-        scope = _workspace_scope(identity)
         store.upsert_workspace_proposal(
             proposal,
             tenant_id=scope["tenant_id"],
@@ -2338,7 +2396,7 @@ def create_trading_room_router(
             )
 
         now = utc_now()
-        errors = _validate_view(view, now=now)
+        errors = _validate_view(view, now=now, require_data_availability=True)
         if errors:
             _validation_failed(errors)
         updated = copy.deepcopy(workspace)
@@ -2401,7 +2459,7 @@ def create_trading_room_router(
         view["id"] = view_id
         view = _normalize_view(view)
         now = utc_now()
-        errors = _validate_view(view, now=now)
+        errors = _validate_view(view, now=now, require_data_availability=True)
         if errors:
             _validation_failed(errors)
         for index, current in enumerate(updated["views"]):
@@ -2465,8 +2523,9 @@ def create_trading_room_router(
             ErrorCode = _error_code_enum()
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, f"Widget {widget.get('id')!r} already exists", "workspace_widget_already_exists")
 
+        _normalize_widget_data_availability(widget)
         now = utc_now()
-        errors = _validate_widget(widget, now=now)
+        errors = _validate_widget(widget, now=now, require_data_availability=True)
         if errors:
             _validation_failed(errors)
         view.setdefault("widgets", []).append(copy.deepcopy(widget))
@@ -2540,10 +2599,11 @@ def create_trading_room_router(
             for key, value in patch.items()
             if key not in {"initiatedBy", "initiated_by", "actorType"}
         }
+        _normalize_widget_data_availability(clean_patch)
         widget.update(copy.deepcopy(clean_patch))
         widget["id"] = widget_id
         now = utc_now()
-        errors = _validate_widget(widget, now=now)
+        errors = _validate_widget(widget, now=now, require_data_availability=True)
         if errors:
             _validation_failed(errors)
         updated = _touch_workspace(updated, now=now)
@@ -2603,7 +2663,9 @@ def create_trading_room_router(
         payload = body or {}
         instruction = str(payload.get("instruction") or "").strip()
         rationale = str(payload.get("rationale") or "").strip()
-        data_availability = str(payload.get("dataAvailability") or payload.get("data_availability") or "").strip()
+        data_availability = _normalize_data_availability_value(
+            str(payload.get("dataAvailability") or payload.get("data_availability") or "").strip()
+        )
         proposed_spec = payload.get("proposedSpec") or payload.get("proposed_spec")
         warnings = payload.get("warnings", [])
         errors: List[str] = []
@@ -2611,16 +2673,24 @@ def create_trading_room_router(
             errors.append("instruction is required")
         if not rationale:
             errors.append("rationale is required")
-        if data_availability not in {"full", "partial", "missing"}:
+        if data_availability not in _DATA_AVAILABILITY_VALUES:
             errors.append("dataAvailability must be full, partial, or missing")
         if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
             errors.append("warnings must be an array of strings")
         if not isinstance(proposed_spec, dict):
             errors.append("proposedSpec must be a TradingRoomWidgetSpec object")
         else:
+            _normalize_widget_data_availability(proposed_spec)
             if proposed_spec.get("id") != widget_id:
                 errors.append("proposedSpec.id must match widgetId; keep-copy acceptance creates a new copy id")
-            errors.extend(_validate_widget(proposed_spec, now=utc_now(), path="proposedSpec"))
+            errors.extend(
+                _validate_widget(
+                    proposed_spec,
+                    now=utc_now(),
+                    path="proposedSpec",
+                    require_data_availability=True,
+                )
+            )
         supplied_view_id = str(payload.get("viewId") or payload.get("view_id") or "").strip()
         if supplied_view_id and supplied_view_id != view.get("id"):
             errors.append("viewId must match the widget's current view")
