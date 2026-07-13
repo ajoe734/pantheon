@@ -55886,7 +55886,10 @@ async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]
     if not dsn:
         return _loop_health_store_records()
     try:
-        from services.loop_control import LoopControllerStore, project_controller_record_to_bff
+        import importlib
+        loop_control = importlib.import_module("services.loop-control")
+        LoopControllerStore = loop_control.LoopControllerStore
+        project_controller_record_to_bff = loop_control.project_controller_record_to_bff
         store = LoopControllerStore(dsn)
         tenant_id = os.environ.get("PANTHEON_TENANT_ID", "default")
         environment = os.environ.get("PANTHEON_ENV", "dev")
