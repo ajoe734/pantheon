@@ -177,7 +177,15 @@ stop_heartbeat_for_quarantine() {
     heartbeat_process_is_stopped && return 0
     return 1
   }
+  heartbeat_process_is_stopped && return 0
   # A stopped heartbeat cannot run its TERM handler until it is continued.
+  # Revalidate after TERM because the original process may have exited and its
+  # PID may already have been reused before CONT is delivered.
+  if ! heartbeat_identity_matches; then
+    heartbeat_process_is_stopped && return 0
+    echo "[dev-environment-lease-guard] ERROR: heartbeat identity changed before CONT" >&2
+    return 1
+  fi
   kill -CONT "${heartbeat_pid}" 2>/dev/null || true
   for attempt in $(seq 1 20); do
     heartbeat_process_is_stopped && return 0
@@ -192,7 +200,6 @@ stop_heartbeat_for_quarantine() {
     return 1
   fi
   kill -KILL "${heartbeat_pid}" 2>/dev/null || true
-  kill -CONT "${heartbeat_pid}" 2>/dev/null || true
   for attempt in $(seq 1 20); do
     heartbeat_process_is_stopped && return 0
     sleep 0.25

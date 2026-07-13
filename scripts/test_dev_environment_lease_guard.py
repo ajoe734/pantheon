@@ -544,3 +544,16 @@ def test_guard_rejects_unsafe_heartbeat_states_and_cli_override() -> None:
     assert "REMOTE_VERIFY_INTERVAL_SECONDS" in script
     assert 'kill -TERM -- "-${pgid}"' in script
     assert 'kill -KILL -- "-${pgid}"' in script
+
+    quarantine = script.split("stop_heartbeat_for_quarantine() {", 1)[1].split(
+        "\n}\n\ncleanup_command()", 1
+    )[0]
+    term_index = quarantine.index('kill -TERM "${heartbeat_pid}"')
+    continue_index = quarantine.index('kill -CONT "${heartbeat_pid}"')
+    kill_index = quarantine.index('kill -KILL "${heartbeat_pid}"')
+    assert term_index < continue_index < kill_index
+    assert quarantine[term_index:continue_index].count(
+        "heartbeat_identity_matches"
+    ) == 1
+    assert quarantine.count('kill -CONT "${heartbeat_pid}"') == 1
+    assert 'kill -CONT "${heartbeat_pid}"' not in quarantine[kill_index:]
