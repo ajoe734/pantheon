@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -11,6 +13,7 @@ from common import (
     config_path,
     load_json,
     load_jsonl,
+    normalize_agent_id,
     summarize_failure_reason,
     utc_now,
     write_json,
@@ -58,7 +61,15 @@ def default_state() -> dict[str, Any]:
         },
         "provider_guardrails": {
             "dispatch_pauses": {},
+            "task_failure_streak_schema_version": 2,
             "task_failure_streaks": {},
+            "task_failure_streak_aliases": {},
+            "task_failure_streak_history": [],
+        },
+        "execution_dispatch_guardrails": {
+            "schema_version": 1,
+            "records": {},
+            "history": [],
         },
         "worker_runtime_metrics": {
             "version": 1,
@@ -106,7 +117,118 @@ def default_state() -> dict[str, Any]:
     }
 
 
-def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
+def _legacy_failure_signature(record: dict[str, Any]) -> str:
+    kind = normalize_agent_id(str(record.get("last_failure_kind") or "unknown")) or "unknown"
+    reason = re.sub(r"\s+", " ", str(record.get("last_reason") or "").strip().lower())
+    return f"legacy:{kind}:{hashlib.sha256(reason.encode('utf-8')).hexdigest()}"
+
+
+def _logical_failure_lane(config: dict[str, Any] | None, provider: str) -> str:
+    provider_id = normalize_agent_id(provider)
+    agents = (config or {}).get("agents", {}) or {}
+    for raw_agent_id, agent in agents.items():
+        agent_id = normalize_agent_id(str(raw_agent_id))
+        agent_provider = normalize_agent_id(str((agent or {}).get("provider") or agent_id))
+        if provider_id not in {agent_id, agent_provider}:
+            continue
+        return normalize_agent_id(str((agent or {}).get("dispatch_slot_for") or agent_id)) or provider_id
+    return provider_id
+
+
+def _failure_record_time(record: dict[str, Any], *, latest: bool) -> str:
+    keys = (
+        ("last_failure_at", "last_at", "updated_at", "first_failure_at", "first_at")
+        if latest
+        else ("first_failure_at", "first_at", "last_failure_at", "last_at", "updated_at")
+    )
+    return next((str(record.get(key) or "") for key in keys if record.get(key)), "")
+
+
+def _merge_legacy_failure_streaks(
+    provider_guardrails: dict[str, Any],
+    config: dict[str, Any] | None,
+) -> None:
+    raw_records = provider_guardrails.get("task_failure_streaks")
+    records = raw_records if isinstance(raw_records, dict) else {}
+    raw_aliases = provider_guardrails.get("task_failure_streak_aliases")
+    aliases = dict(raw_aliases) if isinstance(raw_aliases, dict) else {}
+    migrated: dict[str, dict[str, Any]] = {}
+
+    for old_key, raw_record in records.items():
+        if not isinstance(raw_record, dict):
+            continue
+        record = deepcopy(raw_record)
+        task_id = str(record.get("task_id") or str(old_key).split(":", 1)[0] or "").strip()
+        physical = str(
+            record.get("logical_agent_id")
+            or record.get("provider")
+            or (str(old_key).split(":", 1)[1] if ":" in str(old_key) else "")
+        ).strip()
+        logical = _logical_failure_lane(config, physical)
+        if not task_id or not logical:
+            continue
+        signature = str(record.get("signature") or _legacy_failure_signature(record))
+        scope = str(record.get("signature_scope") or "legacy_unbound")
+        digest = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:24]
+        key = f"{task_id}|{logical}|{digest}"
+        previous = migrated.get(key)
+        first_at = _failure_record_time(record, latest=False)
+        last_at = _failure_record_time(record, latest=True)
+        evidence = [str(value) for value in (record.get("evidence_refs") or []) if str(value)]
+        for field in ("raw_ref", "last_raw_ref", "last_error_raw_ref"):
+            if record.get(field):
+                evidence.append(str(record[field]))
+        alias_values = [str(old_key), *[str(value) for value in (record.get("aliases") or []) if str(value)]]
+        if previous is None:
+            merged = record
+            merged.update(
+                {
+                    "schema_version": 2,
+                    "task_id": task_id,
+                    "logical_agent_id": logical,
+                    "provider": logical,
+                    "signature": signature,
+                    "signature_scope": scope,
+                    "count": max(0, int(record.get("count", 0) or 0)),
+                    "first_failure_at": first_at or None,
+                    "last_failure_at": last_at or None,
+                    "evidence_refs": list(dict.fromkeys(evidence))[-20:],
+                    "aliases": list(dict.fromkeys(alias_values)),
+                }
+            )
+            migrated[key] = merged
+        else:
+            previous["count"] = int(previous.get("count", 0) or 0) + max(0, int(record.get("count", 0) or 0))
+            previous_first = str(previous.get("first_failure_at") or "")
+            if first_at and (not previous_first or first_at < previous_first):
+                previous["first_failure_at"] = first_at
+            previous_last = str(previous.get("last_failure_at") or "")
+            if last_at and (not previous_last or last_at >= previous_last):
+                for field, value in record.items():
+                    if field.startswith("last_") or field in {"worker_run_id", "provider", "logical_agent_id"}:
+                        previous[field] = deepcopy(value)
+                previous["last_failure_at"] = last_at
+                previous["logical_agent_id"] = logical
+                previous["provider"] = logical
+            previous["evidence_refs"] = list(
+                dict.fromkeys([*(previous.get("evidence_refs") or []), *evidence])
+            )[-20:]
+            previous["aliases"] = list(dict.fromkeys([*(previous.get("aliases") or []), *alias_values]))
+        for alias in alias_values:
+            aliases[alias] = key
+
+    live_keys = set(migrated)
+    aliases = {
+        str(alias): str(target)
+        for alias, target in aliases.items()
+        if str(target) in live_keys and str(alias) != str(target)
+    }
+    provider_guardrails["task_failure_streak_schema_version"] = 2
+    provider_guardrails["task_failure_streaks"] = migrated
+    provider_guardrails["task_failure_streak_aliases"] = aliases
+
+
+def migrate_state(raw: dict[str, Any] | None, config: dict[str, Any] | None = None) -> dict[str, Any]:
     state = deepcopy(default_state())
     if not raw:
         return state
@@ -143,6 +265,19 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state.setdefault("provider_guardrails", {})
     state["provider_guardrails"].setdefault("dispatch_pauses", {})
     state["provider_guardrails"].setdefault("task_failure_streaks", {})
+    state["provider_guardrails"].setdefault("task_failure_streak_aliases", {})
+    failure_history = state["provider_guardrails"].get("task_failure_streak_history")
+    state["provider_guardrails"]["task_failure_streak_history"] = (
+        failure_history if isinstance(failure_history, list) else []
+    )
+    _merge_legacy_failure_streaks(state["provider_guardrails"], config)
+    if not isinstance(state.get("execution_dispatch_guardrails"), dict):
+        state["execution_dispatch_guardrails"] = {}
+    state["execution_dispatch_guardrails"].setdefault("schema_version", 1)
+    records = state["execution_dispatch_guardrails"].get("records")
+    state["execution_dispatch_guardrails"]["records"] = records if isinstance(records, dict) else {}
+    history = state["execution_dispatch_guardrails"].get("history")
+    state["execution_dispatch_guardrails"]["history"] = history if isinstance(history, list) else []
     state.setdefault("worker_runtime_metrics", {})
     state["worker_runtime_metrics"].setdefault("version", 1)
     state["worker_runtime_metrics"].setdefault("updated_at", None)
@@ -257,7 +392,7 @@ def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | No
     state["workers"] = keep
 
 def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
-    state = migrate_state(load_json(config_path(config, "state_file"), default=default_state()))
+    state = migrate_state(load_json(config_path(config, "state_file"), default=default_state()), config)
     queued_events = load_jsonl(config_path(config, "event_queue"))
     _rebuild_queue_records(state, queued_events)
 
@@ -298,7 +433,7 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
-    write_json(config_path(config, "state_file"), migrate_state(state))
+    write_json(config_path(config, "state_file"), migrate_state(state, config))
 
 
 def load_event_queue(config: dict[str, Any]) -> list[dict[str, Any]]:

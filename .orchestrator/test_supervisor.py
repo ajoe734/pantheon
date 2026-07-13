@@ -1457,6 +1457,24 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             source_brief = repo_root / ".orchestrator" / "task-briefs" / "ops_brief_001.md"
             source_brief.parent.mkdir(parents=True)
             source_brief.write_text("# Source brief\n", encoding="utf-8")
+            (repo_root / "ai-status.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "OPS-BRIEF-001",
+                                "status": "review",
+                                "owner": "Claude",
+                                "reviewer": "Codex",
+                                "artifacts": ["services/example.py"],
+                                "last_update": "2026-07-13T17:00:00Z",
+                                "next": "Review the implementation.",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
             worktree_root = Path(tmpdir) / "workers"
             config = {
                 **self.config,
@@ -1479,7 +1497,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 message="wake",
                 task_id="OPS-BRIEF-001",
                 reason="owned_in_progress_dispatch",
-                context_files=[".orchestrator/task-briefs/ops_brief_001.md"],
+                context_files=[".orchestrator/task-briefs/ops_brief_001.md", "ai-status.json"],
+                metadata={"status_root": "/stale/status/root"},
             )
 
             with (
@@ -1501,6 +1520,27 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             copied_brief = Path(request.metadata["workspace_path"]) / ".orchestrator" / "task-briefs" / "ops_brief_001.md"
             self.assertEqual(copied_brief.read_text(encoding="utf-8"), "# Source brief\n")
             self.assertEqual(request.metadata["materialized_context_files"], [".orchestrator/task-briefs/ops_brief_001.md"])
+            task_state_path = Path(request.metadata["authoritative_task_state_path"])
+            source_task_state_path = Path(request.metadata["authoritative_task_state_source_path"])
+            task_state = json.loads(task_state_path.read_text(encoding="utf-8"))
+            self.assertTrue(task_state["task_found"])
+            self.assertTrue(task_state["status_read_ok"])
+            self.assertEqual(task_state["task"]["status"], "review")
+            self.assertEqual(task_state["status_root"], str(repo_root.resolve()))
+            self.assertEqual(request.metadata["status_root"], str(repo_root.resolve()))
+            self.assertNotIn("ai-status.json", request.context_files)
+            snapshot_context = request.metadata["authoritative_task_state_context_file"]
+            self.assertEqual(snapshot_context, f".orchestrator/worker-runtime/context/{task_state_path.name}")
+            self.assertIn(snapshot_context, request.context_files)
+            self.assertNotEqual(source_task_state_path, task_state_path)
+            self.assertNotIn(str(source_task_state_path), request.context_files)
+            self.assertEqual(
+                (Path(request.metadata["workspace_path"]) / snapshot_context).read_text(encoding="utf-8"),
+                source_task_state_path.read_text(encoding="utf-8"),
+            )
+            self.assertIn(f"Snapshot: {snapshot_context}", request.message)
+            self.assertIn("不得以 isolated worktree", request.message)
+            self.assertIn(f"PANTHEON_STATUS_ROOT={repo_root.resolve()}", request.message)
 
     def test_prepare_worker_workspace_blocks_dirty_reused_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4043,6 +4083,114 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
         self.assertFalse(changed)
         run_mock.assert_not_called()
+
+    def test_sync_dispatched_task_status_never_writes_progress_or_finalize_notes(self) -> None:
+        for status, reason in (
+            ("in_progress", supervisor.REASON_OWNED_IN_PROGRESS),
+            ("review_approved", supervisor.REASON_OWNED_FINALIZE),
+        ):
+            with self.subTest(status=status, reason=reason):
+                self.status_path.write_text(
+                    json.dumps(
+                        {
+                            "tasks": [
+                                {
+                                    "id": "APP-002-W1-FRONT-HANDOFF",
+                                    "status": status,
+                                    "owner": "Copilot",
+                                    "reviewer": "Codex",
+                                    "depends_on": [],
+                                }
+                            ]
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                event = {
+                    "task_id": "APP-002-W1-FRONT-HANDOFF",
+                    "target_agent": "copilot",
+                    "target_display_name": "Copilot",
+                    "reason": reason,
+                }
+                with mock.patch.object(supervisor.subprocess, "run") as run_mock:
+                    changed = supervisor.sync_dispatched_task_status(self.config, event)
+                self.assertFalse(changed)
+                run_mock.assert_not_called()
+
+    def test_post_start_baseline_is_persisted_to_worker_queue_and_authoritative_snapshots(self) -> None:
+        todo = {
+            "id": "APP-002-W1-FRONT-HANDOFF",
+            "status": "todo",
+            "owner": "Copilot",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "last_update": "2026-07-13T10:00:00Z",
+        }
+        original = supervisor.build_dispatch_event(todo, "Copilot", supervisor.REASON_OWNED_READY, {todo["id"]: todo})
+        in_progress = {
+            **todo,
+            "status": "in_progress",
+            "last_update": "2026-07-13T10:01:00Z",
+        }
+        self.status_path.write_text(json.dumps({"tasks": [in_progress]}), encoding="utf-8")
+        source = self.root / "source-snapshot.json"
+        workspace = self.root / "workspace-snapshot.json"
+        source.write_text("{}", encoding="utf-8")
+        workspace.write_text("{}", encoding="utf-8")
+        state = {
+            "queue": {"events": {"evt-start": {"status": "started"}}},
+            "workers": {
+                "run-start": {
+                    "run_id": "run-start",
+                    "task_id": todo["id"],
+                    "queue_event_id": "evt-start",
+                    "request_snapshot": {
+                        "reason": supervisor.REASON_OWNED_READY,
+                        "metadata": {
+                            "logical_agent_id": "copilot",
+                            "dispatch_event_key": original["key"],
+                            "dispatch_task_signature": original["signature"],
+                            "dispatch_target_display_name": "Copilot",
+                            "authoritative_task_state_source_path": str(source),
+                            "authoritative_task_state_path": str(workspace),
+                        },
+                    },
+                }
+            },
+        }
+        event = {
+            **original,
+            "event_id": "evt-start",
+            "event_key": original["key"],
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+        }
+
+        refreshed = supervisor.refresh_execution_dispatch_baseline_after_status_sync(
+            self.config,
+            state,
+            event,
+            worker_run_id="run-start",
+        )
+
+        self.assertTrue(refreshed)
+        effective = supervisor.build_dispatch_event(
+            in_progress,
+            "Copilot",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            {in_progress["id"]: in_progress},
+        )
+        metadata = state["workers"]["run-start"]["request_snapshot"]["metadata"]
+        self.assertEqual(metadata["dispatch_origin_event_key"], original["key"])
+        self.assertEqual(metadata["dispatch_event_key"], effective["key"])
+        self.assertEqual(metadata["dispatch_task_signature"], effective["signature"])
+        queue_record = state["queue"]["events"]["evt-start"]
+        self.assertEqual(queue_record["effective_dispatch_event_key"], effective["key"])
+        for path in (source, workspace):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["task"]["status"], "in_progress")
+            self.assertEqual(payload["dispatch"]["event_key"], effective["key"])
+            self.assertEqual(payload["dispatch"]["baseline_kind"], "post_dispatch_status_sync")
 
 
 class RunOnceSupervisorStateTests(unittest.TestCase):
@@ -8734,6 +8882,1051 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
         scan.assert_not_called()
 
 
+class ExecutionDispatchOutcomeGuardTests(unittest.TestCase):
+    def _config(self, root: Path) -> dict:
+        return {
+            "paths": {
+                "status_file": str(root / "ai-status.json"),
+                "activity_log": str(root / "activity-log.jsonl"),
+                "event_queue": str(root / "event-queue.jsonl"),
+                "state_file": str(root / ".orchestrator" / "state.json"),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "status_field": "status",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+                "artifacts_field": "artifacts",
+                "next_field": "next",
+                "last_update_field": "last_update",
+            },
+            "ready_dispatcher": {
+                "active_worker_statuses": ["running", "stalled", "retry_backoff"],
+                "execution_outcome_guard": {
+                    "retry_delays_seconds": [60, 300, 900],
+                    "terminal_retry_delays_seconds": [300, 900, 1800],
+                    "triage_after_attempts": 2,
+                    "retention_seconds": 86400,
+                },
+            },
+            "worker_reassignment": {"enabled": False, "after_attempts": 2},
+            "providers": {
+                "codex": {"delivery_mode": "codex", "quota_group": "codex1"},
+                "codex1-1": {"delivery_mode": "codex", "quota_group": "codex1"},
+                "codex1-2": {"delivery_mode": "codex", "quota_group": "codex1"},
+            },
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "worker_slots": ["codex1_1", "codex1_2"],
+                },
+                "codex1_1": {
+                    "id": "codex1_1",
+                    "display_name": "Codex",
+                    "provider": "codex1-1",
+                    "dispatch_slot_for": "codex",
+                },
+                "codex1_2": {
+                    "id": "codex1_2",
+                    "display_name": "Codex",
+                    "provider": "codex1-2",
+                    "dispatch_slot_for": "codex",
+                },
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+        }
+
+    def _review_task(self) -> dict:
+        return {
+            "id": "TASK-REVIEW",
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "last_update": "2026-07-13T17:00:00Z",
+            "artifacts": ["services/example.py"],
+            "next": "Review this task.",
+        }
+
+    def _worker(self, event: dict, *, provider: str = "codex1-1", agent_id: str = "codex1_1") -> dict:
+        return {
+            "run_id": "run-review",
+            "provider": provider,
+            "agent_id": agent_id,
+            "logical_agent_id": "codex",
+            "task_id": "TASK-REVIEW",
+            "queue_event_id": "evt-review",
+            "request_snapshot": {
+                "reason": supervisor.REASON_REVIEW_READY,
+                "metadata": {
+                    "logical_agent_id": "codex",
+                    "dispatch_event_key": event["key"],
+                    "dispatch_task_signature": event["signature"],
+                    "dispatch_target_display_name": "Codex",
+                },
+            },
+        }
+
+    def test_successful_unchanged_review_records_signature_backoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            task = self._review_task()
+            task_map = {task["id"]: task}
+            event = supervisor.build_dispatch_event(task, "Codex", supervisor.REASON_REVIEW_READY, task_map)
+            worker = self._worker(event)
+            state: dict = {}
+            now = datetime(2026, 7, 13, 17, 1, tzinfo=timezone.utc)
+
+            outcome = supervisor.reconcile_successful_execution_worker_outcome(
+                config,
+                state,
+                worker,
+                task_map,
+                queue_events_by_id={"evt-review": {"event_key": event["key"]}},
+                now=now,
+            )
+
+            self.assertFalse(outcome["resolved"])
+            self.assertEqual(outcome["outcome"], "incomplete_noop")
+            guard = outcome["guard"]
+            self.assertEqual(guard["logical_agent_id"], "codex")
+            self.assertEqual(guard["retry_not_before"], "2026-07-13T17:02:00Z")
+            self.assertFalse(guard["triage_required"])
+            self.assertIsNotNone(
+                supervisor.current_execution_dispatch_guard(
+                    config,
+                    state,
+                    task_id=task["id"],
+                    logical_agent_id="codex",
+                    event=event,
+                    now=now + timedelta(seconds=30),
+                )
+            )
+            self.assertIsNone(
+                supervisor.current_execution_dispatch_guard(
+                    config,
+                    state,
+                    task_id=task["id"],
+                    logical_agent_id="codex",
+                    event=event,
+                    now=now + timedelta(seconds=61),
+                )
+            )
+
+    def test_guard_ledger_round_trips_runtime_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            task = self._review_task()
+            event = supervisor.build_dispatch_event(
+                task,
+                "Codex",
+                supervisor.REASON_REVIEW_READY,
+                {task["id"]: task},
+            )
+            state: dict = {"queue": {"events": {}}, "workers": {}}
+            recorded = supervisor.record_execution_dispatch_guard(
+                config,
+                state,
+                task_id=task["id"],
+                logical_agent_id="codex",
+                event=event,
+                outcome="incomplete_noop",
+                failure_kind="process_success_no_task_transition",
+                worker_run_id="run-review",
+                queue_event_id="evt-review",
+                now=datetime(2026, 7, 13, 17, 0, tzinfo=timezone.utc),
+            )
+
+            supervisor.save_runtime_state(config, state)
+            reloaded = supervisor.load_runtime_state(config)
+
+            self.assertIsNotNone(recorded)
+            key = supervisor.execution_dispatch_guard_key(
+                task_id=task["id"],
+                logical_agent_id="codex",
+                reason=supervisor.REASON_REVIEW_READY,
+                event_key=event["key"],
+            )
+            self.assertEqual(
+                reloaded["execution_dispatch_guardrails"]["records"][key]["retry_not_before"],
+                recorded["retry_not_before"],
+            )
+            self.assertEqual(
+                reloaded["execution_dispatch_guardrails"]["records"][key]["signature"],
+                event["signature"],
+            )
+
+    def test_successful_review_transition_clears_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            task = self._review_task()
+            task_map = {task["id"]: task}
+            event = supervisor.build_dispatch_event(task, "Codex", supervisor.REASON_REVIEW_READY, task_map)
+            worker = self._worker(event)
+            state: dict = {}
+            supervisor.reconcile_successful_execution_worker_outcome(config, state, worker, task_map)
+            approved = {**task, "status": "review_approved", "last_update": "2026-07-13T17:02:00Z"}
+
+            outcome = supervisor.reconcile_successful_execution_worker_outcome(
+                config,
+                state,
+                worker,
+                {approved["id"]: approved},
+            )
+
+            self.assertTrue(outcome["resolved"])
+            self.assertEqual(state["execution_dispatch_guardrails"]["records"], {})
+
+    def test_owner_handoff_is_resolved_but_auto_started_owned_task_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            todo = {
+                "id": "TASK-OWNED",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+                "last_update": "2026-07-13T17:00:00Z",
+            }
+            original_event = supervisor.build_dispatch_event(
+                todo,
+                "Codex",
+                supervisor.REASON_OWNED_READY,
+                {todo["id"]: todo},
+            )
+            worker = {
+                **self._worker(original_event),
+                "task_id": "TASK-OWNED",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_OWNED_READY,
+                    "metadata": {
+                        "logical_agent_id": "codex",
+                        "dispatch_event_key": original_event["key"],
+                        "dispatch_target_display_name": "Codex",
+                    },
+                },
+            }
+            in_progress = {**todo, "status": "in_progress", "last_update": "2026-07-13T17:01:00Z"}
+            state: dict = {}
+
+            incomplete = supervisor.reconcile_successful_execution_worker_outcome(
+                config,
+                state,
+                worker,
+                {in_progress["id"]: in_progress},
+            )
+            self.assertFalse(incomplete["resolved"])
+            self.assertEqual(incomplete["current_event"]["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+
+            review = {**in_progress, "status": "review", "last_update": "2026-07-13T17:02:00Z"}
+            resolved = supervisor.reconcile_successful_execution_worker_outcome(
+                config,
+                state,
+                worker,
+                {review["id"]: review},
+            )
+            self.assertTrue(resolved["resolved"])
+
+    def test_physical_slots_share_logical_failure_streak_and_guard_threshold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            task = self._review_task()
+            task_map = {task["id"]: task}
+            event = supervisor.build_dispatch_event(task, "Codex", supervisor.REASON_REVIEW_READY, task_map)
+            state: dict = {}
+            worker_one = self._worker(event, provider="codex1-1", agent_id="codex1_1")
+            worker_two = {
+                **self._worker(event, provider="codex1-2", agent_id="codex1_2"),
+                "run_id": "run-review-2",
+            }
+
+            self.assertEqual(supervisor.record_task_failure_streak(state, worker_one, "failed"), 1)
+            self.assertEqual(supervisor.record_task_failure_streak(state, worker_two, "failed"), 2)
+            streaks = state["provider_guardrails"]["task_failure_streaks"]
+            self.assertEqual(len(streaks), 1)
+            streak = next(iter(streaks.values()))
+            self.assertEqual(streak["logical_agent_id"], "codex")
+            self.assertEqual(streak["count"], 2)
+            self.assertEqual(streak["schema_version"], 2)
+            first = supervisor.record_execution_dispatch_failure_guard(
+                config,
+                state,
+                worker_one,
+                task_map,
+                failure_kind="terminal",
+                now=datetime(2026, 7, 13, 17, 0, tzinfo=timezone.utc),
+            )
+            second = supervisor.record_execution_dispatch_failure_guard(
+                config,
+                state,
+                worker_two,
+                task_map,
+                failure_kind="terminal",
+                now=datetime(2026, 7, 13, 17, 6, tzinfo=timezone.utc),
+            )
+            self.assertEqual(first["lane_attempt_count"], 1)
+            self.assertEqual(second["lane_attempt_count"], 2)
+            self.assertTrue(second["triage_required"])
+
+    def test_failure_streak_signatures_split_distinct_failures_and_lane_clear_removes_aliases(self) -> None:
+        task = self._review_task()
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_REVIEW_READY,
+            {task["id"]: task},
+        )
+        worker = self._worker(event)
+        state: dict = {}
+
+        self.assertEqual(supervisor.record_task_failure_streak(state, worker, "fatal one", failure_kind="fatal"), 1)
+        self.assertEqual(supervisor.record_task_failure_streak(state, worker, "fatal two", failure_kind="fatal"), 1)
+
+        guardrails = state["provider_guardrails"]
+        self.assertEqual(len(guardrails["task_failure_streaks"]), 2)
+        self.assertEqual(len({record["signature"] for record in guardrails["task_failure_streaks"].values()}), 2)
+        self.assertIn("TASK-REVIEW:codex", guardrails["task_failure_streak_aliases"])
+
+        supervisor.clear_task_failure_streak(state, worker=worker)
+
+        self.assertEqual(guardrails["task_failure_streaks"], {})
+        self.assertEqual(guardrails["task_failure_streak_aliases"], {})
+
+    def test_failure_streak_prune_clears_missing_done_and_ttl_records_with_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            task = self._review_task()
+            event = supervisor.build_dispatch_event(
+                task,
+                "Codex",
+                supervisor.REASON_REVIEW_READY,
+                {task["id"]: task},
+            )
+            for disposition in ("missing", "done", "ttl"):
+                with self.subTest(disposition=disposition):
+                    state: dict = {}
+                    worker = self._worker(event)
+                    supervisor.record_task_failure_streak(state, worker, "fatal", failure_kind="fatal")
+                    record = next(iter(state["provider_guardrails"]["task_failure_streaks"].values()))
+                    record["last_failure_at"] = "2026-07-10T17:00:00Z"
+                    task_map = (
+                        {}
+                        if disposition == "missing"
+                        else {task["id"]: {**task, "status": "done"} if disposition == "done" else task}
+                    )
+                    now = (
+                        datetime(2026, 7, 13, 17, 0, tzinfo=timezone.utc)
+                        if disposition == "ttl"
+                        else datetime(2026, 7, 10, 17, 1, tzinfo=timezone.utc)
+                    )
+
+                    changed = supervisor.prune_task_failure_streak_records(
+                        config,
+                        state,
+                        task_map,
+                        now=now,
+                    )
+
+                    self.assertTrue(changed)
+                    self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+                    self.assertEqual(state["provider_guardrails"]["task_failure_streak_aliases"], {})
+                    self.assertEqual(len(state["provider_guardrails"]["task_failure_streak_history"]), 1)
+
+    def test_queue_redispatch_clears_stale_outcome_observability(self) -> None:
+        record = {
+            "status": "failed",
+            "execution_outcome": "terminal_failure",
+            "retry_not_before": "2026-07-13T18:00:00Z",
+            "triage_required": True,
+            "error": "old error",
+            "lease_owner": "old-run",
+        }
+
+        supervisor._reset_queue_record_for_redispatch(record, reason="fresh launch")
+
+        self.assertEqual(record["status"], "queued")
+        self.assertEqual(record["requeue_reason"], "fresh launch")
+        for key in ("execution_outcome", "retry_not_before", "triage_required", "error", "lease_owner"):
+            self.assertNotIn(key, record)
+
+    def test_dispatcher_skips_guarded_signature_but_allows_new_signature(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            task = self._review_task()
+            task_map = {task["id"]: task}
+            event = supervisor.build_dispatch_event(task, "Codex", supervisor.REASON_REVIEW_READY, task_map)
+            state: dict = {"queue": {"events": {}}, "workers": {}}
+            supervisor.record_execution_dispatch_guard(
+                config,
+                state,
+                task_id=task["id"],
+                logical_agent_id="codex",
+                event=event,
+                outcome="incomplete_noop",
+                failure_kind="process_success_no_task_transition",
+                worker_run_id="run-review",
+                queue_event_id="evt-review",
+            )
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+                mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+                mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+            ):
+                changed = supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["codex"])
+
+            self.assertFalse(changed)
+            queue_delivery_event.assert_not_called()
+
+            updated = {**task, "last_update": "2026-07-13T17:10:00Z", "next": "New review evidence."}
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [updated]}),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+                mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+                mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            ):
+                changed = supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["codex"])
+
+            self.assertTrue(changed)
+            queue_delivery_event.assert_called_once()
+
+    def test_poll_successful_unchanged_review_matches_boot_incomplete_outcome(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            task = self._review_task()
+            event = supervisor.build_dispatch_event(task, "Codex", supervisor.REASON_REVIEW_READY, {task["id"]: task})
+            queue_event = {
+                "event_id": "evt-review",
+                "event_key": event["key"],
+                "task_id": task["id"],
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "reason": supervisor.REASON_REVIEW_READY,
+            }
+            (root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            (root / "event-queue.jsonl").write_text(json.dumps(queue_event) + "\n", encoding="utf-8")
+            worker = {
+                **self._worker(event),
+                "status": "running",
+                "pid": 12345,
+                "runner_status": "completed",
+                "runner_finished_at": "2026-07-13T17:01:00Z",
+                "exit_code": 0,
+            }
+            state = {
+                "queue": {"events": {"evt-review": {"status": "started", "run_id": worker["run_id"]}}},
+                "workers": {worker["run_id"]: worker},
+            }
+
+            with (
+                mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+                mock.patch.object(supervisor, "load_provider_report", return_value={}),
+                mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "detect_worker_failure", side_effect=AssertionError("successful runner log must not be scanned")),
+                mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                changed = supervisor.poll_workers(config, state)
+
+            self.assertTrue(changed)
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(worker["execution_outcome"], "incomplete_noop")
+            self.assertEqual(state["queue"]["events"]["evt-review"]["status"], "failed")
+            self.assertIn("worker_incomplete", [call.args[1]["type"] for call in write_activity_log.call_args_list])
+
+    def test_boot_and_poll_apply_identical_successful_review_outcome(self) -> None:
+        results: dict[str, dict] = {}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for entrypoint in ("boot", "poll"):
+                root = Path(tmpdir) / entrypoint
+                root.mkdir()
+                config = self._config(root)
+                task = self._review_task()
+                event = supervisor.build_dispatch_event(
+                    task,
+                    "Codex",
+                    supervisor.REASON_REVIEW_READY,
+                    {task["id"]: task},
+                )
+                queue_event = {
+                    "event_id": "evt-review",
+                    "event_key": event["key"],
+                    "task_id": task["id"],
+                    "target_agent": "codex",
+                    "target_display_name": "Codex",
+                    "reason": supervisor.REASON_REVIEW_READY,
+                }
+                (root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+                (root / "event-queue.jsonl").write_text(json.dumps(queue_event) + "\n", encoding="utf-8")
+                worker = {
+                    **self._worker(event),
+                    "status": "running",
+                    "pid": 12345,
+                    "runner_status": "completed",
+                    "runner_finished_at": "2026-07-13T17:01:00Z",
+                    "exit_code": 0,
+                }
+                state = {
+                    "queue": {"events": {"evt-review": {"status": "started", "run_id": worker["run_id"]}}},
+                    "workers": {worker["run_id"]: worker},
+                }
+
+                with (
+                    mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+                    mock.patch.object(supervisor, "load_provider_report", return_value={}),
+                    mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+                    mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                    mock.patch.object(
+                        supervisor,
+                        "detect_worker_failure",
+                        side_effect=AssertionError("successful runner log must not be scanned"),
+                    ),
+                    mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=False),
+                    mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+                ):
+                    changed = (
+                        supervisor.reconcile_runtime_on_boot(config, state)
+                        if entrypoint == "boot"
+                        else supervisor.poll_workers(config, state)
+                    )
+
+                guard = next(iter(state["execution_dispatch_guardrails"]["records"].values()))
+                results[entrypoint] = {
+                    "changed": changed,
+                    "worker_status": worker["status"],
+                    "execution_outcome": worker["execution_outcome"],
+                    "queue_status": state["queue"]["events"]["evt-review"]["status"],
+                    "guard_reason": guard["reason"],
+                    "guard_event_key": guard["event_key"],
+                    "guard_lane_attempt_count": guard["lane_attempt_count"],
+                    "triage_required": guard["triage_required"],
+                    "activity_types": [call.args[1]["type"] for call in write_activity_log.call_args_list],
+                }
+
+        self.assertEqual(
+            {key: value for key, value in results["boot"].items() if key != "activity_types"},
+            {key: value for key, value in results["poll"].items() if key != "activity_types"},
+        )
+        self.assertIn("worker_incomplete", results["boot"]["activity_types"])
+        self.assertIn("worker_incomplete", results["poll"]["activity_types"])
+
+    def test_review_review_approved_done_outcome_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            review = {**self._review_task(), "owner": "Codex", "reviewer": "Codex"}
+            event = supervisor.build_dispatch_event(
+                review,
+                "Codex",
+                supervisor.REASON_REVIEW_READY,
+                {review["id"]: review},
+            )
+            worker = self._worker(event)
+
+            open_outcome = supervisor.reconcile_successful_execution_worker_outcome(
+                config,
+                {},
+                worker,
+                {review["id"]: review},
+            )
+            self.assertFalse(open_outcome["resolved"])
+            self.assertEqual(open_outcome["outcome"], "incomplete_noop")
+
+            for terminal_status in ("review_approved", "done"):
+                state: dict = {}
+                supervisor.record_execution_dispatch_guard(
+                    config,
+                    state,
+                    task_id=review["id"],
+                    logical_agent_id="codex",
+                    event=event,
+                    outcome="incomplete_noop",
+                    failure_kind="process_success_no_task_transition",
+                    worker_run_id=worker["run_id"],
+                    queue_event_id=worker["queue_event_id"],
+                )
+                terminal_task = {
+                    **review,
+                    "status": terminal_status,
+                    "last_update": f"2026-07-13T17:0{2 if terminal_status == 'review_approved' else 3}:00Z",
+                }
+
+                outcome = supervisor.reconcile_successful_execution_worker_outcome(
+                    config,
+                    state,
+                    worker,
+                    {terminal_task["id"]: terminal_task},
+                )
+
+                self.assertTrue(outcome["resolved"], terminal_status)
+                self.assertEqual(outcome["outcome"], "resolved")
+                self.assertEqual(state["execution_dispatch_guardrails"]["records"], {})
+
+    def test_finalize_to_done_resolves_same_logical_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            approved = {
+                **self._review_task(),
+                "status": "review_approved",
+                "owner": "Codex",
+                "reviewer": "Codex",
+            }
+            event = supervisor.build_dispatch_event(
+                approved,
+                "Codex",
+                supervisor.REASON_OWNED_FINALIZE,
+                {approved["id"]: approved},
+            )
+            worker = {
+                **self._worker(event),
+                "request_snapshot": {
+                    "reason": supervisor.REASON_OWNED_FINALIZE,
+                    "metadata": {
+                        "logical_agent_id": "codex",
+                        "dispatch_event_key": event["key"],
+                        "dispatch_task_signature": event["signature"],
+                        "dispatch_target_display_name": "Codex",
+                    },
+                },
+            }
+            done = {**approved, "status": "done", "last_update": "2026-07-13T17:10:00Z"}
+
+            outcome = supervisor.reconcile_successful_execution_worker_outcome(
+                config,
+                {},
+                worker,
+                {done["id"]: done},
+            )
+
+            self.assertTrue(outcome["resolved"])
+            self.assertEqual(outcome["outcome"], "resolved")
+
+    def test_new_signature_resets_logical_lane_retry_and_noop_streak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            first_task = self._review_task()
+            first_event = supervisor.build_dispatch_event(
+                first_task,
+                "Codex",
+                supervisor.REASON_REVIEW_READY,
+                {first_task["id"]: first_task},
+            )
+            second_task = {
+                **first_task,
+                "last_update": "2026-07-13T17:05:00Z",
+                "next": "Review newly attached evidence.",
+            }
+            second_event = supervisor.build_dispatch_event(
+                second_task,
+                "Codex",
+                supervisor.REASON_REVIEW_READY,
+                {second_task["id"]: second_task},
+            )
+            state: dict = {}
+            first_worker = self._worker(first_event, provider="codex1-1", agent_id="codex1_1")
+            second_worker = {
+                **self._worker(first_event, provider="codex1-2", agent_id="codex1_2"),
+                "run_id": "run-review-2",
+            }
+
+            supervisor.record_task_failure_streak(state, first_worker, "no transition", failure_kind="incomplete_noop")
+            supervisor.record_task_failure_streak(state, second_worker, "no transition", failure_kind="incomplete_noop")
+            first = supervisor.record_execution_dispatch_failure_guard(
+                config,
+                state,
+                first_worker,
+                {first_task["id"]: first_task},
+                failure_kind="fatal",
+                now=datetime(2026, 7, 13, 17, 0, tzinfo=timezone.utc),
+            )
+            repeated = supervisor.record_execution_dispatch_failure_guard(
+                config,
+                state,
+                second_worker,
+                {first_task["id"]: first_task},
+                failure_kind="fatal",
+                now=datetime(2026, 7, 13, 17, 1, tzinfo=timezone.utc),
+            )
+            progressed = supervisor.reconcile_successful_execution_worker_outcome(
+                config,
+                state,
+                second_worker,
+                {second_task["id"]: second_task},
+                now=datetime(2026, 7, 13, 17, 6, tzinfo=timezone.utc),
+            )
+
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(repeated)
+            assert first is not None and repeated is not None
+            self.assertEqual(first["lane_attempt_count"], 1)
+            self.assertEqual(repeated["lane_attempt_count"], 2)
+            self.assertTrue(repeated["triage_required"])
+            self.assertEqual(progressed["outcome"], "incomplete_progress")
+            self.assertFalse(progressed["resolved"])
+            self.assertEqual(progressed["guard"]["event_key"], second_event["key"])
+            self.assertEqual(progressed["guard"]["lane_attempt_count"], 1)
+            self.assertFalse(progressed["guard"]["triage_required"])
+            self.assertEqual(len(state["execution_dispatch_guardrails"]["records"]), 1)
+            history = state["execution_dispatch_guardrails"]["history"]
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]["event_key"], first_event["key"])
+            self.assertEqual(history[0]["archive_disposition"], "canonical_advanced")
+            self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+            self.assertEqual(
+                supervisor.record_task_failure_streak(
+                    state,
+                    second_worker,
+                    supervisor.SUCCESSFUL_WORKER_INCOMPLETE_REASON,
+                    failure_kind="incomplete_progress",
+                ),
+                1,
+            )
+
+    def test_triage_guard_survives_retention_until_canonical_signature_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            task = self._review_task()
+            event = supervisor.build_dispatch_event(
+                task,
+                "Codex",
+                supervisor.REASON_REVIEW_READY,
+                {task["id"]: task},
+            )
+            state: dict = {}
+            worker = self._worker(event)
+            supervisor.record_task_failure_streak(
+                state,
+                worker,
+                supervisor.SUCCESSFUL_WORKER_INCOMPLETE_REASON,
+                failure_kind="incomplete_noop",
+            )
+            supervisor.record_task_failure_streak(
+                state,
+                worker,
+                supervisor.SUCCESSFUL_WORKER_INCOMPLETE_REASON,
+                failure_kind="incomplete_noop",
+            )
+            first_at = datetime(2026, 7, 13, 17, 0, tzinfo=timezone.utc)
+            supervisor.record_execution_dispatch_guard(
+                config,
+                state,
+                task_id=task["id"],
+                logical_agent_id="codex",
+                event=event,
+                outcome="incomplete_noop",
+                failure_kind="process_success_no_task_transition",
+                worker_run_id="run-1",
+                queue_event_id="evt-1",
+                now=first_at,
+            )
+            triaged = supervisor.record_execution_dispatch_guard(
+                config,
+                state,
+                task_id=task["id"],
+                logical_agent_id="codex",
+                event=event,
+                outcome="incomplete_noop",
+                failure_kind="process_success_no_task_transition",
+                worker_run_id="run-2",
+                queue_event_id="evt-2",
+                now=first_at + timedelta(minutes=1),
+            )
+            self.assertTrue(triaged["triage_required"])
+
+            pruned = supervisor.prune_execution_dispatch_guard_records(
+                config,
+                state,
+                task_map={task["id"]: task},
+                now=first_at + timedelta(days=2),
+            )
+            self.assertFalse(pruned)
+            self.assertEqual(len(state["execution_dispatch_guardrails"]["records"]), 1)
+            self.assertIsNotNone(
+                supervisor.current_execution_dispatch_guard(
+                    config,
+                    state,
+                    task_id=task["id"],
+                    logical_agent_id="codex",
+                    event=event,
+                    now=first_at + timedelta(days=2),
+                )
+            )
+
+            updated = {**task, "last_update": "2026-07-15T17:00:00Z"}
+            pruned = supervisor.prune_execution_dispatch_guard_records(
+                config,
+                state,
+                task_map={updated["id"]: updated},
+                now=first_at + timedelta(days=2),
+            )
+            self.assertTrue(pruned)
+            self.assertEqual(state["execution_dispatch_guardrails"]["records"], {})
+            self.assertEqual(
+                state["execution_dispatch_guardrails"]["history"][-1]["archive_disposition"],
+                "canonical_advanced",
+            )
+            self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+    def test_process_queue_keeps_already_queued_guarded_signature_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            task = self._review_task()
+            event = {
+                **supervisor.build_dispatch_event(
+                    task,
+                    "Codex",
+                    supervisor.REASON_REVIEW_READY,
+                    {task["id"]: task},
+                ),
+                "event_id": "evt-review",
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "message": "wake",
+            }
+            state: dict = {"queue": {"events": {}}, "workers": {}}
+            supervisor.record_execution_dispatch_guard(
+                config,
+                state,
+                task_id=task["id"],
+                logical_agent_id="codex",
+                event=event,
+                outcome="incomplete_noop",
+                failure_kind="process_success_no_task_transition",
+                worker_run_id="run-review",
+                queue_event_id="evt-review",
+            )
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+                mock.patch.object(
+                    supervisor,
+                    "start_worker_for_request",
+                    side_effect=AssertionError("guarded queue event must not start"),
+                ),
+            ):
+                changed = supervisor.process_queue(config, state, {})
+
+            self.assertTrue(changed)
+            record = state["queue"]["events"]["evt-review"]
+            self.assertEqual(record["status"], "pending")
+            self.assertEqual(record["last_wait_reason"], "Execution outcome retry guard is active.")
+            self.assertIsNotNone(record["retry_not_before"])
+
+    def test_terminal_poll_failure_records_terminal_guard_and_blocks_same_signature(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            task = self._review_task()
+            event = supervisor.build_dispatch_event(
+                task,
+                "Codex",
+                supervisor.REASON_REVIEW_READY,
+                {task["id"]: task},
+            )
+            queue_event = {
+                "event_id": "evt-review",
+                "event_key": event["key"],
+                "task_id": task["id"],
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "reason": supervisor.REASON_REVIEW_READY,
+            }
+            (root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            (root / "event-queue.jsonl").write_text(json.dumps(queue_event) + "\n", encoding="utf-8")
+            worker = {
+                **self._worker(event),
+                "status": "running",
+                "pid": 12345,
+                "runner_status": "completed",
+                "runner_finished_at": "2026-07-13T17:01:00Z",
+                "exit_code": 1,
+            }
+            state = {
+                "queue": {"events": {"evt-review": {"status": "started", "run_id": worker["run_id"]}}},
+                "workers": {worker["run_id"]: worker},
+            }
+
+            with (
+                mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+                mock.patch.object(supervisor, "load_provider_report", return_value={}),
+                mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "detect_worker_failure", return_value="fatal runner failure"),
+                mock.patch.object(
+                    supervisor,
+                    "classify_worker_failure",
+                    return_value={"kind": "fatal", "label": "fatal", "transient": False},
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "summarize_failure_reason",
+                    return_value={"summary": "fatal runner failure", "kind": "fatal"},
+                ),
+                mock.patch.object(supervisor, "write_failure_evidence", return_value=None),
+                mock.patch.object(supervisor, "maybe_rotate_provider_model", return_value="disabled"),
+                mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
+                mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                changed = supervisor.poll_workers(config, state)
+
+            self.assertTrue(changed)
+            self.assertEqual(worker["status"], "failed")
+            guard = next(iter(state["execution_dispatch_guardrails"]["records"].values()))
+            self.assertEqual(guard["last_outcome"], "terminal_failure")
+            self.assertEqual(guard["last_failure_kind"], "fatal")
+            self.assertEqual(guard["lane_attempt_count"], 1)
+            self.assertEqual(worker["next_retry_at"], guard["retry_not_before"])
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+                mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+                mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+            ):
+                dispatched = supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["codex"])
+
+            self.assertFalse(dispatched)
+            queue_delivery_event.assert_not_called()
+
+    def test_boot_and_poll_share_terminal_outcome_matrix_for_all_execution_lanes(self) -> None:
+        lane_cases = (
+            ("todo", supervisor.REASON_OWNED_READY, "Codex", "Claude"),
+            ("in_progress", supervisor.REASON_OWNED_IN_PROGRESS, "Codex", "Claude"),
+            ("review_approved", supervisor.REASON_OWNED_FINALIZE, "Codex", "Claude"),
+            ("review", supervisor.REASON_REVIEW_READY, "Claude", "Codex"),
+        )
+        outcome_cases = ("exit_zero", "recognized_failure", "generic_exit")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            for status, reason, owner, reviewer in lane_cases:
+                for outcome_kind in outcome_cases:
+                    results: dict[str, dict] = {}
+                    for entrypoint in ("boot", "poll"):
+                        root = base / f"{status}-{outcome_kind}-{entrypoint}"
+                        root.mkdir()
+                        config = self._config(root)
+                        task = {
+                            "id": f"TASK-{status.upper()}",
+                            "status": status,
+                            "owner": owner,
+                            "reviewer": reviewer,
+                            "depends_on": [],
+                            "last_update": "2026-07-13T17:00:00Z",
+                        }
+                        event = supervisor.build_dispatch_event(task, "Codex", reason, {task["id"]: task})
+                        queue_event = {
+                            "event_id": "evt-matrix",
+                            "event_key": event["key"],
+                            "task_id": task["id"],
+                            "target_agent": "codex",
+                            "target_display_name": "Codex",
+                            "reason": reason,
+                        }
+                        (root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+                        (root / "event-queue.jsonl").write_text(json.dumps(queue_event) + "\n", encoding="utf-8")
+                        worker = {
+                            "run_id": "run-matrix",
+                            "provider": "codex1-1",
+                            "agent_id": "codex1_1",
+                            "logical_agent_id": "codex",
+                            "task_id": task["id"],
+                            "queue_event_id": "evt-matrix",
+                            "status": "running",
+                            "pid": 12345,
+                            "request_snapshot": {
+                                "reason": reason,
+                                "metadata": {
+                                    "logical_agent_id": "codex",
+                                    "dispatch_event_key": event["key"],
+                                    "dispatch_task_signature": event["signature"],
+                                    "dispatch_target_display_name": "Codex",
+                                },
+                            },
+                        }
+                        if outcome_kind == "exit_zero":
+                            worker.update(
+                                {
+                                    "runner_status": "completed",
+                                    "runner_finished_at": "2026-07-13T17:01:00Z",
+                                    "exit_code": 0,
+                                }
+                            )
+                        elif outcome_kind == "recognized_failure":
+                            worker.update({"runner_status": "completed", "exit_code": 1})
+                        state = {
+                            "queue": {"events": {"evt-matrix": {"status": "started", "run_id": "run-matrix"}}},
+                            "workers": {"run-matrix": worker},
+                        }
+                        detected = "fatal runner failure" if outcome_kind == "recognized_failure" else None
+                        with (
+                            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+                            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+                            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+                            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                            mock.patch.object(supervisor, "detect_worker_failure", return_value=detected),
+                            mock.patch.object(
+                                supervisor,
+                                "classify_worker_failure",
+                                return_value={"kind": "fatal", "label": "fatal", "transient": False},
+                            ),
+                            mock.patch.object(
+                                supervisor,
+                                "summarize_failure_reason",
+                                return_value={"summary": detected or "generic", "kind": "fatal"},
+                            ),
+                            mock.patch.object(supervisor, "write_failure_evidence", return_value=None),
+                            mock.patch.object(supervisor, "maybe_rotate_provider_model", return_value="disabled"),
+                            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
+                            mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=False),
+                            mock.patch.object(supervisor, "write_activity_log"),
+                        ):
+                            changed = (
+                                supervisor.reconcile_runtime_on_boot(config, state)
+                                if entrypoint == "boot"
+                                else supervisor.poll_workers(config, state)
+                            )
+                        guard = next(iter(state["execution_dispatch_guardrails"]["records"].values()))
+                        streak = next(iter(state["provider_guardrails"]["task_failure_streaks"].values()))
+                        retry_at = supervisor._parse_iso_utc(guard["retry_not_before"])
+                        guard_at = supervisor._parse_iso_utc(guard["last_at"])
+                        assert retry_at is not None and guard_at is not None
+                        results[entrypoint] = {
+                            "changed": changed,
+                            "worker_status": worker["status"],
+                            "execution_outcome": worker["execution_outcome"],
+                            "queue_status": state["queue"]["events"]["evt-matrix"]["status"],
+                            "guard_outcome": guard["last_outcome"],
+                            "guard_kind": guard["last_failure_kind"],
+                            "guard_attempts": guard["lane_attempt_count"],
+                            "guard_triage": guard["triage_required"],
+                            "guard_delay_seconds": int((retry_at - guard_at).total_seconds()),
+                            "streak_count": streak["count"],
+                            "streak_kind": streak["last_failure_kind"],
+                            "streak_signature": streak["signature"],
+                            "streak_scope": streak["signature_scope"],
+                            "streak_lane": streak["logical_agent_id"],
+                        }
+                    with self.subTest(status=status, outcome_kind=outcome_kind):
+                        self.assertEqual(results["boot"], results["poll"])
+                        self.assertEqual(results["boot"]["worker_status"], "failed")
+                        self.assertEqual(results["boot"]["queue_status"], "failed")
+                        self.assertEqual(results["boot"]["streak_count"], 1)
+                        self.assertEqual(results["boot"]["streak_scope"], "exact_dispatch")
+                        self.assertEqual(results["boot"]["streak_lane"], "codex")
+
+
 class RuntimeLeaseReconciliationTests(unittest.TestCase):
     def _config(self, root: Path) -> dict:
         return {
@@ -8878,7 +10071,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 1,
             )
 
-    def test_reconcile_runtime_does_not_scan_successful_missing_worker_log_for_failure(self) -> None:
+    def test_reconcile_runtime_defers_successful_review_worker_without_task_transition(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config = self._config(root)
@@ -8953,11 +10146,15 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
 
             self.assertTrue(changed)
             worker = state["workers"]["codex-run-done"]
-            self.assertEqual(worker["status"], "completed")
-            self.assertNotIn("last_error", worker)
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(worker["execution_outcome"], "incomplete_progress")
+            self.assertIn("remains eligible", worker["last_error"])
             self.assertEqual(worker["runner_status"], "completed")
             self.assertEqual(worker["exit_code"], 0)
-            self.assertEqual(state["queue"]["events"]["evt-worker"]["status"], "completed")
+            self.assertEqual(state["queue"]["events"]["evt-worker"]["status"], "failed")
+            self.assertIsNotNone(worker["next_retry_at"])
+            guard_records = state["execution_dispatch_guardrails"]["records"]
+            self.assertEqual(len(guard_records), 1)
             self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
             write_failure_evidence.assert_not_called()
             mark_provider_dispatch_paused.assert_not_called()
@@ -9032,7 +10229,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             pause = state["provider_guardrails"]["dispatch_pauses"]["gemini"]
             self.assertEqual(pause["pause_kind"], "quota_terminal")
             self.assertEqual(pause["worker_run_id"], "gemini-run-dead")
-            streak = state["provider_guardrails"]["task_failure_streaks"]["OPS-LEASE-003:gemini"]
+            streak = next(iter(state["provider_guardrails"]["task_failure_streaks"].values()))
             self.assertEqual(streak["last_failure_kind"], "quota_terminal")
             self.assertIn("capacity", worker["last_error"].lower())
 
@@ -9100,7 +10297,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             pause = state["provider_guardrails"]["dispatch_pauses"]["copilot"]
             self.assertEqual(pause["pause_kind"], "quota_terminal")
             self.assertEqual(pause["worker_run_id"], "copilot-run-dead")
-            streak = state["provider_guardrails"]["task_failure_streaks"]["MPOS-P1-PER-002:copilot"]
+            streak = next(iter(state["provider_guardrails"]["task_failure_streaks"].values()))
             self.assertEqual(streak["last_failure_kind"], "quota_terminal")
             self.assertIn("monthly quota", worker["last_error"].lower())
 

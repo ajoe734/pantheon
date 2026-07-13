@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -259,6 +260,8 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
     task_id_kebab = re.sub(r"[^a-z0-9]+", "-", task_id.lower()).strip("-") if task_id else "none"
     branch_name = f"{task_branch_prefix}{task_id}" if task_id else f"{task_branch_prefix}(none)"
     lane = re.sub(r"[^a-z0-9]+", "-", str(target_agent or "").lower()).strip("-") or "unknown"
+    target_display_name = display_name_for(config, agent["id"])
+    status_root = config_path(config, "status_file").parent.resolve()
     variables = {
         "context_files": "\n".join(f"- {path}" for path in context_files) if context_files else "- AI_COLLABORATION_GUIDE.md",
         "task_id": task_id or "(none)",
@@ -271,7 +274,10 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "reason": event.get("reason") or "wakeup",
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",
         "sidecar_guardrails": sidecar_guardrails.rstrip(),
-        "target_agent_display_name": display_name_for(config, agent["id"]),
+        "target_agent_display_name": target_display_name,
+        "target_agent_shell": shlex.quote(target_display_name),
+        "status_root_shell": shlex.quote(str(status_root)),
+        "task_id_shell": shlex.quote(task_id) if task_id else "'(none)'",
     }
     return render_template(template_path, variables).strip() + "\n"
 
@@ -293,6 +299,16 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
     context_files = event.get("context_files") or execution_context_files(config, event.get("task_id"))
     event["context_files"] = context_files
     message = render_wakeup_message(config, event, target_agent)
+    metadata = dict(event.get("metadata", {}) or {})
+    metadata.update(
+        {
+            "handoff": event.get("handoff"),
+            "task": event.get("task", {}),
+            "dispatch_event_key": event.get("key"),
+            "dispatch_task_signature": event.get("signature"),
+            "dispatch_target_display_name": display_name_for(config, agent["id"]),
+        }
+    )
     queue_payload = {
         "event_id": new_runtime_id("evt"),
         "created_at": utc_now(),
@@ -305,7 +321,7 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
         "message": message,
         "context_files": context_files,
         "target_files": event.get("task", {}).get("artifacts") or [],
-        "metadata": {"handoff": event.get("handoff"), "task": event.get("task", {})},
+        "metadata": metadata,
     }
     enqueue_event(config, queue_payload)
     write_activity_log(

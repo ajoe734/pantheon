@@ -5,12 +5,14 @@ import argparse
 import atexit
 import fcntl
 import fnmatch
+import hashlib
 import importlib
 import json
 import math
 import os
 import random
 import re
+import shlex
 import signal
 import shutil
 import subprocess
@@ -158,6 +160,18 @@ COMMAND_OUTPUT_EXIT_LINE_PATTERN = re.compile(r"^exited\s+\d+\s+in\s+\S+:", re.I
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
 GENERIC_WORKER_EXIT_REASON = "Worker exited before the task reached a terminal status."
+LEASE_EXPIRED_OUTCOME_REASON = "Worker lease expired after heartbeat became stale."
+STALL_TERMINAL_OUTCOME_REASON = "Worker terminated after an extended stall."
+APPROVAL_WAIT_EXIT_OUTCOME_REASON = "Worker exited while waiting for approval."
+APPROVAL_STATE_LOST_OUTCOME_REASON = "Approval state disappeared before the worker could resume."
+SUCCESSFUL_WORKER_INCOMPLETE_REASON = (
+    "Worker process exited successfully, but the task remains eligible for execution dispatch."
+)
+EXECUTION_DISPATCH_GUARD_SCHEMA_VERSION = 1
+DEFAULT_EXECUTION_DISPATCH_RETRY_DELAYS_SECONDS = (60, 300, 900)
+DEFAULT_EXECUTION_DISPATCH_TERMINAL_RETRY_DELAYS_SECONDS = (300, 900, 1800)
+AUTHORITATIVE_TASK_STATE_CONTEXT_START = "<!-- authoritative-task-state:start -->"
+AUTHORITATIVE_TASK_STATE_CONTEXT_END = "<!-- authoritative-task-state:end -->"
 PLANNING_STATE_FILE = THIS_DIR / "planning-state.json"
 PLANNING_PHASE_DIR = THIS_DIR.parent / "docs" / "02-architecture" / "consensus" / "phase1"
 _UNSET = object()
@@ -1828,6 +1842,178 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
     )
 
 
+def _worker_task_state_snapshot_path(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    queue_event_id: str | None,
+) -> Path:
+    try:
+        runtime_root = config_path(config, "state_file").parent / "worker-runtime" / "context"
+    except KeyError:
+        runtime_root = config_path(config, "status_file").parent / ".orchestrator" / "worker-runtime" / "context"
+    task_slug = normalize_agent_id(task_id) or "task"
+    event_slug = normalize_agent_id(queue_event_id or "current") or "current"
+    return runtime_root / f"{task_slug}-{event_slug}.json"
+
+
+def _replace_authoritative_task_state_message_block(message: str, block: str) -> str:
+    current = str(message or "")
+    start = current.find(AUTHORITATIVE_TASK_STATE_CONTEXT_START)
+    if start >= 0:
+        end = current.find(AUTHORITATIVE_TASK_STATE_CONTEXT_END, start)
+        if end >= 0:
+            current = current[:start].rstrip() + current[end + len(AUTHORITATIVE_TASK_STATE_CONTEXT_END) :]
+    return current.rstrip() + "\n\n" + block.strip() + "\n"
+
+
+def _authoritative_task_state_message_block(
+    config: dict[str, Any],
+    request: DeliveryRequest,
+    *,
+    snapshot_path: str,
+    status_root: Path,
+) -> str:
+    task_id = str(request.task_id or "").strip()
+    target_name = str(
+        request.metadata.get("dispatch_target_display_name")
+        or display_name_for(config, str(request.metadata.get("logical_agent_id") or request.agent_id))
+    )
+    refresh_command = " ".join(
+        [
+            f"PANTHEON_STATUS_ROOT={shlex.quote(str(status_root))}",
+            f"AI_NAME={shlex.quote(target_name)}",
+            "python3 scripts/ai_status.py show",
+            shlex.quote(task_id),
+        ]
+    )
+    return "\n".join(
+        [
+            AUTHORITATIVE_TASK_STATE_CONTEXT_START,
+            "權威 task state（read-only）：",
+            f"- Snapshot: {snapshot_path}",
+            f"- Status root: {status_root}",
+            f"- Refresh command: {refresh_command}",
+            "- 不得以 isolated worktree 內追蹤到的 `ai-status.json` 是否含此 task 判定 canonical task 是否存在。",
+            AUTHORITATIVE_TASK_STATE_CONTEXT_END,
+        ]
+    )
+
+
+def materialize_authoritative_task_state(
+    config: dict[str, Any],
+    request: DeliveryRequest,
+    *,
+    queue_event_id: str | None,
+) -> str | None:
+    task_id = str(getattr(request, "task_id", None) or "").strip()
+    if not task_id:
+        return None
+    try:
+        status_root = config_path(config, "status_file").parent.resolve()
+    except KeyError:
+        # Lightweight integrations may intentionally omit repository paths.
+        # A canonical snapshot is only meaningful when a status root exists.
+        return None
+    status_file = config_path(config, "status_file").resolve()
+    request.metadata["status_root"] = str(status_root)
+    status_read_error = None
+    try:
+        task = task_index_from_status(config, load_status(config)).get(task_id)
+    except (KeyError, OSError, json.JSONDecodeError) as exc:
+        task = None
+        status_read_error = f"{type(exc).__name__}: {exc}"
+    task_snapshot = dict(task) if task is not None else None
+    path = _worker_task_state_snapshot_path(
+        config,
+        task_id=task_id,
+        queue_event_id=queue_event_id,
+    )
+    write_json(
+        path,
+        {
+            "schema_version": 1,
+            "generated_at": utc_now(),
+            "status_root": str(status_root),
+            "status_file": str(status_file),
+            "status_read_ok": status_read_error is None,
+            "status_read_error": status_read_error,
+            "task_id": task_id,
+            "task_found": task_snapshot is not None,
+            "task": task_snapshot,
+            "dispatch": {
+                "queue_event_id": queue_event_id,
+                "event_key": request.metadata.get("dispatch_event_key"),
+                "task_signature": request.metadata.get("dispatch_task_signature"),
+                "reason": request.reason,
+                "logical_agent_id": request.metadata.get("logical_agent_id"),
+            },
+        },
+    )
+    request.metadata["authoritative_task_state_source_path"] = str(path)
+    request.metadata["authoritative_task_state_path"] = str(path)
+    request.metadata["queue_event_id"] = queue_event_id
+    request.context_files = [
+        value for value in list(request.context_files or []) if str(value).replace("\\", "/") != "ai-status.json"
+    ]
+    if str(path) not in request.context_files:
+        request.context_files.append(str(path))
+    request.message = _replace_authoritative_task_state_message_block(
+        request.message,
+        _authoritative_task_state_message_block(
+            config,
+            request,
+            snapshot_path=str(path),
+            status_root=status_root,
+        ),
+    )
+    return str(path)
+
+
+def materialize_authoritative_task_state_in_workspace(
+    config: dict[str, Any],
+    request: DeliveryRequest,
+    workspace_path: Path,
+) -> str | None:
+    source_value = str(
+        request.metadata.get("authoritative_task_state_source_path")
+        or request.metadata.get("authoritative_task_state_path")
+        or ""
+    ).strip()
+    if not source_value:
+        return None
+    source_path = Path(source_value).expanduser().resolve()
+    relative_path = Path(".orchestrator") / "worker-runtime" / "context" / source_path.name
+    destination = workspace_path / relative_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, destination)
+    source_candidates = {
+        source_value,
+        str(source_path),
+        str(request.metadata.get("authoritative_task_state_path") or ""),
+    }
+    request.context_files = [
+        value for value in list(request.context_files or []) if str(value) not in source_candidates
+    ]
+    context_value = relative_path.as_posix()
+    if context_value not in request.context_files:
+        request.context_files.append(context_value)
+    request.metadata["authoritative_task_state_path"] = str(destination)
+    request.metadata["authoritative_task_state_context_file"] = context_value
+    status_root = config_path(config, "status_file").parent.resolve()
+    request.metadata["status_root"] = str(status_root)
+    request.message = _replace_authoritative_task_state_message_block(
+        request.message,
+        _authoritative_task_state_message_block(
+            config,
+            request,
+            snapshot_path=context_value,
+            status_root=status_root,
+        ),
+    )
+    return context_value
+
+
 def materialize_worker_context_files(
     config: dict[str, Any],
     request: DeliveryRequest,
@@ -1870,6 +2056,11 @@ def prepare_worker_workspace(
     queue_event_id: str | None,
     target_agent: str | None,
 ) -> tuple[bool, str | None]:
+    materialize_authoritative_task_state(
+        config,
+        request,
+        queue_event_id=queue_event_id,
+    )
     settings = worker_worktree_settings(config)
     if not settings.get("enabled"):
         return True, None
@@ -1980,6 +2171,30 @@ def prepare_worker_workspace(
             "status_root": str(repo_root),
         }
     )
+    try:
+        authoritative_context_file = materialize_authoritative_task_state_in_workspace(
+            config,
+            request,
+            worktree_path,
+        )
+    except OSError as exc:
+        message = (
+            f"Cannot materialize authoritative task state for {workspace_task_id} "
+            f"inside isolated worktree {worktree_path}: {exc}"
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_task_context",
+                "task_id": request.task_id,
+                "workspace_task_id": workspace_task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "workspace_path": str(worktree_path),
+                "message": message,
+            },
+        )
+        return False, message
     materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
     leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
     leases[workspace_task_id] = {
@@ -1992,6 +2207,7 @@ def prepare_worker_workspace(
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
         "materialized_context_files": materialized_context_files,
+        "authoritative_task_state_context_file": authoritative_context_file,
     }
     write_activity_log(
         config,
@@ -2281,8 +2497,9 @@ def start_worker_for_request(
 
 
 def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any]) -> bool:
-    changed = False
     task_map = task_index_from_status(config, load_status(config))
+    changed = prune_execution_dispatch_guard_records(config, state, task_map=task_map)
+    changed = prune_task_failure_streak_records(config, state, task_map) or changed
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     for event in load_event_queue(config):
         event_id = event.get("event_id")
@@ -2337,7 +2554,13 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
-                sync_dispatched_task_status(config, event)
+                if sync_dispatched_task_status(config, event):
+                    refresh_execution_dispatch_baseline_after_status_sync(
+                        config,
+                        state,
+                        event,
+                        worker_run_id=str(active_worker.get("run_id") or ""),
+                    )
                 changed = True
             continue
         skip_message = stale_dispatch_skip_message(config, event, task_map)
@@ -2357,6 +2580,25 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             )
             changed = True
             continue
+        if is_execution_dispatch_reason(str(event.get("reason") or "")):
+            logical_target_id = worker_logical_dispatch_agent_id(
+                config,
+                {"agent_id": event.get("target_agent")},
+            )
+            dispatch_guard = current_execution_dispatch_guard(
+                config,
+                state,
+                task_id=str(event.get("task_id") or ""),
+                logical_agent_id=logical_target_id,
+                event=event,
+            )
+            if dispatch_guard:
+                record["status"] = "pending"
+                record["last_wait_reason"] = "Execution outcome retry guard is active."
+                record["retry_not_before"] = dispatch_guard.get("retry_not_before")
+                record["triage_required"] = dispatch_guard.get("triage_required", False)
+                changed = True
+                continue
         request = build_request(config, event)
         request_provider = getattr(request, "provider", event.get("provider"))
         pause_entry = current_provider_dispatch_pause(state, request_provider, config)
@@ -2476,10 +2718,12 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             failure_worker = {
                 "provider": request.provider,
                 "agent_id": request.agent_id,
+                "logical_agent_id": request.metadata.get("logical_agent_id"),
                 "task_id": request.task_id,
                 "queue_event_id": event_id,
                 "run_id": record.get("run_id"),
                 "retry_count": max(0, int(record.get("attempt_count", 0)) - 1),
+                "request_snapshot": request_snapshot(request),
             }
             failure_reason = str(outcome or "")
             failure = classify_worker_failure(config, failure_worker, failure_reason)
@@ -2490,6 +2734,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 reason=failure_reason,
                 failure_kind=str(failure.get("kind") or ""),
             )
+            failure_worker["last_error_raw_ref"] = raw_ref
             failure_count = record_task_failure_streak(
                 state,
                 failure_worker,
@@ -2584,8 +2829,20 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                     record["raw_ref"] = raw_ref
                 changed = True
                 continue
+            dispatch_guard = record_execution_dispatch_failure_guard(
+                config,
+                state,
+                failure_worker,
+                task_map,
+                failure_kind=failure_kind or "terminal",
+                queue_events_by_id={str(event_id): event},
+            )
             record["status"] = "failed"
             record["error"] = failure_summary.get("summary") or outcome
+            if dispatch_guard:
+                record["execution_outcome"] = dispatch_guard.get("last_outcome")
+                record["retry_not_before"] = dispatch_guard.get("retry_not_before")
+                record["triage_required"] = dispatch_guard.get("triage_required", False)
             if raw_ref:
                 record["raw_ref"] = raw_ref
             record["processed_at"] = utc_now()
@@ -2600,8 +2857,15 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         record["lease_acquired_at"] = _isoformat_utc(queue_started_at)
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
         record["processed_at"] = _isoformat_utc(queue_started_at)
-        record.pop("last_wait_reason", None)
-        sync_dispatched_task_status(config, event)
+        for key in ("last_wait_reason", "execution_outcome", "retry_not_before", "triage_required"):
+            record.pop(key, None)
+        if sync_dispatched_task_status(config, event):
+            refresh_execution_dispatch_baseline_after_status_sync(
+                config,
+                state,
+                event,
+                worker_run_id=str(worker_run_id or ""),
+            )
         changed = True
     return changed
 
@@ -4102,15 +4366,17 @@ def chair_reassignment_triage_needed_for_task(
     provider_id = normalize_agent_id(agent_name)
     if not task_id or not provider_id:
         return False
-    record = ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).get(
-        _failure_streak_key(task_id, provider_id)
-    )
-    if not isinstance(record, dict):
-        return False
-    try:
-        return int(record.get("count", 0)) >= threshold
-    except (TypeError, ValueError):
-        return False
+    for _key, record in _failure_streak_records_for_lane(
+        state,
+        task_id=task_id,
+        logical_agent_id=provider_id,
+    ):
+        try:
+            if int(record.get("count", 0)) >= threshold:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 def failure_loop_task_agents_for_task_map(
@@ -4968,7 +5234,11 @@ def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
 def _provider_guardrail_bucket(state: dict[str, Any]) -> dict[str, Any]:
     bucket = state.setdefault("provider_guardrails", {})
     bucket.setdefault("dispatch_pauses", {})
-    bucket.setdefault("task_failure_streaks", {})
+    bucket.setdefault("task_failure_streak_schema_version", 2)
+    if not isinstance(bucket.get("task_failure_streaks"), dict):
+        bucket["task_failure_streaks"] = {}
+    if not isinstance(bucket.get("task_failure_streak_aliases"), dict):
+        bucket["task_failure_streak_aliases"] = {}
     return bucket
 
 
@@ -4980,8 +5250,66 @@ def _task_failure_streak_bucket(state: dict[str, Any]) -> dict[str, Any]:
     return _provider_guardrail_bucket(state).setdefault("task_failure_streaks", {})
 
 
-def _failure_streak_key(task_id: str, provider: str) -> str:
-    return f"{task_id}:{provider}"
+def _task_failure_streak_alias_bucket(state: dict[str, Any]) -> dict[str, str]:
+    return _provider_guardrail_bucket(state).setdefault("task_failure_streak_aliases", {})
+
+
+def _normalized_failure_reason(reason: str | None) -> str:
+    return re.sub(r"\s+", " ", str(reason or "").strip().lower())
+
+
+def _failure_streak_signature(worker: dict[str, Any], reason: str, failure_kind: str | None) -> tuple[str, str]:
+    kind = normalize_agent_id(str(failure_kind or "unknown")) or "unknown"
+    reason_digest = hashlib.sha256(_normalized_failure_reason(reason).encode("utf-8")).hexdigest()
+    snapshot = worker.get("request_snapshot", {}) or {}
+    metadata = snapshot.get("metadata", {}) if isinstance(snapshot, dict) else {}
+    material_signature = str((metadata or {}).get("dispatch_task_signature") or "").strip()
+    if material_signature:
+        material_digest = hashlib.sha256(material_signature.encode("utf-8")).hexdigest()
+        return f"dispatch:{kind}:{reason_digest}:{material_digest}", "exact_dispatch"
+    return f"runtime:{kind}:{reason_digest}", "runtime_unbound"
+
+
+def _failure_streak_key(task_id: str, provider: str, signature: str | None = None) -> str:
+    if signature is None:
+        # Read-side compatibility for callers that still address the legacy
+        # task/provider alias. New writes always include a signature.
+        return f"{task_id}:{provider}"
+    digest = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:24]
+    return f"{task_id}|{provider}|{digest}"
+
+
+def _failure_streak_records_for_lane(
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    logical_agent_id: str,
+) -> list[tuple[str, dict[str, Any]]]:
+    task_value = str(task_id or "").strip()
+    logical_value = normalize_agent_id(logical_agent_id)
+    matches: list[tuple[str, dict[str, Any]]] = []
+    for key, record in _task_failure_streak_bucket(state).items():
+        if not isinstance(record, dict):
+            continue
+        record_task = str(record.get("task_id") or str(key).split(":", 1)[0]).strip()
+        record_lane = normalize_agent_id(
+            str(record.get("logical_agent_id") or record.get("provider") or "")
+        )
+        if record_task == task_value and record_lane == logical_value:
+            matches.append((str(key), record))
+    return matches
+
+
+def _drop_failure_streak_keys(state: dict[str, Any], keys: set[str]) -> None:
+    if not keys:
+        return
+    bucket = _task_failure_streak_bucket(state)
+    aliases = _task_failure_streak_alias_bucket(state)
+    for key in keys:
+        bucket.pop(key, None)
+    for alias, target in list(aliases.items()):
+        if alias in keys or target in keys:
+            aliases.pop(alias, None)
 
 
 def current_provider_dispatch_pause(
@@ -5334,24 +5662,50 @@ def record_task_failure_streak(
     failure_kind: str | None = None,
 ) -> int:
     task_id = str(worker.get("task_id") or "").strip()
-    provider_id = normalize_agent_id(str(worker.get("provider") or worker.get("agent_id") or ""))
+    # Dispatch slots such as codex1_1/codex1_2 are implementation details of
+    # one logical lane.  Failure-loop policy must aggregate them instead of
+    # resetting the streak every time the slot selector rotates.
+    provider_id = normalize_agent_id(
+        str(worker.get("logical_agent_id") or worker.get("provider") or worker.get("agent_id") or "")
+    )
     if not task_id or not provider_id:
         return 0
     bucket = _task_failure_streak_bucket(state)
-    key = _failure_streak_key(task_id, provider_id)
+    signature, signature_scope = _failure_streak_signature(worker, reason, failure_kind)
+    key = _failure_streak_key(task_id, provider_id, signature)
     record = dict(bucket.get(key) or {})
     count = int(record.get("count", 0)) + 1
+    now = utc_now()
+    raw_ref = str(worker.get("last_error_raw_ref") or worker.get("raw_ref") or "").strip()
+    evidence_refs = [str(value) for value in (record.get("evidence_refs") or []) if str(value)]
+    if raw_ref:
+        evidence_refs.append(raw_ref)
+    snapshot = worker.get("request_snapshot", {}) or {}
+    metadata = snapshot.get("metadata", {}) if isinstance(snapshot, dict) else {}
+    material_signature = str((metadata or {}).get("dispatch_task_signature") or "").strip()
+    legacy_alias = _failure_streak_key(task_id, provider_id)
     record.update(
         {
+            "schema_version": 2,
             "task_id": task_id,
+            "logical_agent_id": provider_id,
             "provider": provider_id,
+            "signature": signature,
+            "signature_scope": signature_scope,
             "count": count,
             "last_reason": reason,
-            "last_failure_at": utc_now(),
+            "first_failure_at": record.get("first_failure_at") or now,
+            "last_failure_at": now,
             "last_failure_kind": failure_kind or str(record.get("last_failure_kind") or ""),
+            "worker_run_id": worker.get("run_id"),
+            "dispatch_task_signature": material_signature or None,
+            "dispatch_event_key": (metadata or {}).get("dispatch_event_key"),
+            "evidence_refs": list(dict.fromkeys(evidence_refs))[-20:],
+            "aliases": list(dict.fromkeys([*(record.get("aliases") or []), legacy_alias])),
         }
     )
     bucket[key] = record
+    _task_failure_streak_alias_bucket(state)[legacy_alias] = key
     return count
 
 
@@ -5364,12 +5718,52 @@ def clear_task_failure_streak(
 ) -> None:
     if worker is not None:
         task_id = str(worker.get("task_id") or task_id or "")
-        provider = str(worker.get("provider") or worker.get("agent_id") or provider or "")
+        provider = str(
+            worker.get("logical_agent_id")
+            or worker.get("provider")
+            or worker.get("agent_id")
+            or provider
+            or ""
+        )
     task_id = str(task_id or "").strip()
     provider_id = normalize_agent_id(provider or "")
     if not task_id or not provider_id:
         return
-    _task_failure_streak_bucket(state).pop(_failure_streak_key(task_id, provider_id), None)
+    keys = {key for key, _record in _failure_streak_records_for_lane(
+        state,
+        task_id=task_id,
+        logical_agent_id=provider_id,
+    )}
+    legacy_alias = _failure_streak_key(task_id, provider_id)
+    alias_target = _task_failure_streak_alias_bucket(state).get(legacy_alias)
+    if alias_target:
+        keys.add(alias_target)
+    keys.add(legacy_alias)
+    _drop_failure_streak_keys(state, keys)
+
+
+def clear_successful_worker_incomplete_streak(
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    logical_agent_id: str,
+) -> bool:
+    task_value = str(task_id or "").strip()
+    logical_value = normalize_agent_id(logical_agent_id)
+    if not task_value or not logical_value:
+        return False
+    keys: set[str] = set()
+    for key, record in _failure_streak_records_for_lane(
+        state,
+        task_id=task_value,
+        logical_agent_id=logical_value,
+    ):
+        failure_kind = str(record.get("last_failure_kind") or "")
+        last_reason = str(record.get("last_reason") or "")
+        if failure_kind in {"incomplete_noop", "incomplete_progress"} or last_reason == SUCCESSFUL_WORKER_INCOMPLETE_REASON:
+            keys.add(key)
+    _drop_failure_streak_keys(state, keys)
+    return bool(keys)
 
 
 def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | None) -> None:
@@ -5377,8 +5771,115 @@ def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | No
     if not task_id:
         return
     bucket = _task_failure_streak_bucket(state)
-    for key in [item for item in bucket if item.startswith(f"{task_id}:")]:
-        bucket.pop(key, None)
+    keys = {
+        str(key)
+        for key, record in bucket.items()
+        if str(key).startswith(f"{task_id}:")
+        or str(key).startswith(f"{task_id}|")
+        or (isinstance(record, dict) and str(record.get("task_id") or "") == task_id)
+    }
+    _drop_failure_streak_keys(state, keys)
+
+
+def clear_task_failure_streaks_for_dispatch_signature(
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    logical_agent_id: str,
+    dispatch_task_signature: str | None,
+) -> bool:
+    signature = str(dispatch_task_signature or "").strip()
+    if not signature:
+        return False
+    keys = {
+        key
+        for key, record in _failure_streak_records_for_lane(
+            state,
+            task_id=task_id,
+            logical_agent_id=logical_agent_id,
+        )
+        if str(record.get("dispatch_task_signature") or "") == signature
+    }
+    _drop_failure_streak_keys(state, keys)
+    return bool(keys)
+
+
+def prune_task_failure_streak_records(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    bucket = _task_failure_streak_bucket(state)
+    if not bucket:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    retention_seconds = max(60, int(execution_dispatch_guard_settings(config).get("retention_seconds", 86400)))
+    remove: set[str] = set()
+    dispositions: dict[str, str] = {}
+    for key, record in list(bucket.items()):
+        if not isinstance(record, dict):
+            remove.add(str(key))
+            dispositions[str(key)] = "invalid"
+            continue
+        task_id = str(record.get("task_id") or "").strip()
+        task = task_map.get(task_id)
+        if task is None:
+            remove.add(str(key))
+            dispositions[str(key)] = "task_missing"
+            continue
+        logical_agent_id = normalize_agent_id(
+            str(record.get("logical_agent_id") or record.get("provider") or "")
+        )
+        task_status = str(task.get("status") or "").lower()
+        done_statuses = normalized_status_set(
+            ready_dispatch_settings(config).get("dependency_done_statuses"),
+            ["done"],
+        )
+        if task_status in done_statuses:
+            remove.add(str(key))
+            dispositions[str(key)] = "task_done"
+            continue
+        known_logical_lane = any(
+            normalize_agent_id(str(agent_id)) == logical_agent_id
+            for agent_id in (config.get("agents", {}) or {})
+        )
+        current_event = current_execution_dispatch_event_for_target(
+            config,
+            task,
+            task_map,
+            target_agent=display_name_for(config, logical_agent_id),
+        )
+        if known_logical_lane and current_event is None:
+            remove.add(str(key))
+            dispositions[str(key)] = "lane_resolved_or_reassigned"
+            continue
+        last_at = _parse_iso_utc(str(record.get("last_failure_at") or record.get("last_at") or ""))
+        if last_at is not None and (now_dt - last_at).total_seconds() > retention_seconds:
+            remove.add(str(key))
+            dispositions[str(key)] = "retention_expired"
+    if not remove:
+        return False
+    guardrails = _provider_guardrail_bucket(state)
+    history = guardrails.get("task_failure_streak_history")
+    if not isinstance(history, list):
+        history = []
+        guardrails["task_failure_streak_history"] = history
+    for key in sorted(remove):
+        record = bucket.get(key)
+        if isinstance(record, dict):
+            history.append(
+                {
+                    **record,
+                    "record_key": key,
+                    "archived_at": utc_now(),
+                    "archive_disposition": dispositions.get(key),
+                }
+            )
+    del history[:-200]
+    _drop_failure_streak_keys(state, remove)
+    return True
 
 
 def _provider_report_entry(provider_report: dict[str, Any] | None, provider: str | None) -> dict[str, Any]:
@@ -5462,14 +5963,22 @@ def clear_auth_failure_streaks_for_provider(config: dict[str, Any], state: dict[
         return []
     bucket = _task_failure_streak_bucket(state)
     removed: list[str] = []
+    keys_to_remove: set[str] = set()
     for key, record in list(bucket.items()):
         key_provider = key.rsplit(":", 1)[-1] if ":" in key else ""
-        record_provider = normalize_agent_id(str((record if isinstance(record, dict) else {}).get("provider") or key_provider))
+        record_provider = normalize_agent_id(
+            str(
+                (record if isinstance(record, dict) else {}).get("logical_agent_id")
+                or (record if isinstance(record, dict) else {}).get("provider")
+                or key_provider
+            )
+        )
         if record_provider not in ids:
             continue
         if isinstance(record, dict) and _is_auth_failure_streak(config, record):
-            bucket.pop(key, None)
+            keys_to_remove.add(str(key))
             removed.append(key)
+    _drop_failure_streak_keys(state, keys_to_remove)
     return removed
 
 
@@ -6075,6 +6584,118 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     return False
 
 
+def refresh_execution_dispatch_baseline_after_status_sync(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    event: dict[str, Any],
+    *,
+    worker_run_id: str | None,
+) -> bool:
+    """Persist the canonical post-``start`` dispatch signature everywhere.
+
+    ``ai_status.py start`` changes both status and ``last_update``.  Those are
+    supervisor bookkeeping, not operator progress, so a worker must compare
+    its eventual outcome with the *post-sync* signature.  Keeping the same
+    baseline in runtime state, queue observability, and both authoritative
+    context copies also makes a supervisor restart deterministic.
+    """
+
+    task_id = str(event.get("task_id") or "").strip()
+    if not task_id:
+        return False
+    try:
+        task_map = task_index_from_status(config, load_status(config))
+    except (KeyError, OSError, json.JSONDecodeError):
+        return False
+    task = task_map.get(task_id)
+    if not task:
+        return False
+    target_agent = str(
+        event.get("target_display_name")
+        or display_name_for(config, str(event.get("target_agent") or ""))
+    ).strip()
+    current_event = current_execution_dispatch_event_for_target(
+        config,
+        task,
+        task_map,
+        target_agent=target_agent,
+    )
+    if current_event is None:
+        return False
+
+    worker = state.setdefault("workers", {}).get(str(worker_run_id or ""))
+    if not isinstance(worker, dict):
+        return False
+    snapshot = worker.setdefault("request_snapshot", {})
+    metadata = snapshot.setdefault("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+        snapshot["metadata"] = metadata
+    metadata.setdefault("dispatch_origin_event_key", metadata.get("dispatch_event_key") or event.get("event_key"))
+    metadata.setdefault("dispatch_origin_task_signature", metadata.get("dispatch_task_signature") or event.get("signature"))
+    metadata["dispatch_event_key"] = current_event.get("key")
+    metadata["dispatch_task_signature"] = current_event.get("signature")
+    metadata["dispatch_effective_reason"] = current_event.get("reason")
+    metadata["dispatch_baseline_refreshed_at"] = utc_now()
+
+    queue_event_id = str(worker.get("queue_event_id") or event.get("event_id") or "")
+    if queue_event_id:
+        record = queue_status(state, queue_event_id)
+        record["effective_dispatch_event_key"] = current_event.get("key")
+        record["effective_dispatch_task_signature"] = current_event.get("signature")
+        record["effective_dispatch_reason"] = current_event.get("reason")
+        record["dispatch_baseline_refreshed_at"] = metadata["dispatch_baseline_refreshed_at"]
+
+    snapshot_paths: set[str] = set()
+    for field in ("authoritative_task_state_source_path", "authoritative_task_state_path"):
+        value = str(metadata.get(field) or "").strip()
+        if value:
+            snapshot_paths.add(value)
+    for raw_path in snapshot_paths:
+        path = Path(raw_path)
+        try:
+            payload = load_json(path, default={})
+            if not isinstance(payload, dict):
+                payload = {}
+            payload.update(
+                {
+                    "generated_at": utc_now(),
+                    "status_read_ok": True,
+                    "status_read_error": None,
+                    "task_id": task_id,
+                    "task_found": True,
+                    "task": dict(task),
+                }
+            )
+            dispatch = payload.setdefault("dispatch", {})
+            if not isinstance(dispatch, dict):
+                dispatch = {}
+                payload["dispatch"] = dispatch
+            dispatch.update(
+                {
+                    "queue_event_id": queue_event_id or None,
+                    "event_key": current_event.get("key"),
+                    "task_signature": current_event.get("signature"),
+                    "reason": current_event.get("reason"),
+                    "origin_reason": snapshot.get("reason"),
+                    "logical_agent_id": metadata.get("logical_agent_id"),
+                    "baseline_kind": "post_dispatch_status_sync",
+                }
+            )
+            write_json(path, payload)
+        except OSError:
+            # Runtime state remains authoritative if an isolated worktree was
+            # concurrently reaped; the next dispatch rematerializes context.
+            continue
+    try:
+        save_runtime_state(config, state)
+    except KeyError:
+        # Lightweight unit/integration configs may intentionally omit a
+        # runtime-state path. Production configs persist this immediately.
+        pass
+    return True
+
+
 def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
     """Keep task truth aligned when a worker is superseded for higher-priority work."""
     if not config.get("paths", {}).get("status_file"):
@@ -6289,6 +6910,7 @@ def maybe_reassign_task_after_worker_failure(
             },
         )
         clear_task_failure_streaks_for_task(state, task_id)
+        clear_execution_dispatch_guard_records_for_task(state, task_id, disposition="task_reassigned")
         console_log(
             f"reassigned review: task={task_id} from={reviewer} to={new_reviewer} kind={failure_label}",
             quiet=SUPERVISOR_LOG_QUIET,
@@ -6336,6 +6958,7 @@ def maybe_reassign_task_after_worker_failure(
             },
         )
         clear_task_failure_streaks_for_task(state, task_id)
+        clear_execution_dispatch_guard_records_for_task(state, task_id, disposition="task_reassigned")
         console_log(
             f"reassigned owner: task={task_id} from={owner} to={new_owner} kind={failure_label}",
             quiet=SUPERVISOR_LOG_QUIET,
@@ -6435,6 +7058,33 @@ def request_for_worker(config: dict[str, Any], worker: dict[str, Any]) -> Delive
     return None
 
 
+def refresh_relaunch_request_context(
+    config: dict[str, Any],
+    request: DeliveryRequest,
+    *,
+    queue_event_id: str | None,
+) -> None:
+    """Refresh canonical task context before retry/fallback relaunch."""
+
+    materialize_authoritative_task_state(
+        config,
+        request,
+        queue_event_id=queue_event_id,
+    )
+    workspace_value = str(request.metadata.get("workspace_path") or "").strip()
+    if not workspace_value:
+        return
+    workspace_path = Path(workspace_value)
+    if not workspace_path.exists():
+        return
+    try:
+        materialize_authoritative_task_state_in_workspace(config, request, workspace_path)
+    except OSError:
+        # The dispatcher will rematerialize context if this retired worktree
+        # has already been reaped; never revive it implicitly here.
+        return
+
+
 def manual_pending_inbox_can_auto_redeliver(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -6473,9 +7123,15 @@ def requeue_stale_manual_pending_worker(
     if queue_event_id:
         record = queue_status(state, queue_event_id)
         record["status"] = "queued"
-        record.pop("processed_at", None)
-        record.pop("error", None)
-        record.pop("run_id", None)
+        for key in (
+            "processed_at",
+            "error",
+            "run_id",
+            "execution_outcome",
+            "retry_not_before",
+            "triage_required",
+        ):
+            record.pop(key, None)
     write_activity_log(
         config,
         {
@@ -6576,6 +7232,11 @@ def maybe_trigger_retry_or_fallback(
             worker["last_event_at"] = utc_now()
             return True, True
         if not worker.get("fallback_run_id"):
+            refresh_relaunch_request_context(
+                config,
+                request,
+                queue_event_id=str(worker.get("queue_event_id") or "") or None,
+            )
             ok, outcome, _ = start_worker_for_request(
                 config,
                 state,
@@ -6593,6 +7254,10 @@ def maybe_trigger_retry_or_fallback(
                 worker["status"] = "fallback"
                 worker["fallback_run_id"] = outcome
                 worker["last_event_at"] = utc_now()
+                if worker.get("queue_event_id"):
+                    record = queue_status(state, str(worker["queue_event_id"]))
+                    for key in ("execution_outcome", "retry_not_before", "triage_required"):
+                        record.pop(key, None)
                 return True, True
     return False, False
 
@@ -6626,6 +7291,11 @@ def retry_due_workers(
             )
             changed = True
             continue
+        refresh_relaunch_request_context(
+            config,
+            request,
+            queue_event_id=str(worker.get("queue_event_id") or "") or None,
+        )
         ok, outcome, _ = start_worker_for_request(
             config,
             state,
@@ -6642,6 +7312,12 @@ def retry_due_workers(
             worker["status"] = "retried"
             worker["superseded_by_run_id"] = outcome
             worker["last_event_at"] = utc_now()
+            if worker.get("queue_event_id"):
+                record = queue_status(state, str(worker["queue_event_id"]))
+                record["status"] = "started"
+                record["run_id"] = outcome
+                for key in ("execution_outcome", "retry_not_before", "triage_required", "error"):
+                    record.pop(key, None)
         else:
             worker["status"] = "failed"
             worker["last_event_at"] = utc_now()
@@ -6704,6 +7380,7 @@ def worker_supports_approval_resume(config: dict[str, Any], worker: dict[str, An
 
 def resume_claude_worker(
     config: dict[str, Any],
+    state: dict[str, Any],
     worker: dict[str, Any],
     provider_report: dict[str, Any],
     *,
@@ -6801,6 +7478,12 @@ def resume_claude_worker(
     worker["metadata"]["resume_allowed_tools"] = allowed_tools
     worker["metadata"]["heartbeat_path"] = str(runtime_paths["heartbeat_path"])
     worker["metadata"]["runner_status_path"] = str(runtime_paths["status_path"])
+    for key in ("execution_outcome", "next_retry_at", "triage_required"):
+        worker.pop(key, None)
+    if worker.get("queue_event_id"):
+        queue_record = queue_status(state, str(worker["queue_event_id"]))
+        for key in ("execution_outcome", "retry_not_before", "triage_required"):
+            queue_record.pop(key, None)
     return {
         "command": command,
         "log_path": str(log_path),
@@ -6813,6 +7496,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     changed = False
     approval_state = load_approval_state(config)
     task_map = task_index_from_status(config, load_status(config))
+    changed = prune_execution_dispatch_guard_records(config, state, task_map=task_map) or changed
+    changed = prune_task_failure_streak_records(config, state, task_map) or changed
+    try:
+        queued_events_by_id = {
+            str(event.get("event_id")): event
+            for event in load_event_queue(config)
+            if event.get("event_id")
+        }
+    except KeyError:
+        queued_events_by_id = {}
     valid_queue_event_ids = set(state.get("queue", {}).get("events", {}))
     redispatch_statuses = redispatch_candidate_statuses(config)
     active_worker_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
@@ -6897,8 +7590,26 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             worker["last_event_at"] = utc_now()
             worker["last_error"] = (
                 pause_dispatch_for_reaped_worker(config, state, worker)
-                or "Worker lease expired after heartbeat became stale."
+                or LEASE_EXPIRED_OUTCOME_REASON
             )
+            failure_kind = str(classify_worker_failure(config, worker, worker["last_error"]).get("kind") or "lease_expired")
+            reduced = reduce_execution_dispatch_terminal_failure(
+                config,
+                state,
+                worker,
+                task_map,
+                reason=(worker["last_error"] if worker["last_error"] != LEASE_EXPIRED_OUTCOME_REASON else LEASE_EXPIRED_OUTCOME_REASON),
+                failure_kind=failure_kind,
+                queue_events_by_id=queued_events_by_id,
+                now=now,
+            )
+            if reduced.get("reassigned_to"):
+                worker["status"] = "reassigned"
+                worker["reassigned_to"] = reduced["reassigned_to"]
+                finalize_queue_event_record(config, state, worker, "completed")
+                poll_counts["expired_lease_workers_failed"] += 1
+                changed = True
+                continue
             write_activity_log(
                 config,
                 {
@@ -7058,7 +7769,17 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker["deferred_action"] = None
                 worker["deferred_tool_use"] = None
                 worker["last_event_at"] = utc_now()
-                worker["last_error"] = "Worker exited while waiting for approval."
+                worker["last_error"] = APPROVAL_WAIT_EXIT_OUTCOME_REASON
+                reduced = reduce_execution_dispatch_terminal_failure(
+                    config,
+                    state,
+                    worker,
+                    task_map,
+                    reason=APPROVAL_WAIT_EXIT_OUTCOME_REASON,
+                    failure_kind="approval_wait_exit",
+                    queue_events_by_id=queued_events_by_id,
+                    now=now,
+                )
                 for approval in pending:
                     approval_id = approval.get("approval_id")
                     if not approval_id:
@@ -7073,6 +7794,12 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         )
                     except KeyError:
                         pass
+                if reduced.get("reassigned_to"):
+                    worker["status"] = "reassigned"
+                    worker["reassigned_to"] = reduced["reassigned_to"]
+                    finalize_queue_event_record(config, state, worker, "completed")
+                    changed = True
+                    continue
                 write_activity_log(
                     config,
                     {
@@ -7117,7 +7844,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if latest.get("approval_id") != worker.get("last_approval_id"):
                 worker["last_approval_id"] = latest.get("approval_id")
                 if latest.get("decision") == "allow" and _provider_uses_claude_cli(config, worker.get("provider")):
-                    resumed = resume_claude_worker(config, worker, provider_report, approval=latest)
+                    resumed = resume_claude_worker(config, state, worker, provider_report, approval=latest)
                     write_activity_log(
                         config,
                         {
@@ -7138,6 +7865,24 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 if latest.get("decision") == "deny":
                     worker["status"] = "failed"
                     worker["last_event_at"] = utc_now()
+                    denial_reason = latest.get("note") or "Worker approval denied."
+                    worker["last_error"] = denial_reason
+                    reduced = reduce_execution_dispatch_terminal_failure(
+                        config,
+                        state,
+                        worker,
+                        task_map,
+                        reason=denial_reason,
+                        failure_kind="approval_denied",
+                        queue_events_by_id=queued_events_by_id,
+                        now=now,
+                    )
+                    if reduced.get("reassigned_to"):
+                        worker["status"] = "reassigned"
+                        worker["reassigned_to"] = reduced["reassigned_to"]
+                        finalize_queue_event_record(config, state, worker, "completed")
+                        changed = True
+                        continue
                     write_activity_log(
                         config,
                         {
@@ -7171,6 +7916,22 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     if current_status == "waiting_approval"
                     else "Approval state disappeared before the suspended worker could resume."
                 )
+                reduced = reduce_execution_dispatch_terminal_failure(
+                    config,
+                    state,
+                    worker,
+                    task_map,
+                    reason=APPROVAL_STATE_LOST_OUTCOME_REASON,
+                    failure_kind="approval_state_lost",
+                    queue_events_by_id=queued_events_by_id,
+                    now=now,
+                )
+                if reduced.get("reassigned_to"):
+                    worker["status"] = "reassigned"
+                    worker["reassigned_to"] = reduced["reassigned_to"]
+                    finalize_queue_event_record(config, state, worker, "completed")
+                    changed = True
+                    continue
                 write_activity_log(
                     config,
                     {
@@ -7232,6 +7993,22 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     worker["status"] = "failed"
                     worker["last_event_at"] = utc_now()
                     worker["last_error"] = f"Worker had no output or measurable process activity for {int(stalled_for_seconds)} seconds and was terminated for redispatch."
+                    reduced = reduce_execution_dispatch_terminal_failure(
+                        config,
+                        state,
+                        worker,
+                        task_map,
+                        reason=STALL_TERMINAL_OUTCOME_REASON,
+                        failure_kind="stalled",
+                        queue_events_by_id=queued_events_by_id,
+                        now=now,
+                    )
+                    if reduced.get("reassigned_to"):
+                        worker["status"] = "reassigned"
+                        worker["reassigned_to"] = reduced["reassigned_to"]
+                        finalize_queue_event_record(config, state, worker, "completed")
+                        changed = True
+                        continue
                     write_activity_log(
                         config,
                         {
@@ -7274,6 +8051,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 reason=failure_reason,
                 failure_kind=str(failure.get("kind") or ""),
             )
+            worker["last_error_raw_ref"] = raw_ref
             failure_count = record_task_failure_streak(
                 state,
                 worker,
@@ -7345,10 +8123,27 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     finalize_queue_event_record(config, state, worker, "completed")
                     changed = True
                     continue
+                reduced = reduce_execution_dispatch_terminal_failure(
+                    config,
+                    state,
+                    worker,
+                    task_map,
+                    reason=failure_summary.get("summary") or failure_reason,
+                    failure_kind=failure_kind,
+                    queue_events_by_id=queued_events_by_id,
+                    now=now,
+                    failure_count=failure_count,
+                    allow_reassignment=False,
+                )
+                dispatch_guard = reduced.get("guard") or {}
                 worker["status"] = "failed"
                 worker["last_error"] = failure_summary.get("summary") or failure_reason
                 worker["last_error_raw_ref"] = raw_ref
                 worker["last_event_at"] = utc_now()
+                if dispatch_guard:
+                    worker["execution_outcome"] = dispatch_guard.get("last_outcome")
+                    worker["next_retry_at"] = dispatch_guard.get("retry_not_before")
+                    worker["triage_required"] = dispatch_guard.get("triage_required", False)
                 write_activity_log(
                     config,
                     {
@@ -7387,10 +8182,27 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "completed")
                 changed = True
                 continue
+            reduced = reduce_execution_dispatch_terminal_failure(
+                config,
+                state,
+                worker,
+                task_map,
+                reason=failure_summary.get("summary") or failure_reason,
+                failure_kind=failure_kind or "terminal",
+                queue_events_by_id=queued_events_by_id,
+                now=now,
+                failure_count=failure_count,
+                allow_reassignment=False,
+            )
+            dispatch_guard = reduced.get("guard") or {}
             worker["status"] = "failed"
             worker["last_error"] = failure_summary.get("summary") or failure_reason
             worker["last_error_raw_ref"] = raw_ref
             worker["last_event_at"] = utc_now()
+            if dispatch_guard:
+                worker["execution_outcome"] = dispatch_guard.get("last_outcome")
+                worker["next_retry_at"] = dispatch_guard.get("retry_not_before")
+                worker["triage_required"] = dispatch_guard.get("triage_required", False)
             write_activity_log(
                 config,
                 {
@@ -7466,17 +8278,43 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "completed")
                 changed = True
                 continue
-            task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
-            terminal_statuses = {
-                str(value).lower()
-                for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
-            }
-            if task_status in redispatch_statuses:
+            runner_succeeded = worker_runner_succeeded(worker)
+            successful_outcome = (
+                reconcile_successful_execution_worker_outcome(
+                    config,
+                    state,
+                    worker,
+                    task_map,
+                    queue_events_by_id=queued_events_by_id,
+                )
+                if runner_succeeded
+                else None
+            )
+            if successful_outcome and successful_outcome.get("resolved"):
+                worker["status"] = "completed"
+                worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+                worker["execution_outcome"] = "resolved"
+                clear_task_failure_streak(state, worker=worker)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_completed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": "Background worker process exited after resolving its execution dispatch.",
+                        "worker_run_id": worker["run_id"],
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                    },
+                )
+                finalize_queue_event_record(config, state, worker, "completed")
+            elif successful_outcome and successful_outcome.get("outcome") != "not_applicable":
+                dispatch_guard = successful_outcome.get("guard") or {}
                 failure_count = record_task_failure_streak(
                     state,
                     worker,
-                    GENERIC_WORKER_EXIT_REASON,
-                    failure_kind="generic_exit",
+                    SUCCESSFUL_WORKER_INCOMPLETE_REASON,
+                    failure_kind=str(successful_outcome.get("outcome") or "incomplete"),
                 )
                 generic_threshold = max(1, int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)))
                 reassigned_to = None
@@ -7485,7 +8323,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         config,
                         state,
                         worker,
-                        GENERIC_WORKER_EXIT_REASON,
+                        SUCCESSFUL_WORKER_INCOMPLETE_REASON,
                         terminal=True,
                         force=True,
                         failure_count=failure_count,
@@ -7493,61 +8331,88 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 if reassigned_to:
                     worker["status"] = "reassigned"
                     worker["reassigned_to"] = reassigned_to
-                    worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+                    worker["last_error"] = SUCCESSFUL_WORKER_INCOMPLETE_REASON
                     worker["last_event_at"] = utc_now()
                     finalize_queue_event_record(config, state, worker, "completed")
                     changed = True
                     continue
                 worker["status"] = "failed"
-                worker["last_event_at"] = utc_now()
-                worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+                worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+                worker["last_error"] = SUCCESSFUL_WORKER_INCOMPLETE_REASON
+                worker["execution_outcome"] = successful_outcome.get("outcome")
+                worker["next_retry_at"] = dispatch_guard.get("retry_not_before")
+                worker["triage_required"] = dispatch_guard.get("triage_required", False)
                 write_activity_log(
                     config,
                     {
-                        "type": "worker_failed",
+                        "type": "worker_incomplete",
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
                         "message": worker["last_error"],
                         "worker_run_id": worker["run_id"],
                         "pr_url": worker.get("pr_url"),
                         "session_url": worker.get("session_url"),
+                        "execution_outcome": worker.get("execution_outcome"),
+                        "retry_not_before": worker.get("next_retry_at"),
                     },
                 )
                 finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-            elif task_status in terminal_statuses:
-                worker["status"] = "completed"
-                worker["last_event_at"] = utc_now()
-                clear_task_failure_streak(state, worker=worker)
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_completed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": "Background worker process exited.",
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "completed")
             else:
-                worker["status"] = "failed"
-                worker["last_event_at"] = utc_now()
-                worker["last_error"] = GENERIC_WORKER_EXIT_REASON
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_failed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": worker["last_error"],
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+                task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
+                terminal_statuses = {
+                    str(value).lower()
+                    for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
+                }
+                if task_status in terminal_statuses and task_status not in redispatch_statuses:
+                    worker["status"] = "completed"
+                    worker["last_event_at"] = utc_now()
+                    clear_task_failure_streak(state, worker=worker)
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_completed",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": "Background worker process exited after task completion.",
+                            "worker_run_id": worker["run_id"],
+                            "pr_url": worker.get("pr_url"),
+                            "session_url": worker.get("session_url"),
+                        },
+                    )
+                    finalize_queue_event_record(config, state, worker, "completed")
+                else:
+                    worker["status"] = "failed"
+                    worker["last_event_at"] = utc_now()
+                    worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+                    reduced = reduce_execution_dispatch_terminal_failure(
+                        config,
+                        state,
+                        worker,
+                        task_map,
+                        reason=worker["last_error"],
+                        failure_kind="generic_exit",
+                        queue_events_by_id=queued_events_by_id,
+                        now=now,
+                    )
+                    if reduced.get("reassigned_to"):
+                        worker["status"] = "reassigned"
+                        worker["reassigned_to"] = reduced["reassigned_to"]
+                        finalize_queue_event_record(config, state, worker, "completed")
+                        changed = True
+                        continue
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_failed",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": worker["last_error"],
+                            "worker_run_id": worker["run_id"],
+                            "pr_url": worker.get("pr_url"),
+                            "session_url": worker.get("session_url"),
+                        },
+                    )
+                    finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
             changed = True
     changed = cleanup_inactive_worker_worktrees(config, state) or changed
     record_worker_runtime_measurement(
@@ -8190,6 +9055,9 @@ def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -
         "lease_expires_at",
         "lease_released_at",
         "last_wait_reason",
+        "execution_outcome",
+        "retry_not_before",
+        "triage_required",
     ):
         record.pop(key, None)
 
@@ -8212,11 +9080,23 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         task_map = task_index_from_status(config, load_status(config))
     except KeyError:
         task_map = {}
+    changed = prune_execution_dispatch_guard_records(config, state, task_map=task_map, now=now) or changed
+    changed = prune_task_failure_streak_records(config, state, task_map, now=now) or changed
+    try:
+        queued_events = load_event_queue(config)
+    except KeyError:
+        queued_events = []
+    queued_events_by_id = {
+        str(event.get("event_id")): event
+        for event in queued_events
+        if event.get("event_id")
+    }
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
         if worker.get("status") not in active_statuses:
             continue
+        was_stalled = worker.get("status") == "stalled"
         marker_changed = update_worker_runtime_markers(worker)
         if marker_changed:
             counts["marker_updates"] += 1
@@ -8265,35 +9145,104 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             changed = True
             continue
 
-        task_status = str(task_map.get(str(worker.get("task_id") or ""), {}).get("status") or "").lower()
-        terminal_statuses = {
-            str(value).lower()
-            for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
-        }
-        if runner_succeeded and task_status in terminal_statuses:
-            worker["status"] = "completed"
-            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
-            clear_task_failure_streak(state, worker=worker)
-            finalize_queue_event_record(config, state, worker, "completed")
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_completed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": "Worker exited successfully during supervisor boot reconciliation.",
-                    "worker_run_id": run_id,
-                    "pr_url": worker.get("pr_url"),
-                    "session_url": worker.get("session_url"),
-                },
-            )
-            changed = True
-            continue
-
         if runner_succeeded:
+            successful_outcome = reconcile_successful_execution_worker_outcome(
+                config,
+                state,
+                worker,
+                task_map,
+                queue_events_by_id=queued_events_by_id,
+                now=now,
+            )
+            if successful_outcome.get("resolved"):
+                worker["status"] = "completed"
+                worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+                worker["execution_outcome"] = "resolved"
+                clear_task_failure_streak(state, worker=worker)
+                finalize_queue_event_record(config, state, worker, "completed")
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_completed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": "Worker exited successfully after resolving its execution dispatch during supervisor boot reconciliation.",
+                        "worker_run_id": run_id,
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                    },
+                )
+                changed = True
+                continue
+            if successful_outcome.get("outcome") != "not_applicable":
+                dispatch_guard = successful_outcome.get("guard") or {}
+                failure_count = record_task_failure_streak(
+                    state,
+                    worker,
+                    SUCCESSFUL_WORKER_INCOMPLETE_REASON,
+                    failure_kind=str(successful_outcome.get("outcome") or "incomplete"),
+                )
+                generic_threshold = max(
+                    1,
+                    int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)),
+                )
+                reassigned_to = None
+                if failure_count >= generic_threshold:
+                    reassigned_to = maybe_reassign_task_after_worker_failure(
+                        config,
+                        state,
+                        worker,
+                        SUCCESSFUL_WORKER_INCOMPLETE_REASON,
+                        terminal=True,
+                        force=True,
+                        failure_count=failure_count,
+                    )
+                if reassigned_to:
+                    worker["status"] = "reassigned"
+                    worker["reassigned_to"] = reassigned_to
+                    worker["last_error"] = SUCCESSFUL_WORKER_INCOMPLETE_REASON
+                    worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+                    finalize_queue_event_record(config, state, worker, "completed")
+                    changed = True
+                    continue
+                reason = SUCCESSFUL_WORKER_INCOMPLETE_REASON
+                worker["status"] = "failed"
+                worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+                worker["last_error"] = reason
+                worker["execution_outcome"] = successful_outcome.get("outcome")
+                worker["next_retry_at"] = dispatch_guard.get("retry_not_before")
+                worker["triage_required"] = dispatch_guard.get("triage_required", False)
+                finalize_queue_event_record(config, state, worker, "failed", reason)
+                if expired_lease:
+                    counts["expired_lease_workers_failed"] += 1
+                else:
+                    counts["missing_process_workers_failed"] += 1
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_incomplete",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": reason,
+                        "worker_run_id": run_id,
+                        "execution_outcome": worker.get("execution_outcome"),
+                        "retry_not_before": worker.get("next_retry_at"),
+                    },
+                )
+                changed = True
+                continue
             reason = GENERIC_WORKER_EXIT_REASON
 
         detected_reason = None if runner_succeeded else detect_worker_failure(worker)
+        detected_failure_kind = ""
+        detected_failure_count: int | None = None
+        guard_reason = (
+            LEASE_EXPIRED_OUTCOME_REASON
+            if expired_lease
+            else STALL_TERMINAL_OUTCOME_REASON
+            if was_stalled
+            else reason
+        )
         if detected_reason:
             failure = classify_worker_failure(config, worker, detected_reason)
             failure_summary = summarize_failure_reason(
@@ -8306,6 +9255,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 reason=detected_reason,
                 failure_kind=str(failure.get("kind") or ""),
             )
+            worker["last_error_raw_ref"] = raw_ref
             failure_count = record_task_failure_streak(
                 state,
                 worker,
@@ -8313,6 +9263,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 failure_kind=str(failure.get("kind") or ""),
             )
             failure_kind = str(failure.get("kind") or "")
+            detected_failure_count = failure_count
+            detected_failure_kind = failure_kind
             if should_pause_dispatch_for_failure_kind(failure_kind):
                 mark_provider_dispatch_paused(
                     config,
@@ -8349,10 +9301,51 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     changed = True
                     continue
             reason = failure_summary.get("summary") or detected_reason
+            guard_reason = reason
             worker["last_error_raw_ref"] = raw_ref
+        elif not runner_succeeded and not expired_lease and not was_stalled:
+            # A dead runner with no recognized provider failure is the same
+            # generic terminal outcome whether observed during boot or poll.
+            guard_reason = GENERIC_WORKER_EXIT_REASON
+        reduced = reduce_execution_dispatch_terminal_failure(
+            config,
+            state,
+            worker,
+            task_map,
+            reason=guard_reason,
+            failure_kind=detected_failure_kind
+            or (
+                "lease_expired"
+                if expired_lease
+                else "stalled"
+                if was_stalled
+                else "generic_exit"
+            ),
+            queue_events_by_id=queued_events_by_id,
+            now=now,
+            failure_count=detected_failure_count,
+            allow_reassignment=not is_terminal_quota_failure_kind(detected_failure_kind),
+        )
+        dispatch_guard = reduced.get("guard") or {}
+        if reduced.get("reassigned_to"):
+            worker["status"] = "reassigned"
+            worker["reassigned_to"] = reduced["reassigned_to"]
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = reason
+            finalize_queue_event_record(config, state, worker, "completed")
+            if expired_lease:
+                counts["expired_lease_workers_failed"] += 1
+            else:
+                counts["missing_process_workers_failed"] += 1
+            changed = True
+            continue
         worker["status"] = "failed"
         worker["last_event_at"] = utc_now()
         worker["last_error"] = reason
+        if dispatch_guard:
+            worker["execution_outcome"] = dispatch_guard.get("last_outcome")
+            worker["next_retry_at"] = dispatch_guard.get("retry_not_before")
+            worker["triage_required"] = dispatch_guard.get("triage_required", False)
         finalize_queue_event_record(config, state, worker, "failed", reason)
         if expired_lease:
             counts["expired_lease_workers_failed"] += 1
@@ -8371,10 +9364,6 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         changed = True
 
     queue_records = state.setdefault("queue", {}).setdefault("events", {})
-    try:
-        queued_events = load_event_queue(config)
-    except KeyError:
-        queued_events = []
     for event in queued_events:
         event_id = str(event.get("event_id") or "")
         if not event_id:
@@ -9331,6 +10320,12 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
     record["lease_released_at"] = record["processed_at"]
     if worker.get("run_id"):
         record["lease_owner"] = worker.get("run_id")
+    if worker.get("execution_outcome"):
+        record["execution_outcome"] = worker.get("execution_outcome")
+    if worker.get("next_retry_at"):
+        record["retry_not_before"] = worker.get("next_retry_at")
+    if worker.get("triage_required") is not None:
+        record["triage_required"] = bool(worker.get("triage_required"))
     if error:
         record["error"] = error
 
@@ -9628,6 +10623,588 @@ def worker_logical_dispatch_agent_id(config: dict[str, Any], worker: dict[str, A
     return normalize_agent_id(str(agent.get("dispatch_slot_for") or agent_id))
 
 
+def execution_dispatch_guard_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = ready_dispatch_settings(config).get("execution_outcome_guard", {}) or {}
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    settings.setdefault("enabled", True)
+    settings.setdefault("retry_delays_seconds", list(DEFAULT_EXECUTION_DISPATCH_RETRY_DELAYS_SECONDS))
+    settings.setdefault(
+        "terminal_retry_delays_seconds",
+        list(DEFAULT_EXECUTION_DISPATCH_TERMINAL_RETRY_DELAYS_SECONDS),
+    )
+    settings.setdefault("triage_after_attempts", int(worker_reassignment_settings(config).get("after_attempts", 2)))
+    settings.setdefault("retention_seconds", 86400)
+    return settings
+
+
+def _execution_dispatch_delay_values(raw: Any, defaults: tuple[int, ...]) -> list[int]:
+    values = raw if isinstance(raw, list) else list(defaults)
+    delays: list[int] = []
+    for value in values:
+        try:
+            delays.append(max(1, int(value)))
+        except (TypeError, ValueError):
+            continue
+    return delays or list(defaults)
+
+
+def _execution_dispatch_guard_bucket(state: dict[str, Any]) -> dict[str, Any]:
+    bucket = state.setdefault("execution_dispatch_guardrails", {})
+    bucket.setdefault("schema_version", EXECUTION_DISPATCH_GUARD_SCHEMA_VERSION)
+    bucket.setdefault("records", {})
+    if not isinstance(bucket.get("history"), list):
+        bucket["history"] = []
+    return bucket
+
+
+def _execution_dispatch_guard_records(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return _execution_dispatch_guard_bucket(state).setdefault("records", {})
+
+
+def _archive_execution_dispatch_guard_record(
+    state: dict[str, Any],
+    record: dict[str, Any],
+    *,
+    disposition: str,
+) -> None:
+    history = _execution_dispatch_guard_bucket(state).setdefault("history", [])
+    history.append({**record, "archived_at": utc_now(), "archive_disposition": disposition})
+    del history[:-200]
+
+
+def execution_dispatch_guard_key(
+    *,
+    task_id: str,
+    logical_agent_id: str,
+    reason: str,
+    event_key: str,
+) -> str:
+    digest = hashlib.sha256(event_key.encode("utf-8")).hexdigest()[:24]
+    return f"{task_id}|{logical_agent_id}|{reason}|{digest}"
+
+
+def prune_execution_dispatch_guard_records(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_map: dict[str, dict[str, Any]] | None = None,
+    now: datetime | None = None,
+) -> bool:
+    records = _execution_dispatch_guard_records(state)
+    if not records:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    retention_seconds = max(60, int(execution_dispatch_guard_settings(config).get("retention_seconds", 86400)))
+    changed = False
+    for key, record in list(records.items()):
+        if not isinstance(record, dict):
+            records.pop(key, None)
+            changed = True
+            continue
+        task_id = str(record.get("task_id") or "")
+        if task_map is not None and task_id not in task_map:
+            clear_task_failure_streaks_for_task(state, task_id)
+            _archive_execution_dispatch_guard_record(state, record, disposition="task_missing")
+            records.pop(key, None)
+            changed = True
+            continue
+        if task_map is not None:
+            logical_agent_id = normalize_agent_id(str(record.get("logical_agent_id") or ""))
+            current_event = current_execution_dispatch_event_for_target(
+                config,
+                task_map[task_id],
+                task_map,
+                target_agent=display_name_for(config, logical_agent_id),
+            )
+            if current_event is None or str(current_event.get("key") or "") != str(record.get("event_key") or ""):
+                clear_task_failure_streak(
+                    state,
+                    task_id=task_id,
+                    provider=logical_agent_id,
+                )
+                _archive_execution_dispatch_guard_record(
+                    state,
+                    record,
+                    disposition="canonical_advanced" if current_event is not None else "lane_resolved",
+                )
+                records.pop(key, None)
+                changed = True
+                continue
+        if record.get("triage_required"):
+            # A triaged exact signature is durable until canonical task state
+            # advances, responsibility moves, or policy explicitly clears it.
+            continue
+        last_at = _parse_iso_utc(str(record.get("last_at") or record.get("first_at") or ""))
+        if last_at is not None and (now_dt - last_at).total_seconds() > retention_seconds:
+            logical_agent_id = normalize_agent_id(str(record.get("logical_agent_id") or ""))
+            clear_task_failure_streaks_for_dispatch_signature(
+                state,
+                task_id=task_id,
+                logical_agent_id=logical_agent_id,
+                dispatch_task_signature=record.get("signature"),
+            )
+            _archive_execution_dispatch_guard_record(state, record, disposition="retention_expired")
+            records.pop(key, None)
+            changed = True
+    return changed
+
+
+def clear_execution_dispatch_guard_records_for_task(
+    state: dict[str, Any],
+    task_id: str | None,
+    *,
+    logical_agent_id: str | None = None,
+    disposition: str = "cleared",
+) -> bool:
+    task_value = str(task_id or "").strip()
+    logical_value = normalize_agent_id(logical_agent_id or "")
+    if not task_value:
+        return False
+    records = _execution_dispatch_guard_records(state)
+    changed = False
+    for key, record in list(records.items()):
+        if not isinstance(record, dict) or str(record.get("task_id") or "") != task_value:
+            continue
+        if logical_value and normalize_agent_id(str(record.get("logical_agent_id") or "")) != logical_value:
+            continue
+        _archive_execution_dispatch_guard_record(state, record, disposition=disposition)
+        records.pop(key, None)
+        changed = True
+    return changed
+
+
+def record_execution_dispatch_guard(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    logical_agent_id: str,
+    event: dict[str, Any],
+    outcome: str,
+    failure_kind: str,
+    worker_run_id: str | None,
+    queue_event_id: str | None,
+    origin_reason: str | None = None,
+    terminal: bool = False,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    settings = execution_dispatch_guard_settings(config)
+    if not settings.get("enabled", True):
+        return None
+    task_value = str(task_id or "").strip()
+    logical_value = normalize_agent_id(logical_agent_id)
+    reason = str(event.get("reason") or "").strip()
+    event_key = str(event.get("key") or event.get("event_key") or "").strip()
+    if not task_value or not logical_value or not reason or not event_key:
+        return None
+    now_dt = now or datetime.now(timezone.utc)
+    prune_execution_dispatch_guard_records(config, state, now=now_dt)
+    records = _execution_dispatch_guard_records(state)
+    key = execution_dispatch_guard_key(
+        task_id=task_value,
+        logical_agent_id=logical_value,
+        reason=reason,
+        event_key=event_key,
+    )
+    for stale_key, stale_record in list(records.items()):
+        if not isinstance(stale_record, dict):
+            continue
+        if str(stale_record.get("task_id") or "") != task_value:
+            continue
+        if normalize_agent_id(str(stale_record.get("logical_agent_id") or "")) != logical_value:
+            continue
+        if str(stale_record.get("event_key") or "") != event_key:
+            clear_task_failure_streak(state, task_id=task_value, provider=logical_value)
+            _archive_execution_dispatch_guard_record(
+                state,
+                stale_record,
+                disposition="canonical_advanced",
+            )
+            records.pop(stale_key, None)
+    existing = dict(records.get(key) or {})
+    attempt_count = int(existing.get("attempt_count", 0)) + 1
+    lane_attempt_count = attempt_count
+    raw_delays = (
+        settings.get("terminal_retry_delays_seconds")
+        if terminal
+        else settings.get("retry_delays_seconds")
+    )
+    default_delays = (
+        DEFAULT_EXECUTION_DISPATCH_TERMINAL_RETRY_DELAYS_SECONDS
+        if terminal
+        else DEFAULT_EXECUTION_DISPATCH_RETRY_DELAYS_SECONDS
+    )
+    delays = _execution_dispatch_delay_values(raw_delays, default_delays)
+    delay_seconds = delays[min(lane_attempt_count - 1, len(delays) - 1)]
+    retry_not_before = _isoformat_utc(now_dt + timedelta(seconds=delay_seconds))
+    triage_after = max(1, int(settings.get("triage_after_attempts", 2)))
+    record = {
+        **existing,
+        "task_id": task_value,
+        "logical_agent_id": logical_value,
+        "reason": reason,
+        "origin_reason": str(origin_reason or reason),
+        "event_key": event_key,
+        "signature": event.get("signature"),
+        "attempt_count": attempt_count,
+        "lane_attempt_count": lane_attempt_count,
+        "last_outcome": outcome,
+        "last_failure_kind": failure_kind,
+        "first_at": existing.get("first_at") or _isoformat_utc(now_dt),
+        "last_at": _isoformat_utc(now_dt),
+        "retry_not_before": retry_not_before,
+        "last_worker_run_id": worker_run_id,
+        "last_queue_event_id": queue_event_id,
+        "triage_required": lane_attempt_count >= triage_after,
+    }
+    records[key] = record
+    return record
+
+
+def current_execution_dispatch_guard(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    logical_agent_id: str,
+    event: dict[str, Any],
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    if not execution_dispatch_guard_settings(config).get("enabled", True):
+        return None
+    event_key = str(event.get("key") or event.get("event_key") or "").strip()
+    reason = str(event.get("reason") or "").strip()
+    logical_value = normalize_agent_id(logical_agent_id)
+    if not task_id or not logical_value or not event_key or not reason:
+        return None
+    key = execution_dispatch_guard_key(
+        task_id=task_id,
+        logical_agent_id=logical_value,
+        reason=reason,
+        event_key=event_key,
+    )
+    record = _execution_dispatch_guard_records(state).get(key)
+    if not isinstance(record, dict):
+        return None
+    if record.get("triage_required"):
+        return record
+    retry_not_before = _parse_iso_utc(str(record.get("retry_not_before") or ""))
+    if retry_not_before is not None and retry_not_before > (now or datetime.now(timezone.utc)):
+        return record
+    return None
+
+
+def current_execution_dispatch_event_for_target(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    target_agent: str,
+) -> dict[str, Any] | None:
+    settings = ready_dispatch_settings(config)
+    schema = config.get("schema", {}) or {}
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    task_status = str(task.get("status") or "").lower()
+    owner = str(task.get(owner_field) or "")
+    reviewer = str(task.get(reviewer_field) or "")
+    review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
+    finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    dependency_done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+    resolver = task_resolver_for_config(config, task_map)
+    reason = ""
+    if task_status in review_statuses and reviewer == target_agent:
+        reason = REASON_REVIEW_READY
+    elif task_status in finalize_statuses and owner == target_agent:
+        reason = REASON_OWNED_FINALIZE
+    elif (
+        task_status == "in_progress"
+        and owner == target_agent
+        and dependencies_satisfied(task, resolver, dependency_done_statuses)
+    ):
+        reason = REASON_OWNED_IN_PROGRESS
+    elif (
+        task_status == "todo"
+        and owner == target_agent
+        and dependencies_satisfied(task, resolver, dependency_done_statuses)
+    ):
+        reason = REASON_OWNED_READY
+    if not reason:
+        return None
+    return build_dispatch_event(task, target_agent, reason, resolver)
+
+
+def execution_dispatch_reason_is_continuation(origin_reason: str, current_reason: str) -> bool:
+    origin = str(origin_reason or "").strip()
+    current = str(current_reason or "").strip()
+    if not origin or not current:
+        return False
+    if origin == current:
+        return True
+    return {origin, current} <= {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}
+
+
+def _worker_original_dispatch_event_key(
+    worker: dict[str, Any],
+    queue_events_by_id: dict[str, dict[str, Any]] | None,
+) -> str:
+    snapshot = worker.get("request_snapshot", {}) or {}
+    metadata = snapshot.get("metadata", {}) if isinstance(snapshot, dict) else {}
+    event_key = str((metadata or {}).get("dispatch_event_key") or "").strip()
+    if event_key:
+        return event_key
+    queue_event_id = str(worker.get("queue_event_id") or "")
+    queued_event = (queue_events_by_id or {}).get(queue_event_id, {})
+    return str(queued_event.get("event_key") or "").strip()
+
+
+def _worker_original_dispatch_reason(
+    worker: dict[str, Any],
+    queue_events_by_id: dict[str, dict[str, Any]] | None,
+) -> str:
+    snapshot = worker.get("request_snapshot", {}) or {}
+    reason = str(snapshot.get("reason") or "").strip() if isinstance(snapshot, dict) else ""
+    if reason:
+        return reason
+    queue_event_id = str(worker.get("queue_event_id") or "")
+    queued_event = (queue_events_by_id or {}).get(queue_event_id, {})
+    return str(queued_event.get("reason") or "").strip()
+
+
+def reconcile_successful_execution_worker_outcome(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    queue_events_by_id: dict[str, dict[str, Any]] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    task_id = str(worker.get("task_id") or "").strip()
+    if not task_id:
+        return {"outcome": "not_applicable", "resolved": False, "guard": None}
+    logical_agent_id = worker_logical_dispatch_agent_id(config, worker)
+    snapshot = worker.get("request_snapshot", {}) or {}
+    metadata = snapshot.get("metadata", {}) if isinstance(snapshot, dict) else {}
+    target_agent = str(
+        (metadata or {}).get("dispatch_target_display_name")
+        or display_name_for(config, logical_agent_id)
+    )
+    task = task_map.get(task_id)
+    current_event = (
+        current_execution_dispatch_event_for_target(
+            config,
+            task,
+            task_map,
+            target_agent=target_agent,
+        )
+        if task is not None
+        else None
+    )
+    if current_event is None:
+        clear_execution_dispatch_guard_records_for_task(state, task_id, disposition="lane_resolved")
+        return {
+            "outcome": "resolved",
+            "resolved": True,
+            "guard": None,
+            "logical_agent_id": logical_agent_id,
+        }
+    origin_reason = _worker_original_dispatch_reason(worker, queue_events_by_id)
+    current_reason = str(current_event.get("reason") or "")
+    if is_execution_dispatch_reason(origin_reason) and not execution_dispatch_reason_is_continuation(
+        origin_reason,
+        current_reason,
+    ):
+        clear_execution_dispatch_guard_records_for_task(state, task_id, disposition="lane_transitioned")
+        clear_task_failure_streak(state, worker=worker)
+        return {
+            "outcome": "resolved",
+            "resolved": True,
+            "guard": None,
+            "logical_agent_id": logical_agent_id,
+            "origin_reason": origin_reason,
+            "current_event": current_event,
+        }
+    original_event_key = _worker_original_dispatch_event_key(worker, queue_events_by_id)
+    current_event_key = str(current_event.get("key") or "")
+    outcome = "incomplete_noop" if original_event_key and original_event_key == current_event_key else "incomplete_progress"
+    if outcome == "incomplete_progress":
+        clear_successful_worker_incomplete_streak(
+            state,
+            task_id=task_id,
+            logical_agent_id=logical_agent_id,
+        )
+    origin_reason = origin_reason or current_reason
+    guard = record_execution_dispatch_guard(
+        config,
+        state,
+        task_id=task_id,
+        logical_agent_id=logical_agent_id,
+        event=current_event,
+        outcome=outcome,
+        failure_kind="process_success_no_task_transition",
+        worker_run_id=str(worker.get("run_id") or "") or None,
+        queue_event_id=str(worker.get("queue_event_id") or "") or None,
+        origin_reason=origin_reason,
+        terminal=False,
+        now=now,
+    )
+    return {
+        "outcome": outcome,
+        "resolved": False,
+        "guard": guard,
+        "logical_agent_id": logical_agent_id,
+        "current_event": current_event,
+    }
+
+
+def record_execution_dispatch_failure_guard(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    failure_kind: str,
+    queue_events_by_id: dict[str, dict[str, Any]] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    task_id = str(worker.get("task_id") or "").strip()
+    task = task_map.get(task_id)
+    if not task_id or task is None:
+        return None
+    logical_agent_id = worker_logical_dispatch_agent_id(config, worker)
+    snapshot = worker.get("request_snapshot", {}) or {}
+    metadata = snapshot.get("metadata", {}) if isinstance(snapshot, dict) else {}
+    target_agent = str(
+        (metadata or {}).get("dispatch_target_display_name")
+        or display_name_for(config, logical_agent_id)
+    )
+    current_event = current_execution_dispatch_event_for_target(
+        config,
+        task,
+        task_map,
+        target_agent=target_agent,
+    )
+    if current_event is None:
+        return None
+    original_event_key = _worker_original_dispatch_event_key(worker, queue_events_by_id)
+    current_event_key = str(current_event.get("key") or "")
+    if original_event_key and original_event_key != current_event_key:
+        _archive_execution_dispatch_guard_record(
+            state,
+            {
+                "task_id": task_id,
+                "logical_agent_id": logical_agent_id,
+                "reason": str(snapshot.get("reason") or ""),
+                "event_key": original_event_key,
+                "signature": (metadata or {}).get("dispatch_task_signature"),
+                "last_outcome": "terminal_failure",
+                "last_failure_kind": failure_kind,
+                "last_worker_run_id": worker.get("run_id"),
+                "last_queue_event_id": worker.get("queue_event_id"),
+            },
+            disposition="canonical_advanced_during_worker",
+        )
+        clear_task_failure_streak(state, task_id=task_id, provider=logical_agent_id)
+        return None
+    return record_execution_dispatch_guard(
+        config,
+        state,
+        task_id=task_id,
+        logical_agent_id=logical_agent_id,
+        event=current_event,
+        outcome="terminal_failure",
+        failure_kind=failure_kind,
+        worker_run_id=str(worker.get("run_id") or "") or None,
+        queue_event_id=str(worker.get("queue_event_id") or "") or None,
+        origin_reason=str(snapshot.get("reason") or current_event.get("reason") or ""),
+        terminal=True,
+        now=now,
+    )
+
+
+def reduce_execution_dispatch_terminal_failure(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    reason: str,
+    failure_kind: str,
+    queue_events_by_id: dict[str, dict[str, Any]] | None = None,
+    now: datetime | None = None,
+    failure_count: int | None = None,
+    allow_reassignment: bool = True,
+) -> dict[str, Any]:
+    """Apply one boot/poll terminal failure decision for execution lanes.
+
+    Provider-specific classification, pause, retry, and evidence collection
+    stay with their callers.  Signature admission, streak accounting,
+    backoff, triage, and reassignment are deliberately centralized here so a
+    restart cannot produce a different fleet decision from a normal poll.
+    """
+
+    task_id = str(worker.get("task_id") or "").strip()
+    if not task_id or not is_execution_dispatch_reason(
+        str((worker.get("request_snapshot", {}) or {}).get("reason") or "")
+    ):
+        return {"applicable": False, "guard": None, "failure_count": failure_count or 0}
+    guard = record_execution_dispatch_failure_guard(
+        config,
+        state,
+        worker,
+        task_map,
+        failure_kind=failure_kind,
+        queue_events_by_id=queue_events_by_id,
+        now=now,
+    )
+    if guard is None:
+        # The exact dispatched signature is no longer canonical. Its terminal
+        # audit is retained by record_execution_dispatch_failure_guard, but it
+        # must not accumulate a streak or reorder the new signature.
+        clear_task_failure_streak(
+            state,
+            task_id=task_id,
+            provider=worker_logical_dispatch_agent_id(config, worker),
+        )
+        return {
+            "applicable": True,
+            "resolved_by_canonical_progress": True,
+            "guard": None,
+            "failure_count": 0,
+            "reassigned_to": None,
+        }
+    if failure_count is None:
+        failure_count = record_task_failure_streak(
+            state,
+            worker,
+            reason,
+            failure_kind=failure_kind,
+        )
+    reassigned_to = None
+    threshold = max(1, int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)))
+    if allow_reassignment and failure_count >= threshold:
+        reassigned_to = maybe_reassign_task_after_worker_failure(
+            config,
+            state,
+            worker,
+            reason,
+            terminal=True,
+            force=is_terminal_quota_failure_kind(failure_kind),
+            failure_count=failure_count,
+        )
+    worker["execution_outcome"] = guard.get("last_outcome")
+    worker["next_retry_at"] = guard.get("retry_not_before")
+    worker["triage_required"] = guard.get("triage_required", False)
+    return {
+        "applicable": True,
+        "resolved_by_canonical_progress": False,
+        "guard": guard,
+        "failure_count": failure_count,
+        "reassigned_to": reassigned_to,
+    }
+
+
 def higher_priority_ready_task_exists(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -9855,6 +11432,7 @@ def build_dispatch_event(
     signature = ready_dispatch_signature(task, reason, task_lookup)
     return {
         "key": f"dispatcher:{target_agent}:{task.get('id')}:{reason}:{signature}",
+        "signature": signature,
         "task_id": task.get("id"),
         "target_agent": target_agent,
         "reason": reason,
@@ -9948,7 +11526,7 @@ def dispatch_ready_tasks(
     failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
     disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
 
-    changed = False
+    changed = prune_execution_dispatch_guard_records(config, state, task_map=task_map)
     normalized = False
     for task in tasks:
         task_id = str(task.get(task_id_field) or "")
@@ -10137,6 +11715,15 @@ def dispatch_ready_tasks(
 
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if event["key"] in pending_event_keys:
+                continue
+            logical_target_id = worker_logical_dispatch_agent_id(config, {"agent_id": agent_id})
+            if current_execution_dispatch_guard(
+                config,
+                state,
+                task_id=task_id,
+                logical_agent_id=logical_target_id,
+                event=event,
+            ):
                 continue
             candidates.append((priority, index, task, reason))
 

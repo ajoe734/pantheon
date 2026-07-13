@@ -23,8 +23,6 @@ DISPATCH_REASON_PRIORITIES = {
 
 DISPATCH_STATUS_ACTIONS = {
     REASON_OWNED_READY: ("start", {"todo"}),
-    REASON_OWNED_FINALIZE: ("note", {"review_approved"}),
-    REASON_OWNED_IN_PROGRESS: ("progress", {"in_progress"}),
 }
 
 DEFAULT_REVIEW_STATUSES = ["review"]
