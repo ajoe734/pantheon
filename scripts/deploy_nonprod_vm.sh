@@ -955,6 +955,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    # Prove the Trade Journey action ledger is genuinely durable on the dev
+    # PostgreSQL instance and that clock-drift diagnostics survive the built
+    # runtime image. This intentionally restarts operator-bff and verifies
+    # receipt replay before the workflow's public smokes run.
+    PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     ;;
 
   bff)
