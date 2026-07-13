@@ -136,6 +136,9 @@ def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
     assert body["source_search_refresh"]["ingest_run_id"] == run_id
     assert body["run"]["events"][-1]["event_type"] == "SearchIndexRefreshObserved"
     assert (data_dir / "ingest_schedule.jsonl").exists()
+    source_record = test_client.get("/api/source-ingest/source-records/src-paper-1")
+    assert source_record.status_code == 200
+    assert source_record.json()["source_record"]["metadata"]["source_ingest_run_id"] == run_id
 
     reloaded = importlib.reload(module)
     replay_client = TestClient(reloaded.app)
