@@ -786,14 +786,18 @@ def test_workspace_proposal_preserves_generator_metadata_on_create_and_get():
 
     assert generator["status"] == "completed"
     assert generator["evidenceRefs"] == ["ev-wb-v4-001"]
-    assert generator["dataFreshness"]["agora.candidate.members"]["dataCutoff"] == "2026-06-28T23:00:00Z"
+    # agora.candidate.members is one of the nine known-unwired source
+    # families -- the BFF has no local query path for it, so the caller's
+    # claimed status/dataCutoff must not survive into the resolved freshness.
+    assert generator["dataFreshness"]["agora.candidate.members"]["wired"] is False
+    assert "dataCutoff" not in generator["dataFreshness"]["agora.candidate.members"]
     assert proposal["personalizationApplied"]["items"] == [{"key": "density", "value": "compact"}]
     assert any("Unsafe personalization hints ignored" in warning for warning in proposal["warnings"])
     candidate_source = next(
         source for source in proposal["dataAvailability"]["sources"]
         if source["dataSource"] == "agora.candidate.members"
     )
-    assert candidate_source["status"] == "full"
+    assert candidate_source["status"] == "missing"
     assert "ev-wb-v4-001" in candidate_source["reason"]
 
     get_resp = client.get(
@@ -814,23 +818,157 @@ def test_workspace_proposal_derives_widget_availability_from_scoped_sources():
         {
             "strategyVersion": "V4",
             "evidenceRefs": ["ev-wb-001"],
-            "dataFreshness": {
-                "agora.candidate.members": {"wired": True, "rowCount": 3},
-                "winner_branch.score_breakdown": {"status": "degraded", "wired": True},
-                "winner_branch.related_branch_flow": {"wired": False},
-            },
         },
     ).json()["data"]
 
     widgets = {widget["id"]: widget for view in proposal["views"] for widget in view["widgets"]}
-    assert widgets["overview_candidate_funnel"]["dataAvailability"] == "full"
-    assert widgets["overview_strategy_health"]["dataAvailability"] == "partial"
-    assert widgets["migration_branch_network"]["dataAvailability"] == "missing"
+    # agora.trading.events is real BFF-owned truth: strat-wb has a real decision event.
     assert widgets["overview_decision_queue"]["dataAvailability"] == "full"
-    assert widgets["positions_pyramid_plan"]["dataAvailability"] == "full"
-    assert widgets["evidence_trace"]["dataAvailability"] == "full"
-    assert proposal["views"][0]["dataAvailability"] == "partial"
+    # No workshop_store is wired in this client and none of the nine
+    # unverified source families have a local query path, so both must be
+    # honestly missing rather than defaulting to "partial".
+    assert widgets["overview_candidate_funnel"]["dataAvailability"] == "missing"
+    assert widgets["positions_pyramid_plan"]["dataAvailability"] == "missing"
     _workspace_schema_validate(proposal)
+
+
+def test_workspace_proposal_forces_missing_for_unverified_known_sources_regardless_of_caller_claim():
+    """AG-UIPOL-003 review round-4 item 1: none of the nine known source
+    families the BFF has no local query path for can be forced to
+    full/partial by caller-supplied dataFreshness -- every one of them
+    always resolves to missing, regardless of what the caller claims."""
+    store = make_trading_room_store()
+    client = _client(store)
+    resp = client.post(
+        "/bff/agora/strategies/strat-forge-001/trading-room/proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
+        json={
+            "strategyVersion": "V4",
+            "dataFreshness": {
+                "agora.candidate.members": {"status": "full", "wired": True, "rowCount": 999},
+                "winner_branch.score_breakdown": {"status": "full", "wired": True, "rowCount": 999},
+                "winner_branch.branch_flow_daily": {"status": "full", "wired": True, "rowCount": 999},
+                "winner_branch.branch_profitability": {"status": "full", "wired": True, "rowCount": 999},
+                "winner_branch.identity_probability": {"status": "full", "wired": True, "rowCount": 999},
+                "winner_branch.related_branch_flow": {"status": "full", "wired": True, "rowCount": 999},
+                "winner_branch.event_lead": {"status": "full", "wired": True, "rowCount": 999},
+                "agora.positions.summary": {"status": "full", "wired": True, "rowCount": 999},
+                "agora.shadow.outcomes": {"status": "full", "wired": True, "rowCount": 999},
+            },
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    generator = resp.json()["meta"]["generator"]
+    unverified_sources = {
+        "agora.candidate.members",
+        "winner_branch.score_breakdown",
+        "winner_branch.branch_flow_daily",
+        "winner_branch.branch_profitability",
+        "winner_branch.identity_probability",
+        "winner_branch.related_branch_flow",
+        "winner_branch.event_lead",
+        "agora.positions.summary",
+        "agora.shadow.outcomes",
+    }
+    for source in unverified_sources:
+        assert generator["dataFreshness"][source]["wired"] is False, source
+        assert generator["dataFreshness"][source]["rowCount"] == 0, source
+
+    proposal = resp.json()["data"]
+    for view in proposal["views"]:
+        for widget in view["widgets"]:
+            if widget["dataSource"] in unverified_sources:
+                assert widget["dataAvailability"] == "missing", widget["id"]
+    print("✅ workspace proposal: caller-forged dataFreshness for unverified known sources is always ignored")
+
+
+def test_workspace_proposal_no_workshop_store_reports_strategy_and_evidence_missing():
+    """AG-UIPOL-003 review round-4 item 1: when no workshop_store is wired at
+    all, `agora.strategy.summary` and `agora.research.evidence_refs` must not
+    report full purely because the caller POSTed a normal request with
+    claimed evidenceRefs -- there is no local signal to verify either
+    against, so a plain POST must not return either as full."""
+    store = make_trading_room_store()
+    client = _client(store)  # no workshop_store wired
+    resp = client.post(
+        "/bff/agora/strategies/strat-no-store-001/trading-room/proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
+        json={"strategyVersion": "V4", "evidenceRefs": ["ev-claimed-001", "ev-claimed-002"]},
+    )
+    assert resp.status_code == 201, resp.text
+    generator = resp.json()["meta"]["generator"]
+    assert generator["dataFreshness"]["agora.strategy.summary"]["wired"] is False
+    assert generator["dataFreshness"]["agora.strategy.summary"]["rowCount"] == 0
+    assert generator["dataFreshness"]["agora.research.evidence_refs"]["wired"] is False
+    assert generator["dataFreshness"]["agora.research.evidence_refs"]["rowCount"] == 0
+
+    proposal = resp.json()["data"]
+    for source in ("agora.strategy.summary", "agora.research.evidence_refs"):
+        widget = next(
+            widget
+            for view in proposal["views"]
+            for widget in view["widgets"]
+            if widget["dataSource"] == source
+        )
+        assert widget["dataAvailability"] != "full", source
+    print("✅ workspace proposal: no workshop_store wired never reports full from a plain POST")
+
+
+def test_workspace_proposal_strategy_summary_finds_ready_session_behind_non_ready_one():
+    """AG-UIPOL-003 review round-4 item 2: an older non-ready workshop
+    session for this strategy_id must not hide a newer ready session for the
+    same strategy_id. The previous implementation stopped at the first
+    matching session found and never checked any later match."""
+    workshop_store = MemoryWorkshopStore()
+    workshop_store.create_session({
+        "workshop_id": "ws-old-not-ready-001",
+        "tenant_id": "tenant-001",
+        "user_id": "user-001",
+        "strategy_id": "strat-dup-001",
+        "status": "open",
+        "created_at": _seq_timestamp(0),
+    })
+    workshop_store.create_session({
+        "workshop_id": "ws-new-ready-001",
+        "tenant_id": "tenant-001",
+        "user_id": "user-001",
+        "strategy_id": "strat-dup-001",
+        "active_strategy_spec_registry_id": "strat-dup-001",
+        "selected_version_id": "wv-new-ready-001",
+        "status": "open",
+        "created_at": _seq_timestamp(100),
+    })
+    workshop_store.create_readiness_assessment({
+        "assessment_id": "ready-ws-new-ready-001",
+        "workshop_id": "ws-new-ready-001",
+        "strategy_id": "strat-dup-001",
+        "workshop_version_id": "wv-new-ready-001",
+        "strategy_spec_registry_id": "strat-dup-001",
+        "assessment_version": 1,
+        "highest_ready_gate": "trading_room",
+        "gates": [
+            {"gate": "preliminary_research", "state": "ready", "requirements": []},
+            {"gate": "full_validation", "state": "ready", "requirements": []},
+            {"gate": "trading_room", "state": "ready", "requirements": []},
+        ],
+        "evidence_refs": [
+            {"ref_type": "evidence_bundle", "ref_id": "ev-ws-new-ready-001", "summary": "Newer ready proof"},
+        ],
+        "assessed_at": "2026-06-22T09:59:00Z",
+    })
+
+    store = make_trading_room_store()
+    client = _client(store, workshop_store=workshop_store)
+    resp = client.post(
+        "/bff/agora/strategies/strat-dup-001/trading-room/proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
+        json={"strategyVersion": "V4", "evidenceRefs": ["ev-ws-new-ready-001"]},
+    )
+    assert resp.status_code == 201, resp.text
+    generator = resp.json()["meta"]["generator"]
+    assert generator["dataFreshness"]["agora.strategy.summary"]["rowCount"] == 1
+    assert generator["dataFreshness"]["agora.research.evidence_refs"]["rowCount"] == 1
+    print("✅ workspace proposal: a newer ready session is found even when an older non-ready session for the same strategy_id sorts first")
 
 
 def test_workspace_proposal_ignores_caller_forged_bff_derived_freshness():
