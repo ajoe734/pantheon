@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -24095,7 +24096,15 @@ async def bff_evaluate_persona_allocation_policy(
                 precondition_failed="rows",
             )
         row_snapshot_id = str(row.get("ranking_snapshot_id") or "").strip()
-        if row_snapshot_id and row_snapshot_id != ranking_snapshot_id:
+        if not row_snapshot_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking_snapshot_id is required on every allocation row",
+                f"rows[{index}].ranking_snapshot_id must identify the source ranking row.",
+                precondition_failed="ranking_snapshot_id",
+            )
+        if row_snapshot_id != ranking_snapshot_id:
             raise _bff_error(
                 422,
                 ErrorCode.VALIDATION_FAILED,
@@ -24121,11 +24130,19 @@ async def bff_evaluate_persona_allocation_policy(
 
 def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     required = ("ranking_snapshot_id", "simulation", "constraints", "rollback_target")
-    missing = [field for field in required if not payload.get(field)]
+    missing = [
+        field
+        for field in required
+        if (
+            not str(payload.get(field) or "").strip()
+            if field == "ranking_snapshot_id"
+            else not payload.get(field)
+        )
+    ]
     lines = payload.get("lines")
     if not isinstance(lines, list) or not lines:
         missing.append("lines")
-    line_fields = ("persona_id", "stage", "capital_scope", "current_weight", "target_weight", "delta", "cap_reasons", "evidence_refs")
+    line_fields = ("ranking_snapshot_id", "persona_id", "stage", "capital_scope", "current_weight", "target_weight", "delta", "cap_reasons", "evidence_refs")
     normalized_lines: List[Dict[str, Any]] = []
     if not missing:
         ranking_snapshot_id = str(payload.get("ranking_snapshot_id") or "").strip()
@@ -24136,7 +24153,15 @@ def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[s
             if absent:
                 raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid proposal line", f"lines[{index}] missing: {', '.join(absent)}")
             line_snapshot_id = str(line.get("ranking_snapshot_id") or "").strip()
-            if line_snapshot_id and line_snapshot_id != ranking_snapshot_id:
+            if not line_snapshot_id:
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "ranking_snapshot_id is required on every proposal line",
+                    f"lines[{index}].ranking_snapshot_id must identify the source allocation line.",
+                    precondition_failed="ranking_snapshot_id",
+                )
+            if line_snapshot_id != ranking_snapshot_id:
                 raise _bff_error(
                     422,
                     ErrorCode.VALIDATION_FAILED,
@@ -41896,6 +41921,20 @@ def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
     ]
 
 
+def _pm12_record_lifecycle_is_active(
+    record: Dict[str, Any],
+    *,
+    fields: tuple[str, ...],
+    active_values: Set[str],
+) -> bool:
+    declared = [
+        str(record.get(field) or "").strip().lower()
+        for field in fields
+        if record.get(field) not in (None, "")
+    ]
+    return bool(declared) and all(value in active_values for value in declared)
+
+
 def _pm12_binding_runtime_context(
     *,
     persona_id: str,
@@ -41931,14 +41970,20 @@ def _pm12_binding_runtime_context(
     active_bindings = [
         record
         for record in bindings
-        if str(record.get("status") or record.get("validity") or "").strip().lower()
-        in {"active", "ready", "bound"}
+        if _pm12_record_lifecycle_is_active(
+            record,
+            fields=("status", "validity"),
+            active_values={"active", "ready", "bound"},
+        )
     ]
     active_runtimes = [
         record
         for record in runtimes
-        if str(record.get("status") or record.get("state") or "").strip().lower()
-        in {"active", "ready", "bound", "running", "idle"}
+        if _pm12_record_lifecycle_is_active(
+            record,
+            fields=("status", "state"),
+            active_values={"active", "ready", "bound", "running", "idle"},
+        )
     ]
     declared_runtime_matches = [
         record
@@ -42126,13 +42171,27 @@ _PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
     "components",
     "metrics",
     "stage",
+    "deployment_stage",
+    "capital_mode",
     "capital_scope",
     "capital_scope_id",
     "capital_pool_id",
     "capital_sleeve_id",
     "paper_ledger_id",
     "current_weight",
+    "target_weight",
+    "current_weight_source",
+    "binding_state",
+    "binding_resolution",
+    "binding_ids",
+    "runtime_ids",
+    "strategy_ids",
+    "capital_pool_ids",
+    "sleeve_ids",
+    "artifact_ids",
+    "broker_ids",
     "eligible",
+    "exclusion_codes",
     "exclusion_reasons",
     "evidence_coverage",
     "evidence_ref_ids",
@@ -42146,6 +42205,17 @@ def _pm12_ranking_snapshot_id(
     surface: str,
     period: str,
 ) -> str:
+    set_like_fields = {
+        "binding_ids",
+        "runtime_ids",
+        "strategy_ids",
+        "capital_pool_ids",
+        "sleeve_ids",
+        "artifact_ids",
+        "broker_ids",
+        "exclusion_codes",
+        "exclusion_reasons",
+    }
     payload_items: List[Dict[str, Any]] = []
     for item in items:
         payload_item: Dict[str, Any] = {}
@@ -42162,9 +42232,30 @@ def _pm12_ranking_snapshot_id(
                     )
                     if str(value).strip()
                 )
+            elif field in set_like_fields and isinstance(item.get(field), list):
+                payload_item[field] = sorted(
+                    item.get(field) or [],
+                    key=lambda value: json.dumps(
+                        value,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    ),
+                )
             else:
                 payload_item[field] = item.get(field)
         payload_items.append(payload_item)
+    payload_items.sort(
+        key=lambda item: (
+            (
+                int(item.get("rank"))
+                if isinstance(item.get("rank"), int)
+                or str(item.get("rank") or "").isdigit()
+                else 10**9
+            ),
+            str(item.get("persona_id") or ""),
+        )
+    )
     digest = _stable_json_hash({
         "surface": surface,
         "period": period,
@@ -42210,6 +42301,20 @@ def _pm12_attach_ranking_evidence(
         for ref in public_evidence_refs
         if _pm12_evidence_ref_key(ref)
     }
+    canonical_ids_by_entity: Dict[tuple[str, str], List[str]] = {}
+    for ref in canonical_refs:
+        linked = (
+            ref.get("linked_object_summary")
+            if isinstance(ref.get("linked_object_summary"), dict)
+            else {}
+        )
+        entity_key = (
+            str(linked.get("entity_type") or "").strip().lower(),
+            str(linked.get("entity_ref") or "").strip(),
+        )
+        ref_id = _pm12_evidence_ref_key(ref)
+        if all(entity_key) and ref_id:
+            canonical_ids_by_entity.setdefault(entity_key, []).append(ref_id)
     enriched: List[Dict[str, Any]] = []
     for item in items:
         linked_entities = {
@@ -42230,19 +42335,11 @@ def _pm12_attach_ranking_evidence(
             for entity_type, entity_ref in linked_entities
             if entity_ref
         }
-        canonical_ref_ids: List[str] = []
-        for ref in canonical_refs:
-            linked = (
-                ref.get("linked_object_summary")
-                if isinstance(ref.get("linked_object_summary"), dict)
-                else {}
-            )
-            entity_type = str(linked.get("entity_type") or "").strip().lower()
-            entity_ref = str(linked.get("entity_ref") or "").strip()
-            if (entity_type, entity_ref) in linked_entities:
-                ref_id = _pm12_evidence_ref_key(ref)
-                if ref_id:
-                    canonical_ref_ids.append(ref_id)
+        canonical_ref_ids = sorted({
+            ref_id
+            for entity_key in linked_entities
+            for ref_id in canonical_ids_by_entity.get(entity_key, [])
+        })
         telemetry_refs = list(item.get("evidence_refs") or [])
         snapshot_evidence_ref_ids = sorted({
             *(_pm12_evidence_ref_key(ref) for ref in telemetry_refs),
@@ -42270,30 +42367,39 @@ def _pm12_attach_ranking_evidence(
     return enriched
 
 
-def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
+def _enrich_persona_item_with_bindings(
+    item: Dict[str, Any],
+    *,
+    bindings: Optional[List[Dict[str, Any]]] = None,
+    runtimes: Optional[List[Dict[str, Any]]] = None,
+    persona: Optional[Dict[str, Any]] = None,
+    league_entry: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     if not persona_id:
         return item
 
     enriched = dict(item)
-    try:
-        bindings = read_store.list_bindings(persona_id=persona_id) or []
-    except Exception:
-        bindings = []
-
-    try:
-        runtimes = read_store.list_runtime_bindings() or []
-    except Exception:
-        runtimes = []
-
-    try:
-        persona = read_store.get_persona(persona_id) or {}
-    except Exception:
-        persona = {}
-    try:
-        league_entry = read_store.get_persona_league_entry(persona_id) or {}
-    except Exception:
-        league_entry = {}
+    if bindings is None:
+        try:
+            bindings = read_store.list_bindings(persona_id=persona_id) or []
+        except Exception:
+            bindings = []
+    if runtimes is None:
+        try:
+            runtimes = read_store.list_runtime_bindings() or []
+        except Exception:
+            runtimes = []
+    if persona is None:
+        try:
+            persona = read_store.get_persona(persona_id) or {}
+        except Exception:
+            persona = {}
+    if league_entry is None:
+        try:
+            league_entry = read_store.get_persona_league_entry(persona_id) or {}
+        except Exception:
+            league_entry = {}
 
     raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
     binding_context_item = {
@@ -42490,7 +42596,7 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
     runtime_for_weight = runtime
     if stage_binding_mismatch:
         binding_resolution = f"{binding_resolution}_stage_mismatch"
-    identity_resolution_failed = any(
+    identity_resolution_failed = not binding or any(
         token in binding_resolution
         for token in ("ambiguous", "mismatch")
     )
@@ -42559,11 +42665,16 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
         )
         if value not in (None, "") and not isinstance(value, bool):
             try:
-                authoritative_current_weight = float(value)
-                current_weight_source = source_name
+                parsed_weight = float(value)
+                if math.isfinite(parsed_weight) and 0.0 <= parsed_weight <= 1.0:
+                    authoritative_current_weight = parsed_weight
+                    current_weight_source = source_name
+                else:
+                    current_weight_source = f"{source_name}_invalid"
                 break
             except (TypeError, ValueError):
-                pass
+                current_weight_source = f"{source_name}_invalid"
+                break
     for record in (binding_for_weight, runtime_for_weight):
         value = _persona_fleet_record_value(
             record,
@@ -42573,10 +42684,12 @@ def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
         )
         if value not in (None, "") and not isinstance(value, bool):
             try:
-                authoritative_target_weight = float(value)
+                parsed_weight = float(value)
+                if math.isfinite(parsed_weight) and 0.0 <= parsed_weight <= 1.0:
+                    authoritative_target_weight = parsed_weight
                 break
             except (TypeError, ValueError):
-                pass
+                break
     capital_projection["current_weight"] = authoritative_current_weight
     capital_projection["target_weight"] = authoritative_target_weight
     capital_projection["capital_binding"]["current_weight"] = authoritative_current_weight
@@ -42698,6 +42811,7 @@ def _pm12_quarterly_recommendation_item(
         "human_review_state": human_review_state,
         "name": item.get("name"),
         "owner": item.get("owner"),
+        "archetype": item.get("archetype"),
         "state": item.get("state"),
         "stage": item.get("stage"),
         "deployment_stage": item.get("deployment_stage"),
@@ -42712,6 +42826,7 @@ def _pm12_quarterly_recommendation_item(
         "current_weight_source": item.get("current_weight_source"),
         "binding_state": item.get("binding_state"),
         "binding_resolution": item.get("binding_resolution"),
+        "binding_ids": list(item.get("binding_ids") or []),
         "strategy_ids": list(item.get("strategy_ids") or []),
         "runtime_ids": list(item.get("runtime_ids") or []),
         "capital_pool_ids": list(item.get("capital_pool_ids") or []),
@@ -42890,6 +43005,17 @@ def _promotion_review_submission_projection(review_id: Any) -> Optional[Dict[str
         "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
         "recommendation_id": params.get("recommendation_id") or params.get("recommendationId"),
         "recommendation_action_id": params.get("recommendation_action_id") or params.get("recommendationActionId"),
+        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
+        "quarter": params.get("quarter"),
+        "persona_id": params.get("persona_id"),
+        "stage_from": params.get("stage_from"),
+        "stage_to": params.get("stage_to"),
+        "review_kind": params.get("review_kind"),
+        "source_recommendation": (
+            json.loads(json.dumps(params.get("source_recommendation")))
+            if isinstance(params.get("source_recommendation"), dict)
+            else None
+        ),
         "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}",
         "live_capital_mutation": False,
         "requires_human_gate_decision": True,
@@ -43342,6 +43468,86 @@ async def bff_management_quarterly_ranking_recommendation_submit(
     _raise_if_promotion_review_direct_mutation_requested(payload)
 
     snapshot_at = utc_now()
+    requested_ranking_snapshot_id = str(
+        payload.get("ranking_snapshot_id") or ""
+    ).strip()
+    existing_submission = _promotion_review_submission_projection(recommendation_id)
+    if existing_submission:
+        stored_ranking_snapshot_id = str(
+            existing_submission.get("ranking_snapshot_id") or ""
+        ).strip()
+        if (
+            requested_ranking_snapshot_id
+            and stored_ranking_snapshot_id
+            and requested_ranking_snapshot_id != stored_ranking_snapshot_id
+        ):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking_snapshot_id does not match the submitted recommendation",
+                "Replay the immutable ranking snapshot stored with the original submission.",
+                precondition_failed="ranking_snapshot_id",
+            )
+        stored_source = existing_submission.get("source_recommendation")
+        if not isinstance(stored_source, dict):
+            stored_source = {
+                "id": existing_submission.get("recommendation_id") or recommendation_id,
+                "recommendation_id": existing_submission.get("recommendation_id") or recommendation_id,
+                "ranking_snapshot_id": stored_ranking_snapshot_id or requested_ranking_snapshot_id,
+                "quarter": existing_submission.get("quarter"),
+                "persona_id": existing_submission.get("persona_id"),
+                "action_id": existing_submission.get("recommendation_action_id"),
+                "stage": existing_submission.get("stage_from"),
+                "evidence_refs": [],
+                "evidence_ref_ids": [],
+            }
+        else:
+            stored_source = json.loads(json.dumps(stored_source))
+            stored_source["ranking_snapshot_id"] = (
+                stored_ranking_snapshot_id
+                or str(stored_source.get("ranking_snapshot_id") or "").strip()
+            )
+        already = _promotion_review_item_from_recommendation(stored_source)
+        replay_snapshot_id = str(
+            stored_ranking_snapshot_id
+            or already.get("ranking_snapshot_id")
+            or requested_ranking_snapshot_id
+            or ""
+        ).strip()
+        already["ranking_snapshot_id"] = replay_snapshot_id
+        return JSONResponse(
+            status_code=200,
+            content=jsonable_encoder(
+                {
+                    "data": {
+                        "command_id": existing_submission.get("command_id"),
+                        "review_id": already["review_id"],
+                        "promotion_review_id": already["promotion_review_id"],
+                        "recommendation_id": already["recommendation_id"],
+                        "persona_id": already.get("persona_id"),
+                        "action_id": already.get("action_id"),
+                        "ranking_snapshot_id": replay_snapshot_id,
+                        "status": already.get("status"),
+                        "submitted": True,
+                        "human_inbox_id": already.get("human_inbox_id"),
+                        "requires_human_gate_decision": True,
+                        "live_capital_mutation": False,
+                        "review": already,
+                        "links": already.get("links") or {},
+                    },
+                    "meta": {
+                        **_snapshot_meta(snapshot_at),
+                        "ranking_snapshot_id": replay_snapshot_id,
+                        "idempotency": {"replayed": True, "source": "existing_submission"},
+                        "live_capital_mutation": False,
+                        "direct_live_capital_mutation": False,
+                        "requires_human_gate_decision": True,
+                        "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
+                    },
+                }
+            ),
+        )
+
     review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
         identity,
         recommendation_id,
@@ -43360,9 +43566,6 @@ async def bff_management_quarterly_ranking_recommendation_submit(
     authoritative_ranking_snapshot_id = str(
         review.get("ranking_snapshot_id") or ""
     ).strip()
-    requested_ranking_snapshot_id = str(
-        payload.get("ranking_snapshot_id") or ""
-    ).strip()
     if (
         requested_ranking_snapshot_id
         and requested_ranking_snapshot_id != authoritative_ranking_snapshot_id
@@ -43373,42 +43576,6 @@ async def bff_management_quarterly_ranking_recommendation_submit(
             "ranking_snapshot_id does not match the recommendation",
             "Submit the immutable ranking snapshot attached to the recommendation.",
             precondition_failed="ranking_snapshot_id",
-        )
-
-    existing_submission = _promotion_review_submission_projection(review["review_id"])
-    if existing_submission:
-        already = _promotion_review_item_from_recommendation(review["source_recommendation"])
-        return JSONResponse(
-            status_code=200,
-            content=jsonable_encoder(
-                {
-                    "data": {
-                        "command_id": existing_submission.get("command_id"),
-                        "review_id": already["review_id"],
-                        "promotion_review_id": already["promotion_review_id"],
-                        "recommendation_id": already["recommendation_id"],
-                        "persona_id": already.get("persona_id"),
-                        "action_id": already.get("action_id"),
-                        "ranking_snapshot_id": already.get("ranking_snapshot_id"),
-                        "status": already.get("status"),
-                        "submitted": True,
-                        "human_inbox_id": already.get("human_inbox_id"),
-                        "requires_human_gate_decision": True,
-                        "live_capital_mutation": False,
-                        "review": already,
-                        "links": already.get("links") or {},
-                    },
-                    "meta": {
-                        **_snapshot_meta(snapshot_at),
-                        "ranking_snapshot_id": already.get("ranking_snapshot_id"),
-                        "idempotency": {"replayed": True, "source": "existing_submission"},
-                        "live_capital_mutation": False,
-                        "direct_live_capital_mutation": False,
-                        "requires_human_gate_decision": True,
-                        "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
-                    },
-                }
-            ),
         )
 
     command_payload = {
@@ -43432,6 +43599,7 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         "runtime_mutation": False,
         "source_type": "quarterly_ranking_recommendation",
         "source_record_id": review["recommendation_id"],
+        "source_recommendation": json.loads(json.dumps(review["source_recommendation"])),
         "audit_event": "quarterly_ranking.recommendation_submitted",
         "policy": "promotion_governance_human_gate_no_direct_live_capital",
     }
@@ -43772,11 +43940,113 @@ def _pm12_persona_league_rows(
     archetype: Optional[str] = None,
     q: str = "",
 ) -> List[Dict[str, Any]]:
+    raw_records = _list_persona_records()
+    try:
+        all_bindings = [
+            record
+            for record in (read_store.list_bindings() or [])
+            if isinstance(record, dict)
+        ]
+    except Exception:
+        all_bindings = []
+    try:
+        all_runtimes = [
+            record
+            for record in (read_store.list_runtime_bindings() or [])
+            if isinstance(record, dict)
+        ]
+    except Exception:
+        all_runtimes = []
+    try:
+        all_league_entries = [
+            record
+            for record in (read_store.list_persona_league() or [])
+            if isinstance(record, dict)
+        ]
+    except Exception:
+        all_league_entries = []
+
+    bindings_by_persona: Dict[str, List[Dict[str, Any]]] = {}
+    for binding in all_bindings:
+        binding_persona_id = str(binding.get("persona_id") or "").strip()
+        if binding_persona_id:
+            bindings_by_persona.setdefault(binding_persona_id, []).append(binding)
+    league_by_persona = {
+        str(record.get("persona_id") or record.get("id") or "").strip(): record
+        for record in all_league_entries
+        if str(record.get("persona_id") or record.get("id") or "").strip()
+    }
+    runtimes_by_persona: Dict[str, List[Dict[str, Any]]] = {}
+    runtimes_by_binding: Dict[str, List[Dict[str, Any]]] = {}
+    runtimes_by_identity: Dict[str, List[Dict[str, Any]]] = {}
+    for runtime in all_runtimes:
+        runtime_persona_id = str(runtime.get("persona_id") or "").strip()
+        if runtime_persona_id:
+            runtimes_by_persona.setdefault(runtime_persona_id, []).append(runtime)
+        runtime_binding_id = str(
+            _persona_fleet_record_value(
+                runtime,
+                "persona_capital_binding_id",
+                "binding_id",
+            )
+            or ""
+        ).strip()
+        if runtime_binding_id:
+            runtimes_by_binding.setdefault(runtime_binding_id, []).append(runtime)
+        for value in (
+            runtime.get("runtime_id"),
+            runtime.get("runtime_binding_id"),
+            runtime.get("id"),
+        ):
+            runtime_identity = str(value or "").strip()
+            if runtime_identity:
+                runtimes_by_identity.setdefault(runtime_identity, []).append(runtime)
+
+    enriched_rows: List[Dict[str, Any]] = []
+    for raw in raw_records:
+        projected = _project_persona_league_row(raw)
+        persona_id = str(projected.get("persona_id") or projected.get("id") or "").strip()
+        persona_bindings = bindings_by_persona.get(persona_id, [])
+        runtime_candidates: Dict[str, Dict[str, Any]] = {}
+
+        def include_runtime(runtime: Dict[str, Any]) -> None:
+            identity = str(
+                runtime.get("runtime_id")
+                or runtime.get("runtime_binding_id")
+                or runtime.get("id")
+                or ""
+            ).strip()
+            if identity:
+                runtime_candidates[identity] = runtime
+
+        for runtime in runtimes_by_persona.get(persona_id, []):
+            include_runtime(runtime)
+        for runtime_id in _pm12_persona_runtime_ids(projected):
+            for runtime in runtimes_by_identity.get(runtime_id, []):
+                include_runtime(runtime)
+        for binding in persona_bindings:
+            for value in (
+                binding.get("id"),
+                binding.get("binding_id"),
+                binding.get("persona_capital_binding_id"),
+            ):
+                binding_id = str(value or "").strip()
+                if not binding_id:
+                    continue
+                for runtime in runtimes_by_binding.get(binding_id, []):
+                    include_runtime(runtime)
+
+        enriched_rows.append(
+            _enrich_persona_item_with_bindings(
+                projected,
+                bindings=persona_bindings,
+                runtimes=list(runtime_candidates.values()),
+                persona=raw,
+                league_entry=league_by_persona.get(persona_id, {}),
+            )
+        )
     rows = sorted(
-        [
-            _enrich_persona_item_with_bindings(_project_persona_league_row(raw))
-            for raw in _list_persona_records()
-        ],
+        enriched_rows,
         key=lambda row: str(row.get("name") or row.get("id") or ""),
     )
     return _pm12_filter_persona_items(
@@ -43826,9 +44096,13 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
     if stage in {"canary_running", "live_running"} and row.get("capital_scope") == "unbound":
         exclusion_codes.append("missing_capital_binding")
         exclusion_reasons.append("Missing authoritative real-capital binding")
-    if any(
-        token in str(row.get("binding_resolution") or "")
-        for token in ("ambiguous", "mismatch")
+    binding_resolution = str(row.get("binding_resolution") or "")
+    if (
+        any(token in binding_resolution for token in ("ambiguous", "mismatch"))
+        or (
+            stage in {"canary_running", "live_running"}
+            and any(token in binding_resolution for token in ("missing", "inactive"))
+        )
     ):
         exclusion_codes.append("binding_mismatch")
         exclusion_reasons.append("Binding/runtime identity prevents an authoritative allocation join")
@@ -43864,6 +44138,7 @@ def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
         "binding_state": row.get("binding_state"),
         "binding_resolution": row.get("binding_resolution"),
         "current_weight_source": row.get("current_weight_source"),
+        "binding_ids": list(row.get("binding_ids") or []),
         "strategy_ids": list(row.get("strategy_ids") or []),
         "runtime_ids": list(row.get("runtime_ids") or metrics.get("runtime_ids") or []),
         "capital_pool_ids": list(row.get("capital_pool_ids") or []),
@@ -45172,10 +45447,22 @@ async def bff_management_quarterly_ranking_recommendations(
 
     formula = _pm12_quarter_formula_payload()
     action_counts = {
-        action_id: len([item for item in recommendations if item.get("action_id") == action_id])
+        action_id: len([item for item in filtered_recs if item.get("action_id") == action_id])
         for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
     }
-    top_item = ranked_items[0] if ranked_items else None
+    filtered_persona_ids = {
+        str(item.get("persona_id") or "")
+        for item in filtered_recs
+        if str(item.get("persona_id") or "")
+    }
+    top_item = next(
+        (
+            item
+            for item in ranked_items
+            if str(item.get("persona_id") or "") in filtered_persona_ids
+        ),
+        None,
+    )
     summary = {
         "quarter": quarter_window["quarter"],
         "formula_version": formula["formula_version"],
