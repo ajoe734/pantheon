@@ -100,6 +100,9 @@ class SignalConsumer:
             signal = self._validate(raw)
             if signal is None:
                 continue
+            recorder = getattr(algo, "RecordSignalProcessed", None)
+            if callable(recorder):
+                recorder(signal)
             if self._is_duplicate(signal):
                 self._record_filtered_signal_noop(
                     signal,

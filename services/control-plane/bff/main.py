@@ -131,6 +131,8 @@ from models import (
     SOURCE_TYPE_TO_EVIDENCE_KIND,
     RecordSponsorDecisionCommandPayload,
     RejectMutationCommandPayload,
+    ReviewMutationCommandPayload,
+    ExecuteMutationCommandPayload,
     StalenessWarning,
     TargetObject,
     utc_now,
@@ -2140,6 +2142,8 @@ _APPROVE_EVO_REQUIRED = {"evolution_decision_id", "approval_action"}
 _VALID_EVO_APPROVAL_ACTIONS = {"approve", "reject"}
 _APPROVE_MUTATION_REQUIRED = {"decision_id"}
 _REJECT_MUTATION_REQUIRED = {"decision_id"}
+_REVIEW_MUTATION_REQUIRED = {"decision_id", "approval_decision_id"}
+_EXECUTE_MUTATION_REQUIRED = {"decision_id"}
 _RECORD_SPONSOR_DECISION_REQUIRED = {"committee_id", "sponsor_decision", "rationale_ref"}
 _VALID_SPONSOR_DECISIONS = {"approved", "rejected", "conditional"}
 
@@ -2254,6 +2258,14 @@ _MUTATION_REJECTION_ROLES = {
     "medium": {"reviewer", "operator", "approver", "admin"},
     "high": {"approver", "admin"},
 }
+
+_MUTATION_REVIEW_ROLES = {
+    "low": {"reviewer", "approver", "admin"},
+    "medium": {"reviewer", "approver", "admin"},
+    "high": {"approver", "admin"},
+}
+
+_MUTATION_EXECUTION_ROLES = {"operator", "admin"}
 
 
 def _env_token(value: Any) -> str:
@@ -3631,6 +3643,48 @@ def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComm
                     params=params,
                     audit_context=AuditContext(reason=note or mutation.command_type),
                 )
+            if command_type == CommandType.REVIEW_MUTATION.value:
+                mutation = ReviewMutationCommandPayload.model_validate(payload)
+                note = str(mutation.note or "").strip() or None
+                params = {
+                    "decision_id": mutation.decision_id,
+                    "approval_decision_id": mutation.approval_decision_id,
+                }
+                if note:
+                    params["note"] = note
+                return OperatorCommand(
+                    command=CommandType.REVIEW_MUTATION,
+                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
+                    action="review_mutation",
+                    params=params,
+                    audit_context=AuditContext(reason=note or mutation.command_type),
+                )
+            if command_type == CommandType.EXECUTE_MUTATION.value:
+                mutation = ExecuteMutationCommandPayload.model_validate(payload)
+                note = str(mutation.note or "").strip() or None
+                params = {
+                    "decision_id": mutation.decision_id,
+                    "has_active_runtime": mutation.has_active_runtime,
+                    "freeze_mode": mutation.freeze_mode,
+                    "force_stage_freeze": mutation.force_stage_freeze,
+                }
+                if mutation.active_binding_id:
+                    params["active_binding_id"] = mutation.active_binding_id
+                if mutation.rollback_action_type:
+                    params["rollback_action_type"] = mutation.rollback_action_type
+                if mutation.fallback_artifact_id:
+                    params["fallback_artifact_id"] = mutation.fallback_artifact_id
+                if mutation.fallback_artifact_version:
+                    params["fallback_artifact_version"] = mutation.fallback_artifact_version
+                if note:
+                    params["note"] = note
+                return OperatorCommand(
+                    command=CommandType.EXECUTE_MUTATION,
+                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
+                    action="execute_mutation",
+                    params=params,
+                    audit_context=AuditContext(reason=note or mutation.command_type),
+                )
             if command_type == CommandType.RECORD_SPONSOR_DECISION.value:
                 decision = RecordSponsorDecisionCommandPayload.model_validate(payload)
                 note = str(decision.note or "").strip() or None
@@ -4242,6 +4296,8 @@ def _mutation_review_roles_for(
     normalized_risk = str(risk_level or "").lower()
     if action == "approve":
         return _MUTATION_APPROVAL_ROLES.get(normalized_risk, {"admin"})
+    if action == "review":
+        return _MUTATION_REVIEW_ROLES.get(normalized_risk, {"admin"})
     return _MUTATION_REJECTION_ROLES.get(normalized_risk, {"admin"})
 
 
@@ -4252,14 +4308,20 @@ def _mutation_review_allowed_actions(
 ) -> Dict[str, bool]:
     if surface_state == "unavailable":
         return {
+            "canReviewMutation": False,
             "canApproveMutation": False,
             "canRejectMutation": False,
+            "canExecuteMutation": False,
         }
 
     decision_state = str(decision.get("decision_state") or decision.get("status") or "").lower()
     risk_level = str(decision.get("risk_level") or "").lower()
     identity_roles = set(identity.roles)
 
+    can_review = (
+        decision_state == "proposed"
+        and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="review")))
+    )
     can_approve = (
         decision_state == "reviewed"
         and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="approve")))
@@ -4268,9 +4330,15 @@ def _mutation_review_allowed_actions(
         decision_state in {"proposed", "reviewed"}
         and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="reject")))
     )
+    can_execute = (
+        decision_state == "approved"
+        and bool(identity_roles.intersection(_MUTATION_EXECUTION_ROLES))
+    )
     return {
+        "canReviewMutation": can_review,
         "canApproveMutation": can_approve,
         "canRejectMutation": can_reject,
+        "canExecuteMutation": can_execute,
     }
 
 
@@ -4876,6 +4944,94 @@ def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity
         )
 
 
+def _validate_review_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _REVIEW_MUTATION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ReviewMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
+    if decision is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Mutation review decision not found",
+            f"Evolution decision {decision_id} does not exist",
+        )
+    projection = _mutation_review_projection(
+        decision,
+        approval_decision=approval_decision,
+        linked_incident=linked_incident,
+        linked_postmortem=linked_postmortem,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        raise _bff_error(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "ReviewMutation is blocked while the mutation-review surface is unavailable",
+            "Mutation-review evidence cannot be composed reliably",
+            precondition_failed="mutation_review_surface",
+        )
+    if not projection["allowedActions"]["canReviewMutation"]:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ReviewMutation is not allowed for this operator and decision state",
+            "allowedActions.canReviewMutation is false for the current read projection",
+            precondition_failed="allowedActions.canReviewMutation",
+        )
+
+
+def _validate_execute_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _EXECUTE_MUTATION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ExecuteMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
+    if decision is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Mutation review decision not found",
+            f"Evolution decision {decision_id} does not exist",
+        )
+    projection = _mutation_review_projection(
+        decision,
+        approval_decision=approval_decision,
+        linked_incident=linked_incident,
+        linked_postmortem=linked_postmortem,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        raise _bff_error(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "ExecuteMutation is blocked while the mutation-review surface is unavailable",
+            "Mutation-review evidence cannot be composed reliably",
+            precondition_failed="mutation_review_surface",
+        )
+    if not projection["allowedActions"]["canExecuteMutation"]:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ExecuteMutation is not allowed for this operator and decision state",
+            "allowedActions.canExecuteMutation is false for the current read projection",
+            precondition_failed="allowedActions.canExecuteMutation",
+        )
+
+
 def _validate_remediate_sentinel_intervention(params: Dict[str, Any], identity: OperatorIdentity) -> None:
     missing = _REMEDIATE_SENTINEL_REQUIRED - params.keys()
     if missing:
@@ -5342,6 +5498,8 @@ _VALIDATORS = {
     CommandType.EXECUTE_EVOLUTION_ACTION: _validate_execute_evolution_action,
     CommandType.APPROVE_MUTATION: _validate_approve_mutation,
     CommandType.REJECT_MUTATION: _validate_reject_mutation,
+    CommandType.REVIEW_MUTATION: _validate_review_mutation,
+    CommandType.EXECUTE_MUTATION: _validate_execute_mutation,
     CommandType.RECORD_SPONSOR_DECISION: _validate_record_sponsor_decision,
     CommandType.REMEDIATE_SENTINEL_INTERVENTION: _validate_remediate_sentinel_intervention,
     CommandType.DECIDE_V5_INTERVENTION: _validate_decide_v5_intervention,
@@ -52944,6 +53102,7 @@ def _loop_health_response_meta(
     *,
     health_records_available: bool,
     health_record_count: int,
+    accepted_controller_health_record_count: int,
     health_source: str,
 ) -> Dict[str, Any]:
     meta = dict(payload.get("meta") or {})
@@ -52961,19 +53120,19 @@ def _loop_health_response_meta(
         snapshot_at=snapshot_at,
         source=health_source if health_records_available else "missing",
     )
-    if health_records_available and health_record_count >= item_count:
+    if item_count and accepted_controller_health_record_count >= item_count:
         loop_health_surface = {
             "status": "ok",
             "source": "bff_composed",
             "truth_level": "controller_snapshot",
             "note": "Composed from loop catalog plus controller health records.",
         }
-    elif health_records_available:
+    elif accepted_controller_health_record_count:
         loop_health_surface = {
             "status": "degraded",
             "source": "bff_composed",
             "truth_level": "partial_controller_snapshot",
-            "note": "Some loops lack controller health snapshots; registry metadata remains visible without live liveness claims.",
+            "note": "Some loops lack accepted current controller health records; registry metadata remains visible without live liveness claims.",
             "staleness": {"served_from": "mixed", "last_known_at": snapshot_at},
         }
     else:
@@ -52988,7 +53147,8 @@ def _loop_health_response_meta(
     surfaces["loop_health"] = loop_health_surface
     surfaces["loop_inventory"] = registry_surface
     surfaces["loop_health_snapshots"] = snapshot_surface
-    meta["catalog"] = loop_inventory_meta()
+    catalog_meta = loop_inventory_meta()
+    meta["catalog"] = catalog_meta
     meta["truth_labels"] = truth_label_payload()
     meta["truth_source_policy"] = {
         "accepted_live_source_types": ["live_truth"],
@@ -52997,8 +53157,15 @@ def _loop_health_response_meta(
     }
     meta["coverage"] = {
         "loop_count": item_count,
-        "controller_health_record_count": health_record_count,
+        "canonical_loop_count": catalog_meta["inventory_counts"]["canonical_loop_count"],
+        "composite_overlay_count": catalog_meta["inventory_counts"]["composite_overlay_count"],
+        "inventory_entry_count": catalog_meta["inventory_counts"]["inventory_entry_count"],
+        "controller_health_record_count": accepted_controller_health_record_count,
+        "raw_health_record_count": health_record_count,
         "controller_health_records_available": health_records_available,
+        "accepted_controller_health_records_available": bool(
+            accepted_controller_health_record_count
+        ),
     }
     payload["meta"] = meta
     return payload
@@ -53043,6 +53210,11 @@ async def bff_v5_loop_health(
         payload,
         health_records_available=health_available,
         health_record_count=len(health_records),
+        accepted_controller_health_record_count=sum(
+            1
+            for record in records
+            if (record.get("controller_health") or {}).get("current_record_accepted")
+        ),
         health_source=health_source,
     )
 
@@ -53070,6 +53242,13 @@ async def bff_v5_loop_health_detail(
         payload,
         health_records_available=health_available,
         health_record_count=len(health_records),
+        accepted_controller_health_record_count=(
+            1
+            if ((payload.get("data") or {}).get("controller_health") or {}).get(
+                "current_record_accepted"
+            )
+            else 0
+        ),
         health_source=health_source,
     )
 

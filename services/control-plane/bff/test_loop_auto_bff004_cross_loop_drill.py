@@ -6,7 +6,7 @@ Acceptance criteria:
   2. Drill proves one runtime-to-incident-to-evolution-proposal flow.
   3. Final evidence states maturity reached and remaining blockers.
 
-Drill 1: Source health connector truth → BFF persona panel projection → loop health truth label
+Drill 1: Source health connector truth → BFF persona panel projection → fail-closed loop-health label
 Drill 2: Heartbeat-loss threshold breach → IncidentCase → resolved → Postmortem draft
          → published → EvolutionDecision proposal (evidence chain integrity verified)
 
@@ -175,7 +175,7 @@ class TestDrill1SourceToHealth:
     Chain: SourceHealth connector record (source_ingestion service)
            → BFF _overlay_source_health_truth projection
            → persona panel shows health_source=source_ingest, live_ingestion_enabled=True
-           → loop-health endpoint shows operator truth 'Reconciled live truth'
+           → loop-health keeps the historical fixture visible without promoting it
     """
 
     def test_source_health_connector_truth_projects_to_persona_panel(self, monkeypatch):
@@ -235,10 +235,10 @@ class TestDrill1SourceToHealth:
             "Binding health_source should be source_ingest, got: " + str(binding.get("health_source"))
         )
 
-    def test_loop_health_endpoint_shows_reconciled_truth_label(self, monkeypatch, tmp_path):
+    def test_loop_health_endpoint_does_not_promote_historical_drill_fixture(self, monkeypatch, tmp_path):
         """
-        Step 1b: BFF /bff/v5/loop-health/source_ingestion with a live health store
-        returns operator truth 'Reconciled live truth' (not 'Seed / fixture' or static).
+        Step 1b: a service-store fixture may report a reconciled truth level, but
+        it is not current controller-runtime proof and cannot raise liveness.
         """
         monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
 
@@ -257,17 +257,21 @@ class TestDrill1SourceToHealth:
             "Expected highest_truth_level=reconciled_live_proof, got: "
             + str(packet.get("highest_truth_level"))
         )
-        assert packet["accepted_live_liveness"] is True, (
-            "reconciled_live_proof should be accepted as live liveness"
-        )
+        assert packet["accepted_live_liveness"] is False
         assert packet["operator_truth"]["truth_level"] == "reconciled_live_proof"
         assert packet["operator_truth"]["label"] == "Reconciled live truth"
-        assert packet["operator_truth"]["is_live_truth"] is True
-        # Static metadata and seed labels are NOT promoted
+        assert packet["operator_truth"]["is_live_truth"] is False
+        assert packet["operator_truth"]["degraded"] is True
+        assert packet["runtime_record_evidence_basis"] == "missing"
+        assert packet["runtime_controller_record_qualified"] is False
+        # The claimed level remains inspectable, but it is not accepted.
         assert packet["operator_truth"]["source_type"] == "live_truth"
-        # Controller health visible to operator
-        assert data["controller_health"]["status"] == "healthy"
-        assert data["controller_health"]["source"] == "service_store"
+        assert data["controller_health"]["reported_status"] == "healthy"
+        assert data["controller_health"]["status"] == "not_implemented"
+        assert data["controller_health"]["source"] == "registry_metadata"
+        assert data["controller_health"]["current_record_accepted"] is False
+        assert data["live_status"]["is_reconciled"] is False
+        assert data["live_status"]["is_live"] is False
 
 
 # ---------------------------------------------------------------------------
