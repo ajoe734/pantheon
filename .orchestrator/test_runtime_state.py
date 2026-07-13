@@ -6,8 +6,10 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import runtime_state
 
@@ -21,6 +23,7 @@ class LoadRuntimeStateTests(unittest.TestCase):
             "paths": {
                 "state_file": str(self.root / "state.json"),
                 "event_queue": str(self.root / "event-queue.jsonl"),
+                "approval_queue": str(self.root / "approval-queue.json"),
             }
         }
 
@@ -361,3 +364,281 @@ class LoadRuntimeStateTests(unittest.TestCase):
         with runtime_state.task_runtime_admission_guard(self.config, "TASK-CLEAR") as decision:
             self.assertTrue(decision["allowed"])
             self.assertEqual(decision["reason"], "runtime_clear")
+
+    def test_runtime_admission_guard_blocks_parallel_enqueue(self) -> None:
+        self._write_json(self.root / "state.json", runtime_state.default_state())
+        event_path = self.root / "event-queue.jsonl"
+        event_path.write_text("", encoding="utf-8")
+        enqueued = threading.Event()
+
+        def producer() -> None:
+            runtime_state.enqueue_event(
+                self.config,
+                {"event_id": "evt-parallel", "task_id": "TASK-PARALLEL"},
+            )
+            enqueued.set()
+
+        with runtime_state.task_runtime_admission_guard(self.config, "TASK-CLEAR") as decision:
+            self.assertTrue(decision["allowed"])
+            thread = threading.Thread(target=producer, daemon=True)
+            thread.start()
+            time.sleep(0.05)
+            self.assertFalse(enqueued.is_set())
+            self.assertEqual(event_path.read_text(encoding="utf-8"), "")
+
+        thread.join(timeout=1.0)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(enqueued.is_set())
+        self.assertIn("evt-parallel", event_path.read_text(encoding="utf-8"))
+
+    def test_multi_task_runtime_admission_uses_one_snapshot_for_queue_worker_and_approval(self) -> None:
+        state = runtime_state.default_state()
+        state["queue"]["events"] = {
+            "evt-queue": {"status": "queued"},
+        }
+        state["workers"] = {
+            "run-worker": {
+                "run_id": "run-worker",
+                "task_id": "TASK-WORKER",
+                "status": "running",
+            }
+        }
+        self._write_json(self.root / "state.json", state)
+        (self.root / "event-queue.jsonl").write_text(
+            json.dumps({"event_id": "evt-queue", "task_id": "TASK-QUEUE"}) + "\n",
+            encoding="utf-8",
+        )
+        approval_state = runtime_state.default_approval_state()
+        approval_state["pending"] = [
+            {
+                "approval_id": "approval-busy",
+                "task_id": "TASK-APPROVAL",
+                "status": "pending",
+            }
+        ]
+        self._write_json(self.root / "approval-queue.json", approval_state)
+
+        with runtime_state.tasks_runtime_admission_guard(
+            self.config,
+            ["TASK-CLEAR", "TASK-QUEUE", "TASK-WORKER", "TASK-APPROVAL"],
+        ) as aggregate:
+            self.assertFalse(aggregate["allowed"])
+            self.assertEqual(
+                aggregate["busy_task_ids"],
+                ["TASK-QUEUE", "TASK-WORKER", "TASK-APPROVAL"],
+            )
+            decisions = aggregate["decisions"]
+            self.assertTrue(decisions["TASK-CLEAR"]["allowed"])
+            self.assertEqual(decisions["TASK-QUEUE"]["queue_event_ids"], ["evt-queue"])
+            self.assertEqual(decisions["TASK-WORKER"]["worker_run_ids"], ["run-worker"])
+            self.assertEqual(
+                decisions["TASK-APPROVAL"]["pending_approval_ids"],
+                ["approval-busy"],
+            )
+
+    def test_multi_task_strict_malformed_snapshot_fails_all_targets_from_one_read(self) -> None:
+        self._write_json(self.root / "state.json", runtime_state.default_state())
+        (self.root / "event-queue.jsonl").write_text(
+            '{"event_id":"evt-other","task_id":"OTHER"}\n',
+            encoding="utf-8",
+        )
+        (self.root / "approval-queue.json").write_text("{not-json", encoding="utf-8")
+
+        with mock.patch.object(
+            runtime_state,
+            "strict_runtime_admission_snapshot",
+            wraps=runtime_state.strict_runtime_admission_snapshot,
+        ) as snapshot:
+            with runtime_state.tasks_runtime_admission_guard(
+                self.config,
+                ["TASK-A", "TASK-B"],
+                strict=True,
+            ) as aggregate:
+                self.assertFalse(aggregate["allowed"])
+                self.assertEqual(aggregate["busy_task_ids"], ["TASK-A", "TASK-B"])
+                for decision in aggregate["decisions"].values():
+                    self.assertFalse(decision["allowed"])
+                    self.assertIn("approval_queue_file_malformed", decision["reason"])
+        snapshot.assert_called_once_with(self.config)
+
+    def test_multi_task_guard_holds_runtime_lock_across_context_and_blocks_producer(self) -> None:
+        self._write_json(self.root / "state.json", runtime_state.default_state())
+        event_path = self.root / "event-queue.jsonl"
+        event_path.write_text("", encoding="utf-8")
+        self._write_json(self.root / "approval-queue.json", runtime_state.default_approval_state())
+        produced = threading.Event()
+
+        def producer() -> None:
+            runtime_state.enqueue_event(
+                self.config,
+                {"event_id": "evt-after-multi", "task_id": "TASK-A"},
+            )
+            produced.set()
+
+        with runtime_state.tasks_runtime_admission_guard(
+            self.config,
+            ["TASK-A", "TASK-B"],
+        ) as aggregate:
+            self.assertTrue(aggregate["allowed"])
+            thread = threading.Thread(target=producer, daemon=True)
+            thread.start()
+            self.assertFalse(produced.wait(timeout=0.1))
+            self.assertEqual(event_path.read_text(encoding="utf-8"), "")
+
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(produced.is_set())
+        self.assertIn("evt-after-multi", event_path.read_text(encoding="utf-8"))
+
+    def test_multi_task_guard_preserves_runtime_then_canonical_lock_order(self) -> None:
+        self._write_json(self.root / "state.json", runtime_state.default_state())
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        self._write_json(self.root / "approval-queue.json", runtime_state.default_approval_state())
+        observed: list[str] = []
+
+        @contextmanager
+        def observed_runtime_lock(_config):
+            observed.append("runtime_enter")
+            try:
+                yield
+            finally:
+                observed.append("runtime_exit")
+
+        @contextmanager
+        def observed_task_lock(_status_file):
+            observed.append("task_enter")
+            try:
+                yield
+            finally:
+                observed.append("task_exit")
+
+        with (
+            mock.patch.object(runtime_state, "runtime_state_lock", side_effect=observed_runtime_lock),
+            mock.patch.object(
+                runtime_state,
+                "canonical_task_state_lock_file",
+                side_effect=observed_task_lock,
+            ),
+        ):
+            with runtime_state.tasks_runtime_admission_guard(
+                self.config,
+                ["TASK-A", "TASK-B"],
+            ) as aggregate:
+                self.assertTrue(aggregate["allowed"])
+                with runtime_state.canonical_task_state_lock_file(self.root / "ai-status.json"):
+                    observed.append("mutation")
+
+        self.assertEqual(
+            observed,
+            ["runtime_enter", "task_enter", "mutation", "task_exit", "runtime_exit"],
+        )
+
+    def test_multi_task_guard_rejects_empty_entries_and_duplicates(self) -> None:
+        cases = (
+            ([], "task_ids_empty"),
+            ([""], "task_ids_empty"),
+            (["TASK-A", ""], "task_ids_contain_empty"),
+            (["TASK-A", "TASK-A"], "task_ids_duplicate"),
+        )
+        for task_ids, expected_reason in cases:
+            with self.subTest(task_ids=task_ids):
+                with runtime_state.tasks_runtime_admission_guard(
+                    self.config,
+                    task_ids,
+                ) as aggregate:
+                    self.assertFalse(aggregate["allowed"])
+                    self.assertEqual(aggregate["reason"], expected_reason)
+                    self.assertTrue(
+                        all(not decision["allowed"] for decision in aggregate["decisions"].values())
+                    )
+
+        with runtime_state.task_runtime_admission_guard(self.config, "") as decision:
+            self.assertFalse(decision["allowed"])
+            self.assertEqual(decision["reason"], "task_id_missing")
+
+    def test_strict_runtime_admission_rejects_missing_empty_and_malformed_files(self) -> None:
+        state_path = self.root / "state.json"
+        event_path = self.root / "event-queue.jsonl"
+        approval_path = self.root / "approval-queue.json"
+        valid_state = json.dumps(runtime_state.default_state())
+        valid_event = '{"event_id":"evt-1","task_id":"OTHER"}\n'
+        valid_approval = json.dumps(runtime_state.default_approval_state())
+
+        cases = (
+            ("missing", None, None, valid_approval, "state_file_missing"),
+            ("empty-state", "", valid_event, valid_approval, "state_file_empty"),
+            ("malformed-state", "{not-json", valid_event, valid_approval, "state_file_malformed"),
+            ("empty-events", valid_state, "", valid_approval, "event_queue_file_empty"),
+            ("malformed-events", valid_state, "{not-json\n", valid_approval, "event_queue_file_malformed"),
+            ("missing-approvals", valid_state, valid_event, None, "approval_queue_file_missing"),
+            ("empty-approvals", valid_state, valid_event, "", "approval_queue_file_empty"),
+            ("malformed-approvals", valid_state, valid_event, "{not-json", "approval_queue_file_malformed"),
+            (
+                "invalid-approval-schema",
+                valid_state,
+                valid_event,
+                json.dumps({"version": 2, "pending": {}, "history": []}),
+                "approval_queue_schema_invalid",
+            ),
+        )
+        for label, state_body, event_body, approval_body, expected in cases:
+            with self.subTest(label=label):
+                state_path.unlink(missing_ok=True)
+                event_path.unlink(missing_ok=True)
+                approval_path.unlink(missing_ok=True)
+                if state_body is not None:
+                    state_path.write_text(state_body, encoding="utf-8")
+                if event_body is not None:
+                    event_path.write_text(event_body, encoding="utf-8")
+                if approval_body is not None:
+                    approval_path.write_text(approval_body, encoding="utf-8")
+
+                with runtime_state.task_runtime_admission_guard(
+                    self.config,
+                    "TASK-CLEAR",
+                    strict=True,
+                ) as decision:
+                    self.assertFalse(decision["allowed"])
+                    self.assertIn(expected, decision["reason"])
+
+    def test_strict_runtime_admission_blocks_pending_approval_task_without_worker(self) -> None:
+        self._write_json(self.root / "state.json", runtime_state.default_state())
+        (self.root / "event-queue.jsonl").write_text(
+            '{"event_id":"evt-other","task_id":"OTHER"}\n',
+            encoding="utf-8",
+        )
+        approval_state = runtime_state.default_approval_state()
+        approval_state["pending"] = [
+            {
+                "approval_id": "approval-target",
+                "task_id": "TASK-PENDING-APPROVAL",
+                "worker_run_id": "run-already-gone",
+                "status": "pending",
+            }
+        ]
+        self._write_json(self.root / "approval-queue.json", approval_state)
+
+        with runtime_state.task_runtime_admission_guard(
+            self.config,
+            "TASK-PENDING-APPROVAL",
+            strict=True,
+        ) as decision:
+            self.assertFalse(decision["allowed"])
+            self.assertEqual(decision["pending_approval_ids"], ["approval-target"])
+            self.assertEqual(
+                decision["reason"],
+                "task_queued_running_admitted_or_pending_approval",
+            )
+
+    def test_live_config_opt_in_enables_strict_runtime_admission(self) -> None:
+        config = {
+            **self.config,
+            "supervisor": {"strict_task_runtime_admission": True},
+        }
+        self._write_json(self.root / "state.json", runtime_state.default_state())
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        self._write_json(self.root / "approval-queue.json", runtime_state.default_approval_state())
+
+        with runtime_state.task_runtime_admission_guard(config, "TASK-CLEAR") as decision:
+            self.assertFalse(decision["allowed"])
+            self.assertIn("strict_runtime_invalid:event_queue_file_empty", decision["reason"])

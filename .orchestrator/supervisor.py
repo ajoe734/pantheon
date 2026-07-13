@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import copy
 import fcntl
 import fnmatch
 import hashlib
@@ -30,7 +31,7 @@ if str(THIS_DIR) not in sys.path:
 
 import model_rotation
 from adapters import build_adapter
-from approval_queue import prune_stale_approvals, resolve_approval
+from approval_queue import consume_resume_override, prune_stale_approvals, resolve_approval
 from adapters.base import DeliveryRequest
 from common import (
     agent_config_for,
@@ -111,6 +112,10 @@ STICKY_AUTH_FAILURE_MARKERS = (
     "invalid_grant",
 )
 STICKY_AUTH_BLOCKED_UNTIL = "9999-12-31T23:59:59Z"
+
+AUTO_START_TRANSITION_SCHEMA_VERSION = 1
+AUTO_START_TRANSITION_KIND = "supervisor_auto_start"
+AUTO_START_TRANSITION_TASK_FIELD = "orchestrator_transition_id"
 
 
 SESSION_ID_PATTERNS = [
@@ -2439,7 +2444,7 @@ def start_worker_for_request(
     now_dt = datetime.now(timezone.utc)
     now = _isoformat_utc(now_dt)
     result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
-    state.setdefault("workers", {})[worker_run_id] = {
+    worker_record = {
         "run_id": worker_run_id,
         "provider": request.provider,
         "agent_id": agent["id"],
@@ -2479,6 +2484,8 @@ def start_worker_for_request(
         "next_retry_at": None,
         "last_error": None,
     }
+    record_worker_process_identity(worker_record)
+    state.setdefault("workers", {})[worker_run_id] = worker_record
     record_worker_runtime_measurement(
         config,
         state,
@@ -2583,7 +2590,14 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 )
                 post_launch_admitted = bool(admission.get("admitted"))
                 if post_launch_admitted and admission.get("reason") == REASON_OWNED_READY:
-                    post_launch_admitted = bool(sync_dispatched_task_status(config, event))
+                    post_launch_admitted = bool(
+                        sync_dispatched_task_status(
+                            config,
+                            state,
+                            event,
+                            worker_run_id=str(active_worker.get("run_id") or ""),
+                        )
+                    )
                     if post_launch_admitted:
                         post_launch_admitted = refresh_execution_dispatch_baseline_after_status_sync(
                             config,
@@ -2620,7 +2634,25 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             continue
         if record.get("status") == "retry_backoff":
             next_retry_at = _parse_iso_utc(str(record.get("next_retry_at") or ""))
-            if next_retry_at is not None and next_retry_at > datetime.now(timezone.utc):
+            if next_retry_at is None:
+                error = "Queue retry quarantined because next_retry_at is missing or malformed."
+                record["status"] = "failed"
+                record["processed_at"] = utc_now()
+                record["retry_quarantined_at"] = utc_now()
+                record["error"] = error
+                write_activity_log(
+                    config,
+                    {
+                        "type": "queue_retry_quarantined",
+                        "task_id": event.get("task_id"),
+                        "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                        "message": error,
+                        "queue_event_id": event_id,
+                    },
+                )
+                changed = True
+                continue
+            if next_retry_at > datetime.now(timezone.utc):
                 continue
         skip_message = stale_dispatch_skip_message(config, event, task_map)
         if skip_message:
@@ -2977,7 +3009,12 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         worker = state.get("workers", {}).get(str(worker_run_id or ""))
         post_launch_admitted = True
         if is_execution_dispatch_reason(str(event.get("reason") or "")):
-            status_synced = sync_dispatched_task_status(config, event)
+            status_synced = sync_dispatched_task_status(
+                config,
+                state,
+                event,
+                worker_run_id=str(worker_run_id or ""),
+            )
             if status_synced:
                 post_launch_admitted = refresh_execution_dispatch_baseline_after_status_sync(
                     config,
@@ -3185,16 +3222,83 @@ def active_worker_refs_for_agent_id(
     return sorted(set(refs))
 
 
-def _worker_process_group_alive(pid: int, process_group_id: int | None) -> bool:
-    if process_group_id == pid:
-        try:
-            os.killpg(process_group_id, 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-    return pid_is_alive(pid)
+PROCESS_IDENTITY_VERSION = 1
+
+
+def _process_start_time_ticks(pid: int) -> str | None:
+    """Read Linux /proc starttime without being confused by spaces in comm."""
+
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    closing = raw.rfind(")")
+    if closing < 0:
+        return None
+    fields = raw[closing + 1 :].strip().split()
+    # fields[0] is stat field 3; process starttime is field 22.
+    if len(fields) <= 19:
+        return None
+    return fields[19]
+
+
+def capture_worker_process_identity(pid: int | None) -> dict[str, Any] | None:
+    try:
+        worker_pid = int(pid or 0)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if worker_pid <= 1:
+        return None
+    try:
+        process_group_id = os.getpgid(worker_pid)
+        process_session_id = os.getsid(worker_pid)
+    except OSError:
+        return None
+    start_time_ticks = _process_start_time_ticks(worker_pid)
+    if (
+        process_group_id != worker_pid
+        or process_session_id != worker_pid
+        or not start_time_ticks
+    ):
+        return None
+    return {
+        "process_identity_version": PROCESS_IDENTITY_VERSION,
+        "process_leader_pid": worker_pid,
+        "process_group_id": process_group_id,
+        "process_session_id": process_session_id,
+        "process_start_time_ticks": start_time_ticks,
+    }
+
+
+def record_worker_process_identity(worker: dict[str, Any]) -> bool:
+    identity = capture_worker_process_identity(worker.get("pid"))
+    for key in (
+        "process_identity_version",
+        "process_leader_pid",
+        "process_group_id",
+        "process_session_id",
+        "process_start_time_ticks",
+        "process_identity_run_id",
+    ):
+        worker.pop(key, None)
+    if identity is None:
+        if worker.get("pid"):
+            worker["process_identity_error"] = "process_is_not_an_owned_session_leader"
+        return False
+    worker.update(identity)
+    worker["process_identity_run_id"] = str(worker.get("run_id") or "")
+    worker.pop("process_identity_error", None)
+    return True
+
+
+def _worker_process_group_alive(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
 
 
 def _reap_worker_child(pid: int) -> None:
@@ -3207,35 +3311,58 @@ def _reap_worker_child(pid: int) -> None:
 def terminate_worker_pid(
     pid: int | None,
     *,
+    process_group_id: int | None = None,
+    process_session_id: int | None = None,
+    process_start_time_ticks: str | None = None,
+    process_identity_version: int | None = None,
     grace_seconds: float = 1.0,
     kill_wait_seconds: float = 0.5,
 ) -> bool:
-    """Terminate the worker's complete session and reap its wrapper child."""
+    """Terminate only a launch-time-owned worker session/process group."""
 
     try:
         worker_pid = int(pid or 0)
+        owned_group_id = int(process_group_id or 0)
+        owned_session_id = int(process_session_id or 0)
+        identity_version = int(process_identity_version or 0)
     except (TypeError, ValueError, OverflowError):
         return False
     if worker_pid <= 1 or worker_pid == os.getpid():
         return False
+    if (
+        identity_version != PROCESS_IDENTITY_VERSION
+        or owned_group_id != worker_pid
+        or owned_session_id != worker_pid
+        or not str(process_start_time_ticks or "").strip()
+    ):
+        return False
+    if owned_group_id == os.getpgrp() or owned_session_id == os.getsid(0):
+        return False
+
+    leader_exists = True
     try:
-        process_group_id = os.getpgid(worker_pid)
+        current_group_id = os.getpgid(worker_pid)
+        current_session_id = os.getsid(worker_pid)
+    except ProcessLookupError:
+        leader_exists = False
+        current_group_id = None
+        current_session_id = None
     except OSError:
+        return False
+    if leader_exists:
+        current_start_time = _process_start_time_ticks(worker_pid)
+        if (
+            current_group_id != owned_group_id
+            or current_session_id != owned_session_id
+            or current_start_time != str(process_start_time_ticks)
+        ):
+            return False
+    elif not _worker_process_group_alive(owned_group_id):
         _reap_worker_child(worker_pid)
         return False
-    # A managed worker always owns a new session.  A record that points back
-    # into the supervisor's process group is corrupt; signalling it could kill
-    # the supervisor or an unrelated launcher/test process.
-    if process_group_id == os.getpgrp():
-        return False
-    # Every managed worker is launched with start_new_session=True.  Refuse to
-    # signal an inherited group if a corrupt record points at a non-leader PID.
-    group_owned = process_group_id == worker_pid
+
     try:
-        if group_owned:
-            os.killpg(process_group_id, signal.SIGTERM)
-        else:
-            os.kill(worker_pid, signal.SIGTERM)
+        os.killpg(owned_group_id, signal.SIGTERM)
     except ProcessLookupError:
         _reap_worker_child(worker_pid)
         return False
@@ -3243,21 +3370,18 @@ def terminate_worker_pid(
         return False
 
     deadline = time.monotonic() + max(0.0, float(grace_seconds))
-    while _worker_process_group_alive(worker_pid, process_group_id if group_owned else None):
+    while _worker_process_group_alive(owned_group_id):
         _reap_worker_child(worker_pid)
         if time.monotonic() >= deadline:
             break
         time.sleep(0.02)
-    if _worker_process_group_alive(worker_pid, process_group_id if group_owned else None):
+    if _worker_process_group_alive(owned_group_id):
         try:
-            if group_owned:
-                os.killpg(process_group_id, signal.SIGKILL)
-            else:
-                os.kill(worker_pid, signal.SIGKILL)
+            os.killpg(owned_group_id, signal.SIGKILL)
         except ProcessLookupError:
             pass
         kill_deadline = time.monotonic() + max(0.0, float(kill_wait_seconds))
-        while _worker_process_group_alive(worker_pid, process_group_id if group_owned else None):
+        while _worker_process_group_alive(owned_group_id):
             _reap_worker_child(worker_pid)
             if time.monotonic() >= kill_deadline:
                 break
@@ -3358,7 +3482,19 @@ def retire_worker_delivery(
     # Revoke manual delivery first so a human cannot start it after runtime
     # state has already declared the run terminal.
     revoke_file_inbox_payload(config, worker, reason=reason)
-    return terminate_worker_pid(worker.get("pid"))
+    identity_keys = (
+        "process_group_id",
+        "process_session_id",
+        "process_start_time_ticks",
+        "process_identity_version",
+    )
+    identity = {key: worker.get(key) for key in identity_keys}
+    if (
+        str(worker.get("process_identity_run_id") or "") != str(worker.get("run_id") or "")
+        or not all(identity.values())
+    ):
+        return terminate_worker_pid(worker.get("pid"))
+    return terminate_worker_pid(worker.get("pid"), **identity)
 
 
 def normalize_pr_url(config: dict[str, Any], url: str | None) -> str | None:
@@ -6947,7 +7083,124 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
     return False
 
 
-def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -> bool:
+def canonical_task_write_set_digest(config: dict[str, Any], status: dict[str, Any], task_id: str) -> str:
+    """Digest the exact canonical records changed by an auto-start.
+
+    This deliberately excludes unrelated tasks.  A prepared transition can
+    therefore be recovered after a supervisor crash without accepting a
+    same-status operator edit to the task, one of its handoffs, or one of its
+    blockers.
+    """
+
+    task_map = task_index_from_status(config, status)
+    task = task_map.get(task_id)
+    payload = {
+        "task": task,
+        "handoffs": [
+            item
+            for item in (status.get("handoffs", []) or [])
+            if isinstance(item, dict) and str(item.get("task_id") or "") == task_id
+        ],
+        "blockers": [
+            item
+            for item in (status.get("blockers", []) or [])
+            if isinstance(item, dict) and str(item.get("task_id") or "") == task_id
+        ],
+    }
+    serialized = json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _install_post_start_dispatch_baseline(
+    state: dict[str, Any],
+    event: dict[str, Any],
+    worker: dict[str, Any],
+    current_event: dict[str, Any],
+    *,
+    refreshed_at: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    """Install one exact post-auto-start baseline in runtime memory."""
+
+    snapshot = worker.setdefault("request_snapshot", {})
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+        worker["request_snapshot"] = snapshot
+    metadata = snapshot.setdefault("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+        snapshot["metadata"] = metadata
+    metadata.setdefault(
+        "dispatch_origin_event_key",
+        metadata.get("dispatch_event_key") or event.get("event_key") or event.get("key"),
+    )
+    metadata.setdefault(
+        "dispatch_origin_task_signature",
+        metadata.get("dispatch_task_signature") or event.get("signature"),
+    )
+    metadata["dispatch_event_key"] = current_event.get("key")
+    metadata["dispatch_task_signature"] = current_event.get("signature")
+    metadata["dispatch_effective_reason"] = current_event.get("reason")
+    metadata["dispatch_baseline_refreshed_at"] = refreshed_at or utc_now()
+
+    queue_event_id = str(worker.get("queue_event_id") or event.get("event_id") or "")
+    if queue_event_id:
+        record = queue_status(state, queue_event_id)
+        record["effective_dispatch_event_key"] = current_event.get("key")
+        record["effective_dispatch_task_signature"] = current_event.get("signature")
+        record["effective_dispatch_reason"] = current_event.get("reason")
+        record["dispatch_baseline_refreshed_at"] = metadata["dispatch_baseline_refreshed_at"]
+    return snapshot, metadata, queue_event_id
+
+
+def _apply_auto_start_canonical_mutation(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    task_id: str,
+    target_agent: str,
+    timestamp: str,
+    transition_id: str,
+    message: str,
+) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]]]:
+    task_map = task_index_from_status(config, status)
+    task = task_map.get(task_id)
+    if task is None:
+        return None, task_map
+    task["status"] = "in_progress"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task[AUTO_START_TRANSITION_TASK_FIELD] = transition_id
+    for handoff in status.get("handoffs", []) or []:
+        if handoff.get("task_id") == task_id and handoff.get("to") == target_agent and handoff.get("status") != "done":
+            handoff["status"] = "done"
+            handoff["resolved_at"] = timestamp
+    for blocker in status.get("blockers", []) or []:
+        if blocker.get("task_id") == task_id and blocker.get("status") == "open":
+            blocker["status"] = "resolved"
+            blocker["resolved_at"] = timestamp
+    return task, task_map
+
+
+def auto_start_transition_id(
+    *,
+    worker_run_id: str,
+    queue_event_id: str,
+    origin_event_key: str,
+    origin_task_signature: str,
+) -> str:
+    binding = "|".join(
+        (worker_run_id, queue_event_id, origin_event_key, origin_task_signature)
+    )
+    return f"canonical-start-{hashlib.sha256(binding.encode('utf-8')).hexdigest()[:24]}"
+
+
+def sync_dispatched_task_status(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    event: dict[str, Any],
+    *,
+    worker_run_id: str,
+) -> bool:
     reason = str(event.get("reason") or "").strip()
     action = DISPATCH_STATUS_ACTIONS.get(reason)
     if action is None:
@@ -6969,69 +7222,174 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
         return False
     expected_event_key = str(event.get("key") or event.get("event_key") or "").strip()
     message = f"Supervisor auto-started {task_id} after successful dispatch."
+    canonical_written = False
     try:
-        with canonical_task_state_lock(config):
-            status = load_status(config)
-            matched, task, task_map, mismatch = _fresh_task_matches_expected_cas(
-                config,
-                status,
-                task_id=task_id,
-                expected_task_signature=None,
-                expected_event_key=expected_event_key,
-                expected_target_agent=target_agent,
-            )
-            if not matched or task is None:
-                event["_status_sync_outcome"] = "stale"
-                event["_status_sync_mismatch"] = mismatch
-                write_activity_log(
+        # The lock order is invariant across every standalone and supervisor
+        # call: runtime state first, canonical task state second.
+        with runtime_state_lock(config):
+            with canonical_task_state_lock(config):
+                status = load_status(config)
+                matched, task, task_map, mismatch = _fresh_task_matches_expected_cas(
                     config,
-                    {
-                        "type": "task_dispatch_sync_stale",
-                        "task_id": task_id,
-                        "target_agent": target_agent,
-                        "dispatch_reason": reason,
-                        "expected_event_key": expected_event_key,
-                        "message": (
-                            f"Skipped auto-start for stale dispatch {task_id}: {mismatch}. "
-                            "Canonical task truth was not modified."
-                        ),
-                    },
+                    status,
+                    task_id=task_id,
+                    expected_task_signature=None,
+                    expected_event_key=expected_event_key,
+                    expected_target_agent=target_agent,
                 )
-                return False
-            if str(task.get("owner") or "").strip() != target_agent:
-                event["_status_sync_outcome"] = "stale"
-                event["_status_sync_mismatch"] = "owner_changed"
-                return False
-            if str(task.get("status") or "").lower() not in eligible_statuses:
-                event["_status_sync_outcome"] = "stale"
-                event["_status_sync_mismatch"] = "status_changed"
-                return False
-            timestamp = utc_now()
-            task["status"] = "in_progress"
-            task["last_update"] = timestamp
-            task["next"] = message
-            for handoff in status.get("handoffs", []) or []:
-                if handoff.get("task_id") == task_id and handoff.get("to") == target_agent and handoff.get("status") != "done":
-                    handoff["status"] = "done"
-                    handoff["resolved_at"] = timestamp
-            for blocker in status.get("blockers", []) or []:
-                if blocker.get("task_id") == task_id and blocker.get("status") == "open":
-                    blocker["status"] = "resolved"
-                    blocker["resolved_at"] = timestamp
-            post_start_event = current_execution_dispatch_event_for_target(
-                config,
-                task,
-                task_map,
-                target_agent=target_agent,
-            )
-            if post_start_event is None:
-                event["_status_sync_outcome"] = "failed"
-                event["_status_sync_mismatch"] = "post_start_lane_missing"
-                return False
-            event["_post_status_sync_event_key"] = post_start_event.get("key")
-            event["_post_status_sync_task_signature"] = post_start_event.get("signature")
-            write_json(config_path(config, "status_file"), status)
+                if not matched or task is None:
+                    event["_status_sync_outcome"] = "stale"
+                    event["_status_sync_mismatch"] = mismatch
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "task_dispatch_sync_stale",
+                            "task_id": task_id,
+                            "target_agent": target_agent,
+                            "dispatch_reason": reason,
+                            "expected_event_key": expected_event_key,
+                            "message": (
+                                f"Skipped auto-start for stale dispatch {task_id}: {mismatch}. "
+                                "Canonical task truth was not modified."
+                            ),
+                        },
+                    )
+                    return False
+                if str(task.get("owner") or "").strip() != target_agent:
+                    event["_status_sync_outcome"] = "stale"
+                    event["_status_sync_mismatch"] = "owner_changed"
+                    return False
+                if str(task.get("status") or "").lower() not in eligible_statuses:
+                    event["_status_sync_outcome"] = "stale"
+                    event["_status_sync_mismatch"] = "status_changed"
+                    return False
+
+                worker = state.setdefault("workers", {}).get(str(worker_run_id or ""))
+                queue_event_id = str(event.get("event_id") or "").strip()
+                if not isinstance(worker, dict):
+                    event["_status_sync_outcome"] = "failed"
+                    event["_status_sync_mismatch"] = "worker_missing"
+                    return False
+                if (
+                    str(worker.get("run_id") or "") != str(worker_run_id or "")
+                    or str(worker.get("task_id") or "") != task_id
+                    or not queue_event_id
+                    or str(worker.get("queue_event_id") or "") != queue_event_id
+                ):
+                    event["_status_sync_outcome"] = "failed"
+                    event["_status_sync_mismatch"] = "worker_binding_mismatch"
+                    return False
+
+                origin_event = current_execution_dispatch_event_for_target(
+                    config,
+                    task,
+                    task_map,
+                    target_agent=target_agent,
+                )
+                worker_event_key = _worker_original_dispatch_event_key(worker, {queue_event_id: event})
+                worker_task_signature = _worker_original_dispatch_signature(worker, {queue_event_id: event})
+                if (
+                    origin_event is None
+                    or str(origin_event.get("reason") or "") != REASON_OWNED_READY
+                    or str(origin_event.get("key") or "") != expected_event_key
+                    or worker_event_key != expected_event_key
+                    or not worker_task_signature
+                    or worker_task_signature != str(origin_event.get("signature") or "")
+                ):
+                    event["_status_sync_outcome"] = "stale"
+                    event["_status_sync_mismatch"] = "worker_dispatch_baseline_changed"
+                    return False
+
+                timestamp = utc_now()
+                transition_id = auto_start_transition_id(
+                    worker_run_id=str(worker_run_id),
+                    queue_event_id=queue_event_id,
+                    origin_event_key=str(origin_event.get("key") or ""),
+                    origin_task_signature=str(origin_event.get("signature") or ""),
+                )
+                prospective_status = copy.deepcopy(status)
+                post_task, post_task_map = _apply_auto_start_canonical_mutation(
+                    config,
+                    prospective_status,
+                    task_id=task_id,
+                    target_agent=target_agent,
+                    timestamp=timestamp,
+                    transition_id=transition_id,
+                    message=message,
+                )
+                post_start_event = (
+                    current_execution_dispatch_event_for_target(
+                        config,
+                        post_task,
+                        post_task_map,
+                        target_agent=target_agent,
+                    )
+                    if post_task is not None
+                    else None
+                )
+                if post_start_event is None:
+                    event["_status_sync_outcome"] = "failed"
+                    event["_status_sync_mismatch"] = "post_start_lane_missing"
+                    return False
+
+                transition = {
+                    "schema_version": AUTO_START_TRANSITION_SCHEMA_VERSION,
+                    "id": transition_id,
+                    "kind": AUTO_START_TRANSITION_KIND,
+                    "phase": "prepared",
+                    "task_id": task_id,
+                    "worker_run_id": worker_run_id,
+                    "queue_event_id": queue_event_id,
+                    "target_agent": target_agent,
+                    "origin_reason": origin_event.get("reason"),
+                    "origin_event_key": origin_event.get("key"),
+                    "origin_task_signature": origin_event.get("signature"),
+                    "origin_write_set_digest": canonical_task_write_set_digest(config, status, task_id),
+                    "post_reason": post_start_event.get("reason"),
+                    "post_event_key": post_start_event.get("key"),
+                    "post_task_signature": post_start_event.get("signature"),
+                    "post_write_set_digest": canonical_task_write_set_digest(
+                        config,
+                        prospective_status,
+                        task_id,
+                    ),
+                    "prepared_at": timestamp,
+                }
+                worker["canonical_status_transition"] = transition
+                record = queue_status(state, queue_event_id)
+                record["canonical_transition_id"] = transition_id
+                record["canonical_transition_phase"] = "prepared"
+
+                # Write-ahead durability: a crash from this point onward can
+                # distinguish our exact mutation from an operator edit.
+                save_runtime_state(config, state)
+                write_json(config_path(config, "status_file"), prospective_status)
+                canonical_written = True
+
+                event["_post_status_sync_event_key"] = post_start_event.get("key")
+                event["_post_status_sync_task_signature"] = post_start_event.get("signature")
+                _install_post_start_dispatch_baseline(
+                    state,
+                    event,
+                    worker,
+                    post_start_event,
+                    refreshed_at=timestamp,
+                )
+                transition["phase"] = "committed"
+                transition["committed_at"] = utc_now()
+                record["canonical_transition_phase"] = "committed"
+                record["canonical_transition_committed_at"] = transition["committed_at"]
+                # Commit runtime truth before any derived sync subprocess can
+                # fail or the supervisor can be restarted.
+                save_runtime_state(config, state)
     except Exception as exc:
+        if canonical_written:
+            # Returning False would make the caller supersede a worker whose
+            # canonical mutation is already durable.  Propagate so the outer
+            # runtime transaction stops; boot recovery consumes the prepared
+            # WAL if the committed save did not land.
+            event["_status_sync_outcome"] = "prepared_recovery_required"
+            raise
         event["_status_sync_outcome"] = "failed"
         write_activity_log(
             config,
@@ -7103,55 +7461,37 @@ def refresh_execution_dispatch_baseline_after_status_sync(
         or display_name_for(config, str(event.get("target_agent") or ""))
     ).strip()
     try:
-        with canonical_task_state_lock(config):
-            task_map = task_index_from_status(config, load_status(config))
-            task = task_map.get(task_id)
-            if not task:
-                return False
-            current_event = current_execution_dispatch_event_for_target(
-                config,
-                task,
-                task_map,
-                target_agent=target_agent,
-            )
-            if (
-                current_event is None
-                or str(current_event.get("key") or "") != expected_event_key
-                or str(current_event.get("signature") or "") != expected_task_signature
-            ):
-                event["_status_sync_outcome"] = "stale"
-                event["_status_sync_mismatch"] = "post_start_dispatch_signature_changed"
-                return False
+        with runtime_state_lock(config):
+            with canonical_task_state_lock(config):
+                task_map = task_index_from_status(config, load_status(config))
+                task = task_map.get(task_id)
+                if not task:
+                    return False
+                current_event = current_execution_dispatch_event_for_target(
+                    config,
+                    task,
+                    task_map,
+                    target_agent=target_agent,
+                )
+                if (
+                    current_event is None
+                    or str(current_event.get("key") or "") != expected_event_key
+                    or str(current_event.get("signature") or "") != expected_task_signature
+                ):
+                    event["_status_sync_outcome"] = "stale"
+                    event["_status_sync_mismatch"] = "post_start_dispatch_signature_changed"
+                    return False
 
-            worker = state.setdefault("workers", {}).get(str(worker_run_id or ""))
-            if not isinstance(worker, dict):
-                return False
-            snapshot = worker.setdefault("request_snapshot", {})
-            metadata = snapshot.setdefault("metadata", {})
-            if not isinstance(metadata, dict):
-                metadata = {}
-                snapshot["metadata"] = metadata
-            metadata.setdefault(
-                "dispatch_origin_event_key",
-                metadata.get("dispatch_event_key") or event.get("event_key"),
-            )
-            metadata.setdefault(
-                "dispatch_origin_task_signature",
-                metadata.get("dispatch_task_signature") or event.get("signature"),
-            )
-            metadata["dispatch_event_key"] = current_event.get("key")
-            metadata["dispatch_task_signature"] = current_event.get("signature")
-            metadata["dispatch_effective_reason"] = current_event.get("reason")
-            metadata["dispatch_baseline_refreshed_at"] = utc_now()
-
-            queue_event_id = str(worker.get("queue_event_id") or event.get("event_id") or "")
-            if queue_event_id:
-                record = queue_status(state, queue_event_id)
-                record["effective_dispatch_event_key"] = current_event.get("key")
-                record["effective_dispatch_task_signature"] = current_event.get("signature")
-                record["effective_dispatch_reason"] = current_event.get("reason")
-                record["dispatch_baseline_refreshed_at"] = metadata["dispatch_baseline_refreshed_at"]
-            task_snapshot = dict(task)
+                worker = state.setdefault("workers", {}).get(str(worker_run_id or ""))
+                if not isinstance(worker, dict):
+                    return False
+                snapshot, metadata, queue_event_id = _install_post_start_dispatch_baseline(
+                    state,
+                    event,
+                    worker,
+                    current_event,
+                )
+                task_snapshot = dict(task)
     except Exception:
         return False
 
@@ -7196,12 +7536,7 @@ def refresh_execution_dispatch_baseline_after_status_sync(
             # Runtime state remains authoritative if an isolated worktree was
             # concurrently reaped; the next dispatch rematerializes context.
             continue
-    try:
-        save_runtime_state(config, state)
-    except KeyError:
-        # Lightweight unit/integration configs may intentionally omit a
-        # runtime-state path. Production configs persist this immediately.
-        pass
+    save_runtime_state(config, state)
     return True
 
 
@@ -7736,6 +8071,26 @@ def request_for_worker(config: dict[str, Any], worker: dict[str, Any]) -> Delive
 
 
 def refresh_relaunch_request_context(
+    config: dict[str, Any],
+    request: DeliveryRequest,
+    *,
+    queue_event_id: str | None,
+    state: dict[str, Any] | None = None,
+    worker: dict[str, Any] | None = None,
+) -> bool:
+    """Refresh relaunch context under the global runtime→canonical order."""
+
+    with runtime_state_lock(config):
+        return _refresh_relaunch_request_context_locked(
+            config,
+            request,
+            queue_event_id=queue_event_id,
+            state=state,
+            worker=worker,
+        )
+
+
+def _refresh_relaunch_request_context_locked(
     config: dict[str, Any],
     request: DeliveryRequest,
     *,
@@ -8426,6 +8781,24 @@ def consume_approval_resume_once(
     return True
 
 
+def revoke_approval_resume_override(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    approval: dict[str, Any],
+    *,
+    reason: str,
+) -> None:
+    approval_id = str(approval.get("approval_id") or "").strip()
+    if not approval_id:
+        return
+    try:
+        consume_resume_override(config, approval_id=approval_id, reason=reason)
+        worker["approval_resume_override_revoked_at"] = utc_now()
+        worker["approval_resume_override_revoked_reason"] = reason
+    except Exception as exc:
+        worker["approval_resume_override_revoke_error"] = f"{type(exc).__name__}: {exc}"
+
+
 def resume_claude_worker(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -8509,6 +8882,7 @@ def resume_claude_worker(
     now_dt = datetime.now(timezone.utc)
     worker["previous_log_paths"] = previous_logs
     worker["pid"] = process.pid
+    record_worker_process_identity(worker)
     worker["status"] = "running"
     worker["deferred_action"] = None
     worker["last_event_at"] = _isoformat_utc(now_dt)
@@ -8532,6 +8906,10 @@ def resume_claude_worker(
         queue_record = queue_status(state, str(worker["queue_event_id"]))
         for key in ("execution_outcome", "retry_not_before", "triage_required"):
             queue_record.pop(key, None)
+    # Persist the new owned session identity before post-spawn admission.  A
+    # crash in that CAS can then safely terminate or recover this exact group
+    # instead of orphaning an unidentifiable resumed process.
+    save_runtime_state(config, state)
     return {
         "command": command,
         "log_path": str(log_path),
@@ -8554,10 +8932,22 @@ def resume_approved_claude_worker(
 
     mismatch = approval_resume_binding_mismatch(worker, approval)
     if mismatch:
+        revoke_approval_resume_override(
+            config,
+            worker,
+            approval,
+            reason=f"approval_resume_binding_rejected:{mismatch}",
+        )
         return {"status": "rejected", "mismatch": mismatch}
     if pid_is_alive(worker.get("pid")):
         return {"status": "awaiting_process_exit", "mismatch": None}
     if not worker_matches_current_assignment(config, worker, task_map):
+        revoke_approval_resume_override(
+            config,
+            worker,
+            approval,
+            reason="approval_resume_assignment_changed",
+        )
         return {"status": "rejected", "mismatch": "assignment_changed"}
     pre_admission = fresh_execution_dispatch_admission(
         config,
@@ -8567,11 +8957,24 @@ def resume_approved_claude_worker(
         audit_failure_kind="approval_resume_pre_spawn",
     )
     if not pre_admission.get("applicable") or not pre_admission.get("admitted"):
+        rejection = pre_admission.get("mismatch") or "dispatch_admission_not_applicable"
+        revoke_approval_resume_override(
+            config,
+            worker,
+            approval,
+            reason=f"approval_resume_pre_admission_rejected:{rejection}",
+        )
         return {
             "status": "rejected",
-            "mismatch": pre_admission.get("mismatch") or "dispatch_admission_not_applicable",
+            "mismatch": rejection,
         }
     if not consume_approval_resume_once(config, state, worker, approval):
+        revoke_approval_resume_override(
+            config,
+            worker,
+            approval,
+            reason="approval_resume_consume_failed_or_replayed",
+        )
         return {"status": "rejected", "mismatch": "approval_consume_failed_or_replayed"}
 
     try:
@@ -8586,6 +8989,12 @@ def resume_approved_claude_worker(
         resumed = None
         worker["approval_resume_error"] = f"{type(exc).__name__}: {exc}"
     if not resumed:
+        revoke_approval_resume_override(
+            config,
+            worker,
+            approval,
+            reason="approval_resume_spawn_failed",
+        )
         worker["approval_resume_state"] = "spawn_failed"
         worker["last_error"] = "Approved worker resume failed before a process was launched."
         save_runtime_state(config, state)
@@ -8599,6 +9008,12 @@ def resume_approved_claude_worker(
         audit_failure_kind="approval_resume_post_spawn",
     )
     if not post_admission.get("applicable") or not post_admission.get("admitted"):
+        revoke_approval_resume_override(
+            config,
+            worker,
+            approval,
+            reason="approval_resume_post_spawn_admission_failed",
+        )
         retire_worker_delivery(
             config,
             worker,
@@ -8851,7 +9266,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             admitted = bool(admission.get("admitted"))
             queued_event = queued_events_by_id.get(str(worker.get("queue_event_id") or ""))
             if admitted and admission.get("reason") == REASON_OWNED_READY:
-                admitted = bool(queued_event and sync_dispatched_task_status(config, queued_event))
+                admitted = bool(
+                    queued_event
+                    and sync_dispatched_task_status(
+                        config,
+                        state,
+                        queued_event,
+                        worker_run_id=str(worker.get("run_id") or ""),
+                    )
+                )
                 if admitted:
                     admitted = refresh_execution_dispatch_baseline_after_status_sync(
                         config,
@@ -10591,7 +11014,15 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             admitted = bool(admission.get("admitted"))
             queued_event = queued_events_by_id.get(str(worker.get("queue_event_id") or ""))
             if admitted and admission.get("reason") == REASON_OWNED_READY:
-                admitted = bool(queued_event and sync_dispatched_task_status(config, queued_event))
+                admitted = bool(
+                    queued_event
+                    and sync_dispatched_task_status(
+                        config,
+                        state,
+                        queued_event,
+                        worker_run_id=str(worker.get("run_id") or ""),
+                    )
+                )
                 if admitted:
                     admitted = refresh_execution_dispatch_baseline_after_status_sync(
                         config,
@@ -11944,12 +12375,20 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
 
 
 def save_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
-    path = config_path(config, "event_queue")
-    payload = "".join(f"{json.dumps(event, ensure_ascii=False)}\n" for event in events)
-    path.write_text(payload, encoding="utf-8")
+    with runtime_state_lock(config):
+        path = config_path(config, "event_queue")
+        payload = "".join(f"{json.dumps(event, ensure_ascii=False)}\n" for event in events)
+        path.write_text(payload, encoding="utf-8")
 
 
 def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Prune the dispatch queue as one serialized read/modify/write."""
+
+    with runtime_state_lock(config):
+        return _prune_event_queue_locked(config, state)
+
+
+def _prune_event_queue_locked(config: dict[str, Any], state: dict[str, Any]) -> bool:
     events = load_event_queue(config)
     if not events:
         return False
@@ -12566,16 +13005,6 @@ def current_execution_dispatch_event_for_target(
     return build_dispatch_event(task, target_agent, reason, resolver)
 
 
-def execution_dispatch_reason_is_continuation(origin_reason: str, current_reason: str) -> bool:
-    origin = str(origin_reason or "").strip()
-    current = str(current_reason or "").strip()
-    if not origin or not current:
-        return False
-    if origin == current:
-        return True
-    return {origin, current} <= {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}
-
-
 def _worker_original_dispatch_event_key(
     worker: dict[str, Any],
     queue_events_by_id: dict[str, dict[str, Any]] | None,
@@ -12620,6 +13049,214 @@ def _worker_original_dispatch_signature(
         or queued_event.get("signature")
         or ""
     ).strip()
+
+
+def _mark_auto_start_transition_conflicted(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    transition: dict[str, Any] | None,
+    mismatch: str,
+) -> dict[str, Any]:
+    now = utc_now()
+    if isinstance(transition, dict):
+        transition["phase"] = "conflicted"
+        transition["conflicted_at"] = now
+        transition["conflict_reason"] = mismatch
+    worker["canonical_transition_recovery_error"] = mismatch
+    queue_event_id = str(
+        (transition or {}).get("queue_event_id")
+        or worker.get("queue_event_id")
+        or ""
+    )
+    if queue_event_id:
+        record = queue_status(state, queue_event_id)
+        record["canonical_transition_phase"] = "conflicted"
+        record["canonical_transition_conflicted_at"] = now
+        record["canonical_transition_conflict_reason"] = mismatch
+    save_runtime_state(config, state)
+    return {
+        "applicable": True,
+        "recovered": False,
+        "conflicted": True,
+        "mismatch": f"canonical_transition_{mismatch}",
+    }
+
+
+def recover_prepared_auto_start_transition(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    queue_events_by_id: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Recover only an exact, durably prepared supervisor auto-start.
+
+    The caller holds runtime then canonical task locks.  No status-only
+    continuation is accepted: exact provenance, dispatch signatures, and the
+    task-scoped write-set digest must all agree.
+    """
+
+    raw_transition = worker.get("canonical_status_transition")
+    if raw_transition is None:
+        return {"applicable": False, "recovered": False, "conflicted": False}
+    if not isinstance(raw_transition, dict):
+        return _mark_auto_start_transition_conflicted(
+            config,
+            state,
+            worker,
+            None,
+            "malformed",
+        )
+    transition = raw_transition
+    phase = str(transition.get("phase") or "")
+    if phase in {"committed", "aborted"}:
+        return {"applicable": False, "recovered": False, "conflicted": False}
+    if phase != "prepared":
+        return _mark_auto_start_transition_conflicted(
+            config,
+            state,
+            worker,
+            transition,
+            "invalid_phase",
+        )
+
+    required_text_fields = (
+        "id",
+        "task_id",
+        "worker_run_id",
+        "queue_event_id",
+        "target_agent",
+        "origin_reason",
+        "origin_event_key",
+        "origin_task_signature",
+        "origin_write_set_digest",
+        "post_reason",
+        "post_event_key",
+        "post_task_signature",
+        "post_write_set_digest",
+        "prepared_at",
+    )
+    if (
+        transition.get("schema_version") != AUTO_START_TRANSITION_SCHEMA_VERSION
+        or transition.get("kind") != AUTO_START_TRANSITION_KIND
+        or any(not isinstance(transition.get(field), str) or not transition.get(field) for field in required_text_fields)
+    ):
+        return _mark_auto_start_transition_conflicted(
+            config,
+            state,
+            worker,
+            transition,
+            "malformed",
+        )
+
+    task_id = str(transition["task_id"])
+    run_id = str(transition["worker_run_id"])
+    queue_event_id = str(transition["queue_event_id"])
+    target_agent = str(transition["target_agent"])
+    queued_event = (queue_events_by_id or {}).get(queue_event_id)
+    queued_signature = ""
+    if isinstance(queued_event, dict):
+        queued_metadata = queued_event.get("metadata", {}) or {}
+        queued_signature = str(
+            queued_metadata.get("dispatch_task_signature")
+            or queued_event.get("signature")
+            or ""
+        )
+    if (
+        run_id != str(worker.get("run_id") or "")
+        or task_id != str(worker.get("task_id") or "")
+        or queue_event_id != str(worker.get("queue_event_id") or "")
+        or not isinstance(queued_event, dict)
+        or str(queued_event.get("event_key") or queued_event.get("key") or "") != transition["origin_event_key"]
+        or queued_signature != transition["origin_task_signature"]
+    ):
+        return _mark_auto_start_transition_conflicted(
+            config,
+            state,
+            worker,
+            transition,
+            "binding_mismatch",
+        )
+
+    task_map = task_index_from_status(config, status)
+    task = task_map.get(task_id)
+    if task is None:
+        return _mark_auto_start_transition_conflicted(
+            config,
+            state,
+            worker,
+            transition,
+            "task_missing",
+        )
+    current_event = current_execution_dispatch_event_for_target(
+        config,
+        task,
+        task_map,
+        target_agent=target_agent,
+    )
+    current_digest = canonical_task_write_set_digest(config, status, task_id)
+    current_event_key = str((current_event or {}).get("key") or "")
+    current_task_signature = str((current_event or {}).get("signature") or "")
+
+    if (
+        current_digest == transition["origin_write_set_digest"]
+        and current_event_key == transition["origin_event_key"]
+        and current_task_signature == transition["origin_task_signature"]
+        and str((current_event or {}).get("reason") or "") == transition["origin_reason"]
+    ):
+        transition["phase"] = "aborted"
+        transition["aborted_at"] = utc_now()
+        transition["abort_reason"] = "canonical_write_not_observed"
+        record = queue_status(state, queue_event_id)
+        record["canonical_transition_phase"] = "aborted"
+        record["canonical_transition_aborted_at"] = transition["aborted_at"]
+        save_runtime_state(config, state)
+        return {
+            "applicable": True,
+            "recovered": False,
+            "conflicted": False,
+            "retry_origin": True,
+        }
+
+    if (
+        current_digest == transition["post_write_set_digest"]
+        and str(task.get(AUTO_START_TRANSITION_TASK_FIELD) or "") == transition["id"]
+        and current_event_key == transition["post_event_key"]
+        and current_task_signature == transition["post_task_signature"]
+        and str((current_event or {}).get("reason") or "") == transition["post_reason"]
+    ):
+        _install_post_start_dispatch_baseline(
+            state,
+            queued_event,
+            worker,
+            current_event,
+            refreshed_at=utc_now(),
+        )
+        transition["phase"] = "committed"
+        transition["committed_at"] = utc_now()
+        transition["recovered_at"] = transition["committed_at"]
+        worker.pop("canonical_transition_recovery_error", None)
+        record = queue_status(state, queue_event_id)
+        record["canonical_transition_phase"] = "committed"
+        record["canonical_transition_committed_at"] = transition["committed_at"]
+        record["canonical_transition_recovered_at"] = transition["recovered_at"]
+        save_runtime_state(config, state)
+        return {
+            "applicable": True,
+            "recovered": True,
+            "conflicted": False,
+            "current_event": current_event,
+        }
+
+    return _mark_auto_start_transition_conflicted(
+        config,
+        state,
+        worker,
+        transition,
+        "canonical_mismatch",
+    )
 
 
 def _execution_dispatch_admission_from_status(
@@ -12683,6 +13320,12 @@ def _execution_dispatch_admission_from_status(
         mismatch = "task_signature_changed"
 
     if mismatch != "matched":
+        if mismatch in {"expected_event_key_missing", "expected_task_signature_missing"}:
+            # Live upgrades fail closed for pre-signature workers.  They are
+            # explicitly identified for observability instead of silently
+            # adopting mutable canonical state.
+            worker["dispatch_upgrade_disposition"] = "legacy_unsigned_worker_superseded"
+            worker["dispatch_upgrade_detected_at"] = utc_now()
         audit_key = f"{expected_event_key}|{audit_failure_kind}|{mismatch}"
         if worker.get("last_execution_admission_rejection") != audit_key:
             _archive_execution_dispatch_guard_record(
@@ -12756,15 +13399,37 @@ def fresh_execution_dispatch_admission(
     audit_failure_kind: str = "canonical_admission",
 ) -> dict[str, Any]:
     try:
-        with canonical_task_state_lock(config):
-            return _execution_dispatch_admission_from_status(
-                config,
-                state,
-                worker,
-                load_status(config),
-                queue_events_by_id=queue_events_by_id,
-                audit_failure_kind=audit_failure_kind,
-            )
+        with runtime_state_lock(config):
+            with canonical_task_state_lock(config):
+                status = load_status(config)
+                recovery = recover_prepared_auto_start_transition(
+                    config,
+                    state,
+                    worker,
+                    status,
+                    queue_events_by_id=queue_events_by_id,
+                )
+                if recovery.get("conflicted"):
+                    worker.pop("execution_admission", None)
+                    return {
+                        "applicable": True,
+                        "admitted": False,
+                        "resolved": False,
+                        "mismatch": recovery.get("mismatch"),
+                    }
+                admission = _execution_dispatch_admission_from_status(
+                    config,
+                    state,
+                    worker,
+                    status,
+                    queue_events_by_id=queue_events_by_id,
+                    audit_failure_kind=audit_failure_kind,
+                )
+                if recovery.get("recovered"):
+                    admission["canonical_transition_recovered"] = True
+                elif recovery.get("retry_origin"):
+                    admission["canonical_transition_retry_origin"] = True
+                return admission
     except Exception as exc:
         worker.pop("execution_admission", None)
         return {
@@ -13242,20 +13907,22 @@ def fresh_queued_dispatch_event_admission(config: dict[str, Any], event: dict[st
 
 
 def ready_dispatch_signature(task: dict[str, Any], reason: str, task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:
-    return json.dumps(
-        {
-            "task_id": task.get("id"),
-            "status": task.get("status"),
-            "reason": reason,
-            "owner": task.get("owner"),
-            "reviewer": task.get("reviewer"),
-            "last_update": task.get("last_update"),
-            "depends_on": list(task.get("depends_on", []) or []),
-            "dependency_signature": task_dependency_signature(task, task_lookup),
-        },
-        sort_keys=True,
-        ensure_ascii=True,
-    )
+    payload = {
+        "task_id": task.get("id"),
+        "status": task.get("status"),
+        "reason": reason,
+        "owner": task.get("owner"),
+        "reviewer": task.get("reviewer"),
+        "last_update": task.get("last_update"),
+        "depends_on": list(task.get("depends_on", []) or []),
+        "dependency_signature": task_dependency_signature(task, task_lookup),
+    }
+    # Only supervisor auto-started tasks carry this field, so existing signed
+    # queued events retain their original signatures during live upgrade.
+    transition_id = str(task.get(AUTO_START_TRANSITION_TASK_FIELD) or "").strip()
+    if transition_id:
+        payload[AUTO_START_TRANSITION_TASK_FIELD] = transition_id
+    return json.dumps(payload, sort_keys=True, ensure_ascii=True)
 
 
 def build_dispatch_event(

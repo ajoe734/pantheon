@@ -258,10 +258,14 @@ def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, A
         "evidence_ref": evidence_ref,
         "resolution_ref": None,
     }
-    with approval_lock(config):
-        state = load_approval_state(config)
-        state.setdefault("pending", []).append(approval)
-        save_approval_state(config, state)
+    # Pending approvals participate in task runtime admission.  Serialize
+    # their creation with queue/worker producers so a clear-task decision
+    # cannot race a newly pending approval for the same task.
+    with runtime_state_lock(config):
+        with approval_lock(config):
+            state = load_approval_state(config)
+            state.setdefault("pending", []).append(approval)
+            save_approval_state(config, state)
     write_activity_log(
         config,
         {

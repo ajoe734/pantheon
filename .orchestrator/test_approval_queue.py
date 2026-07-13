@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -220,6 +221,38 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
         self.assertEqual(evidence["stage"], "request")
         self.assertEqual(evidence["tool_input"]["command"], "python3 -m unittest discover -s .orchestrator -p test_approval_queue.py")
+
+    def test_create_approval_waits_for_runtime_admission_transaction(self) -> None:
+        created = threading.Event()
+        errors: list[BaseException] = []
+
+        def producer() -> None:
+            try:
+                approval_queue.create_approval(
+                    self.config,
+                    {
+                        "provider": "codex",
+                        "task_id": "TASK-RUNTIME-GUARD",
+                        "worker_run_id": "run-runtime-guard",
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "git status"},
+                    },
+                )
+            except BaseException as exc:  # pragma: no cover - surfaced below
+                errors.append(exc)
+            finally:
+                created.set()
+
+        with approval_queue.runtime_state_lock(self.config):
+            thread = threading.Thread(target=producer)
+            thread.start()
+            self.assertFalse(created.wait(timeout=0.1))
+
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        saved = json.loads((self.root / "approval-queue.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["pending"][0]["task_id"], "TASK-RUNTIME-GUARD")
 
     def test_can_recover_tool_input_from_request_evidence(self) -> None:
         approval_queue.create_approval(

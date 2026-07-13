@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import fcntl
+import json
 import re
+from collections.abc import Iterable
 from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -661,6 +663,7 @@ def inspect_task_runtime_admission(
     state: dict[str, Any],
     queued_events: list[dict[str, Any]],
     task_id: str,
+    approval_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a fail-closed task mutation decision from one locked snapshot."""
 
@@ -673,7 +676,9 @@ def inspect_task_runtime_admission(
             "queue_event_ids": [],
             "worker_run_ids": [],
             "admitted_run_ids": [],
+            "pending_approval_ids": [],
         }
+    approvals = approval_state if approval_state is not None else default_approval_state()
     runtime_shape_valid = bool(
         isinstance(state, dict)
         and isinstance(queued_events, list)
@@ -681,6 +686,9 @@ def inspect_task_runtime_admission(
         and isinstance((state.get("queue") or {}).get("events"), dict)
         and isinstance(state.get("workers"), dict)
         and all(isinstance(event, dict) for event in queued_events)
+        and isinstance(approvals, dict)
+        and isinstance(approvals.get("pending"), list)
+        and all(isinstance(item, dict) for item in approvals.get("pending", []))
     )
     if not runtime_shape_valid:
         return {
@@ -690,6 +698,7 @@ def inspect_task_runtime_admission(
             "queue_event_ids": [],
             "worker_run_ids": [],
             "admitted_run_ids": [],
+            "pending_approval_ids": [],
         }
 
     queue_records = ((state.get("queue") or {}).get("events") or {}) if isinstance(state.get("queue"), dict) else {}
@@ -724,40 +733,282 @@ def inspect_task_runtime_admission(
     queue_event_ids = sorted(set(queue_event_ids))
     worker_run_ids = sorted(set(worker_run_ids))
     admitted_run_ids = sorted(set(admitted_run_ids))
-    allowed = not queue_event_ids and not worker_run_ids and not admitted_run_ids
+    pending_approval_ids: list[str] = []
+    for item in approvals.get("pending", []):
+        if str(item.get("task_id") or "").strip() != task_value:
+            continue
+        approval_id = str(
+            item.get("approval_id")
+            or item.get("request_id")
+            or item.get("tool_use_id")
+            or item.get("worker_run_id")
+            or "<missing-approval-id>"
+        ).strip()
+        pending_approval_ids.append(approval_id or "<missing-approval-id>")
+    pending_approval_ids = sorted(set(pending_approval_ids))
+    allowed = not queue_event_ids and not worker_run_ids and not admitted_run_ids and not pending_approval_ids
     return {
         "allowed": allowed,
         "task_id": task_value,
-        "reason": "runtime_clear" if allowed else "task_queued_running_or_admitted",
+        "reason": "runtime_clear" if allowed else "task_queued_running_admitted_or_pending_approval",
         "queue_event_ids": queue_event_ids,
         "worker_run_ids": worker_run_ids,
         "admitted_run_ids": admitted_run_ids,
+        "pending_approval_ids": pending_approval_ids,
     }
 
 
-@contextmanager
-def task_runtime_admission_guard(config: dict[str, Any], task_id: str):
-    """Hold runtime serialization across a caller's canonical task CAS/write.
+def strict_runtime_admission_snapshot(
+    config: dict[str, Any],
+) -> tuple[str | None, dict[str, Any] | None, list[dict[str, Any]] | None, dict[str, Any] | None]:
+    """Read and validate one strict state/event/approval snapshot."""
 
-    Callers must enter this guard *before* ``canonical_task_state_lock_file``.
-    The returned decision is fail closed when runtime state cannot be read or
-    the task is already queued, running, or admitted.
+    try:
+        state_path = config_path(config, "state_file")
+        event_path = config_path(config, "event_queue")
+        approval_path = config_path(config, "approval_queue")
+    except KeyError as exc:
+        return f"path_missing:{exc.args[0]}", None, None, None
+    bodies: dict[str, str] = {}
+    for label, path in (
+        ("state", state_path),
+        ("event_queue", event_path),
+        ("approval_queue", approval_path),
+    ):
+        if not path.exists() or not path.is_file():
+            return f"{label}_file_missing", None, None, None
+        try:
+            body = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return f"{label}_file_unreadable:{type(exc).__name__}", None, None, None
+        if not body.strip():
+            return f"{label}_file_empty", None, None, None
+        bodies[label] = body
+    try:
+        raw_state = json.loads(bodies["state"])
+    except json.JSONDecodeError as exc:
+        return f"state_file_malformed:{type(exc).__name__}", None, None, None
+    if (
+        not isinstance(raw_state, dict)
+        or raw_state.get("version") != 2
+        or not isinstance(raw_state.get("queue"), dict)
+        or not isinstance((raw_state.get("queue") or {}).get("events"), dict)
+        or not isinstance(raw_state.get("workers"), dict)
+    ):
+        return "state_schema_invalid", None, None, None
+    try:
+        raw_events = [
+            json.loads(line)
+            for line in bodies["event_queue"].splitlines()
+            if line.strip()
+        ]
+    except json.JSONDecodeError as exc:
+        return f"event_queue_file_malformed:{type(exc).__name__}", None, None, None
+    if not raw_events:
+        return "event_queue_file_empty", None, None, None
+    if any(
+        not isinstance(event, dict)
+        or not isinstance(event.get("event_id"), str)
+        or not event.get("event_id", "").strip()
+        for event in raw_events
+    ):
+        return "event_queue_schema_invalid", None, None, None
+    try:
+        raw_approvals = json.loads(bodies["approval_queue"])
+    except json.JSONDecodeError as exc:
+        return f"approval_queue_file_malformed:{type(exc).__name__}", None, None, None
+    if (
+        not isinstance(raw_approvals, dict)
+        or raw_approvals.get("version") != 2
+        or not isinstance(raw_approvals.get("pending"), list)
+        or not isinstance(raw_approvals.get("history"), list)
+        or any(not isinstance(item, dict) for item in raw_approvals.get("pending", []))
+        or any(not isinstance(item, dict) for item in raw_approvals.get("history", []))
+    ):
+        return "approval_queue_schema_invalid", None, None, None
+    return None, raw_state, raw_events, raw_approvals
+
+
+def strict_runtime_admission_error(config: dict[str, Any]) -> str | None:
+    """Validate live runtime inputs without accepting loader defaults."""
+
+    error, _state, _events, _approvals = strict_runtime_admission_snapshot(config)
+    return error
+
+
+def _blocked_task_runtime_decision(task_id: str, reason: str) -> dict[str, Any]:
+    return {
+        "allowed": False,
+        "task_id": str(task_id or "").strip(),
+        "reason": reason,
+        "queue_event_ids": [],
+        "worker_run_ids": [],
+        "admitted_run_ids": [],
+        "pending_approval_ids": [],
+    }
+
+
+def _normalize_runtime_admission_task_ids(
+    task_ids: Iterable[str] | str | None,
+) -> tuple[list[str], list[str], list[str]]:
+    if isinstance(task_ids, str):
+        raw_ids: list[Any] = [task_ids]
+    elif task_ids is None:
+        raw_ids = []
+    else:
+        try:
+            raw_ids = list(task_ids)
+        except TypeError:
+            raw_ids = []
+    normalized: list[str] = []
+    empty_entries: list[str] = []
+    duplicate_ids: list[str] = []
+    seen: set[str] = set()
+    for index, raw_id in enumerate(raw_ids):
+        task_id = str(raw_id or "").strip()
+        if not task_id:
+            empty_entries.append(f"index:{index}")
+            continue
+        if task_id in seen:
+            duplicate_ids.append(task_id)
+            continue
+        seen.add(task_id)
+        normalized.append(task_id)
+    return normalized, empty_entries, sorted(set(duplicate_ids))
+
+
+@contextmanager
+def tasks_runtime_admission_guard(
+    config: dict[str, Any],
+    task_ids: Iterable[str] | str | None,
+    *,
+    strict: bool | None = None,
+):
+    """Admit multiple task mutations from one locked runtime snapshot.
+
+    The runtime lock remains held for the entire context.  A dispatcher may
+    therefore enter ``canonical_task_state_lock_file`` inside this guard while
+    preserving the global runtime→task lock order.  IDs must be non-empty and
+    unique; invalid input poisons the aggregate instead of silently narrowing
+    the mutation set.
     """
 
+    normalized_ids, empty_entries, duplicate_ids = _normalize_runtime_admission_task_ids(task_ids)
+    # ``strict`` is tri-state so fresh/unit configurations retain normalized
+    # loader defaults while a live config can opt in centrally.
+    strict_mode = (
+        bool((config.get("supervisor", {}) or {}).get("strict_task_runtime_admission", False))
+        if strict is None
+        else bool(strict)
+    )
     with runtime_state_lock(config):
-        try:
-            state = _load_runtime_state_unlocked(config)
-            queued_events = load_jsonl(config_path(config, "event_queue"))
-            decision = inspect_task_runtime_admission(state, queued_events, task_id)
-        except Exception as exc:
-            decision = {
-                "allowed": False,
-                "task_id": str(task_id or "").strip(),
-                "reason": f"runtime_state_unavailable:{type(exc).__name__}",
-                "queue_event_ids": [],
-                "worker_run_ids": [],
-                "admitted_run_ids": [],
+        invalid_reason = ""
+        if not normalized_ids:
+            invalid_reason = "task_ids_empty"
+        elif empty_entries:
+            invalid_reason = "task_ids_contain_empty"
+        elif duplicate_ids:
+            invalid_reason = "task_ids_duplicate"
+        if invalid_reason:
+            decisions = {
+                task_id: _blocked_task_runtime_decision(task_id, invalid_reason)
+                for task_id in normalized_ids
             }
+            yield {
+                "allowed": False,
+                "reason": invalid_reason,
+                "task_ids": normalized_ids,
+                "decisions": decisions,
+                "busy_task_ids": normalized_ids,
+                "empty_task_id_entries": empty_entries,
+                "duplicate_task_ids": duplicate_ids,
+                "strict": strict_mode,
+            }
+            return
+
+        if strict_mode:
+            strict_error, strict_state, strict_events, strict_approvals = strict_runtime_admission_snapshot(config)
+            if strict_error:
+                reason = f"strict_runtime_invalid:{strict_error}"
+                decisions = {
+                    task_id: _blocked_task_runtime_decision(task_id, reason)
+                    for task_id in normalized_ids
+                }
+                yield {
+                    "allowed": False,
+                    "reason": reason,
+                    "task_ids": normalized_ids,
+                    "decisions": decisions,
+                    "busy_task_ids": normalized_ids,
+                    "empty_task_id_entries": [],
+                    "duplicate_task_ids": [],
+                    "strict": True,
+                }
+                return
+        try:
+            if strict_mode:
+                state = migrate_state(strict_state, config)
+                queued_events = strict_events or []
+                approval_state = strict_approvals or default_approval_state()
+            else:
+                state = _load_runtime_state_unlocked(config)
+                queued_events = load_jsonl(config_path(config, "event_queue"))
+                try:
+                    approval_state = load_approval_state(config)
+                except KeyError:
+                    approval_state = default_approval_state()
+            decisions = {
+                task_id: inspect_task_runtime_admission(
+                    state,
+                    queued_events,
+                    task_id,
+                    approval_state,
+                )
+                for task_id in normalized_ids
+            }
+        except Exception as exc:
+            reason = f"runtime_state_unavailable:{type(exc).__name__}"
+            decisions = {
+                task_id: _blocked_task_runtime_decision(task_id, reason)
+                for task_id in normalized_ids
+            }
+        busy_task_ids = [
+            task_id
+            for task_id, decision in decisions.items()
+            if not decision.get("allowed")
+        ]
+        allowed = not busy_task_ids
+        yield {
+            "allowed": allowed,
+            "reason": "runtime_clear" if allowed else "one_or_more_tasks_busy",
+            "task_ids": normalized_ids,
+            "decisions": decisions,
+            "busy_task_ids": busy_task_ids,
+            "empty_task_id_entries": [],
+            "duplicate_task_ids": [],
+            "strict": strict_mode,
+        }
+
+
+@contextmanager
+def task_runtime_admission_guard(
+    config: dict[str, Any],
+    task_id: str,
+    *,
+    strict: bool | None = None,
+):
+    """Backward-compatible single-task view of the shared multi-task guard."""
+
+    task_value = str(task_id or "").strip()
+    with tasks_runtime_admission_guard(config, [task_id], strict=strict) as aggregate:
+        decision = (aggregate.get("decisions") or {}).get(task_value)
+        if not isinstance(decision, dict):
+            decision = _blocked_task_runtime_decision(
+                task_value,
+                "task_id_missing"
+                if not task_value
+                else str(aggregate.get("reason") or "runtime_state_unavailable"),
+            )
         yield decision
 
 
@@ -766,7 +1017,8 @@ def load_event_queue(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def enqueue_event(config: dict[str, Any], event: dict[str, Any]) -> None:
-    append_jsonl(config_path(config, "event_queue"), event)
+    with runtime_state_lock(config):
+        append_jsonl(config_path(config, "event_queue"), event)
 
 
 def queue_event_record(state: dict[str, Any], event_id: str) -> dict[str, Any]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 import sys
@@ -138,6 +139,13 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
             '{"type":"assistant","message":{"content":[{"type":"text","text":"Qwen OAuth quota exceeded: Your free daily quota has been reached."}]}}\n',
             encoding="utf-8",
         )
+        task = self._task(owner="Qwen", reviewer="Claude", status="in_progress")
+        dispatch = supervisor.build_dispatch_event(
+            task,
+            "Qwen",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            {task["id"]: task},
+        )
         state = runtime_state.default_state()
         state["queue"]["events"] = {"evt-1": {"status": "started", "attempt_count": 1}}
         state["workers"] = {
@@ -149,13 +157,20 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
                 "status": "running",
                 "pid": None,
                 "queue_event_id": "evt-1",
-                "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+                "request_snapshot": {
+                    "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                    "metadata": {
+                        "dispatch_event_key": dispatch["key"],
+                        "dispatch_task_signature": dispatch["signature"],
+                        "dispatch_target_display_name": "Qwen",
+                    },
+                },
                 "log_path": str(log_path),
                 "last_event_at": "2026-04-11T14:37:23Z",
                 "retry_count": 0,
             }
         }
-        status = {"tasks": [self._task(owner="Qwen", reviewer="Claude", status="in_progress")], "handoffs": []}
+        status = {"tasks": [task], "handoffs": []}
 
         with mock.patch.object(supervisor, "load_status", return_value=status), \
             mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}), \
@@ -169,20 +184,16 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
         self.assertIn("qwen", state["provider_guardrails"]["dispatch_pauses"])
 
     def test_poll_workers_reassigns_after_repeated_generic_exit(self) -> None:
+        task = self._task(owner="Qwen", reviewer="Claude", status="in_progress")
+        dispatch = supervisor.build_dispatch_event(
+            task,
+            "Qwen",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            {task["id"]: task},
+        )
         state = runtime_state.default_state()
         state["queue"]["events"] = {"evt-1": {"status": "started", "attempt_count": 2}}
-        state["provider_guardrails"]["task_failure_streaks"] = {
-            "TASK-001:qwen": {
-                "task_id": "TASK-001",
-                "provider": "qwen",
-                "count": 1,
-                "last_reason": supervisor.GENERIC_WORKER_EXIT_REASON,
-                "last_failure_at": "2026-04-11T14:30:00Z",
-                "last_failure_kind": "generic_exit",
-            }
-        }
-        state["workers"] = {
-            "run-2": {
+        worker = {
                 "run_id": "run-2",
                 "provider": "qwen",
                 "agent_id": "qwen",
@@ -190,13 +201,49 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
                 "status": "running",
                 "pid": None,
                 "queue_event_id": "evt-1",
-                "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+                "request_snapshot": {
+                    "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                    "metadata": {
+                        "dispatch_event_key": dispatch["key"],
+                        "dispatch_task_signature": dispatch["signature"],
+                        "dispatch_target_display_name": "Qwen",
+                    },
+                },
                 "log_path": str(self.root / ".orchestrator" / "logs" / "generic-exit.log"),
                 "last_event_at": "2026-04-11T14:37:23Z",
                 "retry_count": 0,
+        }
+        failure_signature, signature_scope = supervisor._failure_streak_signature(
+            worker,
+            supervisor.GENERIC_WORKER_EXIT_REASON,
+            "generic_exit",
+        )
+        failure_key = supervisor._failure_streak_key("TASK-001", "qwen", failure_signature)
+        state["provider_guardrails"]["task_failure_streaks"] = {
+            failure_key: {
+                "schema_version": 2,
+                "task_id": "TASK-001",
+                "provider": "qwen",
+                "logical_agent_id": "qwen",
+                "signature": failure_signature,
+                "signature_scope": signature_scope,
+                "dispatch_task_signature": dispatch["signature"],
+                "dispatch_event_key": dispatch["key"],
+                "dispatch_reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "dispatch_target_display_name": "Qwen",
+                "count": 1,
+                "first_failure_at": (
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "last_failure_at": (
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "last_reason": supervisor.GENERIC_WORKER_EXIT_REASON,
+                "last_failure_kind": "generic_exit",
             }
         }
-        status = {"tasks": [self._task(owner="Qwen", reviewer="Claude", status="in_progress")], "handoffs": []}
+        state["workers"] = {"run-2": worker}
+        status = {"tasks": [task], "handoffs": []}
 
         with mock.patch.object(supervisor, "load_status", return_value=status), \
             mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}), \
@@ -222,11 +269,22 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
         }
         status = {"tasks": [self._task(owner="Qwen", reviewer="Claude", status="todo")], "handoffs": []}
 
+        config = {
+            **self.config,
+            "worker_reassignment": {
+                **self.config["worker_reassignment"],
+                "enabled": False,
+            },
+        }
+
         with mock.patch.object(supervisor, "load_status", return_value=status), \
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event:
-            supervisor.dispatch_ready_tasks(self.config, state)
+            supervisor.dispatch_ready_tasks(config, state)
 
-        queue_delivery_event.assert_not_called()
+        queue_delivery_event.assert_called_once()
+        dispatched = queue_delivery_event.call_args.args[1]
+        self.assertNotEqual(dispatched["target_agent"], "Qwen")
+        self.assertEqual(dispatched["target_agent"], "Codex")
 
 
 class SupervisorRuntimeStateTests(unittest.TestCase):
