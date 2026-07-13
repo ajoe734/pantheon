@@ -708,3 +708,50 @@ def test_tj_e2e_005_list_pagination_handles_many_journeys_within_budget() -> Non
         assert elapsed < 2.0, f"list over 500 journeys took {elapsed:.3f}s, expected < 2.0s"
 
     _run(scenario)
+
+
+def test_tj_e2e_005_publish_events_appends_and_saves_to_store_file(tmp_path) -> None:
+    import json
+    store_file = tmp_path / "trade_journey_events.json"
+    # Seed empty list
+    store_file.write_text("[]", encoding="utf-8")
+
+    # We set the environment variable so the route finds the temp file
+    original_store_env = os.environ.get("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE")
+    os.environ["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"] = str(store_file)
+
+    try:
+        client = TestClient(bff_main.app)
+        new_event = {
+            "event_id": "test-evt-123",
+            "journey_id": "tj-123",
+            "tenant_id": "tenant-a",
+            "environment": "paper",
+            "occurred_at": "2026-07-12T00:00:00Z",
+            "stage": "signal_generation",
+            "stage_status": "succeeded",
+        }
+
+        # Test validation error (missing required field)
+        invalid_event = {**new_event}
+        invalid_event.pop("tenant_id")
+        resp_invalid = client.post("/bff/management/trade-journeys/events", json=[invalid_event])
+        assert resp_invalid.status_code == 400
+        assert "VALIDATION_FAILED" in resp_invalid.text
+
+        # Test successful publish
+        resp = client.post("/bff/management/trade-journeys/events", json=[new_event])
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"status": "ok", "count": 1}
+
+        # Verify it was saved to the temp file
+        content = json.loads(store_file.read_text(encoding="utf-8"))["events"]
+        assert len(content) == 1
+        assert content[0]["event_id"] == "test-evt-123"
+
+    finally:
+        if original_store_env is not None:
+            os.environ["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"] = original_store_env
+        else:
+            os.environ.pop("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", None)
+
