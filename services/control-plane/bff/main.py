@@ -53826,15 +53826,10 @@ async def sem_v5_intervention_command(
                 precondition_failed="two_man_evidence_binding",
             )
         payload = dict(payload)
-        for alias in (
-            "signerOperatorIds",
-            "signer_operator_ids",
-            "operatorIds",
-            "operator_ids",
-            "first_operator_id",
-            "second_operator_id",
-            "secondOperatorId",
-        ):
+        for alias in {
+            *_TWO_MAN_SIGNER_LIST_FIELDS,
+            *_TWO_MAN_SIGNER_FIELDS,
+        }:
             payload.pop(alias, None)
         # A trusted evidence record represents exactly the authenticated actor.
         # Two-man completion is derived by aggregating two distinct records.

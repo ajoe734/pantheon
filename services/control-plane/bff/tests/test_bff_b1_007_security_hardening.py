@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
+import pytest
 from command_queue import CommandStore
 from models import CommandStatus
 from read_store import ReadSurfaceStore
@@ -349,6 +350,65 @@ def test_two_man_sign_uses_only_authenticated_actor_and_rejects_reviewer() -> No
             },
         )
         assert reviewer.status_code == 403, reviewer.text
+
+
+@pytest.mark.parametrize(
+    "signer_alias",
+    (
+        *bff_main._TWO_MAN_SIGNER_LIST_FIELDS,
+        *bff_main._TWO_MAN_SIGNER_FIELDS,
+    ),
+)
+def test_every_two_man_signer_alias_is_server_sanitized(
+    signer_alias: str,
+) -> None:
+    with _isolated_security_client() as client:
+        suffix = signer_alias.replace("_", "-")
+        signature_id = f"tms-alias-{suffix}"
+        token_id = f"ct-alias-{suffix}"
+        _seed_approval_decision("approval-sec-001")
+        _create_bound_confirm_token(client, token_id)
+
+        forged_value: object = (
+            ["op-primary", "op-victim"]
+            if signer_alias in bff_main._TWO_MAN_SIGNER_LIST_FIELDS
+            else "op-victim"
+        )
+        signed = client.post(
+            "/bff/v5/interventions/int-sec-001/two-man-sign",
+            headers={
+                **PRIMARY_HEADERS,
+                "Idempotency-Key": f"sign-alias-{suffix}",
+            },
+            json={
+                "twoManSignatureId": signature_id,
+                "command": "RemediateSentinelIntervention",
+                "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                signer_alias: forged_value,
+                "reason": "caller signer aliases must never mint another identity",
+            },
+        )
+        assert signed.status_code == 202, signed.text
+        record = bff_main.command_store.get_command(
+            signed.json()["data"]["command_id"]
+        )
+        assert record is not None
+        assert bff_main._two_man_signers(record) == {"op-primary"}
+        assert record["params"]["signerOperatorIds"] == ["op-primary"]
+        if signer_alias != "signerOperatorIds":
+            assert signer_alias not in record["params"]
+
+        final = client.post(
+            "/bff/v1/commands",
+            headers={
+                **PRIMARY_HEADERS,
+                "Idempotency-Key": f"final-alias-{suffix}",
+                "X-Confirm-Token": token_id,
+            },
+            json=_remediate_payload(signature_id=signature_id),
+        )
+        assert final.status_code == 409, final.text
+        assert _error_reason(final) == "TWO_MAN_SIGNATURE_SIGNER_MISMATCH"
 
 
 def test_generic_v5_and_claim_routes_cannot_forge_two_man_evidence() -> None:
