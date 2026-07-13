@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 import sys
+import time
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -12,9 +14,82 @@ sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
 import loop_inventory as loop_inventory_model  # noqa: E402
+from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer loop-inventory-operator:operator,reviewer,admin:mfa"}
+
+
+def _response_schema_ref(schema: dict[str, Any], path: str) -> str:
+    response_schema = schema["paths"][path]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]
+    if "$ref" in response_schema:
+        return response_schema["$ref"].rsplit("/", 1)[-1]
+    if response_schema.get("allOf"):
+        return response_schema["allOf"][0]["$ref"].rsplit("/", 1)[-1]
+    raise AssertionError(f"{path} does not publish a component response schema: {response_schema}")
+
+
+def test_loop_read_models_publish_typed_openapi_envelopes() -> None:
+    bff_main.app.openapi_schema = None
+    schema = TestClient(bff_main.app).get("/openapi.json").json()
+    expected = {
+        "/bff/v5/loop-inventory": "LoopInventoryListEnvelope",
+        "/bff/v5/loop-inventory/{loop_id}": "LoopInventoryDetailEnvelope",
+        "/bff/v5/loop-health": "LoopHealthListEnvelope",
+        "/bff/v5/loop-health/{loop_id}": "LoopHealthDetailEnvelope",
+    }
+
+    for path, component in expected.items():
+        assert _response_schema_ref(schema, path) == component
+
+    components = schema["components"]["schemas"]
+    for component in (
+        "LoopInventoryEntry",
+        "LoopInventoryListEnvelope",
+        "LoopInventoryDetailEnvelope",
+        "LoopHealthEntry",
+        "LoopHealthListEnvelope",
+        "LoopHealthDetailEnvelope",
+    ):
+        assert component in components
+
+
+def test_loop_read_models_enforce_strict_jwt_auth_and_read_roles(monkeypatch) -> None:
+    secret = "loop-prod-strict-jwt-test-secret"
+    issuer = "pantheon-loop-prod-test"
+    audience = "bff-operators"
+    now = int(time.time())
+
+    def bearer(*roles: str) -> dict[str, str]:
+        token = encode_jwt_hs256(
+            {
+                "sub": f"loop-prod-{'-'.join(roles)}",
+                "roles": list(roles),
+                "iss": issuer,
+                "aud": audience,
+                "iat": now,
+                "exp": now + 300,
+            },
+            secret=secret,
+        )
+        return {"Authorization": f"Bearer {token}"}
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", issuer)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", audience)
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+    monkeypatch.delenv("PANTHEON_BFF_JWKS_URI", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", raising=False)
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+    for path in ("/bff/v5/loop-inventory", "/bff/v5/loop-health"):
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers=bearer("audit_only")).status_code == 403
+        assert client.get(path, headers=bearer("viewer")).status_code == 200
 
 
 def test_loop_inventory_list_exposes_sa21_catalog_for_operator_surfaces(monkeypatch) -> None:

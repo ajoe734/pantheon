@@ -684,7 +684,8 @@ def _workspace_schema_validate(payload: dict) -> None:
     schema_path = Path(_WORKSPACE_SCHEMA_PATH).resolve()
     with schema_path.open() as f:
         schema = json.load(f)
-    chart_schema_path = schema_path.parent / "v2" / "chart_spec_v1.schema.json"
+    agora_dir = schema_path.parent if schema_path.parent.name != "v8" else schema_path.parent.parent
+    chart_schema_path = agora_dir / "v2" / "chart_spec_v1.schema.json"
     with chart_schema_path.open() as f:
         chart_schema = json.load(f)
     resolver = jsonschema.RefResolver(
@@ -1329,7 +1330,7 @@ _GOVERNED_HANDOFF_SCHEMA_PATH = os.path.join(
 )
 _WORKSPACE_SCHEMA_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "..", "..", "..", "specs", "agora", "trading_room_workspace.schema.json",
+    "..", "..", "..", "specs", "agora", "v8", "trading_room_workspace_v1_7.schema.json",
 )
 
 

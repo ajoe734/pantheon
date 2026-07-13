@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Reconcile the canonical catalog, OODA overlay classification, verification counts, and maturity projection tests.
+- Next: Resume from merged PR #3543, reconcile the evidence checksum and AC-06/AC-09 scope split, then hand the merged evidence to Codex2 for independent review.
 
 ## Summary
 校正 loop catalog、BFF inventory 與 verification index：維持 12 個 L1 canonical loops，新增 per_persona_ooda 為 composite_overlay 並宣告 composed_of；archived task 不得被投影成 live maturity。
