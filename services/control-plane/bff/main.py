@@ -39964,6 +39964,37 @@ async def bff_create_paper_persona_bundle(
     )
 
 
+def _persona_catalog_fallback_record(persona_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve a Fleet-visible persona when the direct detail store misses it."""
+    clean_id = str(persona_id or "").strip()
+    if not clean_id:
+        return None
+    for candidate in read_store.list_personas(include_market_persona_defaults=True):
+        candidate_id = str(candidate.get("persona_id") or candidate.get("id") or "").strip()
+        if candidate_id == clean_id:
+            return dict(candidate)
+    return None
+
+
+def _persona_catalog_fallback_surface(snapshot_at: str) -> Dict[str, Any]:
+    return {
+        "status": "degraded",
+        "source": "persona_catalog_list_fallback",
+        "note": (
+            "Resolved from the governed Persona catalog used by Persona Fleet because "
+            "the direct detail store did not return this list-visible identity."
+        ),
+        "staleness": {
+            "served_from": "persona_catalog_list_fallback",
+            "last_known_at": snapshot_at,
+        },
+        "observed_time": snapshot_at,
+        "freshness": "persona_catalog_list_fallback",
+        "coverage": 1.0,
+        "missing_bindings": False,
+    }
+
+
 @app.get("/bff/personas/{persona_id}")
 async def bff_get_persona(
     persona_id: str,
@@ -39975,6 +40006,11 @@ async def bff_get_persona(
     snapshot_at = utc_now()
     overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
     raw = read_store.get_persona(persona_id)
+    detail_surface = None
+    if not raw and not overlay:
+        raw = _persona_catalog_fallback_record(persona_id)
+        if raw:
+            detail_surface = _persona_catalog_fallback_surface(snapshot_at)
     if not raw and not overlay:
         raise _bff_error(
             404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -39989,6 +40025,7 @@ async def bff_get_persona(
         "meta": _read_surface_meta(
             "personas", "persona_detail",
             snapshot_at=snapshot_at,
+            surface=detail_surface,
         ),
     }
 
@@ -40087,7 +40124,11 @@ async def bff_patch_persona(
 
 
 def _ensure_persona_exists(persona_id: str) -> None:
-    if read_store.get_persona(persona_id) or persona_id in _PERSONA_BFF_OVERLAY:
+    if (
+        read_store.get_persona(persona_id)
+        or persona_id in _PERSONA_BFF_OVERLAY
+        or _persona_catalog_fallback_record(persona_id)
+    ):
         return
     raise _bff_error(
         404, ErrorCode.RESOURCE_NOT_FOUND,
