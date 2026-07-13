@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body { margin:0; }
+  * { box-sizing:border-box; }
+</style>
+</helmet>
+
+<div style="min-height:100vh; background:#c2c0bb; font-family:'Noto Sans TC',sans-serif; padding:48px 40px 80px; color:#2a2824;">
+
+  <div style="max-width:1320px; margin:0 auto 44px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.22em; color:#7a776f; margin-bottom:10px;">AGORA · 視覺方向探索</div>
+    <div style="font-size:30px; font-weight:700; letter-spacing:-.01em; margin-bottom:10px;">盯盤 Radar — 三種視覺系統</div>
+    <div style="font-size:15px; color:#5f5c55; max-width:680px; line-height:1.6;">同一個畫面（策略 Lens → 候選池 → AI 審視抽屜），三種視覺方向。挑一個你喜歡的，我接著把三大工作區（Radar / Lab / Cockpit）做成完整可互動的原型。</div>
+  </div>
+
+  <!-- ============ DIRECTION A ============ -->
+  <div style="max-width:1320px; margin:0 auto 56px;">
+    <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:16px; flex-wrap:wrap;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.16em; color:#7a776f;">方向 A</div>
+      <div style="font-size:21px; font-weight:700;">終端機 · Terminal</div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#8a877f;">高密度 · 近黑底 · 等寬數字 · 交易終端風</div>
+    </div>
+    <div style="--canvas:#14161b; --panel:#191c22; --panel2:#1e222a; --line:rgba(255,255,255,.08); --tx:#e6e8ec; --mut:#8b919c; --faint:#5b616b; --ai:#5fb3d4; --ai-soft:rgba(95,179,212,.12); --on-ai:#06222b; --up:#ef4d52; --up-soft:rgba(239,77,82,.14); --down:#37c98a; --down-soft:rgba(55,201,138,.14); --warn:#e0a23c; --warn-soft:rgba(224,162,60,.14); --radius:6px; --fz:12.5px; --rowpy:9px; --railpad:13px; font-size:var(--fz); color:var(--tx); width:1320px;">
+      <div style="background:var(--canvas); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:0 24px 60px -28px rgba(0,0,0,.45);">
+
+        <!-- TOP BAR -->
+        <div style="display:flex; align-items:center; gap:16px; padding:0 16px; height:52px; background:var(--panel2); border-bottom:1px solid var(--line);">
+          <div style="display:flex; align-items:center; gap:9px;">
+            <div style="width:25px; height:25px; border-radius:7px; background:var(--ai); display:flex; align-items:center; justify-content:center; color:var(--on-ai); font-weight:700; font-size:14px;">A</div>
+            <div style="font-weight:700; letter-spacing:.16em; font-size:13px;">AGORA</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:7px; padding:4px 11px; border:1px solid var(--line); border-radius:999px; font-size:11px; color:var(--mut);"><span style="width:6px; height:6px; border-radius:50%; background:var(--ai);"></span>主觀交易 · 籌碼派</div>
+          <div style="flex:1; display:flex; align-items:center; gap:10px; padding:0 14px; height:32px; background:var(--canvas); border:1px solid var(--line); border-radius:999px; min-width:0;">
+            <span style="color:var(--ai); font-size:13px; font-family:'IBM Plex Mono',monospace;">⌘K</span>
+            <span style="color:var(--faint); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">輸入你想建立的盯盤策略，例如：找可能有大戶建立部位的股票…</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px; color:var(--mut); font-size:13px;"><span>◷</span><span>⊕</span><div style="width:28px; height:28px; border-radius:50%; background:var(--panel); border:1px solid var(--line);"></div></div>
+        </div>
+
+        <!-- MAIN TABS -->
+        <div style="display:flex; align-items:center; padding:0 16px; height:46px; background:var(--panel); border-bottom:1px solid var(--line); gap:26px;">
+          <div style="display:flex; align-items:center; height:100%; border-bottom:2px solid var(--ai); color:var(--tx); font-weight:600; font-size:14px;">盯盤 Radar</div>
+          <div style="display:flex; align-items:center; height:100%; border-bottom:2px solid transparent; color:var(--mut); font-size:14px;">策略 Lab</div>
+          <div style="display:flex; align-items:center; height:100%; border-bottom:2px solid transparent; color:var(--mut); font-size:14px;">部位 Cockpit</div>
+          <div style="margin-left:auto; display:flex; gap:7px;">
+            <div style="padding:5px 11px; border:1px solid var(--line); border-radius:999px; font-size:11.5px; color:var(--mut); background:var(--canvas);">+ 新增盯盤</div>
+            <div style="padding:5px 11px; border:1px solid var(--line); border-radius:999px; font-size:11.5px; color:var(--mut); background:var(--canvas);">找落後補漲</div>
+            <div style="padding:5px 11px; border:1px solid var(--line); border-radius:999px; font-size:11.5px; color:var(--mut); background:var(--canvas);">分析分點</div>
+          </div>
+        </div>
+
+        <!-- WORKSPACE -->
+        <div style="display:grid; grid-template-columns:212px 1fr 320px;">
+
+          <!-- LEFT RAIL -->
+          <div style="border-right:1px solid var(--line); padding:var(--railpad); background:var(--panel2); display:flex; flex-direction:column; gap:18px;">
+            <div>
+              <div style="font-size:10px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:600; margin-bottom:9px;">策略 Lens</div>
+              <div style="display:flex; flex-direction:column; gap:3px;">
+                <div style="display:flex; align-items:center; gap:8px; padding:9px 10px; border-radius:7px; background:var(--ai-soft); color:var(--tx); font-weight:600; font-size:12.5px; border-left:2px solid var(--ai);">籌碼大戶部位建立</div>
+                <div style="padding:9px 10px; border-radius:7px; color:var(--mut); font-size:12.5px;">AI server 落後補漲</div>
+                <div style="padding:9px 10px; border-radius:7px; color:var(--mut); font-size:12.5px;">技術突破</div>
+                <div style="padding:9px 10px; border-radius:7px; color:var(--faint); font-size:12.5px;">+ 新增 Lens</div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:10px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:600; margin-bottom:9px;">此 Lens 狀態</div>
+              <div style="display:flex; flex-direction:column; gap:1px; font-size:12px;">
+                <div style="display:flex; justify-content:space-between; padding:7px 8px; color:var(--mut);">候選池<span style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">38</span></div>
+                <div style="display:flex; justify-content:space-between; padding:7px 8px; color:var(--ai); background:var(--ai-soft); border-radius:6px;">待討論<span style="font-family:'IBM Plex Mono',monospace;">12</span></div>
+                <div style="display:flex; justify-content:space-between; padding:7px 8px; color:var(--mut);">監控中<span style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">9</span></div>
+                <div style="display:flex; justify-content:space-between; padding:7px 8px; color:var(--mut);">Shadow 中<span style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">4</span></div>
+                <div style="display:flex; justify-content:space-between; padding:7px 8px; color:var(--mut);">已剔除<span style="font-family:'IBM Plex Mono',monospace; color:var(--faint);">13</span></div>
+                <div style="display:flex; justify-content:space-between; padding:7px 8px; color:var(--mut);">Parking<span style="font-family:'IBM Plex Mono',monospace; color:var(--faint);">6</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CENTER BOARD -->
+          <div style="display:flex; flex-direction:column; min-width:0;">
+            <div style="display:flex; align-items:center; gap:6px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel);">
+              <div style="padding:5px 12px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:12px; font-weight:600; border:1px solid var(--ai);">籌碼大戶部位建立</div>
+              <div style="padding:5px 12px; border-radius:999px; color:var(--mut); font-size:12px; border:1px solid var(--line);">AI server 落後補漲</div>
+              <div style="padding:5px 12px; border-radius:999px; color:var(--mut); font-size:12px; border:1px solid var(--line);">技術突破</div>
+              <div style="margin-left:auto; font-size:11px; color:var(--faint); font-family:'IBM Plex Mono',monospace;">38 candidates · sort: score ↓</div>
+            </div>
+            <!-- header -->
+            <div style="display:grid; grid-template-columns:28px 1.5fr 84px 50px 64px 78px 64px 76px; gap:8px; align-items:center; padding:9px 14px; border-bottom:1px solid var(--line); font-size:9.5px; letter-spacing:.06em; color:var(--faint); text-transform:uppercase; background:var(--panel2);">
+              <div>#</div><div>標的</div><div>吸貨分數</div><div>連買</div><div>集中度</div><div>出貨風險</div><div>流動性</div><div>狀態</div>
+            </div>
+            <!-- row 1 selected -->
+            <div style="display:grid; grid-template-columns:28px 1.5fr 84px 50px 64px 78px 64px 76px; gap:8px; align-items:center; padding:var(--rowpy) 14px; border-bottom:1px solid var(--line); background:var(--ai-soft); border-left:2px solid var(--ai);">
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--mut); font-size:12px;">01</div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13px;">8086</div><div style="font-size:11px; color:var(--mut);">宏捷科</div></div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--ai);">92</span><div style="flex:1; height:3px; background:var(--line); border-radius:2px; overflow:hidden;"><div style="width:92%; height:100%; background:var(--ai);"></div></div></div>
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">7</div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:11px;">高</span></div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--down-soft); color:var(--down); font-size:11px;">低</span></div>
+              <div style="color:var(--mut); font-size:11.5px;">充足</div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:11px;">待討論</span></div>
+            </div>
+            <!-- row 2 -->
+            <div style="display:grid; grid-template-columns:28px 1.5fr 84px 50px 64px 78px 64px 76px; gap:8px; align-items:center; padding:var(--rowpy) 14px; border-bottom:1px solid var(--line);">
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--faint); font-size:12px;">02</div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13px;">3017</div><div style="font-size:11px; color:var(--mut);">奇鋐</div></div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:600;">88</span><div style="flex:1; height:3px; background:var(--line); border-radius:2px; overflow:hidden;"><div style="width:88%; height:100%; background:var(--mut);"></div></div></div>
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">5</div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:11px;">中</span></div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:11px;">中</span></div>
+              <div style="color:var(--mut); font-size:11.5px;">充足</div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--down-soft); color:var(--down); font-size:11px;">監控中</span></div>
+            </div>
+            <!-- row 3 -->
+            <div style="display:grid; grid-template-columns:28px 1.5fr 84px 50px 64px 78px 64px 76px; gap:8px; align-items:center; padding:var(--rowpy) 14px; border-bottom:1px solid var(--line);">
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--faint); font-size:12px;">03</div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13px;">6669</div><div style="font-size:11px; color:var(--mut);">緯穎</div></div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:600;">85</span><div style="flex:1; height:3px; background:var(--line); border-radius:2px; overflow:hidden;"><div style="width:85%; height:100%; background:var(--mut);"></div></div></div>
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">6</div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:11px;">高</span></div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--down-soft); color:var(--down); font-size:11px;">低</span></div>
+              <div style="color:var(--mut); font-size:11.5px;">充足</div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:11px;">待討論</span></div>
+            </div>
+            <!-- row 4 -->
+            <div style="display:grid; grid-template-columns:28px 1.5fr 84px 50px 64px 78px 64px 76px; gap:8px; align-items:center; padding:var(--rowpy) 14px; border-bottom:1px solid var(--line);">
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--faint); font-size:12px;">04</div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13px;">3035</div><div style="font-size:11px; color:var(--mut);">智原</div></div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:600;">79</span><div style="flex:1; height:3px; background:var(--line); border-radius:2px; overflow:hidden;"><div style="width:79%; height:100%; background:var(--mut);"></div></div></div>
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">4</div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:11px;">中</span></div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:11px;">中</span></div>
+              <div style="color:var(--faint); font-size:11.5px;">普通</div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--line); color:var(--mut); font-size:11px;">候選</span></div>
+            </div>
+            <!-- row 5 -->
+            <div style="display:grid; grid-template-columns:28px 1.5fr 84px 50px 64px 78px 64px 76px; gap:8px; align-items:center; padding:var(--rowpy) 14px; border-bottom:1px solid var(--line);">
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--faint); font-size:12px;">05</div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13px;">2454</div><div style="font-size:11px; color:var(--mut);">聯發科</div></div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:600;">74</span><div style="flex:1; height:3px; background:var(--line); border-radius:2px; overflow:hidden;"><div style="width:74%; height:100%; background:var(--mut);"></div></div></div>
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">3</div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--line); color:var(--mut); font-size:11px;">低</span></div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:11px;">中</span></div>
+              <div style="color:var(--mut); font-size:11.5px;">充足</div>
+              <div><span style="padding:2px 8px; border-radius:999px; background:var(--line); color:var(--mut); font-size:11px;">候選</span></div>
+            </div>
+          </div>
+
+          <!-- RIGHT DRAWER -->
+          <div style="border-left:1px solid var(--line); background:var(--panel2); padding:16px; display:flex; flex-direction:column; gap:15px;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between;">
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:17px;">8086</div><div style="font-size:12px; color:var(--mut);">宏捷科 · 砷化鎵</div></div>
+              <div style="text-align:right;"><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:17px; color:var(--ai);">92</div><div style="font-size:10px; color:var(--faint); letter-spacing:.08em;">FIT SCORE</div></div>
+            </div>
+            <div>
+              <div style="font-size:10px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:600; margin-bottom:8px;">AI 為什麼選</div>
+              <div style="display:flex; flex-direction:column; gap:7px; font-size:12px; color:var(--mut); line-height:1.5;">
+                <div style="display:flex; gap:7px;"><span style="color:var(--ai); margin-top:1px;">▪</span>近 10 日分點淨買集中，買盤在區間內吸收而非追高</div>
+                <div style="display:flex; gap:7px;"><span style="color:var(--ai); margin-top:1px;">▪</span>同族群已有 3 檔先行起漲，此檔相對落後</div>
+                <div style="display:flex; gap:7px;"><span style="color:var(--ai); margin-top:1px;">▪</span>成交金額穩定，流動性足以分批建立部位</div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:10px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:600; margin-bottom:8px;">AI 疑慮</div>
+              <div style="display:flex; flex-direction:column; gap:7px; font-size:12px; color:var(--mut); line-height:1.5;">
+                <div style="display:flex; gap:7px;"><span style="color:var(--warn); margin-top:1px;">▪</span>同券商另一分點於同族群某檔出現賣超</div>
+                <div style="display:flex; gap:7px;"><span style="color:var(--warn); margin-top:1px;">▪</span>今日量增但價格尚未有效突破前高</div>
+              </div>
+            </div>
+            <div style="background:var(--canvas); border:1px solid var(--line); border-radius:8px; padding:11px;">
+              <div style="font-size:10px; letter-spacing:.16em; color:var(--ai); text-transform:uppercase; font-weight:600; margin-bottom:6px;">建議下一步</div>
+              <div style="font-size:12px; color:var(--tx); line-height:1.55;">加入監控池，將「分點買盤是否延續」設為主要觸發條件，先觀察 2 個交易日再決定是否送 Shadow。</div>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px;">
+              <span style="font-size:10.5px; color:var(--mut); border:1px solid var(--line); border-radius:999px; padding:3px 9px;">分點明細</span>
+              <span style="font-size:10.5px; color:var(--mut); border:1px solid var(--line); border-radius:999px; padding:3px 9px;">K 線</span>
+              <span style="font-size:10.5px; color:var(--mut); border:1px solid var(--line); border-radius:999px; padding:3px 9px;">同族群比較</span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:auto;">
+              <div style="grid-column:span 2; text-align:center; padding:9px; border-radius:7px; background:var(--ai); color:var(--on-ai); font-weight:600; font-size:12.5px;">加入監控</div>
+              <div style="text-align:center; padding:8px; border-radius:7px; border:1px solid var(--line); color:var(--tx); font-size:12px;">送 Shadow</div>
+              <div style="text-align:center; padding:8px; border-radius:7px; border:1px solid var(--line); color:var(--mut); font-size:12px;">剔除</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ DIRECTION B ============ -->
+  <div style="max-width:1320px; margin:0 auto 56px;">
+    <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:16px; flex-wrap:wrap;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.16em; color:#7a776f;">方向 B</div>
+      <div style="font-size:21px; font-weight:700;">交易桌 · Desk</div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#8a877f;">深色但寬鬆 · 高級感 · 琥珀色 AI 重點 · 留白充足</div>
+    </div>
+    <div style="--canvas:#1b1f27; --panel:#232831; --panel2:#2a303b; --line:rgba(255,255,255,.07); --tx:#eef0f3; --mut:#9aa1ad; --faint:#6b7280; --ai:#e3a94e; --ai-soft:rgba(227,169,78,.13); --on-ai:#241a06; --up:#f05c61; --up-soft:rgba(240,92,97,.14); --down:#43cf94; --down-soft:rgba(67,207,148,.14); --warn:#e3a94e; --warn-soft:rgba(227,169,78,.14); --radius:16px; --fz:14px; --rowpy:13px; --railpad:18px; font-size:var(--fz); color:var(--tx); width:1320px;">
+      <div style="background:var(--canvas); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:0 30px 70px -30px rgba(0,0,0,.5);">
+
+        <!-- TOP BAR -->
+        <div style="display:flex; align-items:center; gap:18px; padding:0 22px; height:62px; background:var(--panel); border-bottom:1px solid var(--line);">
+          <div style="display:flex; align-items:center; gap:11px;">
+            <div style="width:30px; height:30px; border-radius:9px; background:var(--ai); display:flex; align-items:center; justify-content:center; color:var(--on-ai); font-weight:700; font-size:16px;">A</div>
+            <div style="font-weight:700; letter-spacing:.14em; font-size:14px;">AGORA</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; padding:6px 13px; background:var(--panel2); border-radius:999px; font-size:12px; color:var(--mut);"><span style="width:7px; height:7px; border-radius:50%; background:var(--ai);"></span>主觀交易 · 籌碼派</div>
+          <div style="flex:1; display:flex; align-items:center; gap:12px; padding:0 18px; height:40px; background:var(--panel2); border:1px solid var(--line); border-radius:999px; min-width:0;">
+            <span style="color:var(--ai); font-size:15px;">✦</span>
+            <span style="color:var(--faint); font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">輸入你想建立的盯盤策略，例如：找可能有大戶建立部位的股票…</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:16px; color:var(--mut); font-size:15px;"><span>◷</span><span>⊕</span><div style="width:32px; height:32px; border-radius:50%; background:var(--panel2); border:1px solid var(--line);"></div></div>
+        </div>
+
+        <!-- MAIN TABS -->
+        <div style="display:flex; align-items:center; padding:0 22px; height:54px; background:var(--canvas); border-bottom:1px solid var(--line); gap:30px;">
+          <div style="display:flex; align-items:center; height:100%; border-bottom:2px solid var(--ai); color:var(--tx); font-weight:700; font-size:15px;">盯盤 Radar</div>
+          <div style="display:flex; align-items:center; height:100%; border-bottom:2px solid transparent; color:var(--mut); font-size:15px;">策略 Lab</div>
+          <div style="display:flex; align-items:center; height:100%; border-bottom:2px solid transparent; color:var(--mut); font-size:15px;">部位 Cockpit</div>
+          <div style="margin-left:auto; display:flex; gap:9px;">
+            <div style="padding:7px 14px; border:1px solid var(--line); border-radius:999px; font-size:12.5px; color:var(--mut); background:var(--panel);">+ 新增盯盤</div>
+            <div style="padding:7px 14px; border:1px solid var(--line); border-radius:999px; font-size:12.5px; color:var(--mut); background:var(--panel);">找落後補漲</div>
+          </div>
+        </div>
+
+        <!-- WORKSPACE -->
+        <div style="display:grid; grid-template-columns:228px 1fr 336px;">
+
+          <!-- LEFT RAIL -->
+          <div style="border-right:1px solid var(--line); padding:var(--railpad); background:var(--canvas); display:flex; flex-direction:column; gap:22px;">
+            <div>
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:600; margin-bottom:12px;">策略 Lens</div>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <div style="display:flex; align-items:center; gap:9px; padding:12px 13px; border-radius:11px; background:var(--ai-soft); color:var(--tx); font-weight:600; font-size:13.5px;">籌碼大戶部位建立</div>
+                <div style="padding:12px 13px; border-radius:11px; color:var(--mut); font-size:13.5px;">AI server 落後補漲</div>
+                <div style="padding:12px 13px; border-radius:11px; color:var(--mut); font-size:13.5px;">技術突破</div>
+                <div style="padding:12px 13px; border-radius:11px; color:var(--faint); font-size:13.5px;">+ 新增 Lens</div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:600; margin-bottom:12px;">此 Lens 狀態</div>
+              <div style="display:flex; flex-direction:column; gap:3px; font-size:13px;">
+                <div style="display:flex; justify-content:space-between; padding:9px 10px; color:var(--mut);">候選池<span style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">38</span></div>
+                <div style="display:flex; justify-content:space-between; padding:9px 10px; color:var(--ai); background:var(--ai-soft); border-radius:9px;">待討論<span style="font-family:'IBM Plex Mono',monospace;">12</span></div>
+                <div style="display:flex; justify-content:space-between; padding:9px 10px; color:var(--mut);">監控中<span style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">9</span></div>
+                <div style="display:flex; justify-content:space-between; padding:9px 10px; color:var(--mut);">Shadow 中<span style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">4</span></div>
+                <div style="display:flex; justify-content:space-between; padding:9px 10px; color:var(--mut);">已剔除<span style="font-family:'IBM Plex Mono',monospace; color:var(--faint);">13</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CENTER BOARD -->
+          <div style="display:flex; flex-direction:column; min-width:0; padding:18px;">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:16px;">
+              <div style="padding:8px 15px; border-radius:999px; background:var(--ai); color:var(--on-ai); font-size:13px; font-weight:600;">籌碼大戶部位建立</div>
+              <div style="padding:8px 15px; border-radius:999px; color:var(--mut); font-size:13px; background:var(--panel);">AI server 落後補漲</div>
+              <div style="padding:8px 15px; border-radius:999px; color:var(--mut); font-size:13px; background:var(--panel);">技術突破</div>
+              <div style="margin-left:auto; font-size:12px; color:var(--faint);">38 檔候選 · 依分數排序</div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:9px;">
+              <!-- card 1 selected -->
+              <div style="display:grid; grid-template-columns:1.5fr 96px 70px 86px 88px 86px; gap:12px; align-items:center; padding:16px; border-radius:13px; background:var(--panel2); border:1px solid var(--ai);">
+                <div style="display:flex; align-items:center; gap:12px;"><div style="font-family:'IBM Plex Mono',monospace; color:var(--ai); font-weight:700;">01</div><div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:15px;">8086</div><div style="font-size:12px; color:var(--mut);">宏捷科</div></div></div>
+                <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; color:var(--ai); font-size:15px;">92</div><div style="font-size:10px; color:var(--faint);">吸貨分數</div></div>
+                <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:600;">7</div><div style="font-size:10px; color:var(--faint);">連買日</div></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:12px;">高集中</span></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--down-soft); color:var(--down); font-size:12px;">低風險</span></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:12px;">待討論</span></div>
+              </div>
+              <!-- card 2 -->
+              <div style="display:grid; grid-template-columns:1.5fr 96px 70px 86px 88px 86px; gap:12px; align-items:center; padding:16px; border-radius:13px; background:var(--panel); border:1px solid var(--line);">
+                <div style="display:flex; align-items:center; gap:12px;"><div style="font-family:'IBM Plex Mono',monospace; color:var(--faint); font-weight:700;">02</div><div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:15px;">3017</div><div style="font-size:12px; color:var(--mut);">奇鋐</div></div></div>
+                <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:15px;">88</div><div style="font-size:10px; color:var(--faint);">吸貨分數</div></div>
+                <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:600;">5</div><div style="font-size:10px; color:var(--faint);">連買日</div></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:12px;">中集中</span></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:12px;">中風險</span></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--down-soft); color:var(--down); font-size:12px;">監控中</span></div>
+              </div>
+              <!-- card 3 -->
+              <div style="display:grid; grid-template-columns:1.5fr 96px 70px 86px 88px 86px; gap:12px; align-items:center; padding:16px; border-radius:13px; background:var(--panel); border:1px solid var(--line);">
+                <div style="display:flex; align-items:center; gap:12px;"><div style="font-family:'IBM Plex Mono',monospace; color:var(--faint); font-weight:700;">03</div><div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:15px;">6669</div><div style="font-size:12px; color:var(--mut);">緯穎</div></div></div>
+                <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:15px;">85</div><div style="font-size:10px; color:var(--faint);">吸貨分數</div></div>
+                <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:600;">6</div><div style="font-size:10px; color:var(--faint);">連買日</div></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:12px;">高集中</span></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--down-soft); color:var(--down); font-size:12px;">低風險</span></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:12px;">待討論</span></div>
+              </div>
+              <!-- card 4 -->
+              <div style="display:grid; grid-template-columns:1.5fr 96px 70px 86px 88px 86px; gap:12px; align-items:center; padding:16px; border-radius:13px; background:var(--panel); border:1px solid var(--line);">
+                <div style="display:flex; align-items:center; gap:12px;"><div style="font-family:'IBM Plex Mono',monospace; color:var(--faint); font-weight:700;">04</div><div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:15px;">3035</div><div style="font-size:12px; color:var(--mut);">智原</div></div></div>
+                <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:15px;">79</div><div style="font-size:10px; color:var(--faint);">吸貨分數</div></div>
+                <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:600;">4</div><div style="font-size:10px; color:var(--faint);">連買日</div></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:12px;">中集中</span></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:12px;">中風險</span></div>
+                <div><span style="padding:4px 11px; border-radius:999px; background:var(--panel2); color:var(--mut); font-size:12px;">候選</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT DRAWER -->
+          <div style="border-left:1px solid var(--line); background:var(--panel); padding:20px; display:flex; flex-direction:column; gap:18px;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between;">
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:20px;">8086</div><div style="font-size:13px; color:var(--mut);">宏捷科 · 砷化鎵</div></div>
+              <div style="text-align:right;"><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:20px; color:var(--ai);">92</div><div style="font-size:10px; color:var(--faint); letter-spacing:.08em;">FIT SCORE</div></div>
+            </div>
+            <div>
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:600; margin-bottom:10px;">AI 為什麼選</div>
+              <div style="display:flex; flex-direction:column; gap:9px; font-size:13px; color:var(--mut); line-height:1.55;">
+                <div style="display:flex; gap:8px;"><span style="color:var(--ai); margin-top:1px;">●</span>近 10 日分點淨買集中，買盤在區間內吸收而非追高</div>
+                <div style="display:flex; gap:8px;"><span style="color:var(--ai); margin-top:1px;">●</span>同族群已有 3 檔先行起漲，此檔相對落後</div>
+                <div style="display:flex; gap:8px;"><span style="color:var(--ai); margin-top:1px;">●</span>成交金額穩定，流動性足以分批建立部位</div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:600; margin-bottom:10px;">AI 疑慮</div>
+              <div style="display:flex; flex-direction:column; gap:9px; font-size:13px; color:var(--mut); line-height:1.55;">
+                <div style="display:flex; gap:8px;"><span style="color:var(--warn); margin-top:1px;">●</span>同券商另一分點於同族群某檔出現賣超</div>
+                <div style="display:flex; gap:8px;"><span style="color:var(--warn); margin-top:1px;">●</span>今日量增但價格尚未有效突破前高</div>
+              </div>
+            </div>
+            <div style="background:var(--ai-soft); border-radius:12px; padding:14px;">
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--ai); text-transform:uppercase; font-weight:600; margin-bottom:7px;">建議下一步</div>
+              <div style="font-size:13px; color:var(--tx); line-height:1.6;">加入監控池，將「分點買盤是否延續」設為主要觸發條件，先觀察 2 個交易日再決定是否送 Shadow。</div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:auto;">
+              <div style="grid-column:span 2; text-align:center; padding:12px; border-radius:11px; background:var(--ai); color:var(--on-ai); font-weight:700; font-size:13.5px;">加入監控</div>
+              <div style="text-align:center; padding:11px; border-radius:11px; border:1px solid var(--line); color:var(--tx); font-size:13px;">送 Shadow</div>
+              <div style="text-align:center; padding:11px; border-radius:11px; border:1px solid var(--line); color:var(--mut); font-size:13px;">剔除</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ DIRECTION C ============ -->
+  <div style="max-width:1320px; margin:0 auto 24px;">
+    <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:16px; flex-wrap:wrap;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.16em; color:#7a776f;">方向 C</div>
+      <div style="font-size:21px; font-weight:700;">日光 · Daylight</div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#8a877f;">明亮乾淨 · 暖白底 · 靛藍 AI 重點 · 通透留白</div>
+    </div>
+    <div style="--canvas:#f6f5f2; --panel:#ffffff; --panel2:#fbfaf8; --line:#e7e4de; --tx:#23262d; --mut:#6c7079; --faint:#9aa0a8; --ai:#4f5bd5; --ai-soft:rgba(79,91,213,.08); --on-ai:#ffffff; --up:#d8453f; --up-soft:rgba(216,69,63,.09); --down:#1f9d6b; --down-soft:rgba(31,157,107,.1); --warn:#c8861f; --warn-soft:rgba(200,134,31,.12); --radius:14px; --fz:13.5px; --rowpy:14px; --railpad:16px; font-size:var(--fz); color:var(--tx); width:1320px;">
+      <div style="background:var(--canvas); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:0 24px 60px -30px rgba(40,38,34,.3);">
+
+        <!-- TOP BAR -->
+        <div style="display:flex; align-items:center; gap:18px; padding:0 20px; height:58px; background:var(--panel); border-bottom:1px solid var(--line);">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:28px; height:28px; border-radius:8px; background:var(--ai); display:flex; align-items:center; justify-content:center; color:var(--on-ai); font-weight:700; font-size:15px;">A</div>
+            <div style="font-weight:700; letter-spacing:.14em; font-size:14px;">AGORA</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; padding:5px 12px; background:var(--panel2); border:1px solid var(--line); border-radius:999px; font-size:12px; color:var(--mut);"><span style="width:7px; height:7px; border-radius:50%; background:var(--ai);"></span>主觀交易 · 籌碼派</div>
+          <div style="flex:1; display:flex; align-items:center; gap:11px; padding:0 16px; height:38px; background:var(--panel2); border:1px solid var(--line); border-radius:999px; min-width:0;">
+            <span style="color:var(--ai); font-size:14px;">✦</span>
+            <span style="color:var(--faint); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">輸入你想建立的盯盤策略，例如：找可能有大戶建立部位的股票…</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:14px; color:var(--mut); font-size:15px;"><span>◷</span><span>⊕</span><div style="width:30px; height:30px; border-radius:50%; background:var(--panel2); border:1px solid var(--line);"></div></div>
+        </div>
+
+        <!-- MAIN TABS -->
+        <div style="display:flex; align-items:center; padding:0 20px; height:52px; background:var(--panel); border-bottom:1px solid var(--line); gap:28px;">
+          <div style="display:flex; align-items:center; height:100%; border-bottom:2px solid var(--ai); color:var(--ai); font-weight:700; font-size:15px;">盯盤 Radar</div>
+          <div style="display:flex; align-items:center; height:100%; border-bottom:2px solid transparent; color:var(--mut); font-size:15px;">策略 Lab</div>
+          <div style="display:flex; align-items:center; height:100%; border-bottom:2px solid transparent; color:var(--mut); font-size:15px;">部位 Cockpit</div>
+          <div style="margin-left:auto; display:flex; gap:8px;">
+            <div style="padding:6px 13px; border:1px solid var(--line); border-radius:999px; font-size:12.5px; color:var(--mut); background:var(--panel2);">+ 新增盯盤</div>
+            <div style="padding:6px 13px; border:1px solid var(--line); border-radius:999px; font-size:12.5px; color:var(--mut); background:var(--panel2);">找落後補漲</div>
+          </div>
+        </div>
+
+        <!-- WORKSPACE -->
+        <div style="display:grid; grid-template-columns:224px 1fr 332px;">
+
+          <!-- LEFT RAIL -->
+          <div style="border-right:1px solid var(--line); padding:var(--railpad); background:var(--panel2); display:flex; flex-direction:column; gap:22px;">
+            <div>
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700; margin-bottom:11px;">策略 Lens</div>
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <div style="display:flex; align-items:center; gap:9px; padding:11px 13px; border-radius:10px; background:var(--ai-soft); color:var(--ai); font-weight:700; font-size:13.5px;">籌碼大戶部位建立</div>
+                <div style="padding:11px 13px; border-radius:10px; color:var(--mut); font-size:13.5px;">AI server 落後補漲</div>
+                <div style="padding:11px 13px; border-radius:10px; color:var(--mut); font-size:13.5px;">技術突破</div>
+                <div style="padding:11px 13px; border-radius:10px; color:var(--faint); font-size:13.5px;">+ 新增 Lens</div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700; margin-bottom:11px;">此 Lens 狀態</div>
+              <div style="display:flex; flex-direction:column; gap:2px; font-size:13px;">
+                <div style="display:flex; justify-content:space-between; padding:8px 10px; color:var(--mut);">候選池<span style="font-family:'IBM Plex Mono',monospace; color:var(--tx); font-weight:600;">38</span></div>
+                <div style="display:flex; justify-content:space-between; padding:8px 10px; color:var(--ai); background:var(--ai-soft); border-radius:8px; font-weight:600;">待討論<span style="font-family:'IBM Plex Mono',monospace;">12</span></div>
+                <div style="display:flex; justify-content:space-between; padding:8px 10px; color:var(--mut);">監控中<span style="font-family:'IBM Plex Mono',monospace; color:var(--tx); font-weight:600;">9</span></div>
+                <div style="display:flex; justify-content:space-between; padding:8px 10px; color:var(--mut);">Shadow 中<span style="font-family:'IBM Plex Mono',monospace; color:var(--tx); font-weight:600;">4</span></div>
+                <div style="display:flex; justify-content:space-between; padding:8px 10px; color:var(--mut);">已剔除<span style="font-family:'IBM Plex Mono',monospace; color:var(--faint);">13</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CENTER BOARD -->
+          <div style="display:flex; flex-direction:column; min-width:0;">
+            <div style="display:flex; align-items:center; gap:7px; padding:14px 18px; border-bottom:1px solid var(--line);">
+              <div style="padding:7px 14px; border-radius:999px; background:var(--ai); color:var(--on-ai); font-size:12.5px; font-weight:600;">籌碼大戶部位建立</div>
+              <div style="padding:7px 14px; border-radius:999px; color:var(--mut); font-size:12.5px; background:var(--panel2); border:1px solid var(--line);">AI server 落後補漲</div>
+              <div style="padding:7px 14px; border-radius:999px; color:var(--mut); font-size:12.5px; background:var(--panel2); border:1px solid var(--line);">技術突破</div>
+              <div style="margin-left:auto; font-size:12px; color:var(--faint);">38 檔候選</div>
+            </div>
+            <div style="display:grid; grid-template-columns:30px 1.5fr 86px 52px 70px 80px 64px 78px; gap:8px; align-items:center; padding:11px 18px; border-bottom:1px solid var(--line); font-size:10px; letter-spacing:.05em; color:var(--faint); text-transform:uppercase; font-weight:600;">
+              <div>#</div><div>標的</div><div>吸貨分數</div><div>連買</div><div>集中度</div><div>出貨風險</div><div>流動性</div><div>狀態</div>
+            </div>
+            <div style="display:grid; grid-template-columns:30px 1.5fr 86px 52px 70px 80px 64px 78px; gap:8px; align-items:center; padding:var(--rowpy) 18px; border-bottom:1px solid var(--line); background:var(--ai-soft);">
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--ai); font-weight:600;">01</div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px;">8086</div><div style="font-size:11.5px; color:var(--mut);">宏捷科</div></div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:700; color:var(--ai);">92</span><div style="flex:1; height:4px; background:var(--line); border-radius:2px; overflow:hidden;"><div style="width:92%; height:100%; background:var(--ai);"></div></div></div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-weight:600;">7</div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:11.5px;">高</span></div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--down-soft); color:var(--down); font-size:11.5px;">低</span></div>
+              <div style="color:var(--mut); font-size:12px;">充足</div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:11.5px;">待討論</span></div>
+            </div>
+            <div style="display:grid; grid-template-columns:30px 1.5fr 86px 52px 70px 80px 64px 78px; gap:8px; align-items:center; padding:var(--rowpy) 18px; border-bottom:1px solid var(--line);">
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--faint);">02</div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px;">3017</div><div style="font-size:11.5px; color:var(--mut);">奇鋐</div></div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:700;">88</span><div style="flex:1; height:4px; background:var(--line); border-radius:2px; overflow:hidden;"><div style="width:88%; height:100%; background:var(--faint);"></div></div></div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-weight:600;">5</div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:11.5px;">中</span></div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:11.5px;">中</span></div>
+              <div style="color:var(--mut); font-size:12px;">充足</div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--down-soft); color:var(--down); font-size:11.5px;">監控中</span></div>
+            </div>
+            <div style="display:grid; grid-template-columns:30px 1.5fr 86px 52px 70px 80px 64px 78px; gap:8px; align-items:center; padding:var(--rowpy) 18px; border-bottom:1px solid var(--line);">
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--faint);">03</div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px;">6669</div><div style="font-size:11.5px; color:var(--mut);">緯穎</div></div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:700;">85</span><div style="flex:1; height:4px; background:var(--line); border-radius:2px; overflow:hidden;"><div style="width:85%; height:100%; background:var(--faint);"></div></div></div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-weight:600;">6</div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:11.5px;">高</span></div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--down-soft); color:var(--down); font-size:11.5px;">低</span></div>
+              <div style="color:var(--mut); font-size:12px;">充足</div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-size:11.5px;">待討論</span></div>
+            </div>
+            <div style="display:grid; grid-template-columns:30px 1.5fr 86px 52px 70px 80px 64px 78px; gap:8px; align-items:center; padding:var(--rowpy) 18px; border-bottom:1px solid var(--line);">
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--faint);">04</div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px;">3035</div><div style="font-size:11.5px; color:var(--mut);">智原</div></div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:700;">79</span><div style="flex:1; height:4px; background:var(--line); border-radius:2px; overflow:hidden;"><div style="width:79%; height:100%; background:var(--faint);"></div></div></div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-weight:600;">4</div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:11.5px;">中</span></div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:11.5px;">中</span></div>
+              <div style="color:var(--faint); font-size:12px;">普通</div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--mut); font-size:11.5px;">候選</span></div>
+            </div>
+            <div style="display:grid; grid-template-columns:30px 1.5fr 86px 52px 70px 80px 64px 78px; gap:8px; align-items:center; padding:var(--rowpy) 18px;">
+              <div style="font-family:'IBM Plex Mono',monospace; color:var(--faint);">05</div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px;">2454</div><div style="font-size:11.5px; color:var(--mut);">聯發科</div></div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:700;">74</span><div style="flex:1; height:4px; background:var(--line); border-radius:2px; overflow:hidden;"><div style="width:74%; height:100%; background:var(--faint);"></div></div></div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-weight:600;">3</div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--mut); font-size:11.5px;">低</span></div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--warn-soft); color:var(--warn); font-size:11.5px;">中</span></div>
+              <div style="color:var(--mut); font-size:12px;">充足</div>
+              <div><span style="padding:3px 9px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--mut); font-size:11.5px;">候選</span></div>
+            </div>
+          </div>
+
+          <!-- RIGHT DRAWER -->
+          <div style="border-left:1px solid var(--line); background:var(--panel); padding:20px; display:flex; flex-direction:column; gap:18px;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between;">
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:19px;">8086</div><div style="font-size:13px; color:var(--mut);">宏捷科 · 砷化鎵</div></div>
+              <div style="text-align:right;"><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:19px; color:var(--ai);">92</div><div style="font-size:10px; color:var(--faint); letter-spacing:.08em;">FIT SCORE</div></div>
+            </div>
+            <div>
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700; margin-bottom:10px;">AI 為什麼選</div>
+              <div style="display:flex; flex-direction:column; gap:9px; font-size:13px; color:var(--mut); line-height:1.55;">
+                <div style="display:flex; gap:8px;"><span style="color:var(--ai); margin-top:1px;">●</span>近 10 日分點淨買集中，買盤在區間內吸收而非追高</div>
+                <div style="display:flex; gap:8px;"><span style="color:var(--ai); margin-top:1px;">●</span>同族群已有 3 檔先行起漲，此檔相對落後</div>
+                <div style="display:flex; gap:8px;"><span style="color:var(--ai); margin-top:1px;">●</span>成交金額穩定，流動性足以分批建立部位</div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700; margin-bottom:10px;">AI 疑慮</div>
+              <div style="display:flex; flex-direction:column; gap:9px; font-size:13px; color:var(--mut); line-height:1.55;">
+                <div style="display:flex; gap:8px;"><span style="color:var(--warn); margin-top:1px;">●</span>同券商另一分點於同族群某檔出現賣超</div>
+                <div style="display:flex; gap:8px;"><span style="color:var(--warn); margin-top:1px;">●</span>今日量增但價格尚未有效突破前高</div>
+              </div>
+            </div>
+            <div style="background:var(--ai-soft); border-radius:11px; padding:14px;">
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--ai); text-transform:uppercase; font-weight:700; margin-bottom:7px;">建議下一步</div>
+              <div style="font-size:13px; color:var(--tx); line-height:1.6;">加入監控池，將「分點買盤是否延續」設為主要觸發條件，先觀察 2 個交易日再決定是否送 Shadow。</div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:auto;">
+              <div style="grid-column:span 2; text-align:center; padding:12px; border-radius:10px; background:var(--ai); color:var(--on-ai); font-weight:700; font-size:13.5px;">加入監控</div>
+              <div style="text-align:center; padding:11px; border-radius:10px; border:1px solid var(--line); color:var(--tx); font-size:13px;">送 Shadow</div>
+              <div style="text-align:center; padding:11px; border-radius:10px; border:1px solid var(--line); color:var(--mut); font-size:13px;">剔除</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
