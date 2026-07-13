@@ -1642,6 +1642,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 "provider": "codex",
                 "reason": "owned_in_progress_dispatch",
                 "message": "wake",
+                "metadata": {
+                    "dispatch_event_key": current_event["key"],
+                    "dispatch_task_signature": current_event["signature"],
+                    "dispatch_target_display_name": "Codex",
+                },
             }
             state = {"queue": {"events": {}}, "workers": {}}
             request = supervisor.DeliveryRequest(
@@ -1651,6 +1656,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 message="wake",
                 task_id="BUS-VAL-004",
                 reason="owned_in_progress_dispatch",
+                metadata=dict(queue_payload["metadata"]),
             )
 
             def prepare_workspace(_config, _state, prepared_request, **_kwargs):
@@ -1664,14 +1670,26 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 )
                 return True, None
 
+            def start_worker(*_args, **_kwargs):
+                state["workers"]["run-123"] = {
+                    "run_id": "run-123",
+                    "status": "running",
+                    "pid": None,
+                    "agent_id": "codex",
+                    "provider": "codex",
+                    "task_id": current_task["id"],
+                    "queue_event_id": queue_payload["event_id"],
+                    "request_snapshot": supervisor.request_snapshot(request),
+                }
+                return True, "run-123", {"manual_confirmation_required": False, "auto_delivered": True}
+
             with (
                 mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
                 mock.patch.object(supervisor, "build_request", return_value=request),
                 mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
                 mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)) as guard,
-                mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", {"manual_confirmation_required": False, "auto_delivered": True})),
-                mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+                mock.patch.object(supervisor, "start_worker_for_request", side_effect=start_worker),
             ):
                 changed = supervisor.process_queue(config, state, self.provider_report)
 
@@ -1965,17 +1983,43 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "target_display_name": "Codex",
             "reason": "owned_in_progress_dispatch",
             "message": "wake",
+            "metadata": {
+                "dispatch_event_key": current_event["key"],
+                "dispatch_task_signature": current_event["signature"],
+                "dispatch_target_display_name": "Codex",
+            },
         }
         state = {"queue": {"events": {}}, "workers": {}}
-        request = object()
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id=current_task["id"],
+            reason=supervisor.REASON_OWNED_IN_PROGRESS,
+            metadata=dict(queue_payload["metadata"]),
+        )
         delivery = {"manual_confirmation_required": False, "auto_delivered": True}
+
+        def start_current_worker(*_args, **_kwargs):
+            state["workers"]["run-123"] = {
+                "run_id": "run-123",
+                "status": "running",
+                "pid": None,
+                "agent_id": "codex",
+                "provider": "codex",
+                "task_id": current_task["id"],
+                "queue_event_id": queue_payload["event_id"],
+                "request_snapshot": supervisor.request_snapshot(request),
+            }
+            return True, "run-123", delivery
 
         with (
             mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
             mock.patch.object(supervisor, "build_request", return_value=request) as build_request,
-            mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", delivery)) as start_worker,
-            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True) as sync_dispatched_task_status,
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=start_current_worker) as start_worker,
+            mock.patch.object(supervisor, "sync_dispatched_task_status", wraps=supervisor.sync_dispatched_task_status) as sync_dispatched_task_status,
         ):
             changed = supervisor.process_queue(self.config, state, self.provider_report)
 
@@ -2011,6 +2055,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "target_display_name": "Codex",
             "reason": supervisor.REASON_OWNED_READY,
             "message": "wake",
+            "metadata": {
+                "dispatch_event_key": event["key"],
+                "dispatch_task_signature": event["signature"],
+                "dispatch_target_display_name": "Codex",
+            },
         }
         operator_update = {
             **todo,
@@ -2030,6 +2079,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 "pid": 4242,
                 "task_id": todo["id"],
                 "queue_event_id": "evt-race",
+                "agent_id": "codex",
+                "provider": "codex",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_OWNED_READY,
+                    "metadata": dict(queue_payload["metadata"]),
+                },
             }
             (self.root / "ai-status.json").write_text(
                 json.dumps({"tasks": [operator_update]}),
@@ -2060,6 +2115,330 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         terminate_worker_pid.assert_called_once_with(4242)
         sync_status_pipeline.assert_not_called()
 
+    def test_all_execution_lanes_cancel_worker_when_signature_changes_after_launch(self) -> None:
+        lane_cases = (
+            ("todo", supervisor.REASON_OWNED_READY, "Codex", "Gemini"),
+            ("in_progress", supervisor.REASON_OWNED_IN_PROGRESS, "Codex", "Gemini"),
+            ("review", supervisor.REASON_REVIEW_READY, "Claude", "Codex"),
+            ("review_approved", supervisor.REASON_OWNED_FINALIZE, "Codex", "Gemini"),
+        )
+
+        for index, (status, reason, owner, reviewer) in enumerate(lane_cases):
+            with self.subTest(status=status):
+                task = {
+                    "id": f"POST-LAUNCH-{index}",
+                    "status": status,
+                    "owner": owner,
+                    "reviewer": reviewer,
+                    "depends_on": [],
+                    "last_update": "2026-07-13T18:00:00Z",
+                    "next": "Original canonical request.",
+                }
+                event = supervisor.build_dispatch_event(task, "Codex", reason, {task["id"]: task})
+                queue_payload = {
+                    "event_id": f"evt-post-launch-{index}",
+                    "event_key": event["key"],
+                    "task_id": task["id"],
+                    "target_agent": "codex",
+                    "target_display_name": "Codex",
+                    "provider": "codex",
+                    "reason": reason,
+                    "message": "wake",
+                    "metadata": {
+                        "dispatch_event_key": event["key"],
+                        "dispatch_task_signature": event["signature"],
+                        "dispatch_target_display_name": "Codex",
+                    },
+                }
+                request = supervisor.DeliveryRequest(
+                    agent_id="codex",
+                    provider="codex",
+                    delivery_mode="codex",
+                    message="wake",
+                    task_id=task["id"],
+                    reason=reason,
+                    metadata=dict(queue_payload["metadata"]),
+                )
+                operator_update = {
+                    **task,
+                    "last_update": "2026-07-13T18:01:00Z",
+                    "next": "Operator advanced canonical truth after process launch.",
+                }
+                (self.root / "ai-status.json").write_text(
+                    json.dumps({"tasks": [task]}),
+                    encoding="utf-8",
+                )
+                state = {"queue": {"events": {}}, "workers": {}}
+                run_id = f"run-post-launch-{index}"
+                pid = 5000 + index
+
+                def launch_then_advance(*_args, **_kwargs):
+                    state["workers"][run_id] = {
+                        "run_id": run_id,
+                        "status": "running",
+                        "pid": pid,
+                        "agent_id": "codex",
+                        "provider": "codex",
+                        "task_id": task["id"],
+                        "queue_event_id": queue_payload["event_id"],
+                        "request_snapshot": supervisor.request_snapshot(request),
+                    }
+                    (self.root / "ai-status.json").write_text(
+                        json.dumps({"tasks": [operator_update]}),
+                        encoding="utf-8",
+                    )
+                    return True, run_id, {"manual_confirmation_required": False, "auto_delivered": True}
+
+                with (
+                    mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+                    mock.patch.object(supervisor, "build_request", return_value=request),
+                    mock.patch.object(supervisor, "start_worker_for_request", side_effect=launch_then_advance),
+                    mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                    mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+                    mock.patch.object(supervisor, "sync_status_pipeline") as sync_status_pipeline,
+                ):
+                    changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+                self.assertTrue(changed)
+                self.assertEqual(state["workers"][run_id]["status"], "superseded")
+                self.assertEqual(
+                    state["queue"]["events"][queue_payload["event_id"]]["status"],
+                    "completed",
+                )
+                self.assertEqual(
+                    json.loads((self.root / "ai-status.json").read_text(encoding="utf-8"))["tasks"][0],
+                    operator_update,
+                )
+                terminate_worker_pid.assert_called_once_with(pid)
+                sync_status_pipeline.assert_not_called()
+
+    def test_todo_post_start_baseline_cas_does_not_absorb_operator_update(self) -> None:
+        task = {
+            "id": "POST-START-CAS-001",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": "2026-07-13T18:00:00Z",
+            "next": "Original canonical request.",
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_READY,
+            {task["id"]: task},
+        )
+        queue_payload = {
+            "event_id": "evt-post-start-cas",
+            "event_key": event["key"],
+            "task_id": task["id"],
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": supervisor.REASON_OWNED_READY,
+            "message": "wake",
+            "metadata": {
+                "dispatch_event_key": event["key"],
+                "dispatch_task_signature": event["signature"],
+                "dispatch_target_display_name": "Codex",
+            },
+        }
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id=task["id"],
+            reason=supervisor.REASON_OWNED_READY,
+            metadata=dict(queue_payload["metadata"]),
+        )
+        (self.root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+        state = {"queue": {"events": {}}, "workers": {}}
+
+        def start_worker(*_args, **_kwargs):
+            state["workers"]["run-post-start-cas"] = {
+                "run_id": "run-post-start-cas",
+                "status": "running",
+                "pid": 6001,
+                "agent_id": "codex",
+                "provider": "codex",
+                "task_id": task["id"],
+                "queue_event_id": queue_payload["event_id"],
+                "request_snapshot": supervisor.request_snapshot(request),
+            }
+            return True, "run-post-start-cas", {"manual_confirmation_required": False, "auto_delivered": True}
+
+        def operator_update_during_pipeline(*_args, **_kwargs):
+            status = json.loads((self.root / "ai-status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["tasks"][0]["status"], "in_progress")
+            status["tasks"][0]["last_update"] = "2026-07-13T18:02:00Z"
+            status["tasks"][0]["next"] = "Operator update after canonical auto-start."
+            (self.root / "ai-status.json").write_text(json.dumps(status), encoding="utf-8")
+            return True
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=start_worker),
+            mock.patch.object(supervisor, "sync_status_pipeline", side_effect=operator_update_during_pipeline),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        worker = state["workers"]["run-post-start-cas"]
+        canonical = json.loads((self.root / "ai-status.json").read_text(encoding="utf-8"))["tasks"][0]
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "superseded")
+        self.assertEqual(canonical["next"], "Operator update after canonical auto-start.")
+        self.assertEqual(
+            worker["request_snapshot"]["metadata"]["dispatch_task_signature"],
+            event["signature"],
+        )
+        self.assertEqual(state["queue"]["events"]["evt-post-start-cas"]["status"], "completed")
+        terminate_worker_pid.assert_called_once_with(6001)
+
+    def test_active_worker_recovery_rechecks_exact_signature_before_restoring_queue_lease(self) -> None:
+        task = {
+            "id": "ACTIVE-RECOVERY-CAS-001",
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "last_update": "2026-07-13T18:00:00Z",
+            "next": "Review the original evidence.",
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_REVIEW_READY,
+            {task["id"]: task},
+        )
+        queue_payload = {
+            "event_id": "evt-active-recovery",
+            "event_key": event["key"],
+            "task_id": task["id"],
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": supervisor.REASON_REVIEW_READY,
+            "message": "wake",
+            "metadata": {
+                "dispatch_event_key": event["key"],
+                "dispatch_task_signature": event["signature"],
+                "dispatch_target_display_name": "Codex",
+            },
+        }
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id=task["id"],
+            reason=supervisor.REASON_REVIEW_READY,
+            metadata=dict(queue_payload["metadata"]),
+        )
+        operator_update = {
+            **task,
+            "last_update": "2026-07-13T18:01:00Z",
+            "next": "Operator replaced the review evidence while the worker was active.",
+        }
+        (self.root / "ai-status.json").write_text(
+            json.dumps({"tasks": [operator_update]}),
+            encoding="utf-8",
+        )
+        worker = {
+            "run_id": "run-active-recovery",
+            "status": "running",
+            "pid": 6101,
+            "agent_id": "codex",
+            "provider": "codex",
+            "task_id": task["id"],
+            "queue_event_id": queue_payload["event_id"],
+            "request_snapshot": supervisor.request_snapshot(request),
+        }
+        state = {
+            "queue": {"events": {queue_payload["event_id"]: {"status": "pending"}}},
+            "workers": {worker["run_id"]: worker},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "superseded")
+        record = state["queue"]["events"][queue_payload["event_id"]]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+        self.assertEqual(
+            json.loads((self.root / "ai-status.json").read_text(encoding="utf-8"))["tasks"][0],
+            operator_update,
+        )
+        terminate_worker_pid.assert_called_once_with(6101)
+
+    def test_queued_dispatch_envelope_key_and_signature_must_be_consistent(self) -> None:
+        task = {
+            "id": "EVENT-ENVELOPE-001",
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "last_update": "2026-07-13T18:00:00Z",
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_REVIEW_READY,
+            {task["id"]: task},
+        )
+        (self.root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+        base = {
+            "event_id": "evt-envelope",
+            "event_key": event["key"],
+            "task_id": task["id"],
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "reason": supervisor.REASON_REVIEW_READY,
+            "metadata": {
+                "dispatch_event_key": event["key"],
+                "dispatch_task_signature": event["signature"],
+                "dispatch_target_display_name": "Codex",
+            },
+        }
+
+        self.assertEqual(supervisor.fresh_queued_dispatch_event_admission(self.config, base), (True, None))
+        cases = (
+            ("top-level key", {"key": "stale-key"}, "event_envelope_key_mismatch"),
+            (
+                "metadata key",
+                {"metadata": {**base["metadata"], "dispatch_event_key": "stale-key"}},
+                "event_envelope_key_mismatch",
+            ),
+            (
+                "metadata signature",
+                {"metadata": {**base["metadata"], "dispatch_task_signature": "stale-signature"}},
+                "task_signature_changed",
+            ),
+            ("top-level signature", {"signature": "stale-signature"}, "event_envelope_signature_mismatch"),
+            (
+                "missing metadata signature",
+                {"metadata": {"dispatch_event_key": event["key"]}},
+                "metadata_task_signature_missing",
+            ),
+        )
+        for label, update, expected_mismatch in cases:
+            with self.subTest(label=label):
+                queued = json.loads(json.dumps(base))
+                queued.update(update)
+                self.assertEqual(
+                    supervisor.fresh_queued_dispatch_event_admission(self.config, queued),
+                    (False, expected_mismatch),
+                )
+
     def test_failed_auto_lane_dispatch_does_not_create_manual_pending_worker(self) -> None:
         current_task = {
             "id": "BUS-VAL-005",
@@ -2084,6 +2463,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "provider": "codex",
             "reason": "owned_in_progress_dispatch",
             "message": "wake",
+            "metadata": {
+                "dispatch_event_key": current_event["key"],
+                "dispatch_task_signature": current_event["signature"],
+                "dispatch_target_display_name": "Codex",
+            },
         }
         state = {"queue": {"events": {}}, "workers": {}}
         request = supervisor.DeliveryRequest(
@@ -2093,6 +2477,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             message="wake",
             task_id="BUS-VAL-005",
             reason="owned_in_progress_dispatch",
+            metadata=dict(queue_payload["metadata"]),
         )
         with (
             mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
@@ -2245,6 +2630,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "provider": "codex",
             "reason": "owned_in_progress_dispatch",
             "message": "wake",
+            "metadata": {
+                "dispatch_event_key": current_event["key"],
+                "dispatch_task_signature": current_event["signature"],
+                "dispatch_target_display_name": "Codex",
+            },
         }
         state = {"queue": {"events": {}}, "workers": {}}
         request = supervisor.DeliveryRequest(
@@ -2254,6 +2644,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             message="wake",
             task_id="BUS-VAL-006",
             reason="owned_in_progress_dispatch",
+            metadata=dict(queue_payload["metadata"]),
         )
 
         with (
@@ -4083,6 +4474,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "target_display_name": "Gemini",
             "reason": "review_ready_dispatch",
             "message": "wake",
+            "metadata": {
+                "dispatch_event_key": current_event["key"],
+                "dispatch_task_signature": current_event["signature"],
+                "dispatch_target_display_name": "Gemini",
+            },
         }
         state = {
             "queue": {"events": {}},
@@ -4091,6 +4487,13 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "run_id": "gemini-run-1",
                     "queue_event_id": "evt-current",
                     "status": "running",
+                    "agent_id": "gemini",
+                    "provider": "gemini",
+                    "task_id": current_task["id"],
+                    "request_snapshot": {
+                        "reason": supervisor.REASON_REVIEW_READY,
+                        "metadata": dict(queue_payload["metadata"]),
+                    },
                 }
             },
         }
@@ -4107,7 +4510,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         record = state["queue"]["events"]["evt-current"]
         self.assertEqual(record["status"], "started")
         self.assertEqual(record["run_id"], "gemini-run-1")
-        sync_dispatched_task_status.assert_called_once_with(self.config, queue_payload)
+        sync_dispatched_task_status.assert_not_called()
 
 
 class DispatchStatusSyncTests(unittest.TestCase):
@@ -4275,6 +4678,12 @@ class DispatchStatusSyncTests(unittest.TestCase):
             "status": "in_progress",
             "last_update": "2026-07-13T10:01:00Z",
         }
+        effective = supervisor.build_dispatch_event(
+            in_progress,
+            "Copilot",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            {in_progress["id"]: in_progress},
+        )
         self.status_path.write_text(json.dumps({"tasks": [in_progress]}), encoding="utf-8")
         source = self.root / "source-snapshot.json"
         workspace = self.root / "workspace-snapshot.json"
@@ -4307,6 +4716,8 @@ class DispatchStatusSyncTests(unittest.TestCase):
             "event_key": original["key"],
             "target_agent": "copilot",
             "target_display_name": "Copilot",
+            "_post_status_sync_event_key": effective["key"],
+            "_post_status_sync_task_signature": effective["signature"],
         }
 
         refreshed = supervisor.refresh_execution_dispatch_baseline_after_status_sync(
@@ -4317,12 +4728,6 @@ class DispatchStatusSyncTests(unittest.TestCase):
         )
 
         self.assertTrue(refreshed)
-        effective = supervisor.build_dispatch_event(
-            in_progress,
-            "Copilot",
-            supervisor.REASON_OWNED_IN_PROGRESS,
-            {in_progress["id"]: in_progress},
-        )
         metadata = state["workers"]["run-start"]["request_snapshot"]["metadata"]
         self.assertEqual(metadata["dispatch_origin_event_key"], original["key"])
         self.assertEqual(metadata["dispatch_event_key"], effective["key"])
@@ -9307,6 +9712,56 @@ class ExecutionDispatchOutcomeGuardTests(unittest.TestCase):
             self.assertEqual(worker["status"], "failed")
             self.assertEqual(worker["last_error"], "synthetic retry failure")
 
+    def test_retry_post_launch_corrupt_canonical_state_terminates_child_fail_closed(self) -> None:
+        corrupt_payloads = (
+            ("empty", ""),
+            ("malformed", "{"),
+            ("list", "[]"),
+            ("scalar", '"not-an-object"'),
+            ("wrong tasks type", '{"tasks":"not-a-list"}'),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            for index, (label, raw_status) in enumerate(corrupt_payloads):
+                with self.subTest(label=label):
+                    root = base / str(index)
+                    root.mkdir()
+                    config = self._config(root)
+                    task = self._review_task()
+                    event = supervisor.build_dispatch_event(
+                        task,
+                        "Codex",
+                        supervisor.REASON_REVIEW_READY,
+                        {task["id"]: task},
+                    )
+                    worker = {
+                        **self._worker(event),
+                        "status": "running",
+                        "pid": 7000 + index,
+                    }
+                    state = {
+                        "queue": {"events": {"evt-review": {"status": "started"}}},
+                        "workers": {worker["run_id"]: worker},
+                    }
+                    (root / "ai-status.json").write_text(raw_status, encoding="utf-8")
+
+                    with (
+                        mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                        mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+                    ):
+                        admitted = supervisor.relaunched_worker_passes_final_admission(
+                            config,
+                            state,
+                            worker_run_id=worker["run_id"],
+                            queue_event_id="evt-review",
+                        )
+
+                    self.assertFalse(admitted)
+                    self.assertEqual(worker["status"], "superseded")
+                    self.assertEqual(state["queue"]["events"]["evt-review"]["status"], "completed")
+                    terminate_worker_pid.assert_called_once_with(7000 + index)
+
     def test_successful_unchanged_review_records_signature_backoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = self._config(Path(tmpdir))
@@ -9350,6 +9805,72 @@ class ExecutionDispatchOutcomeGuardTests(unittest.TestCase):
                     logical_agent_id="codex",
                     event=event,
                     now=now + timedelta(seconds=61),
+                )
+            )
+
+    def test_corrupt_execution_guard_retry_timestamp_blocks_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(Path(tmpdir))
+            task = self._review_task()
+            event = supervisor.build_dispatch_event(
+                task,
+                "Codex",
+                supervisor.REASON_REVIEW_READY,
+                {task["id"]: task},
+            )
+            state: dict = {}
+            now = datetime(2026, 7, 13, 17, 0, tzinfo=timezone.utc)
+            record = supervisor.record_execution_dispatch_guard(
+                config,
+                state,
+                task_id=task["id"],
+                logical_agent_id="codex",
+                event=event,
+                outcome="incomplete_noop",
+                failure_kind="process_success_no_task_transition",
+                worker_run_id="run-review",
+                queue_event_id="evt-review",
+                now=now,
+            )
+            key = supervisor.execution_dispatch_guard_key(
+                task_id=task["id"],
+                logical_agent_id="codex",
+                reason=supervisor.REASON_REVIEW_READY,
+                event_key=event["key"],
+            )
+
+            for label, corrupt_value in (
+                ("missing", None),
+                ("empty", ""),
+                ("malformed", "not-a-timestamp"),
+                ("wrong type", {"unexpected": "object"}),
+            ):
+                with self.subTest(label=label):
+                    if label == "missing":
+                        record.pop("retry_not_before", None)
+                    else:
+                        record["retry_not_before"] = corrupt_value
+                    self.assertIs(
+                        supervisor.current_execution_dispatch_guard(
+                            config,
+                            state,
+                            task_id=task["id"],
+                            logical_agent_id="codex",
+                            event=event,
+                            now=now + timedelta(days=1),
+                        ),
+                        state["execution_dispatch_guardrails"]["records"][key],
+                    )
+
+            record["retry_not_before"] = "2026-07-13T17:00:01Z"
+            self.assertIsNone(
+                supervisor.current_execution_dispatch_guard(
+                    config,
+                    state,
+                    task_id=task["id"],
+                    logical_agent_id="codex",
+                    event=event,
+                    now=now + timedelta(seconds=2),
                 )
             )
 
@@ -10207,6 +10728,108 @@ class ExecutionDispatchOutcomeGuardTests(unittest.TestCase):
 
             self.assertFalse(dispatched)
             queue_delivery_event.assert_not_called()
+
+    def test_poll_terminal_paths_match_boot_fail_closed_resolution(self) -> None:
+        path_cases = (
+            ("lease", "running", True, {"lease_expires_at": "2000-01-01T00:00:00Z"}),
+            ("approval", "running", False, {}),
+            (
+                "stall",
+                "stalled",
+                True,
+                {
+                    "lease_expires_at": "2999-01-01T00:00:00Z",
+                    "last_event_at": "2000-01-01T00:00:00Z",
+                    "last_process_activity_at": "2000-01-01T00:00:00Z",
+                },
+            ),
+            ("generic", "running", False, {}),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            for index, (path_name, worker_status, alive, worker_updates) in enumerate(path_cases):
+                with self.subTest(path=path_name):
+                    root = base / path_name
+                    root.mkdir()
+                    config = self._config(root)
+                    config["supervisor"] = {
+                        "adaptive_stall_detection": False,
+                        "stall_after_seconds": 1,
+                    }
+                    original = self._review_task()
+                    event = supervisor.build_dispatch_event(
+                        original,
+                        "Codex",
+                        supervisor.REASON_REVIEW_READY,
+                        {original["id"]: original},
+                    )
+                    updated = {
+                        **original,
+                        "last_update": "2026-07-13T17:05:00Z",
+                        "next": "Canonical review evidence advanced after launch.",
+                    }
+                    self._persist_tasks(updated)
+                    queue_event = {
+                        "event_id": "evt-review",
+                        "event_key": event["key"],
+                        "task_id": original["id"],
+                        "target_agent": "codex",
+                        "target_display_name": "Codex",
+                        "reason": supervisor.REASON_REVIEW_READY,
+                        "metadata": {
+                            "dispatch_event_key": event["key"],
+                            "dispatch_task_signature": event["signature"],
+                        },
+                    }
+                    (root / "event-queue.jsonl").write_text(
+                        json.dumps(queue_event) + "\n",
+                        encoding="utf-8",
+                    )
+                    worker = {
+                        **self._worker(event),
+                        "status": worker_status,
+                        "pid": 8000 + index,
+                        **worker_updates,
+                    }
+                    state = {
+                        "queue": {"events": {"evt-review": {"status": "started"}}},
+                        "workers": {worker["run_id"]: worker},
+                    }
+                    approval_state = {"pending": [], "history": []}
+                    if path_name == "approval":
+                        approval_state["pending"] = [
+                            {
+                                "approval_id": "approval-1",
+                                "worker_run_id": worker["run_id"],
+                                "created_at": "2026-07-13T17:01:00Z",
+                            }
+                        ]
+
+                    with (
+                        mock.patch.object(supervisor, "load_approval_state", return_value=approval_state),
+                        mock.patch.object(supervisor, "load_provider_report", return_value={}),
+                        mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+                        mock.patch.object(supervisor, "pid_is_alive", return_value=alive),
+                        mock.patch.object(supervisor, "worker_supports_approval_resume", return_value=False),
+                        mock.patch.object(supervisor, "resolve_approval"),
+                        mock.patch.object(supervisor, "pause_dispatch_for_reaped_worker", return_value=None),
+                        mock.patch.object(
+                            supervisor,
+                            "classify_worker_failure",
+                            return_value={"kind": "lease_expired", "label": "lease expired"},
+                        ),
+                        mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
+                        mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=False),
+                        mock.patch.object(supervisor, "write_activity_log"),
+                        mock.patch.object(supervisor, "terminate_worker_pid"),
+                    ):
+                        changed = supervisor.poll_workers(config, state)
+
+                    self.assertTrue(changed)
+                    self.assertEqual(worker["status"], "superseded")
+                    self.assertEqual(state["queue"]["events"]["evt-review"]["status"], "completed")
+                    self.assertEqual(state.get("execution_dispatch_guardrails", {}).get("records", {}), {})
 
     def test_boot_and_poll_stale_terminal_outcome_preserve_new_signature_lane_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

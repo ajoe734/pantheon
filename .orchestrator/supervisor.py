@@ -2555,14 +2555,26 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
-                if sync_dispatched_task_status(config, event):
-                    refresh_execution_dispatch_baseline_after_status_sync(
+                post_launch_admitted = True
+                if is_execution_dispatch_reason(str(event.get("reason") or "")):
+                    admission = fresh_execution_dispatch_admission(
                         config,
                         state,
-                        event,
-                        worker_run_id=str(active_worker.get("run_id") or ""),
+                        active_worker,
+                        queue_events_by_id={str(event_id): event},
+                        audit_failure_kind="active_worker_recovery",
                     )
-                elif event.get("_status_sync_outcome") == "stale":
+                    post_launch_admitted = bool(admission.get("admitted"))
+                    if post_launch_admitted and admission.get("reason") == REASON_OWNED_READY:
+                        post_launch_admitted = bool(sync_dispatched_task_status(config, event))
+                        if post_launch_admitted:
+                            post_launch_admitted = refresh_execution_dispatch_baseline_after_status_sync(
+                                config,
+                                state,
+                                event,
+                                worker_run_id=str(active_worker.get("run_id") or ""),
+                            )
+                if not post_launch_admitted:
                     supersede_worker_after_stale_dispatch_cas(
                         config,
                         state,
@@ -2924,18 +2936,33 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         record["processed_at"] = _isoformat_utc(queue_started_at)
         for key in ("last_wait_reason", "execution_outcome", "retry_not_before", "triage_required"):
             record.pop(key, None)
-        if sync_dispatched_task_status(config, event):
-            refresh_execution_dispatch_baseline_after_status_sync(
-                config,
-                state,
-                event,
-                worker_run_id=str(worker_run_id or ""),
-            )
-        elif event.get("_status_sync_outcome") == "stale":
+        worker = state.get("workers", {}).get(str(worker_run_id or ""))
+        post_launch_admitted = True
+        if is_execution_dispatch_reason(str(event.get("reason") or "")):
+            status_synced = sync_dispatched_task_status(config, event)
+            if status_synced:
+                post_launch_admitted = refresh_execution_dispatch_baseline_after_status_sync(
+                    config,
+                    state,
+                    event,
+                    worker_run_id=str(worker_run_id or ""),
+                )
+            elif event.get("_status_sync_outcome") == "not_applicable" and isinstance(worker, dict):
+                admission = fresh_execution_dispatch_admission(
+                    config,
+                    state,
+                    worker,
+                    queue_events_by_id={str(event_id): event},
+                    audit_failure_kind="dispatch_post_launch",
+                )
+                post_launch_admitted = bool(admission.get("admitted"))
+            else:
+                post_launch_admitted = False
+        if not post_launch_admitted:
             supersede_worker_after_stale_dispatch_cas(
                 config,
                 state,
-                state.get("workers", {}).get(str(worker_run_id or "")),
+                worker,
                 event,
                 record=record,
             )
@@ -6693,7 +6720,7 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     try:
         with canonical_task_state_lock(config):
             status = load_status(config)
-            matched, task, _task_map, mismatch = _fresh_task_matches_expected_cas(
+            matched, task, task_map, mismatch = _fresh_task_matches_expected_cas(
                 config,
                 status,
                 task_id=task_id,
@@ -6739,8 +6766,20 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
                 if blocker.get("task_id") == task_id and blocker.get("status") == "open":
                     blocker["status"] = "resolved"
                     blocker["resolved_at"] = timestamp
+            post_start_event = current_execution_dispatch_event_for_target(
+                config,
+                task,
+                task_map,
+                target_agent=target_agent,
+            )
+            if post_start_event is None:
+                event["_status_sync_outcome"] = "failed"
+                event["_status_sync_mismatch"] = "post_start_lane_missing"
+                return False
+            event["_post_status_sync_event_key"] = post_start_event.get("key")
+            event["_post_status_sync_task_signature"] = post_start_event.get("signature")
             write_json(config_path(config, "status_file"), status)
-    except (KeyError, OSError, json.JSONDecodeError) as exc:
+    except Exception as exc:
         event["_status_sync_outcome"] = "failed"
         write_activity_log(
             config,
@@ -6803,48 +6842,66 @@ def refresh_execution_dispatch_baseline_after_status_sync(
     task_id = str(event.get("task_id") or "").strip()
     if not task_id:
         return False
-    try:
-        task_map = task_index_from_status(config, load_status(config))
-    except (KeyError, OSError, json.JSONDecodeError):
-        return False
-    task = task_map.get(task_id)
-    if not task:
+    expected_event_key = str(event.get("_post_status_sync_event_key") or "").strip()
+    expected_task_signature = str(event.get("_post_status_sync_task_signature") or "").strip()
+    if not expected_event_key or not expected_task_signature:
         return False
     target_agent = str(
         event.get("target_display_name")
         or display_name_for(config, str(event.get("target_agent") or ""))
     ).strip()
-    current_event = current_execution_dispatch_event_for_target(
-        config,
-        task,
-        task_map,
-        target_agent=target_agent,
-    )
-    if current_event is None:
-        return False
+    try:
+        with canonical_task_state_lock(config):
+            task_map = task_index_from_status(config, load_status(config))
+            task = task_map.get(task_id)
+            if not task:
+                return False
+            current_event = current_execution_dispatch_event_for_target(
+                config,
+                task,
+                task_map,
+                target_agent=target_agent,
+            )
+            if (
+                current_event is None
+                or str(current_event.get("key") or "") != expected_event_key
+                or str(current_event.get("signature") or "") != expected_task_signature
+            ):
+                event["_status_sync_outcome"] = "stale"
+                event["_status_sync_mismatch"] = "post_start_dispatch_signature_changed"
+                return False
 
-    worker = state.setdefault("workers", {}).get(str(worker_run_id or ""))
-    if not isinstance(worker, dict):
-        return False
-    snapshot = worker.setdefault("request_snapshot", {})
-    metadata = snapshot.setdefault("metadata", {})
-    if not isinstance(metadata, dict):
-        metadata = {}
-        snapshot["metadata"] = metadata
-    metadata.setdefault("dispatch_origin_event_key", metadata.get("dispatch_event_key") or event.get("event_key"))
-    metadata.setdefault("dispatch_origin_task_signature", metadata.get("dispatch_task_signature") or event.get("signature"))
-    metadata["dispatch_event_key"] = current_event.get("key")
-    metadata["dispatch_task_signature"] = current_event.get("signature")
-    metadata["dispatch_effective_reason"] = current_event.get("reason")
-    metadata["dispatch_baseline_refreshed_at"] = utc_now()
+            worker = state.setdefault("workers", {}).get(str(worker_run_id or ""))
+            if not isinstance(worker, dict):
+                return False
+            snapshot = worker.setdefault("request_snapshot", {})
+            metadata = snapshot.setdefault("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+                snapshot["metadata"] = metadata
+            metadata.setdefault(
+                "dispatch_origin_event_key",
+                metadata.get("dispatch_event_key") or event.get("event_key"),
+            )
+            metadata.setdefault(
+                "dispatch_origin_task_signature",
+                metadata.get("dispatch_task_signature") or event.get("signature"),
+            )
+            metadata["dispatch_event_key"] = current_event.get("key")
+            metadata["dispatch_task_signature"] = current_event.get("signature")
+            metadata["dispatch_effective_reason"] = current_event.get("reason")
+            metadata["dispatch_baseline_refreshed_at"] = utc_now()
 
-    queue_event_id = str(worker.get("queue_event_id") or event.get("event_id") or "")
-    if queue_event_id:
-        record = queue_status(state, queue_event_id)
-        record["effective_dispatch_event_key"] = current_event.get("key")
-        record["effective_dispatch_task_signature"] = current_event.get("signature")
-        record["effective_dispatch_reason"] = current_event.get("reason")
-        record["dispatch_baseline_refreshed_at"] = metadata["dispatch_baseline_refreshed_at"]
+            queue_event_id = str(worker.get("queue_event_id") or event.get("event_id") or "")
+            if queue_event_id:
+                record = queue_status(state, queue_event_id)
+                record["effective_dispatch_event_key"] = current_event.get("key")
+                record["effective_dispatch_task_signature"] = current_event.get("signature")
+                record["effective_dispatch_reason"] = current_event.get("reason")
+                record["dispatch_baseline_refreshed_at"] = metadata["dispatch_baseline_refreshed_at"]
+            task_snapshot = dict(task)
+    except Exception:
+        return False
 
     snapshot_paths: set[str] = set()
     for field in ("authoritative_task_state_source_path", "authoritative_task_state_path"):
@@ -6864,7 +6921,7 @@ def refresh_execution_dispatch_baseline_after_status_sync(
                     "status_read_error": None,
                     "task_id": task_id,
                     "task_found": True,
-                    "task": dict(task),
+                    "task": task_snapshot,
                 }
             )
             dispatch = payload.setdefault("dispatch", {})
@@ -6909,11 +6966,11 @@ def supersede_worker_after_stale_dispatch_cas(
             terminate_worker_pid(worker.get("pid"))
         worker["status"] = "superseded"
         worker["last_event_at"] = utc_now()
-        worker["last_error"] = "Worker cancelled because queued dispatch signature lost canonical CAS."
+        worker["last_error"] = "Worker cancelled because post-launch dispatch signature lost canonical CAS."
     record["status"] = "completed"
     record["processed_at"] = utc_now()
     record["skip_reason"] = "stale_dispatch_event"
-    record["error"] = "Queued dispatch became stale before canonical start CAS."
+    record["error"] = "Queued dispatch became stale during final post-launch canonical admission."
     for key in ("lease_owner", "lease_acquired_at", "lease_expires_at"):
         record.pop(key, None)
     write_activity_log(
@@ -6925,7 +6982,7 @@ def supersede_worker_after_stale_dispatch_cas(
             "worker_run_id": (worker or {}).get("run_id"),
             "queue_event_id": event.get("event_id"),
             "expected_event_key": event.get("key") or event.get("event_key"),
-            "message": "Cancelled stale worker without modifying canonical task truth; task is eligible for a fresh dispatch.",
+            "message": "Cancelled stale worker after final post-launch CAS without modifying canonical task truth; task is eligible for a fresh dispatch.",
         },
     )
 
@@ -7507,7 +7564,7 @@ def refresh_relaunch_request_context(
             if isinstance(state, dict):
                 save_runtime_state(config, state)
             return True
-    except (KeyError, OSError, json.JSONDecodeError) as exc:
+    except Exception as exc:
         if isinstance(worker, dict):
             worker["status"] = "superseded"
             worker["last_event_at"] = utc_now()
@@ -8004,6 +8061,25 @@ def resume_claude_worker(
     }
 
 
+def supersede_worker_after_terminal_reducer_resolution(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    reduced: dict[str, Any],
+    *,
+    message: str,
+) -> bool:
+    """Apply the same fail-closed terminal reducer outcome in boot and poll."""
+
+    if not (reduced.get("admission_failed") or reduced.get("resolved_by_canonical_progress")):
+        return False
+    worker["status"] = "superseded"
+    worker["last_event_at"] = utc_now()
+    worker["last_error"] = message
+    finalize_queue_event_record(config, state, worker, "completed", message)
+    return True
+
+
 def reconcile_dead_approval_worker(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -8098,9 +8174,14 @@ def reconcile_dead_approval_worker(
         worker["status"] = "reassigned"
         worker["reassigned_to"] = reduced["reassigned_to"]
         finalize_queue_event_record(config, state, worker, "completed")
-    elif reduced.get("resolved_by_canonical_progress") or reduced.get("admission_failed"):
-        worker["status"] = "superseded"
-        finalize_queue_event_record(config, state, worker, "completed", failure_reason)
+    elif supersede_worker_after_terminal_reducer_resolution(
+        config,
+        state,
+        worker,
+        reduced,
+        message="Ignored approval terminal outcome because canonical admission failed.",
+    ):
+        pass
     else:
         finalize_queue_event_record(config, state, worker, "failed", failure_reason)
     write_activity_log(
@@ -8232,6 +8313,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 queue_events_by_id=queued_events_by_id,
                 now=now,
             )
+            if supersede_worker_after_terminal_reducer_resolution(
+                config,
+                state,
+                worker,
+                reduced,
+                message="Ignored expired-lease outcome because canonical admission failed.",
+            ):
+                poll_counts["expired_lease_workers_failed"] += 1
+                changed = True
+                continue
             if reduced.get("reassigned_to"):
                 worker["status"] = "reassigned"
                 worker["reassigned_to"] = reduced["reassigned_to"]
@@ -8436,6 +8527,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         )
                     except KeyError:
                         pass
+                if supersede_worker_after_terminal_reducer_resolution(
+                    config,
+                    state,
+                    worker,
+                    reduced,
+                    message="Ignored approval-wait exit because canonical admission failed.",
+                ):
+                    changed = True
+                    continue
                 if reduced.get("reassigned_to"):
                     worker["status"] = "reassigned"
                     worker["reassigned_to"] = reduced["reassigned_to"]
@@ -8519,6 +8619,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         queue_events_by_id=queued_events_by_id,
                         now=now,
                     )
+                    if supersede_worker_after_terminal_reducer_resolution(
+                        config,
+                        state,
+                        worker,
+                        reduced,
+                        message="Ignored approval-denied outcome because canonical admission failed.",
+                    ):
+                        changed = True
+                        continue
                     if reduced.get("reassigned_to"):
                         worker["status"] = "reassigned"
                         worker["reassigned_to"] = reduced["reassigned_to"]
@@ -8568,6 +8677,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     queue_events_by_id=queued_events_by_id,
                     now=now,
                 )
+                if supersede_worker_after_terminal_reducer_resolution(
+                    config,
+                    state,
+                    worker,
+                    reduced,
+                    message="Ignored approval-state-lost outcome because canonical admission failed.",
+                ):
+                    changed = True
+                    continue
                 if reduced.get("reassigned_to"):
                     worker["status"] = "reassigned"
                     worker["reassigned_to"] = reduced["reassigned_to"]
@@ -8645,6 +8763,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         queue_events_by_id=queued_events_by_id,
                         now=now,
                     )
+                    if supersede_worker_after_terminal_reducer_resolution(
+                        config,
+                        state,
+                        worker,
+                        reduced,
+                        message="Ignored stalled-worker outcome because canonical admission failed.",
+                    ):
+                        changed = True
+                        continue
                     if reduced.get("reassigned_to"):
                         worker["status"] = "reassigned"
                         worker["reassigned_to"] = reduced["reassigned_to"]
@@ -9055,6 +9182,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         queue_events_by_id=queued_events_by_id,
                         now=now,
                     )
+                    if supersede_worker_after_terminal_reducer_resolution(
+                        config,
+                        state,
+                        worker,
+                        reduced,
+                        message="Ignored generic worker exit because canonical admission failed.",
+                    ):
+                        changed = True
+                        continue
                     if reduced.get("reassigned_to"):
                         worker["status"] = "reassigned"
                         worker["reassigned_to"] = reduced["reassigned_to"]
@@ -11661,7 +11797,9 @@ def current_execution_dispatch_guard(
     if record.get("triage_required"):
         return record
     retry_not_before = _parse_iso_utc(str(record.get("retry_not_before") or ""))
-    if retry_not_before is not None and retry_not_before > (now or datetime.now(timezone.utc)):
+    if retry_not_before is None:
+        return record
+    if retry_not_before > (now or datetime.now(timezone.utc)):
         return record
     return None
 
@@ -11805,6 +11943,7 @@ def _execution_dispatch_admission_from_status(
         else None
     )
     current_event_key = str((current_event or {}).get("key") or "")
+    current_task_signature = str((current_event or {}).get("signature") or "")
     mismatch = "matched"
     if task is None:
         mismatch = "task_missing"
@@ -11812,10 +11951,14 @@ def _execution_dispatch_admission_from_status(
         mismatch = "target_missing"
     elif not expected_event_key:
         mismatch = "expected_event_key_missing"
+    elif not expected_task_signature:
+        mismatch = "expected_task_signature_missing"
     elif current_event is None:
         mismatch = "lane_resolved_or_reassigned"
     elif current_event_key != expected_event_key:
         mismatch = "dispatch_signature_changed"
+    elif current_task_signature != expected_task_signature:
+        mismatch = "task_signature_changed"
 
     if mismatch != "matched":
         audit_key = f"{expected_event_key}|{audit_failure_kind}|{mismatch}"
@@ -11900,7 +12043,7 @@ def fresh_execution_dispatch_admission(
                 queue_events_by_id=queue_events_by_id,
                 audit_failure_kind=audit_failure_kind,
             )
-    except (KeyError, OSError, json.JSONDecodeError) as exc:
+    except Exception as exc:
         worker.pop("execution_admission", None)
         return {
             "applicable": True,
@@ -11965,7 +12108,7 @@ def reconcile_successful_execution_worker_outcome(
                 SUCCESSFUL_WORKER_INCOMPLETE_REASON,
                 failure_kind=outcome,
             )
-    except (KeyError, OSError, json.JSONDecodeError):
+    except Exception:
         worker.pop("execution_admission", None)
         return {
             "outcome": "resolved",
@@ -12021,7 +12164,7 @@ def record_execution_dispatch_failure_guard(
                 terminal=True,
                 now=now,
             )
-    except (KeyError, OSError, json.JSONDecodeError):
+    except Exception:
         worker.pop("execution_admission", None)
         return None
 
@@ -12094,7 +12237,7 @@ def reduce_execution_dispatch_terminal_failure(
                 reason,
                 failure_kind=failure_kind,
             )
-    except (KeyError, OSError, json.JSONDecodeError) as exc:
+    except Exception as exc:
         worker.pop("execution_admission", None)
         return {
             "applicable": True,
@@ -12326,19 +12469,53 @@ def fresh_queued_dispatch_event_admission(config: dict[str, Any], event: dict[st
 
     if not is_execution_dispatch_reason(str(event.get("reason") or "")):
         return True, None
-    expected = str(event.get("event_key") or event.get("key") or "").strip()
+    top_level_event_key = str(event.get("event_key") or "").strip()
+    top_level_key = str(event.get("key") or "").strip()
+    if top_level_event_key and top_level_key and top_level_event_key != top_level_key:
+        return False, "event_envelope_key_mismatch"
+    expected = top_level_event_key or top_level_key
     if not expected:
         return False, "expected_event_key_missing"
+    metadata = event.get("metadata")
+    if not isinstance(metadata, dict):
+        return False, "dispatch_metadata_missing"
+    metadata_event_key = str(metadata.get("dispatch_event_key") or "").strip()
+    metadata_signature = str(metadata.get("dispatch_task_signature") or "").strip()
+    if not metadata_event_key:
+        return False, "metadata_event_key_missing"
+    if metadata_event_key != expected:
+        return False, "event_envelope_key_mismatch"
+    if not metadata_signature:
+        return False, "metadata_task_signature_missing"
+    top_level_signature = str(event.get("signature") or "").strip()
+    if top_level_signature and top_level_signature != metadata_signature:
+        return False, "event_envelope_signature_mismatch"
     try:
         with canonical_task_state_lock(config):
             task_map = task_index_from_status(config, load_status(config))
-            current = current_dispatch_event_key(config, event, task_map)
-            if current is None:
+            task = task_map.get(str(event.get("task_id") or ""))
+            target_agent = str(
+                event.get("target_display_name")
+                or display_name_for(config, str(event.get("target_agent") or ""))
+            ).strip()
+            current_event = (
+                current_execution_dispatch_event_for_target(
+                    config,
+                    task,
+                    task_map,
+                    target_agent=target_agent,
+                )
+                if task is not None and target_agent
+                else None
+            )
+            if current_event is None or str(current_event.get("reason") or "") != str(event.get("reason") or ""):
                 return False, "lane_resolved_or_reassigned"
-            if current != expected:
+            if str(current_event.get("key") or "") != expected:
                 return False, "dispatch_signature_changed"
+            if str(current_event.get("signature") or "") != metadata_signature:
+                return False, "task_signature_changed"
             return True, None
-    except (KeyError, OSError, json.JSONDecodeError) as exc:
+    except Exception as exc:
         return False, f"canonical_read_failed:{type(exc).__name__}"
 
 
