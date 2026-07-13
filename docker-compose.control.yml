@@ -342,6 +342,8 @@ services:
         condition: service_healthy
       deployment:
         condition: service_healthy
+      capital:
+        condition: service_healthy
       incidents:
         condition: service_healthy
       postmortems:

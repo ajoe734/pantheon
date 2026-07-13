@@ -10451,6 +10451,10 @@ class ReadSurfaceStore:
         projected.setdefault("owner_type", raw.get("owner_type"))
         projected.setdefault("single_runtime_enforced", raw.get("single_runtime_enforced", True))
         projected.setdefault("risk_policy_ref", raw.get("risk_policy_ref"))
+        projected["canonicalWriteAuthority"] = "capital_service"
+        projected["canonical_write_authority"] = "capital_service"
+        projected["persistenceMode"] = "owner_store"
+        projected["persistence_mode"] = "owner_store"
         projected["tenant_id"] = tenant_id
         projected["tenantId"] = tenant_id
         return projected
@@ -10463,11 +10467,16 @@ class ReadSurfaceStore:
         projected["binding_id"] = binding_id
         projected.setdefault("persona_id", raw.get("persona_id"))
         projected.setdefault("capital_pool_id", raw.get("capital_pool_id"))
+        projected.setdefault("capital_sleeve_id", raw.get("capital_sleeve_id"))
         projected.setdefault("role", raw.get("role"))
         projected.setdefault("validity", raw.get("validity"))
         projected.setdefault("status", raw.get("status"))
         projected.setdefault("approval_decision_id", raw.get("approval_decision_id"))
         projected.setdefault("allowed_deployment_scope", raw.get("allowed_deployment_scope"))
+        projected["canonicalWriteAuthority"] = "capital_service"
+        projected["canonical_write_authority"] = "capital_service"
+        projected["persistenceMode"] = "owner_store"
+        projected["persistence_mode"] = "owner_store"
         return projected
 
     @staticmethod
@@ -11699,7 +11708,13 @@ class ReadSurfaceStore:
             ]
         return sorted(
             items,
-            key=lambda item: str(item.get("updated_at") or item.get("applied_at") or item.get("created_at") or ""),
+            key=lambda item: str(
+                item.get("executed_at")
+                or item.get("updated_at")
+                or item.get("applied_at")
+                or item.get("created_at")
+                or ""
+            ),
             reverse=True,
         )
 
