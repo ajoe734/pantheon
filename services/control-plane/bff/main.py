@@ -44511,6 +44511,17 @@ def _promotion_review_submit_response(
     return JSONResponse(status_code=command_response.status_code, content=jsonable_encoder(content))
 
 
+def _promotion_review_stored_source(
+    recommendation: Dict[str, Any],
+) -> Dict[str, Any]:
+    stored = json.loads(json.dumps(recommendation))
+    # Command params are visible on governance read surfaces. Persist the
+    # authoritative recommendation tuple, never submitter-supplied evidence.
+    stored["evidence_refs"] = []
+    stored["evidence_ref_ids"] = []
+    return stored
+
+
 @app.post("/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit", status_code=202)
 async def bff_management_quarterly_ranking_recommendation_submit(
     recommendation_id: str,
@@ -44603,6 +44614,9 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         "runtime_mutation": False,
         "source_type": "quarterly_ranking_recommendation",
         "source_record_id": review["recommendation_id"],
+        "source_recommendation": _promotion_review_stored_source(
+            review["source_recommendation"]
+        ),
         "audit_event": "quarterly_ranking.recommendation_submitted",
         "policy": "promotion_governance_human_gate_no_direct_live_capital",
     }

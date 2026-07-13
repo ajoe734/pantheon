@@ -241,6 +241,56 @@ def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item(mon
         assert inbox_detail.json()["data"]["source_type"] == "promotion_review"
 
 
+def test_quarterly_recommendation_submit_ignores_caller_source_snapshot() -> None:
+    with _isolated_client() as client:
+        review = _first_review(client)
+        authoritative = review["source_recommendation"]
+        forged = {
+            **authoritative,
+            "name": "FORGED VIEWER TITLE",
+            "rationale": "FORGED VIEWER RATIONALE",
+            "priority": "critical",
+            "evidence_refs": [
+                {
+                    "ref_id": "private-evidence",
+                    "source_document": "FORGED PRIVATE EVIDENCE",
+                }
+            ],
+            "evidence_ref_ids": ["private-evidence"],
+        }
+        submit = client.post(
+            f"/bff/management/quarterly-ranking/recommendations/{review['review_id']}/submit",
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
+            json={"quarter": "2026-Q1", "source_recommendation": forged},
+        )
+
+        assert submit.status_code == 202, submit.text
+        records = bff_main.command_store._get_all_commands()
+        stored = records[0]["params"]["source_recommendation"]
+        assert stored["name"] == authoritative["name"]
+        assert stored.get("rationale") == authoritative.get("rationale")
+        assert stored.get("priority") == authoritative.get("priority")
+        assert stored["evidence_refs"] == []
+        assert stored["evidence_ref_ids"] == []
+
+        inbox = client.get(
+            "/bff/management/human-inbox",
+            headers={"Authorization": "Bearer promotion-viewer:viewer"},
+            params={"source_type": "promotion_review", "page_size": 10},
+        )
+
+        assert inbox.status_code == 200, inbox.text
+        item = next(
+            item
+            for item in inbox.json()["data"]["items"]
+            if item["promotion_review_id"] == review["review_id"]
+        )
+        serialized = json.dumps(item, sort_keys=True)
+        assert "FORGED VIEWER TITLE" not in serialized
+        assert "FORGED VIEWER RATIONALE" not in serialized
+        assert "FORGED PRIVATE EVIDENCE" not in serialized
+
+
 def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch) -> None:
     with _isolated_client() as client:
         review = _first_review(client)
