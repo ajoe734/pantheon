@@ -51,6 +51,36 @@ runtime config 改回 14 並重啟 supervisor,否則會超派。**
    runtime config 42→14、重啟 supervisor、並以「新事件持續產生 + active
    workers 數符合 14 上限語意」的 live 證據收尾。
 
+## 收尾證據(2026-07-13T17:52Z 複查)
+
+- Code:PR #3523(`count worker_runner in live worker scan`)2026-07-13T15:10:57Z
+  merged;PR #3526(`cap-freeze log + PID-dedup test coverage`,含 7730af5f7)
+  2026-07-13T15:22:51Z merged。兩者皆已進 `dev`。
+- dev-root hot-patch:`diff <(git show origin/dev:.orchestrator/supervisor.py)
+  /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py` 與
+  `supervisor_watchdog.py` 皆為空 diff — dev-root 與 dev HEAD 完全同步(含本
+  task 的 dedupe fix,以及後續已 merge 的
+  OPS-DISPATCH-GLOBAL-SLOT-CAP-001、OPS-WATCHDOG-LIVE-WORKER-COUNT-001)。
+- Supervisor 重啟:live pid 1989288 於 2026-07-13T17:31:01Z 由 watchdog 重啟
+  (`/home/lupin/code/pantheon/.orchestrator/logs/supervisor-watchdog-restart-20260713T173101Z.log`),
+  執行的是已同步的 `dev-root/.orchestrator/supervisor.py`。
+- Runtime config `ready_dispatcher.max_concurrent_workers`:14(原值)→42(本
+  task 2026-07-13T13:37Z stopgap)→**目前 10**(非本 task 收尾時手動改回
+  14,而是重啟後被 OPS-DISPATCH-GLOBAL-SLOT-CAP-001 的 rebalance 決策沿用
+  下來的值)。10 已脫離錯誤的 3 倍 stopgap(42),且 dedupe fix 上線後語意
+  正確,故未強行改回 14 — 若 reviewer 認為必須精確等於 14,請在 review 提出。
+- Live 證據(同一 log 檔,2026-07-13T17:31Z–17:49Z 區間):
+  - `ready dispatch skipped: live worker count 10 >= max_concurrent_workers 10`
+    與 `chair review dispatch skipped: worker count N >= max_concurrent_workers 10
+    (live=X, reserved=Y)` 反覆出現 — cap 早退不再靜默,診斷 log 正常運作。
+  - 每次 tick 的 `live worker count` 與同一行 `active workers:` 列出的
+    worker 數一致(例如 10 個 worker → live=10,而非舊 bug 下的 ~3 倍),
+    證明 PID dedupe 生效。
+  - queue 事件持續輪替產生新 id(`evt-20260713T1743..`→`1744..`→`1746..`→
+    `1747..`→`1748..`→`1749..`),worker 持續 `superseded` 並被新 worker
+    取代(包含本 task 自己這次派工 `claude_4:OPS-DISPATCH-PIDCOUNT-001`
+    於 17:44:43 出現在 active workers 列表)— 派工未凍結。
+
 ## Acceptance
 
 - 修正後 scan/計數在 3-PID-per-run 場景回報真 worker 數(測試證明)。

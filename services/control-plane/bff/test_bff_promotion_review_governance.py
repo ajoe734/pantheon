@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Iterator
 
-import httpx
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -39,7 +39,8 @@ def _isolated_client() -> Iterator[TestClient]:
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
         try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
+            with TestClient(bff_main.app, raise_server_exceptions=False) as client:
+                yield client
         finally:
             bff_main.read_store = original_read_store
             bff_main.command_store = original_command_store
@@ -216,7 +217,7 @@ def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item(mon
             raise AssertionError("Human Inbox must project the durable submission without rebuilding PM12")
 
         monkeypatch.setattr(bff_main, "_promotion_review_find", fail_if_ranking_is_rebuilt)
-        monkeypatch.setattr(bff_main, "_build_persona_health_items", fail_if_ranking_is_rebuilt)
+        monkeypatch.setattr(bff_main, "_build_persona_readiness_items", fail_if_ranking_is_rebuilt)
         for method_name in (
             "list_governance_review_queue_items",
             "list_approval_queue_items",
@@ -437,22 +438,14 @@ def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch)
             time.sleep(1.5)
             return []
 
-        monkeypatch.setattr(bff_main, "_build_persona_health_items", slow_persona_readiness)
-        async def bounded_request() -> tuple[httpx.Response, float]:
-            transport = httpx.ASGITransport(app=bff_main.app)
-            async with httpx.AsyncClient(
-                transport=transport,
-                base_url="http://testserver",
-            ) as async_client:
-                started_at = time.monotonic()
-                response = await async_client.get(
-                    "/bff/management/human-inbox",
-                    headers=OPERATOR_HEADERS,
-                    params={"page_size": 20},
-                )
-                return response, time.monotonic() - started_at
-
-        inbox, elapsed = asyncio.run(bounded_request())
+        monkeypatch.setattr(bff_main, "_build_persona_readiness_items", slow_persona_readiness)
+        started_at = time.monotonic()
+        inbox = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"page_size": 20},
+        )
+        elapsed = time.monotonic() - started_at
 
         assert inbox.status_code == 200, inbox.text
         assert elapsed < 0.8
@@ -465,6 +458,229 @@ def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch)
         assert body["meta"]["partial"] is True
         assert body["meta"]["surfaces"]["human_inbox"]["status"] == "degraded"
         assert body["meta"]["surfaces"]["persona_readiness"]["reason"] == "read_timeout"
+
+
+def test_human_inbox_surface_timeout_has_a_hard_one_second_ceiling(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "9.5")
+    assert bff_main._human_inbox_surface_timeout_seconds() == 1.0
+
+    monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.17")
+    assert bff_main._human_inbox_surface_timeout_seconds() == 0.17
+
+    monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "invalid")
+    assert bff_main._human_inbox_surface_timeout_seconds() == 1.0
+
+
+def test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one(monkeypatch) -> None:
+    with _isolated_client() as client:
+        calls = {"personas": 0, "league": 0}
+
+        def list_personas(*_args, **_kwargs):
+            calls["personas"] += 1
+            return [
+                {
+                    "persona_id": "persona-batched-review",
+                    "name": "Batched Review",
+                    "lifecycle_state": "active",
+                    "updated_at": "2026-07-13T12:00:00Z",
+                    "metadata": {
+                        "persona_status": "needs_human_approval",
+                        "current_work": "Review the bounded readiness packet",
+                        "research_status": {
+                            "summary": "Research admission awaits review.",
+                            "pending_task_ids": ["PPL-ALLOC-015"],
+                            "can_deploy": False,
+                        },
+                        "current_research_projects": [{"project_id": "research-batched"}],
+                        "data_source_status": {"state": "read_ok"},
+                    },
+                },
+                {
+                    "persona_id": "persona-no-review",
+                    "name": "No Review",
+                    "lifecycle_state": "active",
+                    "metadata": {},
+                },
+            ]
+
+        def list_persona_league(*_args, **_kwargs):
+            calls["league"] += 1
+            return [
+                {
+                    "persona_id": "persona-batched-review",
+                    "governance_required": True,
+                    "recommendation": "hold_for_risk_owner_review",
+                    "status": "needs_human_approval",
+                },
+                {
+                    "persona_id": "persona-no-review",
+                    "governance_required": True,
+                    "recommendation": "no_change",
+                    "status": "active",
+                },
+            ]
+
+        def forbidden_subread(*_args, **_kwargs):
+            raise AssertionError("Human Inbox readiness must not enter the full Fleet N+1 chain")
+
+        monkeypatch.setattr(bff_main.read_store, "list_personas", list_personas)
+        monkeypatch.setattr(bff_main.read_store, "list_persona_league", list_persona_league)
+        for method_name in (
+            "list_bindings",
+            "list_runtime_bindings",
+            "list_incidents",
+            "list_evolution_decisions",
+            "list_strategy_specs",
+        ):
+            monkeypatch.setattr(bff_main.read_store, method_name, forbidden_subread)
+        monkeypatch.setattr(bff_main, "_source_ingest_truth_by_connector", forbidden_subread)
+
+        response = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "readiness_blocker"},
+        )
+
+        assert response.status_code == 200, response.text
+        items = response.json()["data"]["items"]
+        assert [item["persona_id"] for item in items] == ["persona-batched-review"]
+        assert "PPL-ALLOC-015" in " ".join(items[0]["blocking_reasons"])
+        assert items[0]["research_context"]["current_research_projects"] == [
+            {"project_id": "research-batched"}
+        ]
+        assert calls == {"personas": 1, "league": 1}
+
+
+def test_human_inbox_capacity_prevents_late_queue_and_bounds_cockpit_hiq_overlap(monkeypatch) -> None:
+    with _isolated_client() as client:
+        release_worker = threading.Event()
+        worker_finished = threading.Event()
+        calls = 0
+
+        def blocked_persona_readiness(*_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+            release_worker.wait(timeout=10)
+            worker_finished.set()
+            return []
+
+        monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.08")
+        monkeypatch.setattr(bff_main, "_HUMAN_INBOX_READ_SLOTS", threading.BoundedSemaphore(1))
+        monkeypatch.setattr(bff_main, "_build_persona_readiness_items", blocked_persona_readiness)
+
+        first = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "readiness_blocker"},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["meta"]["surfaces"]["persona_readiness"]["reason"] == "read_timeout"
+        assert calls == 1
+
+        started_at = time.monotonic()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            cockpit_future = pool.submit(
+                client.get,
+                "/bff/management/cockpit",
+                headers=OPERATOR_HEADERS,
+            )
+            hiq_future = pool.submit(
+                client.get,
+                "/bff/management/hiq-backlog",
+                headers=OPERATOR_HEADERS,
+            )
+            cockpit = cockpit_future.result(timeout=3)
+            hiq = hiq_future.result(timeout=3)
+        overlap_elapsed = time.monotonic() - started_at
+
+        repeated = client.get(
+            "/bff/management/human-inbox",
+            headers=OPERATOR_HEADERS,
+            params={"source_type": "readiness_blocker"},
+        )
+        assert cockpit.status_code == 200, cockpit.text
+        assert hiq.status_code == 200, hiq.text
+        assert repeated.status_code == 200, repeated.text
+        assert overlap_elapsed < 2.0
+        assert calls == 1, "saturated contributors must not be submitted for late execution"
+        assert repeated.json()["meta"]["surfaces"]["persona_readiness"]["reason"] == (
+            "read_capacity_saturated"
+        )
+        assert cockpit.json()["data"]["human_inbox"]["meta"]["partial"] is True
+        assert hiq.json()["meta"]["surfaces"]["human_inbox"]["status"] == "degraded"
+
+        release_worker.set()
+        assert worker_finished.wait(timeout=2)
+        deadline = time.monotonic() + 2
+        recovered = None
+        while time.monotonic() < deadline:
+            recovered = client.get(
+                "/bff/management/human-inbox",
+                headers=OPERATOR_HEADERS,
+                params={"source_type": "readiness_blocker"},
+            )
+            if (
+                recovered.json()["meta"]["surfaces"]["persona_readiness"].get("reason")
+                != "read_capacity_saturated"
+            ):
+                break
+            time.sleep(0.01)
+
+        assert recovered is not None
+        assert recovered.status_code == 200, recovered.text
+        assert recovered.json()["meta"]["surfaces"]["persona_readiness"].get("reason") not in {
+            "read_timeout",
+            "read_capacity_saturated",
+        }
+        assert calls == 2
+
+
+def test_cockpit_composition_timeout_does_not_block_event_loop(monkeypatch) -> None:
+    with _isolated_client() as client:
+        entered_worker = threading.Event()
+        release_worker = threading.Event()
+        worker_finished = threading.Event()
+
+        def blocked_cockpit_composition(*_args, **_kwargs):
+            entered_worker.set()
+            release_worker.wait(timeout=5)
+            worker_finished.set()
+            return {"late_result": True}
+
+        monkeypatch.setenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "0.08")
+        monkeypatch.setattr(
+            bff_main,
+            "_MANAGEMENT_COCKPIT_READ_SLOTS",
+            threading.BoundedSemaphore(1),
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_build_management_cockpit_payload",
+            blocked_cockpit_composition,
+        )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            cockpit_future = pool.submit(
+                client.get,
+                "/bff/management/cockpit",
+                headers=OPERATOR_HEADERS,
+            )
+            assert entered_worker.wait(timeout=3)
+            started_at = time.monotonic()
+            health_future = pool.submit(client.get, "/health")
+            try:
+                health = health_future.result(timeout=0.6)
+                health_elapsed = time.monotonic() - started_at
+                cockpit = cockpit_future.result(timeout=1)
+            finally:
+                release_worker.set()
+
+        assert health.status_code == 200, health.text
+        assert health_elapsed < 0.5
+        assert cockpit.status_code == 200, cockpit.text
+        cockpit_surface = cockpit.json()["meta"]["surfaces"]["management_cockpit"]
+        assert cockpit_surface["reason"] == "read_timeout"
+        assert worker_finished.wait(timeout=2)
 
 
 def test_human_inbox_filtered_local_snapshot_empty_remains_degraded(monkeypatch) -> None:
@@ -514,7 +730,7 @@ def test_hiq_backlog_remains_available_after_human_inbox_surface_extension(monke
         monkeypatch.setattr(bff_main.read_store, "list_sentinel_findings", lambda **_: (True, []))
         monkeypatch.setattr(
             bff_main,
-            "_build_persona_health_items",
+            "_build_persona_readiness_items",
             lambda *_args, **_kwargs: [],
         )
 

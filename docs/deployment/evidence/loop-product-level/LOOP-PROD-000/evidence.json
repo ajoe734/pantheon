@@ -1,0 +1,909 @@
+{
+  "schema_version": "loop_product_evidence.bootstrap.v1",
+  "schema_status": {
+    "status": "provisional",
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Replace or validate this bootstrap shape when the product-evidence schema from LOOP-PROD-002 merges.",
+    "note": "No formal product-level evidence schema existed when LOOP-PROD-000 was executed. This manifest remains machine-readable, redacted, checksummed, and fail-closed."
+  },
+  "evidence_policy": {
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "After the first evidence PR merges, existing record_log entries are immutable. Review and closeout are recorded only as new entries with the previously reviewed manifest checksum.",
+    "self_hashing": false,
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.sha256"
+  },
+  "task": {
+    "id": "LOOP-PROD-000",
+    "title": "Canonical loop inventory and OODA overlay truth",
+    "phase": "Loop Product-Level Remediation / Wave 0",
+    "repository": "ajoe734/pantheon",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "task_branch": "task/LOOP-PROD-000",
+    "base_branch": "dev",
+    "target_environment": "dev",
+    "product_level_required": true,
+    "target_maturity": "contract",
+    "evidence_cut_at": "2026-07-13T15:34:06Z",
+    "evidence_cut_semantics": "Capture-time hosted data-contract evidence only. It does not assert that e103d29 remains the current dev runtime after this timestamp, and it is not admitted as strict hosted identity-provider proof.",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
+    "overall_admission": "review_required_follow_up_merge_and_scope_split"
+  },
+  "authorities": {
+    "desired_state": [
+      "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+      "Pantheon_總索引版系統分析文件.md section 6.4 Per-Persona OODA",
+      "docs/deployment/loop-catalog.registry.json"
+    ],
+    "actual_state": [
+      "GET /bff/v5/loop-inventory",
+      "GET /bff/v5/loop-health",
+      "docs/05/system-verification-rounds/INDEX.md",
+      "ai-task-archive task states"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-000.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex for the v2 static catalog contract, BFF read-model projection, focused contracts, and this task evidence",
+    "owned_layer": "Twelve-loop canonical classification, per_persona_ooda composite overlay metadata, fail-closed controller evidence admission, read-model counts, verification wording, tests, and evidence",
+    "not_changing": "Loop controllers, schedulers, target deployment configuration, broker authority, approval policy, or live-capital behavior",
+    "composes_with": [
+      "LOOP-PROD-OODA-001",
+      "LOOP-PROD-BFF-001",
+      "LOOP-PROD-002",
+      "LOOP-PROD-AUTH-001",
+      "LOOP-PROD-CLOSE-001",
+      "Wave 1 loop controller owners"
+    ],
+    "implementation_changed_files": [
+      ".orchestrator/task-briefs/loop_prod_000.md",
+      "docs/05/system-verification-rounds/INDEX.md",
+      "docs/deployment/loop-catalog.registry.json",
+      "docs/deployment/loop-catalog.schema.json",
+      "services/control-plane/bff/loop_inventory.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+      "services/control-plane/bff/test_loop_health_read_model_contract.py",
+      "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+      "tests/test_loop_catalog_registry.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.sha256",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/hosted-readback.normalized.json"
+    ]
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "281bad0b16c8eb967fc7eb94e3692a20c785d62a",
+        "subject": "LOOP-PROD-000: anchor loop inventory truth"
+      },
+      {
+        "sha": "13aa6374a192cb4a08f9ee3267ca8e74437e752a",
+        "subject": "LOOP-PROD-000: reject stale controller truth"
+      },
+      {
+        "sha": "f2e9d5eb305dd647bf7dd12bae174de100f0b19e",
+        "subject": "LOOP-PROD-000: reject mixed and mismatched loop truth",
+        "delivery_state": "local_anchor_pending_follow_up_pr_at_evidence_authoring",
+        "hosted_cut_inclusion": false,
+        "note": "The capture-time hosted artifact predates this adversarial hardening. The hardening is locally contract-tested and must merge through the evidence follow-up PR; no hosted deployment claim is made for it here."
+      }
+    ],
+    "pull_request": {
+      "number": 3520,
+      "url": "https://github.com/ajoe734/pantheon/pull/3520",
+      "head_sha": "13aa6374a192cb4a08f9ee3267ca8e74437e752a",
+      "base": "dev",
+      "merged_at": "2026-07-13T14:55:57Z",
+      "merge_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "run_id": 29259973772,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29259973772",
+        "head_sha": "13aa6374a192cb4a08f9ee3267ca8e74437e752a",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "push",
+        "run_id": 29259967464,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29259967464",
+        "head_sha": "13aa6374a192cb4a08f9ee3267ca8e74437e752a",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Orchestrator Sync",
+        "event": "pull_request",
+        "run_id": 29259972657,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29259972657",
+        "jobs": {
+          "Forward to orchestrator": "success"
+        },
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "validated_base_sha": "ae1e3f2000c3fdef9c235e6f6dbac290269426da",
+    "validated_head_sha": "5e9c088420ba347c793279b8ec1a586214594df0",
+    "validated_at": "2026-07-13T17:49:31Z",
+    "commands": [
+      {
+        "command": "python3 -m json.tool docs/deployment/loop-catalog.schema.json >/dev/null && python3 -m json.tool docs/deployment/loop-catalog.registry.json >/dev/null",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/loop_inventory.py services/control-plane/bff/main.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider tests/test_loop_catalog_registry.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "result": "26 passed, 8 FastAPI deprecation warnings",
+        "conclusion": "pass"
+      },
+      {
+        "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py services/control-plane/bff/test_route_resolution_no_shadowing.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable",
+        "result": "10 passed, 12 FastAPI deprecation warnings",
+        "conclusion": "pass"
+      },
+      {
+        "command": "python3 scripts/test_loop_done_guardrail.py",
+        "result": "26 unittest cases passed; expected negative fixtures reported fail-closed diagnostics",
+        "conclusion": "pass"
+      }
+    ]
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "dev",
+    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "publish_cut": {
+      "workflow": "Hourly Publish Cut",
+      "run_id": 29260134140,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/29260134140",
+      "conclusion": "success",
+      "source_dev_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "publish_ref": "publish/v2026.07.13.6",
+      "release_ref": "release/v2026.07.13.6"
+    },
+    "canonical_root_deploy": {
+      "workflow": "Pantheon Nonprod Deploy",
+      "run_id": 29260158410,
+      "job_id": 86850959675,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/29260158410",
+      "started_at": "2026-07-13T14:57:30Z",
+      "completed_at": "2026-07-13T15:15:56Z",
+      "conclusion": "success",
+      "workflow_definition_branch": "master",
+      "workflow_definition_sha": "51e6f95092b533e22853a24f05a69e9139a1a099",
+      "target_ref": "publish/v2026.07.13.6",
+      "resolved_target_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "target_component": "dev/root",
+      "managed_worktree": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "managed_worktree_logged_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "public_bff_smoke": "success",
+      "cors_smoke": "success"
+    },
+    "scoped_bff_redeploy_and_restart": {
+      "purpose": "Repeat the exact merged BFF deployment through the dev workflow definition and run its scoped restart-persistence gate.",
+      "workflow": "Pantheon Nonprod Deploy",
+      "run_id": 29261536522,
+      "job_id": 86855928190,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/29261536522",
+      "started_at": "2026-07-13T15:17:05Z",
+      "completed_at": "2026-07-13T15:19:10Z",
+      "conclusion": "success",
+      "workflow_definition_branch": "dev",
+      "workflow_definition_sha": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "target_ref": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "resolved_target_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "target_component": "dev/bff",
+      "managed_worktree": "/home/lupin/pantheon-ci-deploy/dev-bff",
+      "managed_worktree_logged_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "operator_bff_image_manifest": "sha256:8d9ae67883c65cb87985467cd3e3c5fc706cb4ca6a905be2e03a5ab111eda700",
+      "operator_bff_image_config": "sha256:ae047f97a09415ceec81f32d7a8a517617344e56e1645cea49b1f6f2e0b7d854",
+      "container_recreated_and_started": true,
+      "public_bff_smoke": "success",
+      "cors_smoke": "success",
+      "agora_postgres_restart_persistence_step": "success",
+      "restart_observation": "The workflow created a versioned dev workshop, restarted pantheon-operator-bff-1, waited through two observed 502 probes, and read the same workshop id from the Postgres-backed store."
+    },
+    "capture_time_root_deploy": {
+      "purpose": "Record the dev/root deployment that owned the hosted runtime at the 2026-07-13T15:34:06Z data-contract capture cut. Later deployments are explicitly excluded below.",
+      "workflow": "Pantheon Nonprod Deploy",
+      "run_id": 29261740288,
+      "job_id": 86856543755,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/29261740288",
+      "job_url": "https://github.com/ajoe734/pantheon/actions/runs/29261740288/job/86856543755",
+      "started_at": "2026-07-13T15:19:36Z",
+      "completed_at": "2026-07-13T15:32:42Z",
+      "conclusion": "success",
+      "workflow_definition_branch": "dev",
+      "workflow_event_head_sha": "24d09a399a95547305ddcf93457139fc0c7ef0ac",
+      "workflow_event_head_sha_is_runtime_identity": false,
+      "target_ref": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "resolved_target_sha": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "implementation_merge_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "implementation_merge_is_ancestor": true,
+      "target_component": "dev/root",
+      "managed_worktree": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "managed_worktree_logged_sha": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "allow_dirty": true,
+      "dirty_state_disposition": "The immediately preceding run 29261462867 failed closed on the dirty managed worktree. This run explicitly preserved that managed runtime state and reconciled the worktree to the exact e103d29 target before build and deployment.",
+      "operator_bff_image_manifest": "sha256:e576b21577ff736965c983f3866d68e03b223cef7177e42f190a82d736606d6b",
+      "operator_bff_image_config": "sha256:0dd3271ffa7ccb6f2618a29ba6c6d5b05076862e7b73d833e6d7e95748d488d2",
+      "operator_bff_image_attestation": "sha256:16cda3141b67c7125eecf27b26267ba724d10f06c0758012e11179c428bccab0",
+      "operator_bff_image_manifest_list": "sha256:afcb8c7c860dbb50ede1a7ab650bc8cad7c63cb0001dbc9aee735517fc07cd2f",
+      "public_bff_smoke": "success",
+      "cors_smoke": "success",
+      "openclaw_smoke": "success",
+      "agora_postgres_restart_persistence_step": "success",
+      "readyz_commit": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "readyz_source_commit_sha": "e103d29e806c21626dc5a2f7392c663894caa772"
+    },
+    "identity_admission": {
+      "authoritative_chain": [
+        "PR #3520 merge SHA fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+        "run 29261536522 deployed the exact implementation merge and proved its restart-persistence gate",
+        "run 29261740288 resolved, prepared, built, and deployed descendant e103d29e806c21626dc5a2f7392c663894caa772 to dev/root",
+        "git ancestry proves fc2db3c0e472c04ed39a0e02f571a0bbafe2245d is contained in e103d29e806c21626dc5a2f7392c663894caa772",
+        "run 29261740288 built BFF manifest sha256:e576b21577ff736965c983f3866d68e03b223cef7177e42f190a82d736606d6b and completed public, CORS, OpenClaw, and restart-persistence gates",
+        "/bff/readyz reported commit and source_commit_sha e103d29e806c21626dc5a2f7392c663894caa772",
+        "the capture-time hosted readback normalized artifact captured the v2 catalog, exact 12+1 shape, and fail-closed controller truth after no deployment remained active at that cut"
+      ],
+      "implementation_merge_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "capture_time_runtime_sha": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "implementation_merge_is_ancestor": true,
+      "readyz_reported_commit": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "readyz_reported_source_commit_sha": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "readyz_matches_capture_time_runtime": true,
+      "capture_time_normalized_readback": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/hosted-readback.normalized.json",
+      "admission_boundary": "Admitted for the hosted data-contract shape at the recorded cut only; not admitted as proof of the current dev runtime or strict identity-provider configuration."
+    },
+    "resolved_observations": {
+      "historical_readyz_mismatch": {
+        "observed_commit": "f7507e4fd5dba28b8d6eb3c9d99c97f542d40b54",
+        "observed_after_run_id": 29261536522,
+        "disposition": "Resolved for the capture-time cut by the superseding dev/root deployment. The captured /bff/readyz commit and source_commit_sha both equal e103d29; neither historical value is used as current release truth."
+      }
+    },
+    "post_cut_runtime_observation": {
+      "observed_at": "2026-07-13T17:35:14Z",
+      "admission": "excluded_from_capture_time_evidence",
+      "readyz_commit": "0e8c06603eb7ede8fd226837e439282e70fefc80",
+      "readyz_source_commit_sha": "0e8c06603eb7ede8fd226837e439282e70fefc80",
+      "readyz_correlated_deploy_run": 29268814057,
+      "later_completed_deploy_run": 29270122636,
+      "active_deploys_in_queried_run_window": 0,
+      "correlation_note": "The 0e8 readyz identity and run timing/head make 29268814057 the correlated deployment candidate; the public readyz response, not the workflow event head, is the authoritative observed runtime identity.",
+      "route_probe": {
+        "unauthenticated_http": 401,
+        "arbitrary_structured_operator_http": 200,
+        "valid_shape_disallowed_role_http": 403
+      },
+      "disposition": "This later runtime proves that e103d29 is no longer current and that hosted strict credential issuance cannot be claimed. Its contract payload is not substituted into the immutable capture-time normalized artifact; LOOP-PROD-AUTH-001 owns strict hosted auth cutover."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "observed_at": "2026-07-13T14:58:00Z",
+      "inventory_http": 200,
+      "health_http": 200,
+      "unauthenticated_inventory_http": 401,
+      "unauthenticated_health_http": 401,
+      "catalog_schema_version": "loop_catalog.v1",
+      "catalog_id": "global-loop-catalog-2026-06-27",
+      "inventory_entry_count": 12,
+      "health_entry_count": 12,
+      "health_surface": "degraded",
+      "controller_health_record_count": 0,
+      "live_loop_ids": [],
+      "reconciled_loop_ids": []
+    },
+    "cutover_degraded_window": {
+      "observed_at": "2026-07-13T15:15:48Z",
+      "public_health_http": 502,
+      "public_inventory_http": 502,
+      "recovered_health_http": 200,
+      "recovered_at": "2026-07-13T15:15:49Z",
+      "disposition": "Expected fail-closed compose replacement window; the canonical workflow subsequently completed public health and CORS smoke successfully."
+    },
+    "scoped_redeploy_security_observation": {
+      "observed_at": "2026-07-13T15:21:03Z",
+      "terminal_cut": false,
+      "note": "A superseding dev/root deployment was active; this observation is historical supporting evidence only.",
+      "inventory_unauthenticated_http": 401,
+      "inventory_authenticated_http": 200,
+      "health_unauthenticated_http": 401,
+      "health_authenticated_http": 200,
+      "credential_recorded": false,
+      "credential_note": "A non-secret dev stub bearer was used only in process memory and is not stored in this evidence. This observation proves route-level 401/200 behavior only, not strict identity-provider issuance, and is not admitted as hosted product auth evidence."
+    },
+    "scoped_redeploy_contract_observation": {
+      "observed_at": "2026-07-13T15:20:53Z",
+      "terminal_cut": false,
+      "note": "A superseding dev/root deployment was active; this observation is historical supporting evidence only.",
+      "two_independent_reads_passed": true,
+      "catalog_schema_version": "loop_catalog.v2",
+      "catalog_id": "global-loop-catalog-2026-07-13",
+      "inventory_entry_count": 13,
+      "canonical_loop_count": 12,
+      "composite_overlay_count": 1,
+      "per_persona_ooda": {
+        "classification": "composite_overlay",
+        "continuous": false,
+        "composed_of": [
+          "source_ingestion",
+          "strategy_distillation",
+          "alpha_replication",
+          "persona_teaching",
+          "agora_interaction_evidence",
+          "human_imitation_shadow_evaluation",
+          "consultation",
+          "promotion_deployment",
+          "telemetry_reconciliation",
+          "evolution"
+        ],
+        "archived_task_completion_accepted": false,
+        "current_controller_record_accepted": false,
+        "is_reconciled": false,
+        "is_live": false
+      },
+      "continuously_resident_execution_loop_ids": [
+        "capital_pool_execution"
+      ],
+      "health_surface": "degraded",
+      "controller_health_record_count": 0,
+      "raw_health_record_count": 0,
+      "live_loop_ids": [],
+      "reconciled_loop_ids": [],
+      "inventory_semantic_sha256_read_1": "6ba7da18eff1c3772bc0dfd723c67261f4932b1c34bf0bf2aa69d3ef2f7a199a",
+      "inventory_semantic_sha256_read_2": "6ba7da18eff1c3772bc0dfd723c67261f4932b1c34bf0bf2aa69d3ef2f7a199a",
+      "health_semantic_sha256_read_1": "69d88f4cd143192df56fed97731a2a594b53009a7c28147a5fa7aa8fe37c7a49",
+      "health_semantic_sha256_read_2": "69d88f4cd143192df56fed97731a2a594b53009a7c28147a5fa7aa8fe37c7a49"
+    },
+    "superseding_cutover_degraded_window": {
+      "deployment_run_id": 29261740288,
+      "observed_window": "2026-07-13T15:29:00Z/2026-07-13T15:32:34Z",
+      "public_routes_observed_http": 502,
+      "restart_probes_observed_http": 502,
+      "recovered_before_workflow_completion": true,
+      "workflow_completed_at": "2026-07-13T15:32:42Z",
+      "disposition": "The replacement and restart windows failed closed. The workflow then passed public BFF, CORS, OpenClaw, and Agora Postgres persistence gates before the capture-time readback."
+    },
+    "capture_time_hosted_readback": {
+      "observed_at": "2026-07-13T15:34:06Z",
+      "terminal_at_capture": true,
+      "current_runtime_claim": false,
+      "strict_identity_provider_claim": false,
+      "active_nonprod_deploys_before": [],
+      "active_nonprod_deploys_after": [],
+      "inventory_unauthenticated_http": 401,
+      "inventory_authenticated_http": 200,
+      "health_unauthenticated_http": 401,
+      "health_authenticated_http": 200,
+      "two_independent_reads_passed": true,
+      "catalog_schema_version": "loop_catalog.v2",
+      "catalog_id": "global-loop-catalog-2026-07-13",
+      "inventory_entry_count": 13,
+      "health_entry_count": 13,
+      "canonical_loop_count": 12,
+      "composite_overlay_count": 1,
+      "per_persona_ooda": {
+        "classification": "composite_overlay",
+        "continuous": false,
+        "composed_of": [
+          "source_ingestion",
+          "strategy_distillation",
+          "alpha_replication",
+          "persona_teaching",
+          "agora_interaction_evidence",
+          "human_imitation_shadow_evaluation",
+          "consultation",
+          "promotion_deployment",
+          "telemetry_reconciliation",
+          "evolution"
+        ],
+        "archived_task_completion_accepted": false,
+        "current_controller_record_accepted": false,
+        "is_reconciled": false,
+        "is_live": false
+      },
+      "continuously_resident_execution_loop_ids": [
+        "capital_pool_execution"
+      ],
+      "health_surface": "degraded",
+      "controller_health_record_count": 0,
+      "raw_health_record_count": 0,
+      "live_loop_ids": [],
+      "reconciled_loop_ids": [],
+      "readyz_commit": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "readyz_source_commit_sha": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "inventory_semantic_sha256_read_1": "6ba7da18eff1c3772bc0dfd723c67261f4932b1c34bf0bf2aa69d3ef2f7a199a",
+      "inventory_semantic_sha256_read_2": "6ba7da18eff1c3772bc0dfd723c67261f4932b1c34bf0bf2aa69d3ef2f7a199a",
+      "health_semantic_sha256_read_1": "69d88f4cd143192df56fed97731a2a594b53009a7c28147a5fa7aa8fe37c7a49",
+      "health_semantic_sha256_read_2": "69d88f4cd143192df56fed97731a2a594b53009a7c28147a5fa7aa8fe37c7a49",
+      "normalized_artifact": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/hosted-readback.normalized.json"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "The exact implementation merge was deployed as dev/root and dev/bff, then its e103d29 descendant superseded dev/root without changing the admitted catalog shape.",
+        "Two independent capture-time inventory reads have identical normalized semantic hashes.",
+        "Two independent capture-time health reads have identical normalized semantic hashes.",
+        "Both endpoints are GET-only and admit no command or mutation."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "Real 502 windows were observed during both root cutovers and recovered before workflow public smoke passed.",
+        "Run 29261462867 failed closed on a dirty managed worktree instead of silently deploying an unproven identity.",
+        "With zero accepted controller records, loop-health remains degraded and reports zero live or reconciled rows.",
+        "Focused tests reject archive-derived, forged, stale, and future-skewed health rows as current live truth."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "Run 29261536522 recreated the BFF at the exact merge SHA.",
+        "Runs 29261536522 and 29261740288 explicitly restarted operator-bff and recovered a Postgres-backed Agora record.",
+        "After the capture-time restart, inventory and health contract assertions passed twice with stable semantic hashes."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "not_applicable_read_only",
+      "execution_required": false,
+      "historical_task_cut_run_id": 29261536522,
+      "historical_task_cut_run_url": "https://github.com/ajoe734/pantheon/actions/runs/29261536522",
+      "historical_task_cut_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "historical_sha_rollback_safe_to_execute_now": false,
+      "rollback_or_compensation_procedure": "Because the task owns GET-only projection code and no migration, durable command, or task-owned runtime state, compensate with a forward fix from the then-current dev descendant and re-run strict auth, identity, restart, and hosted contract gates. Do not redeploy fc2 directly after later unrelated dev changes.",
+      "trigger": "Use the forward-fix procedure if a future deployment fails contract, authorization, identity, or restart checks.",
+      "not_applicable_reason": "The capture-time deployment and hosted data-contract gates passed. This task creates no persistent mutation to roll back, and replaying a historical SHA would roll back unrelated descendant work.",
+      "admitted_task_command_count": 0,
+      "admitted_command_rpo": 0,
+      "rpo_interpretation": "RPO is zero by construction because the task admits no write command and creates no task-owned runtime record."
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "not_applicable",
+      "reason": "The task exposes authenticated GET read models only. There is no submitted command, task receipt, downstream mutation, or terminal execution state to correlate.",
+      "canonical_requests": [
+        "GET /bff/v5/loop-inventory",
+        "GET /bff/v5/loop-health"
+      ],
+      "capture_time_readback": "Authenticated hosted response bodies and their normalized SHA-256 digests",
+      "note": "The workflow's Agora workshop is deployment-platform restart smoke, not a LOOP-PROD-000 command or outcome receipt."
+    }
+  },
+  "security_and_safety": {
+    "rbac": {
+      "status": "pass_with_split_evidence_and_hosted_auth_risk",
+      "capture_time_authenticated_operator_reads": 200,
+      "capture_time_unauthenticated_reads": 401,
+      "strict_jwt_contract": {
+        "routes": [
+          "GET /bff/v5/loop-inventory",
+          "GET /bff/v5/loop-health"
+        ],
+        "unauthenticated_http": 401,
+        "valid_jwt_disallowed_role_http": 403,
+        "valid_jwt_viewer_http": 200,
+        "validation": "services/control-plane/bff/test_loop_inventory_read_model_contract.py::test_loop_read_models_enforce_strict_jwt_auth_and_read_roles"
+      },
+      "hosted_strict_identity_provider_admitted": false,
+      "hosted_follow_up_owner": "LOOP-PROD-AUTH-001",
+      "note": "The route authorization contract is proven under strict JWT locally. The capture-time hosted cut proves 401/200 route behavior, while the later excluded runtime accepts arbitrary structured operator credentials and therefore is not strict identity proof."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "reason": "The loop registry is global, contains no tenant-owned records, and exposes no tenant mutation."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "reason": "These are read-only registry endpoints; no sensitive write or approval transition is admitted."
+    },
+    "two_person_approval": {
+      "status": "not_applicable",
+      "reason": "No deployment, capital, or governance command is exposed by these endpoints. Repository merge and independent task review remain separate controls."
+    },
+    "environment_boundary": {
+      "status": "pass",
+      "environment": "dev",
+      "implementation_merge_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+      "exact_capture_time_runtime_sha": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "implementation_merge_is_ancestor": true,
+      "current_runtime_claim": false
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "write_commands_executed_by_task": 0,
+      "broker_side_effects": 0,
+      "live_loop_ids": [],
+      "continuously_resident_policy_descriptor": "capital_pool_execution only",
+      "note": "The continuous descriptor is catalog classification, not evidence of a running controller, broker connection, or live capital."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "reason": "No execute-plans or user-visible frontend artifact changed."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "statement": "catalog contains exactly twelve canonical loops and one composite OODA overlay with composed_of metadata",
+      "status": "pass",
+      "evidence_refs": [
+        "implementation_delivery.pull_request",
+        "hosted_readback.capture_time_hosted_readback",
+        "integrity.normalized_hosted_readback"
+      ]
+    },
+    {
+      "id": "AC-02",
+      "statement": "verification indexes and tests use the same 12+overlay classification",
+      "status": "pass",
+      "evidence_refs": [
+        "scope.implementation_changed_files",
+        "validation.commands"
+      ]
+    },
+    {
+      "id": "AC-03",
+      "statement": "archived task completion cannot create controller liveness or maturity",
+      "status": "pass",
+      "evidence_refs": [
+        "hosted_readback.capture_time_hosted_readback.per_persona_ooda",
+        "behavioral_proof.failure_and_degraded_behavior"
+      ]
+    },
+    {
+      "id": "AC-04",
+      "statement": "L1 continuously-resident execution claim remains limited to Capital Pool Execution",
+      "status": "pass",
+      "evidence_refs": [
+        "hosted_readback.capture_time_hosted_readback.continuously_resident_execution_loop_ids",
+        "security_and_safety.no_live_capital"
+      ]
+    },
+    {
+      "id": "AC-05",
+      "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+      "status": "pending_independent_review",
+      "blocking_until": "The follow-up PR containing f2e9d5eb3 and this manifest passes required checks, merges to dev, and Codex2 records a verdict against its merged SHA and companion evidence checksum.",
+      "evidence_refs": [
+        "implementation_delivery",
+        "residual_risks",
+        "record_log"
+      ]
+    },
+    {
+      "id": "AC-06",
+      "statement": "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not authoritative capture-time success",
+      "status": "pending_independent_provenance_and_scope_split_acceptance",
+      "blocking_until": "Codex2 explicitly accepts the normalized-only capture as data-contract evidence, without treating it as strict hosted auth or independently reproducible raw-response proof.",
+      "evidence_refs": [
+        "hosted_readback.pre_deploy",
+        "hosted_readback.capture_time_hosted_readback",
+        "deployment.identity_admission",
+        "integrity.normalized_hosted_readback"
+      ]
+    },
+    {
+      "id": "AC-07",
+      "statement": "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+      "status": "pass_with_explicit_read_only_not_applicable",
+      "evidence_refs": [
+        "behavioral_proof"
+      ]
+    },
+    {
+      "id": "AC-08",
+      "statement": "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+      "status": "pass",
+      "evidence_refs": [
+        "deployment.identity_admission",
+        "deployment.capture_time_root_deploy",
+        "hosted_readback.capture_time_hosted_readback",
+        "integrity.normalized_hosted_readback"
+      ]
+    },
+    {
+      "id": "AC-09",
+      "statement": "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+      "status": "pending_independent_auth_scope_split_acceptance",
+      "blocking_until": "Codex2 explicitly accepts closure of canonical inventory truth before LOOP-PROD-AUTH-001, while strict hosted auth remains mandatory for global product close.",
+      "evidence_refs": [
+        "security_and_safety"
+      ]
+    },
+    {
+      "id": "AC-10",
+      "statement": "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed",
+      "status": "pass",
+      "evidence_refs": [
+        "evidence_policy",
+        "integrity",
+        "integrity.normalized_hosted_readback",
+        "record_log"
+      ]
+    }
+  ],
+  "residual_risks": {
+    "RISK-DEPLOY-DIRTY-ALLOWANCE": {
+      "severity": "medium",
+      "blocking_for_this_task": false,
+      "description": "The capture-time dev/root workflow used allow_dirty=true after predecessor run 29261462867 failed closed on managed-worktree dirt. Although that run logged an exact e103d29 target and capture-time /bff/readyz matched it, repeated dirty-state bypasses weaken operational reproducibility.",
+      "containment": "Admit the historical cut only through the exact resolved target, managed-worktree SHA, immutable image digests, matching capture-time readyz identity, successful workflow gates, and normalized readback. No dirty worktree content is accepted as source identity.",
+      "owner": "Pantheon nonprod deployment maintainers (Human/Ops)",
+      "expiry": "2026-07-20T00:00:00Z",
+      "recheck_trigger": "Complete a clean dev/root deployment with allow_dirty=false and matching target/worktree/image/readyz identities."
+    },
+    "RISK-EVIDENCE-SCHEMA-BOOTSTRAP": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "This is a provisional bootstrap evidence shape because the formal product evidence schema does not yet exist.",
+      "containment": "Machine-readable JSON, explicit requirement conclusions, redaction, a companion SHA-256, and append-only review events are present.",
+      "owner": "LOOP-PROD-002",
+      "expiry": "2026-07-20T00:00:00Z",
+      "recheck_trigger": "Validate or migrate this manifest when LOOP-PROD-002 merges the formal schema and anti-false-closure guard."
+    },
+    "RISK-CONTROLLER-COVERAGE": {
+      "severity": "high_program_risk",
+      "blocking_for_this_task": false,
+      "description": "The hosted health surface has zero accepted controller records and remains degraded. This task intentionally corrects catalog truth; it does not implement the twelve loop controllers or the OODA controller.",
+      "containment": "No row is promoted to reconciled or live; archived tasks, static registry metadata, stale records, and unqualified sources fail closed.",
+      "owner": "Wave 1 loop owners and LOOP-PROD-BFF-001",
+      "expiry": "2026-07-31T00:00:00Z",
+      "recheck_trigger": "Re-evaluate only after controller tasks deploy current qualified records and LOOP-PROD-CLOSE-001 runs the global target-host drill."
+    },
+    "RISK-POST-CUT-HOSTED-AUTH": {
+      "severity": "high_program_risk",
+      "blocking_for_this_task": false,
+      "description": "The later observed dev runtime at 0e8c066 accepts an arbitrary structured operator credential. It is excluded from this task's capture-time evidence and cannot serve as strict hosted identity-provider proof.",
+      "containment": "No later runtime is substituted for the capture artifact. Strict-JWT route behavior is contract-tested with 401/403/200, and no write, capital, tenant, or governance command is exposed by this task.",
+      "owner": "LOOP-PROD-AUTH-001",
+      "expiry": "2026-07-20T00:00:00Z",
+      "dependency_order": "LOOP-PROD-AUTH-001 depends on LOOP-PROD-002, which depends on LOOP-PROD-000; this risk is nonblocking only for the canonical inventory task and remains blocking for global product close.",
+      "recheck_trigger": "Require a hosted strict-auth cut with a real short-lived identity credential before global product close; fixed all-role or arbitrary structured tokens remain inadmissible."
+    },
+    "RISK-POST-CUT-ADMISSION-HARDENING": {
+      "severity": "medium",
+      "blocking_for_this_task": true,
+      "description": "Anchor f2e9d5eb3 adds two adversarial admission checks after the hosted e103d29 capture: accepted truth must exist at the claimed level, and runtime controller identity must match the catalog contract.",
+      "containment": "The follow-up is included in this task branch, passes the focused contract suite, and must merge through the evidence PR. The hosted capture has zero raw or accepted controller records, so it does not claim to exercise these post-cut paths.",
+      "owner": "Codex through evidence PR; LOOP-PROD-CLOSE-001 for later hosted target drill",
+      "expiry": "2026-07-31T00:00:00Z",
+      "clear_when": "The follow-up task PR containing f2e9d5eb3 passes required checks and merges to dev.",
+      "recheck_trigger": "Confirm f2e9d5eb3 is contained in dev before independent approval, then exercise mismatched and cross-level records during the global hosted target drill."
+    },
+    "RISK-NORMALIZED-READBACK-PROVENANCE": {
+      "severity": "medium",
+      "blocking_for_this_task": true,
+      "description": "The durable hosted artifact retains normalized contract projections and two semantic receipts, not the full raw authenticated response bodies.",
+      "containment": "The artifact records redacted request recipes, exact runtime and image identity, semantic jq programs, per-read hashes, and the normalized payload. Independent review must treat it as capture-time evidence and must not infer fields omitted by normalization.",
+      "owner": "LOOP-PROD-002",
+      "expiry": "2026-07-20T00:00:00Z",
+      "clear_when": "Codex2 explicitly accepts this task's normalized-only capture limitation against the merged manifest checksum; future tasks remain subject to the stronger LOOP-PROD-002 schema.",
+      "recheck_trigger": "The formal evidence schema should require redacted raw-response retention or an independently signed capture receipt for future loop tasks."
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.sha256",
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion file hashes evidence.json to avoid a recursive self-hash.",
+    "checksum_coverage": [
+      "evidence.json",
+      "hosted-readback.normalized.json"
+    ],
+    "source_artifact_sha256_by_epoch": {
+      "implementation_merge": {
+        "git_sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d",
+        "artifacts": {
+          "docs/deployment/loop-catalog.registry.json": "5a0531795104ace538bd4f4e5ec50141fedb198fde8d1d96b6c7a5e154f431b3",
+          "docs/deployment/loop-catalog.schema.json": "696f5f9fef7e6bb65b755cdf3ac49c9b65c3aa2db0f2164889e823f3a1679fd3",
+          "services/control-plane/bff/loop_inventory.py": "197b07b6ad3aafcbda2fda553cd44e80c52d1e93601f80590f4acca81020a1d1",
+          "services/control-plane/bff/main.py": "172bb66f3357882881381a710f72dc96ff577671991878125c474a38710b3721"
+        }
+      },
+      "capture_time_hosted_runtime": {
+        "git_sha": "e103d29e806c21626dc5a2f7392c663894caa772",
+        "artifacts": {
+          "docs/deployment/loop-catalog.registry.json": "5a0531795104ace538bd4f4e5ec50141fedb198fde8d1d96b6c7a5e154f431b3",
+          "docs/deployment/loop-catalog.schema.json": "696f5f9fef7e6bb65b755cdf3ac49c9b65c3aa2db0f2164889e823f3a1679fd3",
+          "services/control-plane/bff/loop_inventory.py": "197b07b6ad3aafcbda2fda553cd44e80c52d1e93601f80590f4acca81020a1d1",
+          "services/control-plane/bff/main.py": "46f4e802d65a6a49b68a2f122bf2b3214431e6aeda547b375166634379222cfb"
+        }
+      },
+      "evidence_authoring_snapshot": {
+        "git_sha": "5e9c088420ba347c793279b8ec1a586214594df0",
+        "artifacts": {
+          "docs/deployment/loop-catalog.registry.json": "5a0531795104ace538bd4f4e5ec50141fedb198fde8d1d96b6c7a5e154f431b3",
+          "docs/deployment/loop-catalog.schema.json": "696f5f9fef7e6bb65b755cdf3ac49c9b65c3aa2db0f2164889e823f3a1679fd3",
+          "services/control-plane/bff/loop_inventory.py": "ac84d68630f6ac4f7b4deff452e138d53e7983e05f02965fdc95307687be3077",
+          "services/control-plane/bff/main.py": "433b99a44b2f54a95e496bd7a6183a4a57280047d1e7eb3ad193f55c65919c4e"
+        }
+      }
+    },
+    "normalized_hosted_readback": {
+      "path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/hosted-readback.normalized.json",
+      "sha256": "c665f3dfee04049f23de2251e1bf73641e7a39933a0df8f3b65ff9c22fc404cf",
+      "redacted": true,
+      "independent_read_receipts": 2,
+      "raw_response_bodies_retained": false,
+      "provenance_limit": "Only normalized projections and semantic receipts are durable; fields omitted by the normalization programs are not independently reproducible from this artifact.",
+      "artifact_recompute": "sha256sum hosted-readback.normalized.json",
+      "inventory_semantic_recompute": "jq -Sc '.inventory' hosted-readback.normalized.json | sha256sum",
+      "health_semantic_recompute": "jq -Sc '.health' hosted-readback.normalized.json | sha256sum"
+    },
+    "hosted_semantic_sha256": {
+      "loop_inventory": "6ba7da18eff1c3772bc0dfd723c67261f4932b1c34bf0bf2aa69d3ef2f7a199a",
+      "loop_health": "69d88f4cd143192df56fed97731a2a594b53009a7c28147a5fa7aa8fe37c7a49"
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-13T14:55:57Z",
+      "kind": "implementation_merged",
+      "actor": "Codex",
+      "status": "pass",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3520",
+      "sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-13T15:15:56Z",
+      "kind": "canonical_dev_deployment",
+      "actor": "Pantheon Nonprod Deploy",
+      "status": "pass",
+      "reference": "https://github.com/ajoe734/pantheon/actions/runs/29260158410",
+      "sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-13T15:19:10Z",
+      "kind": "scoped_bff_redeploy_and_restart",
+      "actor": "Pantheon Nonprod Deploy",
+      "status": "pass",
+      "reference": "https://github.com/ajoe734/pantheon/actions/runs/29261536522",
+      "sha": "fc2db3c0e472c04ed39a0e02f571a0bbafe2245d"
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-07-13T15:24:02Z",
+      "kind": "evidence_ready_for_independent_review",
+      "actor": "Codex",
+      "status": "pending",
+      "reviewer": "Codex2",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
+      "required_next_event": "independent_review_verdict"
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-07-13T15:30:00Z",
+      "kind": "superseding_deployment_detected",
+      "actor": "Codex",
+      "status": "fail_closed_wait_for_terminal_cut",
+      "reference": "https://github.com/ajoe734/pantheon/actions/runs/29261740288",
+      "invalidated_review_request_sequence": 4,
+      "prior_manifest_sha256": "c27c70dcd504f1090a29182c61a05149da6e1e481dbfb709ffdde791d03769c6",
+      "disposition": "The earlier review request was withdrawn while a newer root deployment remained active."
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-07-13T15:32:42Z",
+      "kind": "capture_time_descendant_dev_deployment",
+      "actor": "Pantheon Nonprod Deploy",
+      "status": "pass",
+      "reference": "https://github.com/ajoe734/pantheon/actions/runs/29261740288",
+      "sha": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "implementation_merge_is_ancestor": true
+    },
+    {
+      "sequence": 7,
+      "recorded_at": "2026-07-13T15:34:06Z",
+      "kind": "capture_time_hosted_readback",
+      "actor": "Codex",
+      "status": "pass",
+      "runtime_sha": "e103d29e806c21626dc5a2f7392c663894caa772",
+      "normalized_artifact": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/hosted-readback.normalized.json",
+      "active_nonprod_deploys_before": 0,
+      "active_nonprod_deploys_after": 0
+    },
+    {
+      "sequence": 8,
+      "recorded_at": "2026-07-13T15:43:30Z",
+      "kind": "evidence_ready_for_independent_review",
+      "actor": "Codex",
+      "status": "pending",
+      "reviewer": "Codex2",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
+      "required_next_event": "independent_review_verdict"
+    },
+    {
+      "sequence": 9,
+      "recorded_at": "2026-07-13T17:37:03Z",
+      "kind": "post_cut_runtime_and_auth_drift_observed",
+      "actor": "Codex",
+      "status": "excluded_and_manifest_requalified",
+      "invalidated_review_request_sequence": 8,
+      "prior_manifest_sha256": "20d4cde8c6a6876563c5ee4b1fe49ccfd99aedc058401945edb3cc54835b5abd",
+      "runtime_sha": "0e8c06603eb7ede8fd226837e439282e70fefc80",
+      "reference": "https://github.com/ajoe734/pantheon/actions/runs/29268814057",
+      "disposition": "The manifest no longer calls e103d29 current, excludes the later permissive-auth runtime from capture-time evidence, and assigns strict hosted auth to LOOP-PROD-AUTH-001."
+    },
+    {
+      "sequence": 10,
+      "recorded_at": "2026-07-13T17:37:03Z",
+      "kind": "adversarial_admission_hardening_validated",
+      "actor": "Codex",
+      "status": "pass_pending_follow_up_pr",
+      "sha": "f2e9d5eb305dd647bf7dd12bae174de100f0b19e",
+      "focused_tests": "26 passed",
+      "adjacent_tests": "10 passed",
+      "hosted_cut_inclusion": false
+    },
+    {
+      "sequence": 11,
+      "recorded_at": "2026-07-13T17:37:03Z",
+      "kind": "evidence_ready_for_independent_review",
+      "actor": "Codex",
+      "status": "pending",
+      "reviewer": "Codex2",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
+      "review_binding_rule": "Reviewer must cite the merged evidence PR SHA and the companion evidence.json SHA-256 from that merged tree.",
+      "required_next_event": "independent_review_verdict"
+    },
+    {
+      "sequence": 12,
+      "recorded_at": "2026-07-13T17:49:31Z",
+      "kind": "latest_dev_merge_and_validation_completed",
+      "actor": "Codex",
+      "status": "pass",
+      "invalidated_review_request_sequence": 11,
+      "prior_manifest_sha256": "3c70775e4218469382805598ba1d33fe3de72cd817d6c31f073e1a3d8989a2cd",
+      "validated_base_sha": "ae1e3f2000c3fdef9c235e6f6dbac290269426da",
+      "validated_head_sha": "5e9c088420ba347c793279b8ec1a586214594df0",
+      "focused_tests": "26 passed",
+      "adjacent_tests": "10 passed",
+      "guardrail_tests": "26 passed"
+    },
+    {
+      "sequence": 13,
+      "recorded_at": "2026-07-13T17:49:31Z",
+      "kind": "evidence_ready_for_independent_review",
+      "actor": "Codex",
+      "status": "pending_follow_up_pr_merge",
+      "reviewer": "Codex2",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
+      "review_binding_rule": "Reviewer must cite the follow-up PR merge SHA and the companion evidence.json SHA-256 from that merged tree, then explicitly decide AC-06 and AC-09 scope splits.",
+      "required_next_event": "follow_up_pr_merged_then_independent_review_verdict"
+    }
+  ]
+}

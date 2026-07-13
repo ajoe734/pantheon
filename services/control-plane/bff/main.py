@@ -13,8 +13,10 @@ import threading
 import time
 import uuid
 from collections import deque
-from contextvars import ContextVar
+from concurrent.futures import Executor, ThreadPoolExecutor
+from contextvars import ContextVar, copy_context
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
@@ -6880,6 +6882,14 @@ def _dataset_surface_status(
     return surface
 
 
+def _dataset_source_after_read(dataset: str) -> str:
+    """Return source provenance without repeating a completed backend read."""
+    cached_source = getattr(read_store, "dataset_source_cached", None)
+    if callable(cached_source):
+        return str(cached_source(dataset) or "missing")
+    return str(read_store.dataset_source(dataset) or "missing")
+
+
 def _composed_dataset_surface_status(
     dataset: str,
     records: Sequence[Any],
@@ -6887,7 +6897,11 @@ def _composed_dataset_surface_status(
     snapshot_at: str,
     source: str,
 ) -> Dict[str, Any]:
-    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at)
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        source=_dataset_source_after_read(dataset),
+    )
     if records and surface.get("source") == "missing":
         return {
             "status": "ok",
@@ -11297,11 +11311,16 @@ def _build_management_ep5_readiness_payload() -> Dict[str, Any]:
     )
 
 
-def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
+def _build_management_cockpit_payload(
+    snapshot_at: str,
+    *,
+    human_inbox: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     operator_home = _build_operator_home_payload(snapshot_at)
     runtime_health = _build_operator_health_status_payload(snapshot_at)
     alerts_payload = _build_operator_alerts_payload(snapshot_at)
-    human_inbox = _human_inbox_payload(snapshot_at, page_size=None)
+    if human_inbox is None:
+        human_inbox = _human_inbox_payload(snapshot_at, page_size=None)
     trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
     anomalies = _build_management_anomalies_payload(snapshot_at)
 
@@ -11356,6 +11375,77 @@ def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
     return {
         "data": data,
         "meta": meta,
+    }
+
+
+def _management_cockpit_read_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "2.5").strip()
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return 2.5
+
+
+_MANAGEMENT_COCKPIT_READ_SLOT_COUNT = 2
+_MANAGEMENT_COCKPIT_READ_SLOTS = threading.BoundedSemaphore(
+    _MANAGEMENT_COCKPIT_READ_SLOT_COUNT
+)
+_MANAGEMENT_COCKPIT_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_MANAGEMENT_COCKPIT_READ_SLOT_COUNT,
+    thread_name_prefix="bff-management-cockpit",
+)
+
+
+def _management_cockpit_degraded_payload(
+    snapshot_at: str,
+    *,
+    human_inbox: Dict[str, Any],
+    saturated: bool,
+) -> Dict[str, Any]:
+    surface = _management_read_timeout_surface(
+        "management_cockpit",
+        snapshot_at=snapshot_at,
+        message=(
+            "Management cockpit composition was not submitted because read capacity is saturated."
+            if saturated
+            else "Management cockpit composition exceeded its bounded read budget."
+        ),
+    )
+    if saturated:
+        surface.update(
+            {
+                "source": "management_read_capacity",
+                "reason": "read_capacity_saturated",
+                "staleness": {
+                    "served_from": "capacity_degraded",
+                    "last_known_at": snapshot_at,
+                },
+            }
+        )
+    empty_section = {"items": [], "summary": {}}
+    return {
+        "data": {
+            "id": "management-cockpit",
+            "snapshot_at": snapshot_at,
+            "operator_home": {},
+            "runtime_health": {},
+            "alerts": dict(empty_section),
+            "human_inbox": human_inbox,
+            "trading_pulse": {},
+            "anomalies": dict(empty_section),
+            "links": {
+                "self": f"/bff{_MANAGEMENT_COCKPIT_ROUTE}",
+                "human_inbox": "/bff/management/human-inbox",
+            },
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "partial": True,
+            "surfaces": {
+                "management_cockpit": surface,
+                "human_inbox": human_inbox["meta"]["surfaces"]["human_inbox"],
+            },
+        },
     }
 
 
@@ -13828,6 +13918,10 @@ class _ManagementReadTimeout(Exception):
     """Raised when a management read exceeds its bounded wait budget (MGMT-LOAD-005)."""
 
 
+class _ManagementReadSaturated(Exception):
+    """Raised before submission when a bounded read executor has no capacity."""
+
+
 def _discard_late_management_read_result(task: "asyncio.Task[Any]") -> None:
     if task.cancelled():
         return
@@ -13840,24 +13934,48 @@ async def _run_management_read(
     func: Callable[..., Any],
     *args: Any,
     timeout_seconds: Optional[float] = None,
+    capacity: Optional[threading.BoundedSemaphore] = None,
+    executor: Optional[Executor] = None,
     **kwargs: Any,
 ) -> Any:
     """Run a synchronous read-store aggregation on a worker thread, bounded by a wait budget.
 
-    Deliberately uses asyncio.wait rather than asyncio.wait_for: once the
-    underlying OS thread has started executing synchronous code, Python
-    cannot forcibly cancel it, so wait_for would still block the caller for
-    the full duration of the slow call before raising TimeoutError (it only
-    reclassifies the outcome afterward). asyncio.wait instead stops waiting
-    at the budget and lets the route return a degraded response immediately;
-    the abandoned thread keeps running in the background and its (now
-    irrelevant) result is discarded by _discard_late_management_read_result.
+    Deliberately uses asyncio.wait rather than asyncio.wait_for: once an OS
+    thread has started synchronous work, Python cannot forcibly cancel it.
+    For capacity-bounded calls the semaphore is acquired before executor
+    submission and released by the actual concurrent future, so timed-out
+    work cannot create an unbounded queue of late jobs.
     """
     budget = _management_read_timeout_seconds() if timeout_seconds is None else timeout_seconds
-    task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    if capacity is None:
+        task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    else:
+        # Reserve capacity before submitting work. Acquiring inside ``func``
+        # would still allow an unbounded number of timed-out jobs to collect in
+        # the executor queue while earlier synchronous calls keep running.
+        if not capacity.acquire(blocking=False):
+            raise _ManagementReadSaturated()
+        context = copy_context()
+        call = partial(func, *args, **kwargs)
+        try:
+            worker_future = executor.submit(context.run, call) if executor else None
+            if worker_future is None:
+                raise RuntimeError("A bounded management read requires an executor")
+        except BaseException:
+            capacity.release()
+            raise
+
+        # Hold the reservation until the actual worker future finishes, not
+        # merely until the asyncio wrapper times out or is cancelled.
+        worker_future.add_done_callback(lambda _future: capacity.release())
+        task = asyncio.wrap_future(worker_future)
     done, _pending = await asyncio.wait({task}, timeout=budget)
     if task in done:
         return task.result()
+    if capacity is not None:
+        # Cancels only work that has not started; a running thread keeps its
+        # reservation until the concurrent future's completion callback.
+        worker_future.cancel()
     task.add_done_callback(_discard_late_management_read_result)
     raise _ManagementReadTimeout()
 
@@ -16712,7 +16830,32 @@ async def bff_management_cockpit(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    return _build_management_cockpit_payload(snapshot_at)
+    human_inbox, _items, _sources, _failures = await _human_inbox_payload_bounded(
+        snapshot_at,
+        identity=identity,
+        page_size=None,
+    )
+    try:
+        return await _run_management_read(
+            _build_management_cockpit_payload,
+            snapshot_at,
+            human_inbox=human_inbox,
+            timeout_seconds=_management_cockpit_read_timeout_seconds(),
+            capacity=_MANAGEMENT_COCKPIT_READ_SLOTS,
+            executor=_MANAGEMENT_COCKPIT_READ_EXECUTOR,
+        )
+    except _ManagementReadSaturated:
+        return _management_cockpit_degraded_payload(
+            snapshot_at,
+            human_inbox=human_inbox,
+            saturated=True,
+        )
+    except _ManagementReadTimeout:
+        return _management_cockpit_degraded_payload(
+            snapshot_at,
+            human_inbox=human_inbox,
+            saturated=False,
+        )
 
 
 @app.get("/bff/management/trading-pulse")
@@ -33617,6 +33760,7 @@ def _human_inbox_governance_contributor(
         snapshot_at=snapshot_at,
         has_data=bool(records),
         missing_message="Governance review queue has no readable source records.",
+        source=_dataset_source_after_read("governance_review_queue_items"),
     )
 
 
@@ -33629,6 +33773,7 @@ def _human_inbox_approval_contributor(
         snapshot_at=snapshot_at,
         has_data=bool(records),
         missing_message="Approval queue has no readable source records.",
+        source=_dataset_source_after_read("approval_queue_items"),
     )
 
 
@@ -33641,6 +33786,7 @@ def _human_inbox_intervention_contributor(
         snapshot_at=snapshot_at,
         has_data=bool(records),
         missing_message="V5 interventions have no readable source records.",
+        source=_dataset_source_after_read("v5_interventions"),
     )
     local_ids = {
         str(record.get("intervention_id") or record.get("id") or "")
@@ -33661,28 +33807,119 @@ def _human_inbox_sentinel_contributor(
 ) -> tuple[tuple[bool, List[Dict[str, Any]]], Dict[str, Any]]:
     available, raw_records = read_store.list_sentinel_findings()
     records = list(raw_records or [])
-    incidents_source = read_store.dataset_source("incidents")
+    incidents_source = _dataset_source_after_read("incidents")
     if incidents_source != "missing":
         surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     else:
         surface = _dataset_surface_status(
             "sentinel_findings",
             snapshot_at=snapshot_at,
-            source=None if available else "missing",
+            source=_dataset_source_after_read("sentinel_findings") if available else "missing",
         )
     return (bool(available), records), surface
+
+
+def _build_persona_readiness_items(snapshot_at: str) -> List[Dict[str, Any]]:
+    """Build only the persona fields consumed by Human Inbox readiness rows.
+
+    The full Fleet projection performs per-persona binding, runtime, strategy,
+    source-health, incident, and evolution reads. Human Inbox does not consume
+    those fields, so using it here created a large N+1 latency chain. This
+    projection deliberately performs one persona read and one league read and
+    reuses the loaded personas when deriving market context defaults.
+    """
+    personas = list(
+        read_store.list_personas(include_market_persona_defaults=True) or []
+    )
+    league_by_persona = {
+        str(item.get("persona_id") or item.get("id") or "").strip(): item
+        for item in (
+            read_store.list_persona_league(
+                include_market_persona_defaults=True,
+            )
+            or []
+        )
+        if str(item.get("persona_id") or item.get("id") or "").strip()
+    }
+    context_defaults = _persona_fleet_context_defaults_by_market(personas)
+    rows: List[Dict[str, Any]] = []
+    for persona in personas:
+        persona_id = _persona_id(persona)
+        if not persona_id:
+            continue
+        metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        context_metadata, _context_persona = _persona_fleet_context_overlay(
+            persona,
+            metadata,
+            context_defaults,
+        )
+        league_entry = league_by_persona.get(persona_id, {})
+        governance_required = bool(
+            league_entry.get("governance_required")
+            if "governance_required" in league_entry
+            else context_metadata.get("governance_required", True)
+        )
+        recommendation = (
+            league_entry.get("recommendation")
+            or context_metadata.get("recommended_governance_action")
+            or ""
+        )
+        human_needed = governance_required and str(recommendation).strip().lower() not in {
+            "",
+            "none",
+            "no_change",
+        }
+        research_status = (
+            context_metadata.get("research_status")
+            if isinstance(context_metadata.get("research_status"), dict)
+            else {}
+        )
+        current_projects = (
+            context_metadata.get("current_research_projects")
+            if isinstance(context_metadata.get("current_research_projects"), list)
+            else []
+        )
+        can_deploy = research_status.get("can_deploy")
+        if can_deploy is None:
+            can_deploy = context_metadata.get("can_deploy")
+        rows.append(
+            {
+                "id": persona_id,
+                "persona_id": persona_id,
+                "name": persona.get("name") or persona_id,
+                "persona_name": persona.get("name") or persona_id,
+                "human_needed": human_needed,
+                "state": str(
+                    metadata.get("persona_status")
+                    or league_entry.get("status")
+                    or persona.get("status")
+                    or persona.get("lifecycle_state")
+                    or "unknown"
+                ),
+                "current_work": context_metadata.get("current_work"),
+                "recommendation": recommendation,
+                "can_deploy": can_deploy,
+                "priority": league_entry.get("priority") or context_metadata.get("priority"),
+                "updated_at": (
+                    league_entry.get("updated_at")
+                    or persona.get("updated_at")
+                    or persona.get("last_active_at")
+                    or snapshot_at
+                ),
+                "research_status": _management_json_clone(research_status),
+                "current_research_projects": _management_json_clone(current_projects),
+                "data_source_status": _management_json_clone(
+                    context_metadata.get("data_source_status") or {}
+                ),
+            }
+        )
+    return rows
 
 
 def _human_inbox_persona_contributor(
     snapshot_at: str,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    rows = list(
-        _build_persona_health_items(
-            snapshot_at,
-            include_market_persona_defaults=True,
-        )
-        or []
-    )
+    rows = list(_build_persona_readiness_items(snapshot_at) or [])
     return rows, _composed_dataset_surface_status(
         "persona_fleet",
         rows,
@@ -33752,12 +33989,18 @@ def _human_inbox_all_items(
     }
 
 
+_HUMAN_INBOX_MAX_SURFACE_TIMEOUT_SECONDS = 1.0
+
+
 def _human_inbox_surface_timeout_seconds() -> float:
-    raw = os.getenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "2.5").strip()
+    raw = os.getenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "1.0").strip()
     try:
-        return max(0.05, float(raw))
+        return min(
+            _HUMAN_INBOX_MAX_SURFACE_TIMEOUT_SECONDS,
+            max(0.05, float(raw)),
+        )
     except (TypeError, ValueError):
-        return 2.5
+        return _HUMAN_INBOX_MAX_SURFACE_TIMEOUT_SECONDS
 
 
 def _human_inbox_read_error_surface(
@@ -33782,19 +34025,30 @@ def _human_inbox_read_slot_count() -> int:
         return 12
 
 
-_HUMAN_INBOX_READ_SLOTS = threading.BoundedSemaphore(_human_inbox_read_slot_count())
+_HUMAN_INBOX_READ_SLOT_COUNT = _human_inbox_read_slot_count()
+_HUMAN_INBOX_READ_SLOTS = threading.BoundedSemaphore(_HUMAN_INBOX_READ_SLOT_COUNT)
+_HUMAN_INBOX_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_HUMAN_INBOX_READ_SLOT_COUNT,
+    thread_name_prefix="bff-human-inbox",
+)
 
 
-def _human_inbox_guarded_contributor(
-    contributor: Callable[..., Any],
-    *args: Any,
-) -> Any:
-    if not _HUMAN_INBOX_READ_SLOTS.acquire(blocking=False):
-        raise RuntimeError("Human Inbox contributor concurrency is saturated")
-    try:
-        return contributor(*args)
-    finally:
-        _HUMAN_INBOX_READ_SLOTS.release()
+def _human_inbox_capacity_surface(
+    dataset: str,
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    return {
+        "status": "degraded",
+        "dataset": dataset,
+        "source": "management_read_capacity",
+        "reason": "read_capacity_saturated",
+        "message": (
+            f"{dataset} was not submitted because Human Inbox read capacity "
+            "is occupied by earlier synchronous contributors."
+        ),
+        "staleness": {"served_from": "capacity_degraded", "last_known_at": snapshot_at},
+    }
 
 
 async def _human_inbox_all_items_bounded(
@@ -33809,46 +34063,52 @@ async def _human_inbox_all_items_bounded(
     jobs: Dict[str, Any] = {}
     if include_all or "governance_review" in source_types:
         jobs["governance_review_records"] = _run_management_read(
-            _human_inbox_guarded_contributor,
             _human_inbox_governance_contributor,
             snapshot_at,
             timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
         )
     if include_all or "approval" in source_types:
         jobs["approval_records"] = _run_management_read(
-            _human_inbox_guarded_contributor,
             _human_inbox_approval_contributor,
             snapshot_at,
             timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
         )
     if include_all or "intervention" in source_types:
         jobs["intervention_records"] = _run_management_read(
-            _human_inbox_guarded_contributor,
             _human_inbox_intervention_contributor,
             snapshot_at,
             timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
         )
     if include_all or "sentinel_finding" in source_types:
         jobs["sentinel_result"] = _run_management_read(
-            _human_inbox_guarded_contributor,
             _human_inbox_sentinel_contributor,
             snapshot_at,
             timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
         )
     if include_all or "readiness_blocker" in source_types:
         jobs["persona_rows"] = _run_management_read(
-            _human_inbox_guarded_contributor,
             _human_inbox_persona_contributor,
             snapshot_at,
             timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
         )
     if include_all or "promotion_review" in source_types:
         jobs["promotion_review_records"] = _run_management_read(
-            _human_inbox_guarded_contributor,
             _human_inbox_promotion_contributor,
             identity,
             snapshot_at,
             timeout_seconds=timeout_seconds,
+            capacity=_HUMAN_INBOX_READ_SLOTS,
+            executor=_HUMAN_INBOX_READ_EXECUTOR,
         )
 
     results = await asyncio.gather(*jobs.values(), return_exceptions=True)
@@ -33873,6 +34133,12 @@ async def _human_inbox_all_items_bounded(
     failures: Dict[str, Dict[str, Any]] = {}
     for key, result in zip(jobs, results):
         surface_key, dataset = surface_specs[key]
+        if isinstance(result, _ManagementReadSaturated):
+            failures[surface_key] = _human_inbox_capacity_surface(
+                dataset,
+                snapshot_at=snapshot_at,
+            )
+            continue
         if isinstance(result, _ManagementReadTimeout):
             failures[surface_key] = _management_read_timeout_surface(
                 dataset,
@@ -34176,6 +34442,42 @@ def _human_inbox_payload(
     )
 
 
+async def _human_inbox_payload_bounded(
+    snapshot_at: str,
+    *,
+    identity: OperatorIdentity,
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: Optional[int] = 20,
+) -> tuple[
+    Dict[str, Any],
+    List[Dict[str, Any]],
+    Dict[str, Any],
+    Dict[str, Dict[str, Any]],
+]:
+    source_types = _human_inbox_csv_filter(source_type)
+    items, sources, failures = await _human_inbox_all_items_bounded(
+        snapshot_at,
+        identity=identity,
+        source_types=source_types,
+    )
+    payload = _human_inbox_payload_from_loaded(
+        snapshot_at,
+        items=items,
+        sources=sources,
+        source_types=source_types,
+        source_type=source_type,
+        status=status,
+        priority=priority,
+        page_token=page_token,
+        page_size=page_size,
+        surface_failures=failures,
+    )
+    return payload, items, sources, failures
+
+
 def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
     clean = str(item_id or "").strip()
     candidates = {
@@ -34461,6 +34763,10 @@ def _management_hiq_backlog_response(
     q: str,
     page_token: Optional[str],
     page_size: int,
+    human_inbox_items: Optional[List[Dict[str, Any]]] = None,
+    human_inbox_sources: Optional[Dict[str, Any]] = None,
+    human_inbox_failures: Optional[Dict[str, Dict[str, Any]]] = None,
+    human_inbox_source_types: Optional[set[str]] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     source_types = _hiq_backlog_filter_values(source_type)
@@ -34468,15 +34774,23 @@ def _management_hiq_backlog_response(
     priorities = _hiq_backlog_filter_values(priority)
     kinds = _hiq_backlog_filter_values(kind, default=_HIQ_BACKLOG_DEFAULT_KINDS)
 
-    human_inbox_items, inbox_sources = _human_inbox_all_items(snapshot_at)
+    if human_inbox_items is None or human_inbox_sources is None:
+        human_inbox_items, inbox_sources = _human_inbox_all_items(snapshot_at)
+    else:
+        inbox_sources = human_inbox_sources
     inbox_by_source_id = {
         str(item.get("source_id") or ""): item
         for item in human_inbox_items
         if str(item.get("source_type") or "") == "intervention" and item.get("source_id")
     }
 
-    intervention_records = _v5_intervention_records()
-    available_sentinel_findings, sentinel_findings = read_store.list_sentinel_findings()
+    if human_inbox_sources is None:
+        intervention_records = _v5_intervention_records()
+        available_sentinel_findings, sentinel_findings = read_store.list_sentinel_findings()
+    else:
+        intervention_records = list(inbox_sources.get("intervention_records") or [])
+        available_sentinel_findings = bool(inbox_sources.get("sentinel_available"))
+        sentinel_findings = list(inbox_sources.get("sentinel_records") or [])
     items: List[Dict[str, Any]] = []
     for record in intervention_records:
         projected = _hiq_backlog_intervention_item(
@@ -34529,21 +34843,6 @@ def _management_hiq_backlog_response(
         "basis": "composed_from_v5_interventions_sentinel_findings_and_human_inbox",
     }
 
-    intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
-    intervention_surface = _dataset_surface_status(
-        "v5_interventions",
-        snapshot_at=snapshot_at,
-        source=intervention_source,
-    )
-    incidents_source = read_store.dataset_source("incidents")
-    if incidents_source != "missing":
-        sentinel_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
-    else:
-        sentinel_surface = _dataset_surface_status(
-            "sentinel_findings",
-            snapshot_at=snapshot_at,
-            source=None if available_sentinel_findings else "missing",
-        )
     human_inbox_surfaces = _human_inbox_surfaces(
         snapshot_at=snapshot_at,
         governance_review_records=inbox_sources["governance_review_records"],
@@ -34553,8 +34852,37 @@ def _management_hiq_backlog_response(
         sentinel_records=inbox_sources["sentinel_records"],
         persona_rows=inbox_sources["persona_rows"],
         promotion_review_records=inbox_sources.get("promotion_review_records", []),
+        source_types=human_inbox_source_types,
+        surface_failures=human_inbox_failures,
         loaded_surfaces=inbox_sources.get("surfaces"),
     )
+    if human_inbox_sources is not None:
+        intervention_surface = human_inbox_surfaces["v5_interventions"]
+        sentinel_surface = human_inbox_surfaces["sentinel_findings"]
+    else:
+        intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
+        intervention_surface = _dataset_surface_status(
+            "v5_interventions",
+            snapshot_at=snapshot_at,
+            source=intervention_source or _dataset_source_after_read("v5_interventions"),
+        )
+        incidents_source = _dataset_source_after_read("incidents")
+        if incidents_source != "missing":
+            sentinel_surface = _dataset_surface_status(
+                "incidents",
+                snapshot_at=snapshot_at,
+                source=incidents_source,
+            )
+        else:
+            sentinel_surface = _dataset_surface_status(
+                "sentinel_findings",
+                snapshot_at=snapshot_at,
+                source=(
+                    _dataset_source_after_read("sentinel_findings")
+                    if available_sentinel_findings
+                    else "missing"
+                ),
+            )
     hiq_surface = _aggregate_group_surface(
         "hiq_backlog",
         [
@@ -35997,24 +36325,15 @@ async def bff_management_human_inbox(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    source_types = _human_inbox_csv_filter(source_type)
     started = time.monotonic()
-    items, sources, failures = await _human_inbox_all_items_bounded(
+    payload, _items, _sources, failures = await _human_inbox_payload_bounded(
         snapshot_at,
         identity=identity,
-        source_types=source_types,
-    )
-    payload = _human_inbox_payload_from_loaded(
-        snapshot_at,
-        items=items,
-        sources=sources,
-        source_types=source_types,
         source_type=source_type,
         status=status,
         priority=priority,
         page_token=page_token,
         page_size=page_size,
-        surface_failures=failures,
     )
     _log_management_read_timing(
         "human_inbox",
@@ -36095,6 +36414,13 @@ async def bff_management_hiq_backlog(
     """BFF: read-only HIQ backlog aggregate for sentinel and intervention review."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    snapshot_at = utc_now()
+    inbox_source_types = {"intervention", "sentinel_finding"}
+    inbox_items, inbox_sources, inbox_failures = await _human_inbox_all_items_bounded(
+        snapshot_at,
+        identity=identity,
+        source_types=inbox_source_types,
+    )
     return _management_hiq_backlog_response(
         source_type=source_type,
         status=status,
@@ -36103,6 +36429,10 @@ async def bff_management_hiq_backlog(
         q=q,
         page_token=page_token,
         page_size=page_size,
+        human_inbox_items=inbox_items,
+        human_inbox_sources=inbox_sources,
+        human_inbox_failures=inbox_failures,
+        human_inbox_source_types=inbox_source_types,
     )
 
 
@@ -43594,15 +43924,7 @@ def _pm12_persona_telemetry_records(
             if telemetry_cache is not None:
                 telemetry_cache[runtime_id] = summary
         if not isinstance(summary, dict):
-            summary = {
-                "runtime_id": runtime_id,
-                "collected_at": utc_now() if callable(globals().get("utc_now")) else datetime.now(timezone.utc).isoformat(),
-                "pnl": 0.0,
-                "drawdown": 0.0,
-                "fill_rate": 0.0,
-                "avg_slippage_bps": 0.0,
-                "total_trades": 0,
-            }
+            continue
         candidates: List[Dict[str, Any]] = [dict(summary)]
         for key in _PM12_TELEMETRY_HISTORY_KEYS:
             raw_history = summary.get(key)
@@ -56833,8 +57155,6 @@ def _training_improvement_delta(metrics: Dict[str, Any]) -> Optional[float]:
     if raw_val is None:
         return None
     val = _as_float(raw_val)
-    if val in (18.2, 14.0, 9.5):
-        return None
     return val / 100.0
 
 
@@ -57267,9 +57587,16 @@ def _persona_fleet_market_key(persona: Dict[str, Any], metadata: Dict[str, Any])
     return None
 
 
-def _persona_fleet_context_defaults_by_market() -> Dict[str, Dict[str, Any]]:
+def _persona_fleet_context_defaults_by_market(
+    candidates: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, Dict[str, Any]]:
     defaults: Dict[str, Dict[str, Any]] = {}
-    for candidate in read_store.list_personas(include_market_persona_defaults=True):
+    persona_candidates = (
+        candidates
+        if candidates is not None
+        else read_store.list_personas(include_market_persona_defaults=True)
+    )
+    for candidate in persona_candidates:
         if not isinstance(candidate, dict):
             continue
         metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
@@ -57447,6 +57774,20 @@ def _build_persona_health_items(
             metadata,
             context_defaults,
         )
+        is_default = persona_id in ("persona-us-equity", "persona-tw-equity", "persona-crypto")
+        if not is_default:
+            keys_to_strip = {
+                "runtime_id", "runtime_binding_id", "legacy_paper_capital_pool_id", "capital_pool_id", "deployment_stage",
+                "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id",
+                "paper_ledger_id", "paperLedgerId", "paper_ledger", "paper_benchmark_budget", "paperBenchmarkBudget", "paper_budget",
+                "league_rank", "rank", "league_score",
+                "review_id", "review_type", "review", "inbox_id", "recommendation", "recommended_governance_action",
+                "ooda_stage", "ooda_status", "ooda",
+                "risk_flags", "risk_level", "violation_count", "risk",
+                "current_work",
+                "performance", "metrics", "pnl", "sharpe", "sortino", "max_drawdown", "win_rate", "trading_cost_bps", "stability_score", "human_interventions", "training_improvement_pct"
+            }
+            context_metadata = {k: v for k, v in context_metadata.items() if k not in keys_to_strip}
         league_entry = league_by_persona.get(persona_id, {})
         league_metrics = (
             league_entry.get("metrics")
@@ -58810,6 +59151,20 @@ def _persona_fleet_slim_list_payload(
             raw_metadata,
             context_defaults,
         )
+        is_default = persona_id in ("persona-us-equity", "persona-tw-equity", "persona-crypto")
+        if not is_default:
+            keys_to_strip = {
+                "runtime_id", "runtime_binding_id", "legacy_paper_capital_pool_id", "capital_pool_id", "deployment_stage",
+                "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id",
+                "paper_ledger_id", "paperLedgerId", "paper_ledger", "paper_benchmark_budget", "paperBenchmarkBudget", "paper_budget",
+                "league_rank", "rank", "league_score",
+                "review_id", "review_type", "review", "inbox_id", "recommendation", "recommended_governance_action",
+                "ooda_stage", "ooda_status", "ooda",
+                "risk_flags", "risk_level", "violation_count", "risk",
+                "current_work",
+                "performance", "metrics", "pnl", "sharpe", "sortino", "max_drawdown", "win_rate", "trading_cost_bps", "stability_score", "human_interventions", "training_improvement_pct"
+            }
+            context_metadata = {k: v for k, v in context_metadata.items() if k not in keys_to_strip}
         league_entry = league_by_persona.get(persona_id, {})
         binding = _persona_fleet_first_binding_from_index(persona_id, bindings_by_persona)
         pool_id = (
@@ -58841,22 +59196,7 @@ def _persona_fleet_slim_list_payload(
         seen_r_ids = set()
         for r in runtimes:
             r_id = str(r.get("runtime_id") or r.get("id") or "").strip()
-            candidates = {
-                str(r.get("persona_id") or "").strip(),
-                str(r.get("binding_id") or "").strip(),
-                str(r.get("runtime_binding_id") or "").strip(),
-                str(r.get("persona_capital_binding_id") or "").strip(),
-                str(r.get("id") or "").strip(),
-            }
-            candidates.discard("")
-
-            is_associated = (
-                persona_id in candidates
-                or (declared_runtime_id and declared_runtime_id in candidates)
-                or (declared_runtime_binding_id and declared_runtime_binding_id in candidates)
-                or bool(candidates.intersection(p_binding_keys))
-                or (pool_id and str(r.get("capital_pool_id") or "").strip() == str(pool_id).strip())
-            )
+            is_associated = (str(r.get("persona_id") or "").strip() == persona_id)
             if is_associated and r_id and r_id not in seen_r_ids:
                 persona_runtimes.append(r)
                 seen_r_ids.add(r_id)
@@ -58886,15 +59226,13 @@ def _persona_fleet_slim_list_payload(
 
         runtime_ids = set()
         for rt in persona_runtimes:
-            for k in ("runtime_id", "runtime_binding_id", "id"):
-                val = str(rt.get(k) or "").strip()
-                if val:
-                    runtime_ids.add(val)
+            val = str(rt.get("runtime_id") or "").strip()
+            if val:
+                runtime_ids.add(val)
         if runtime:
-            for k in ("runtime_id", "runtime_binding_id", "id"):
-                val = str(runtime.get(k) or "").strip()
-                if val:
-                    runtime_ids.add(val)
+            val = str(runtime.get("runtime_id") or "").strip()
+            if val:
+                runtime_ids.add(val)
         active_incidents = _persona_fleet_active_incidents_for_row(
             incidents=incidents,
             persona_id=persona_id,

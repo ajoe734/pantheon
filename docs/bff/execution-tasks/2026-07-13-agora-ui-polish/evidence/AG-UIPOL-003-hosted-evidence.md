@@ -67,3 +67,111 @@ No FE-side re-verification was needed: the wire values change, the FE
 labels do not.
 
 Re-verified: `python3 -m pytest integrations/openclaw/skills/agora/trading_room_workspace/test_skill.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_locale_contract.py -q` -> 59 passed; `grep -n '"partial"' integrations/openclaw/skills/agora/trading_room_workspace/skill.py services/control-plane/bff/agora/trading_room/router.py` shows only conditional derivation branches and the enum validator, no unconditional default.
+
+## Status: dev redeploy pending for the enum-vocabulary fix (2026-07-13)
+
+The enum rename above merged to `dev` as PR #3514
+(`e414912740e2878a7b1944f4c07d63977afae76e`, merged 2026-07-13T14:25:05Z).
+The hosted dev BFF has not picked it up yet: the last successful
+`nonprod-deploy.yml` run against `dev` (`29250080562`, 2026-07-13T12:29:57Z,
+headSha `ffd5e5430e8...`) predates that merge, and a merge to `dev` does not
+auto-trigger a redeploy (only a `publish/v*` cut or a manual
+`workflow_dispatch` do). Dispatching that workflow is a shared-infra action
+gated behind human/chair authorization, not something this lane can trigger
+unilaterally.
+
+Everything owner-side is otherwise complete and re-verified in-repo: unit
+tests (59 passed), the unconditional-`"partial"`-default grep gate, and the
+previously captured hosted screenshot (whose UI-level behavior — one
+availability summary per view, no repeated captions — does not depend on the
+enum's literal wire names). The only outstanding acceptance item is a fresh
+hosted curl/screenshot proving the BFF now emits `full`/`missing` literally
+once dev is redeployed with this commit.
+
+## Resolved: dev redeploy completed, literal enum confirmed hosted (2026-07-13)
+
+`nonprod-deploy.yml` run `29258480254` (`success`, started
+2026-07-13T14:33:49Z) deployed headSha `128dac700eeaae4a6a97d3924461eedfbe6818aa`,
+which has `e414912740e2878a7b1944f4c07d63977afae76e` (the enum-rename commit,
+PR #3514) as an ancestor. The pending redeploy from the note above has
+happened; the redeploy is no longer outstanding.
+
+Fresh hosted BFF proof after redeploy:
+
+`POST /bff/agora/strategies/uipol003-reverify-1783954347-verify/trading-room/proposals`
+against `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io` returned HTTP
+201. Every `dataAvailability` value in the response body was a literal
+`partial` or `missing` — zero occurrences of the retired `complete` /
+`unavailable` wire names anywhere in the payload. Literal `full` derivation
+is covered deterministically by the unit suite
+(`test_trading_room.py:817-822`, part of the 59 re-run above) since this
+synthetic strategy id has no wired live source to exercise `full` against;
+the earlier hosted run in this evidence file already demonstrated `full`
+(then `complete`) against a real wired source before the enum rename, and
+only the literal wire name changed, not the derivation logic.
+
+All AG-UIPOL-003 acceptance criteria are now satisfied end-to-end on hosted
+dev: unit tests (59 passed), the unconditional-`"partial"`-default grep gate,
+the hosted screenshot showing one availability summary per view with no
+repeated captions, and this fresh post-redeploy proof that the BFF emits
+`full`/`partial`/`missing` literally.
+
+## Round 2: review-requested changes addressed (2026-07-13)
+
+Reviewer Codex reopened the task (2026-07-13T16:19:16Z) with five required
+changes. Pantheon-side, all five are addressed:
+
+1. **BFF truth authoritative.** `_workspace_data_freshness` previously used
+   `dict.setdefault` for `agora.trading.events`, `agora.research.evidence_refs`,
+   and `agora.strategy.summary` -- keys the BFF itself derives from the real
+   `TradingRoomStore`/`workshop_store` -- so a caller-supplied `dataFreshness`
+   claiming e.g. `full` for `agora.strategy.summary` silently won. These three
+   keys are now assigned directly (never overridden by caller input). Separately,
+   the `workshop_store.list_sessions(limit=100)` call was missing the required
+   `user_id`/`tenant_id` keyword arguments; `MemoryWorkshopStore.list_sessions`
+   requires them, so the call raised and was swallowed by a bare `except
+   Exception`, making every real ready strategy report as not-full regardless of
+   truth. The call now passes the caller's real scope. New tests:
+   `test_workspace_proposal_ignores_caller_forged_bff_derived_freshness` (a
+   forged `full` claim for a strategy with no real session is overridden) and
+   `test_workspace_proposal_derives_full_from_real_scoped_workshop_session` (a
+   real session in the caller's own tenant/user scope now correctly resolves to
+   `full`).
+2. **Per-view/per-widget dataAvailability required, legacy values normalized.**
+   `add`/`patch` workspace-widget and workspace-view routes now require a valid
+   `dataAvailability` (`full`/`partial`/`missing`) on submitted specs, and a
+   `_normalize_widget_data_availability`/`_normalize_data_availability_value`
+   pass maps the retired `complete`/`unavailable` widget-revision vocabulary to
+   `full`/`missing` before validation, on both the widget-revision-proposal
+   `dataAvailability` field and any `proposedSpec`/`widgetSpec` payload field
+   reaching the router (add/patch widget, add/patch view, layout
+   `add_registered_widget`). New tests:
+   `test_workspace_widget_mutation_requires_and_normalizes_data_availability` and
+   `test_widget_revision_proposal_normalizes_legacy_complete_unavailable_values`.
+3. **Hosted FE deploy gap (execute-plans, cross-repo).** execute-plans PR #302
+   (`40f008252903bbd72d27c079fb74ed3d0c35f941`, merged 2026-07-13T15:38:53Z) adds
+   the FE-side adapter that maps the live `full`/`partial`/`missing` wire values
+   back to the FE's `complete`/`partial`/`unavailable` preview vocabulary and
+   fixes the Winner Branch crash Codex flagged. As of this writing the hosted
+   dev FE manifest is still `3e5177c` (predates PR #302's merge commit
+   `40f0082`); `Pantheon Dev FE Deploy` runs since the merge
+   (`29265519201`, `29268293953`, `29269713560`) all report `skipped` because a
+   plain `dev` push does not auto-trigger a redeploy (only a `publish/v*` cut or
+   a manual `workflow_dispatch` do -- same shared-infra gap recorded earlier in
+   this file). Dispatching that workflow is gated behind human/chair
+   authorization; this remains the one outstanding item this lane cannot
+   self-resolve. Once a redeploy picks up `40f0082` (or later), capture a fresh
+   hosted screenshot of the Winner Branch proposal page to close this item.
+4. **Server-derived literal `full` proof.** The new
+   `test_workspace_proposal_derives_full_from_real_scoped_workshop_session` test
+   asserts `dataAvailability == "full"` for a widget backed by a real
+   `workshop_store` session in the caller's own scope, with no caller-supplied
+   override -- i.e. a genuinely BFF-derived `full`, not a caller-forged one. The
+   prior hosted `full` proof (pre-rename, referenced above) was caller-supplied
+   `dataFreshness`; this in-repo test closes that gap for the derivation logic
+   pending item 3's redeploy for a literal hosted re-capture.
+5. **PR #3519 refreshed.** `task/AG-UIPOL-003` merged current `origin/dev`
+   (commit `47cbab958767d30f3b35165a37a462832df49c40`) on top of the fixes above
+   (`9416c7979`), unblocking the `BEHIND` merge state again.
+
+Re-verified: `python3 -m pytest integrations/openclaw/skills/agora/trading_room_workspace/test_skill.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_locale_contract.py -q` -> 63 passed (was 59; +4 new regression tests); `python3 -m pytest scripts/test_agora_v1_7_bundle.py -q` -> 8 passed (no schema/bundle drift); grep confirms no unconditional `"partial"` default remains.
