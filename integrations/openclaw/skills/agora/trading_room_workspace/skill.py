@@ -188,7 +188,7 @@ def generate_trading_room_workspace_proposal(
     for view in views:
         widget_statuses: list[str] = []
         for widget in view.get("widgets") or []:
-            status = source_statuses.get(str(widget.get("dataSource") or ""), "unavailable")
+            status = source_statuses.get(str(widget.get("dataSource") or ""), "missing")
             widget["dataAvailability"] = status
             widget_statuses.append(status)
         view["dataAvailability"] = _aggregate_availability(widget_statuses)
@@ -397,10 +397,10 @@ def _build_data_availability(
 
 def _aggregate_availability(statuses: Sequence[str]) -> str:
     status_set = set(statuses)
-    if status_set == {"complete"}:
-        return "complete"
-    if not status_set or status_set == {"unavailable"}:
-        return "unavailable"
+    if status_set == {"full"}:
+        return "full"
+    if not status_set or status_set == {"missing"}:
+        return "missing"
     return "partial"
 
 
@@ -411,20 +411,20 @@ def _source_availability(
     data_freshness: Mapping[str, Any],
 ) -> dict[str, str]:
     freshness = data_freshness.get(data_source)
-    status = "unavailable"
+    status = "missing"
     reason_parts: list[str] = []
     if isinstance(freshness, Mapping):
         requested_status = str(freshness.get("status") or freshness.get("state") or "").strip().lower()
         wired = freshness.get("wired")
         row_count = freshness.get("rowCount", freshness.get("row_count"))
         if wired is False or requested_status in {"unavailable", "missing", "not_wired", "not_configured"}:
-            status = "unavailable"
+            status = "missing"
         elif requested_status in {"partial", "degraded", "stale"}:
             status = "partial"
         elif requested_status in {"complete", "full", "healthy", "ok", "read_ok"}:
-            status = "complete"
+            status = "full"
         elif wired is True and isinstance(row_count, int):
-            status = "complete" if row_count > 0 else "partial"
+            status = "full" if row_count > 0 else "partial"
         elif wired is True:
             status = "partial"
         if freshness.get("reason"):

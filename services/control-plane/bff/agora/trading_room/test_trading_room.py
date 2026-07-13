@@ -784,7 +784,7 @@ def test_workspace_proposal_preserves_generator_metadata_on_create_and_get():
         source for source in proposal["dataAvailability"]["sources"]
         if source["dataSource"] == "agora.candidate.members"
     )
-    assert candidate_source["status"] == "complete"
+    assert candidate_source["status"] == "full"
     assert "ev-wb-v4-001" in candidate_source["reason"]
 
     get_resp = client.get(
@@ -814,12 +814,12 @@ def test_workspace_proposal_derives_widget_availability_from_scoped_sources():
     ).json()["data"]
 
     widgets = {widget["id"]: widget for view in proposal["views"] for widget in view["widgets"]}
-    assert widgets["overview_candidate_funnel"]["dataAvailability"] == "complete"
+    assert widgets["overview_candidate_funnel"]["dataAvailability"] == "full"
     assert widgets["overview_strategy_health"]["dataAvailability"] == "partial"
-    assert widgets["migration_branch_network"]["dataAvailability"] == "unavailable"
-    assert widgets["overview_decision_queue"]["dataAvailability"] == "complete"
-    assert widgets["positions_pyramid_plan"]["dataAvailability"] == "complete"
-    assert widgets["evidence_trace"]["dataAvailability"] == "complete"
+    assert widgets["migration_branch_network"]["dataAvailability"] == "missing"
+    assert widgets["overview_decision_queue"]["dataAvailability"] == "full"
+    assert widgets["positions_pyramid_plan"]["dataAvailability"] == "full"
+    assert widgets["evidence_trace"]["dataAvailability"] == "full"
     assert proposal["views"][0]["dataAvailability"] == "partial"
     _workspace_schema_validate(proposal)
 
