@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import fcntl
 import os
 import sys
 from pathlib import Path
@@ -67,16 +68,26 @@ def main() -> int:
     rows = fetch_rows(args.dsn)
     backfill = journey_events_from_telemetry(rows, tenant_id=args.tenant)
     store_path = Path(args.store)
-    existing = load_store_events(store_path)
-    merged = merge_with_store(existing, backfill)
-    journeys = {event.get("journey_id") for event in backfill}
-    print(f"telemetry rows: {len(rows)}; backfill events: {len(backfill)} "
-          f"({len(journeys)} journeys, tenant={args.tenant}); "
-          f"store: {len(existing)} -> {len(merged)} events")
-    if args.dry_run:
-        return 0
-    write_store_atomic(store_path, merged)
-    print(f"wrote {store_path}")
+    lock_path = store_path.with_suffix(".lock")
+    
+    try:
+        store_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "w") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            
+            existing = load_store_events(store_path)
+            merged = merge_with_store(existing, backfill)
+            journeys = {event.get("journey_id") for event in backfill}
+            print(f"telemetry rows: {len(rows)}; backfill events: {len(backfill)} "
+                  f"({len(journeys)} journeys, tenant={args.tenant}); "
+                  f"store: {len(existing)} -> {len(merged)} events")
+            if args.dry_run:
+                return 0
+            write_store_atomic(store_path, merged)
+            print(f"wrote {store_path}")
+    except Exception as exc:
+        print(f"Error executing backfill with lock: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

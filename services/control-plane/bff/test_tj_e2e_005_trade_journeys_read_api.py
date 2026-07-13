@@ -732,17 +732,58 @@ def test_tj_e2e_005_publish_events_appends_and_saves_to_store_file(tmp_path) -> 
             "stage_status": "succeeded",
         }
 
-        # Test validation error (missing required field)
+        # 1. Test authorization check (no header)
+        resp_unauth = client.post("/bff/management/trade-journeys/events", json=[new_event])
+        assert resp_unauth.status_code == 401
+
+        # 2. Test empty batch error
+        resp_empty = client.post("/bff/management/trade-journeys/events", json=[], headers=OPERATOR_HEADERS)
+        assert resp_empty.status_code == 400
+        assert "batch cannot be empty" in resp_empty.text
+
+        # 3. Test validation error (missing required field)
         invalid_event = {**new_event}
         invalid_event.pop("tenant_id")
-        resp_invalid = client.post("/bff/management/trade-journeys/events", json=[invalid_event])
+        resp_invalid = client.post("/bff/management/trade-journeys/events", json=[invalid_event], headers=OPERATOR_HEADERS)
         assert resp_invalid.status_code == 400
         assert "VALIDATION_FAILED" in resp_invalid.text
 
-        # Test successful publish
-        resp = client.post("/bff/management/trade-journeys/events", json=[new_event])
+        # 4. Test validation error (non-timezone-aware timestamp)
+        invalid_ts_event = {**new_event, "occurred_at": "2026-07-12 00:00:00"}
+        resp_invalid_ts = client.post("/bff/management/trade-journeys/events", json=[invalid_ts_event], headers=OPERATOR_HEADERS)
+        assert resp_invalid_ts.status_code == 400
+        assert "must be timezone-aware" in resp_invalid_ts.text
+
+        # 5. Test validation error (conflicting duplicate event in the batch)
+        dup_batch_event_1 = {**new_event, "event_id": "dup-batch"}
+        dup_batch_event_2 = {**new_event, "event_id": "dup-batch", "occurred_at": "2026-07-12T00:05:00Z"}
+        resp_dup_batch = client.post(
+            "/bff/management/trade-journeys/events",
+            json=[dup_batch_event_1, dup_batch_event_2],
+            headers=OPERATOR_HEADERS
+        )
+        assert resp_dup_batch.status_code == 400
+        assert "CONFLICTING_DUPLICATE" in resp_dup_batch.text
+
+        # 6. Test successful publish
+        resp = client.post("/bff/management/trade-journeys/events", json=[new_event], headers=OPERATOR_HEADERS)
         assert resp.status_code == 200, resp.text
         assert resp.json() == {"status": "ok", "count": 1}
+
+        # 7. Test validation error (conflicting duplicate event in the store)
+        conflicting_store_event = {**new_event, "occurred_at": "2026-07-12T00:05:00Z"}
+        resp_store_conflict = client.post(
+            "/bff/management/trade-journeys/events",
+            json=[conflicting_store_event],
+            headers=OPERATOR_HEADERS
+        )
+        assert resp_store_conflict.status_code == 409
+        assert "CONFLICTING_DUPLICATE" in resp_store_conflict.text
+
+        # 8. Test tenant scope rejection (403)
+        tenant_constrained_headers = {"Authorization": "Bearer op-tj-005:operator:tenant-b"}
+        resp_forbidden = client.post("/bff/management/trade-journeys/events", json=[new_event], headers=tenant_constrained_headers)
+        assert resp_forbidden.status_code == 403
 
         # Verify it was saved to the temp file
         content = json.loads(store_file.read_text(encoding="utf-8"))["events"]
