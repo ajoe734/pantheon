@@ -3302,6 +3302,80 @@ def _require_two_man_signature_evidence(
     return signature_id
 
 
+def _require_final_command_confirm_token(
+    *,
+    cmd: OperatorCommand,
+    payload: Dict[str, Any],
+    confirm_token: Optional[str],
+    identity: OperatorIdentity,
+    correlation_id: Optional[str],
+) -> Optional[str]:
+    entry = get_catalog_entry(cmd.command.value)
+    if entry is None or not getattr(entry, "requires_confirm_token", False):
+        return None
+
+    params = dict(cmd.params)
+    token_id = _precondition_value(payload, params, _CONFIRM_TOKEN_FIELDS, confirm_token)
+    if not token_id:
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=428,
+            code=ErrorCode.CONFIRMATION_REQUIRED,
+            message="Confirmation token is required before this action can be accepted",
+            reason="CONFIRM_TOKEN_MISSING",
+            kind="confirm_token",
+            correlation_id=correlation_id,
+            suggestion="Retry with X-Confirm-Token or confirmToken after the operator confirmation step",
+        )
+    token_records = _confirm_token_records(token_id)
+    create_record = next(
+        (
+            record
+            for record in reversed(token_records)
+            if record.get("type") == CommandType.CONFIRM_TOKEN_CREATE.value
+        ),
+        None,
+    )
+    token_state = _confirm_token_lifecycle_payload(token_id)
+    if create_record is None or token_state.get("status") != "created":
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=428,
+            code=ErrorCode.CONFIRMATION_REQUIRED,
+            message="Confirmation token is not valid for this command",
+            reason="CONFIRM_TOKEN_INVALID",
+            kind="confirm_token",
+            correlation_id=correlation_id,
+            suggestion="Issue a fresh confirm token bound to this command, target, and operator",
+            details_extra={"confirmToken": token_id, "tokenStatus": token_state.get("status")},
+        )
+    if not _record_bound_to_command_and_target(create_record, cmd):
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=428,
+            code=ErrorCode.CONFIRMATION_REQUIRED,
+            message="Confirmation token is not bound to this command target",
+            reason="CONFIRM_TOKEN_BINDING_MISMATCH",
+            kind="confirm_token",
+            correlation_id=correlation_id,
+            suggestion="Issue a confirm token for the exact command and target being submitted",
+            details_extra={"confirmToken": token_id},
+        )
+    if not _record_bound_to_caller(create_record, identity):
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=428,
+            code=ErrorCode.CONFIRMATION_REQUIRED,
+            message="Confirmation token is not bound to this operator",
+            reason="CONFIRM_TOKEN_CALLER_MISMATCH",
+            kind="confirm_token",
+            correlation_id=correlation_id,
+            suggestion="Use a confirm token issued for the same authenticated operator",
+            details_extra={"confirmToken": token_id},
+        )
+    return token_id
+
+
 def _require_final_command_preconditions(
     *,
     cmd: OperatorCommand,
@@ -3314,68 +3388,18 @@ def _require_final_command_preconditions(
     if entry is None:
         return {}
 
-    params = dict(cmd.params)
     evidence: Dict[str, str] = {}
-    if getattr(entry, "requires_confirm_token", False):
-        token_id = _precondition_value(payload, params, _CONFIRM_TOKEN_FIELDS, confirm_token)
-        if not token_id:
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=428,
-                code=ErrorCode.CONFIRMATION_REQUIRED,
-                message="Confirmation token is required before this action can be accepted",
-                reason="CONFIRM_TOKEN_MISSING",
-                kind="confirm_token",
-                correlation_id=correlation_id,
-                suggestion="Retry with X-Confirm-Token or confirmToken after the operator confirmation step",
-            )
-        token_records = _confirm_token_records(token_id)
-        create_record = next(
-            (
-                record
-                for record in reversed(token_records)
-                if record.get("type") == CommandType.CONFIRM_TOKEN_CREATE.value
-            ),
-            None,
-        )
-        token_state = _confirm_token_lifecycle_payload(token_id)
-        if create_record is None or token_state.get("status") != "created":
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=428,
-                code=ErrorCode.CONFIRMATION_REQUIRED,
-                message="Confirmation token is not valid for this command",
-                reason="CONFIRM_TOKEN_INVALID",
-                kind="confirm_token",
-                correlation_id=correlation_id,
-                suggestion="Issue a fresh confirm token bound to this command, target, and operator",
-                details_extra={"confirmToken": token_id, "tokenStatus": token_state.get("status")},
-            )
-        if not _record_bound_to_command_and_target(create_record, cmd):
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=428,
-                code=ErrorCode.CONFIRMATION_REQUIRED,
-                message="Confirmation token is not bound to this command target",
-                reason="CONFIRM_TOKEN_BINDING_MISMATCH",
-                kind="confirm_token",
-                correlation_id=correlation_id,
-                suggestion="Issue a confirm token for the exact command and target being submitted",
-                details_extra={"confirmToken": token_id},
-            )
-        if not _record_bound_to_caller(create_record, identity):
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=428,
-                code=ErrorCode.CONFIRMATION_REQUIRED,
-                message="Confirmation token is not bound to this operator",
-                reason="CONFIRM_TOKEN_CALLER_MISMATCH",
-                kind="confirm_token",
-                correlation_id=correlation_id,
-                suggestion="Use a confirm token issued for the same authenticated operator",
-                details_extra={"confirmToken": token_id},
-            )
+    token_id = _require_final_command_confirm_token(
+        cmd=cmd,
+        payload=payload,
+        confirm_token=confirm_token,
+        identity=identity,
+        correlation_id=correlation_id,
+    )
+    if token_id:
         evidence["confirm_token_id"] = token_id
+
+    params = dict(cmd.params)
 
     if getattr(entry, "requires_approval", False):
         approval_decision_id = _precondition_value(payload, params, _APPROVAL_EVIDENCE_FIELDS)
@@ -4210,6 +4234,92 @@ def _stored_command_params(
         }
     )
     return params
+
+
+def _assert_duplicate_confirm_token_matches(
+    *,
+    duplicate: Dict[str, Any],
+    cmd: OperatorCommand,
+    payload: Dict[str, Any],
+    confirm_token: Optional[str],
+    foundation_context: Dict[str, Any],
+) -> None:
+    audit = duplicate.get("audit") if isinstance(duplicate.get("audit"), dict) else {}
+    evidence = (
+        audit.get("precondition_evidence")
+        if isinstance(audit.get("precondition_evidence"), dict)
+        else {}
+    )
+    stored_params = (
+        duplicate.get("params") if isinstance(duplicate.get("params"), dict) else {}
+    )
+    stored_token_id = str(
+        evidence.get("confirm_token_id")
+        or stored_params.get("confirm_token_id")
+        or ""
+    ).strip()
+    if not stored_token_id:
+        return
+    supplied_token_id = _precondition_value(
+        payload,
+        dict(cmd.params),
+        _CONFIRM_TOKEN_FIELDS,
+        confirm_token,
+    )
+    if supplied_token_id == stored_token_id:
+        return
+    raise _foundation_idempotency_conflict_error(
+        foundation_context=foundation_context,
+        existing_command_id=str(duplicate.get("command_id") or ""),
+    )
+
+
+def _persist_admitted_command_with_confirm_token(
+    *,
+    command_id: str,
+    command_type: CommandType,
+    target: TargetObject,
+    submitted_at: str,
+    params: Dict[str, Any],
+    audit_context: Dict[str, Any],
+    foundation_context: Dict[str, Any],
+    precondition_evidence: Dict[str, str],
+    identity: OperatorIdentity,
+) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    token_id = str(precondition_evidence.get("confirm_token_id") or "").strip()
+    if not token_id:
+        return command_store.submit_command_if_no_active_target(
+            command_id=command_id,
+            command_type=command_type,
+            target=target,
+            submitted_at=submitted_at,
+            params=params,
+            audit_context=audit_context,
+            foundation_context=foundation_context,
+        )
+
+    confirmation_id = f"auto-confirm-{command_id}"
+    confirmation_request = {
+        "confirm_token": token_id,
+        "command_id": command_id,
+        "confirmation_id": confirmation_id,
+        "confirmed_by": identity.operator_id,
+    }
+    return command_store.submit_command_with_confirm_token_redeem_if_no_active_target(
+        command_id=command_id,
+        command_type=command_type,
+        target=target,
+        submitted_at=submitted_at,
+        params=params,
+        audit_context=audit_context,
+        foundation_context=foundation_context,
+        confirm_token_id=token_id,
+        confirmation_id=confirmation_id,
+        confirmation_command_id=f"cmd-{uuid.uuid4().hex[:16]}",
+        confirmation_idempotency_key=f"auto-confirm:{command_id}",
+        confirmation_request_hash=_stable_json_hash(confirmation_request),
+        operator_id=identity.operator_id,
+    )
 
 
 def _resolve_execution_params_for_record(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -21346,8 +21456,7 @@ async def submit_command(
         idempotency_key=x_idempotency_key,
     )
 
-    # 2. Command-specific precondition validation (role + params shape)
-    precondition_evidence: Dict[str, str] = {}
+    # 2. Command-specific validation that does not consume mutable evidence.
     try:
         x_idempotency_key = _require_operator_command_idempotency_key(x_idempotency_key)
         _reject_server_managed_rebalance_evidence_command(cmd)
@@ -21359,26 +21468,8 @@ async def submit_command(
         validator = _VALIDATORS.get(cmd.command)
         if validator:
             validator(cmd.params, identity)
-        if cmd.command in {
-            CommandType.APPROVED_APPLY,
-            CommandType.EMERGENCY_CONTAINMENT,
-        }:
-            precondition_evidence = _require_final_command_preconditions(
-                cmd=cmd,
-                payload=payload,
-                confirm_token=x_confirm_token,
-                identity=identity,
-                correlation_id=foundation_context["trace_context"].correlation_id,
-            )
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
-    stored_params["idempotency_key"] = x_idempotency_key
-    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
-    _canonicalize_validated_precondition_evidence(
-        stored_params,
-        precondition_evidence,
-    )
 
     duplicate = command_store.get_command_by_idempotency_key(
         foundation_context["idempotency_record"].idempotency_key,
@@ -21392,6 +21483,13 @@ async def submit_command(
                 existing_command_id=str(duplicate.get("command_id") or ""),
             )
             raise conflict_error
+        _assert_duplicate_confirm_token_matches(
+            duplicate=duplicate,
+            cmd=cmd,
+            payload=payload,
+            confirm_token=x_confirm_token,
+            foundation_context=foundation_context,
+        )
         return _project_command_submission_response(
             command_id=duplicate["command_id"],
             command=cmd.command,
@@ -21399,6 +21497,30 @@ async def submit_command(
             status=CommandStatus(duplicate.get("status") or CommandStatus.SUBMITTED.value),
             staleness_warning=None,
         )
+
+    precondition_evidence: Dict[str, str] = {}
+    if cmd.command in {
+        CommandType.APPROVED_APPLY,
+        CommandType.EMERGENCY_CONTAINMENT,
+    }:
+        try:
+            precondition_evidence = _require_final_command_preconditions(
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                identity=identity,
+                correlation_id=foundation_context["trace_context"].correlation_id,
+            )
+        except HTTPException as exc:
+            raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+
+    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
+    stored_params["idempotency_key"] = x_idempotency_key
+    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
+    _canonicalize_validated_precondition_evidence(
+        stored_params,
+        precondition_evidence,
+    )
 
     # 3. Concurrent modification check (§5.1)
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
@@ -21450,15 +21572,66 @@ async def submit_command(
     if precondition_evidence:
         audit_record["precondition_evidence"] = dict(precondition_evidence)
 
-    record, active_after_precheck = command_store.submit_command_if_no_active_target(
-        command_id=command_id,
-        command_type=cmd.command,
-        target=cmd.target,
-        submitted_at=submitted_at,
-        params=stored_params,
-        audit_context=audit_record,
-        foundation_context=_serialize_foundation_context(foundation_context),
-    )
+    serialized_foundation = _serialize_foundation_context(foundation_context)
+    with command_store.serialized_transaction():
+        duplicate_after_precheck = command_store.get_command_by_idempotency_key(
+            x_idempotency_key,
+            operator_id=identity.operator_id,
+        )
+        if duplicate_after_precheck:
+            duplicate_record = (
+                (duplicate_after_precheck.get("foundation") or {})
+                .get("idempotency_record")
+                or {}
+            )
+            if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
+                raise _foundation_idempotency_conflict_error(
+                    foundation_context=foundation_context,
+                    existing_command_id=str(duplicate_after_precheck.get("command_id") or ""),
+                )
+            _assert_duplicate_confirm_token_matches(
+                duplicate=duplicate_after_precheck,
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                foundation_context=foundation_context,
+            )
+            return _project_command_submission_response(
+                command_id=duplicate_after_precheck["command_id"],
+                command=cmd.command,
+                accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
+                status=CommandStatus(
+                    duplicate_after_precheck.get("status")
+                    or CommandStatus.SUBMITTED.value
+                ),
+                staleness_warning=None,
+            )
+
+        if precondition_evidence.get("confirm_token_id"):
+            try:
+                revalidated_token_id = _require_final_command_confirm_token(
+                    cmd=cmd,
+                    payload=payload,
+                    confirm_token=x_confirm_token,
+                    identity=identity,
+                    correlation_id=foundation_context["trace_context"].correlation_id,
+                )
+            except HTTPException as exc:
+                raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+            if revalidated_token_id:
+                precondition_evidence["confirm_token_id"] = revalidated_token_id
+
+        record, active_after_precheck = _persist_admitted_command_with_confirm_token(
+            command_id=command_id,
+            command_type=cmd.command,
+            target=cmd.target,
+            submitted_at=submitted_at,
+            params=stored_params,
+            audit_context=audit_record,
+            foundation_context=serialized_foundation,
+            precondition_evidence=precondition_evidence,
+            identity=identity,
+        )
     if active_after_precheck:
         error = _bff_error(
             409, ErrorCode.RESOURCE_CONFLICT,
@@ -21526,6 +21699,7 @@ def _submit_final_command_admission(
     x_idempotency_key: Optional[str],
     route: str = _FINAL_COMMAND_ROUTE,
     source_route: Optional[str] = None,
+    foundation_raw_payload: Optional[Dict[str, Any]] = None,
     audit_extra: Optional[Dict[str, Any]] = None,
     extra_precondition: Optional[Callable[[OperatorIdentity, OperatorCommand], None]] = None,
     enqueue: bool = True,
@@ -21543,7 +21717,11 @@ def _submit_final_command_admission(
     foundation_context = _build_foundation_command_context(
         cmd=cmd,
         identity=identity,
-        raw_payload=payload,
+        raw_payload=(
+            foundation_raw_payload
+            if foundation_raw_payload is not None
+            else payload
+        ),
         trace_id=x_trace_id,
         correlation_id=x_correlation_id,
         request_id=x_request_id,
@@ -21552,7 +21730,6 @@ def _submit_final_command_admission(
         source_route=source_route,
     )
 
-    precondition_evidence: Dict[str, str] = {}
     try:
         _reject_body_idempotency_key(payload)
         _reject_server_managed_rebalance_evidence_command(cmd)
@@ -21566,23 +21743,8 @@ def _submit_final_command_admission(
         validator = _VALIDATORS.get(cmd.command)
         if validator:
             validator(cmd.params, identity)
-        precondition_evidence = _require_final_command_preconditions(
-            cmd=cmd,
-            payload=payload,
-            confirm_token=x_confirm_token,
-            identity=identity,
-            correlation_id=foundation_context["trace_context"].correlation_id,
-        )
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-
-    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
-    stored_params["idempotency_key"] = resolved_key
-    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
-    _canonicalize_validated_precondition_evidence(
-        stored_params,
-        precondition_evidence,
-    )
 
     duplicate = command_store.get_command_by_idempotency_key(
         foundation_context["idempotency_record"].idempotency_key,
@@ -21595,6 +21757,13 @@ def _submit_final_command_admission(
                 foundation_context=foundation_context,
                 existing_command_id=str(duplicate.get("command_id") or ""),
             )
+        _assert_duplicate_confirm_token_matches(
+            duplicate=duplicate,
+            cmd=cmd,
+            payload=payload,
+            confirm_token=x_confirm_token,
+            foundation_context=foundation_context,
+        )
         duplicate_status = CommandStatus(
             duplicate.get("status") or CommandStatus.SUBMITTED.value
         )
@@ -21619,6 +21788,25 @@ def _submit_final_command_admission(
             else None,
             deprecation=response_deprecation,
         )
+
+    try:
+        precondition_evidence = _require_final_command_preconditions(
+            cmd=cmd,
+            payload=payload,
+            confirm_token=x_confirm_token,
+            identity=identity,
+            correlation_id=foundation_context["trace_context"].correlation_id,
+        )
+    except HTTPException as exc:
+        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+
+    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
+    stored_params["idempotency_key"] = resolved_key
+    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
+    _canonicalize_validated_precondition_evidence(
+        stored_params,
+        precondition_evidence,
+    )
 
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
     if active:
@@ -21687,15 +21875,69 @@ def _submit_final_command_admission(
     if audit_extra:
         audit_record.update({key: value for key, value in audit_extra.items() if value is not None})
 
-    record, active_after_precheck = command_store.submit_command_if_no_active_target(
-        command_id=command_id,
-        command_type=cmd.command,
-        target=cmd.target,
-        submitted_at=submitted_at,
-        params=stored_params,
-        audit_context=audit_record,
-        foundation_context=_serialize_foundation_context(foundation_context),
-    )
+    serialized_foundation = _serialize_foundation_context(foundation_context)
+    with command_store.serialized_transaction():
+        duplicate_after_precheck = command_store.get_command_by_idempotency_key(
+            resolved_key,
+            operator_id=identity.operator_id,
+        )
+        if duplicate_after_precheck:
+            duplicate_record = (
+                (duplicate_after_precheck.get("foundation") or {})
+                .get("idempotency_record")
+                or {}
+            )
+            if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
+                raise _foundation_idempotency_conflict_error(
+                    foundation_context=foundation_context,
+                    existing_command_id=str(duplicate_after_precheck.get("command_id") or ""),
+                )
+            _assert_duplicate_confirm_token_matches(
+                duplicate=duplicate_after_precheck,
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                foundation_context=foundation_context,
+            )
+            return _project_final_command_response(
+                command_id=duplicate_after_precheck["command_id"],
+                command=cmd.command,
+                accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
+                status=CommandStatus(
+                    duplicate_after_precheck.get("status")
+                    or CommandStatus.SUBMITTED.value
+                ),
+                staleness_warning=None,
+                meta=_command_response_durable_meta(resolved_key, replayed=True)
+                if include_durable_meta
+                else None,
+                deprecation=response_deprecation,
+            )
+
+        try:
+            revalidated_token_id = _require_final_command_confirm_token(
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                identity=identity,
+                correlation_id=foundation_context["trace_context"].correlation_id,
+            )
+        except HTTPException as exc:
+            raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+        if revalidated_token_id:
+            precondition_evidence["confirm_token_id"] = revalidated_token_id
+
+        record, active_after_precheck = _persist_admitted_command_with_confirm_token(
+            command_id=command_id,
+            command_type=cmd.command,
+            target=cmd.target,
+            submitted_at=submitted_at,
+            params=stored_params,
+            audit_context=audit_record,
+            foundation_context=serialized_foundation,
+            precondition_evidence=precondition_evidence,
+            identity=identity,
+        )
     if active_after_precheck:
         error = _bff_error(
             409, ErrorCode.RESOURCE_CONFLICT,
@@ -25316,8 +25558,11 @@ async def bff_apply_rebalance_proposal(
     rebalance = read_store.get_rebalance(rebalance_id)
     if not rebalance:
         raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Rebalance not found", f"Rebalance {rebalance_id} does not exist")
+    live_stages = {"live", "live_candidate", "live_running"}
     increases_live = any(
-        line.get("stage") == "live_running" and float(line.get("target_weight") or 0) > float(line.get("current_weight") or 0)
+        str(line.get("stage") or "").strip().lower() in live_stages
+        and float(line.get("target_weight") or 0)
+        > float(line.get("current_weight") or 0)
         for line in rebalance.get("lines") or []
     )
     approval_ref = str(
@@ -48357,146 +48602,35 @@ async def remediate_v5_intervention(
     routes it through the same admission, idempotency, and audit pipeline as all
     other governed commands.
     """
-    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-
     merged_params = dict(payload)
     merged_params["intervention_id"] = intervention_id
-
-    cmd = OperatorCommand(
-        command=CommandType.REMEDIATE_SENTINEL_INTERVENTION,
-        target=TargetObject(
-            type=ObjectType.SENTINEL_INTERVENTION,
-            id=intervention_id,
-        ),
-        action="remediate_sentinel_intervention",
-        params=merged_params,
-        audit_context=AuditContext(
-            reason=str(payload.get("reason") or "HIQ Sentinel remediation"),
-            incident_id=str(payload.get("incident_id") or "").strip() or None,
-        ),
-    )
-
-    foundation_context = _build_foundation_command_context(
-        cmd=cmd,
-        identity=identity,
-        raw_payload={**payload, "intervention_id": intervention_id},
-        trace_id=x_trace_id,
-        correlation_id=x_correlation_id,
-        request_id=x_request_id,
-        idempotency_key=resolved_key,
-    )
-
-    precondition_evidence: Dict[str, str] = {}
-    try:
-        _reject_body_idempotency_key(payload)
-        _validate_audit_context(cmd)
-        _validate_remediate_sentinel_intervention(merged_params, identity)
-        precondition_evidence = _require_final_command_preconditions(
-            cmd=cmd,
-            payload={**payload, "intervention_id": intervention_id},
-            confirm_token=x_confirm_token,
-            identity=identity,
-            correlation_id=foundation_context["trace_context"].correlation_id,
-        )
-    except HTTPException as exc:
-        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-
-    stored_params = _stored_command_params(cmd, identity)
-
-    duplicate = command_store.get_command_by_idempotency_key(
-        foundation_context["idempotency_record"].idempotency_key,
-        operator_id=identity.operator_id,
-    )
-    if duplicate:
-        duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
-        if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
-            raise _foundation_idempotency_conflict_error(
-                foundation_context=foundation_context,
-                existing_command_id=str(duplicate.get("command_id") or ""),
-            )
-        return _project_final_command_response(
-            command_id=duplicate["command_id"],
-            command=cmd.command,
-            accepted_at=duplicate.get("submitted_at") or utc_now(),
-            status=CommandStatus(duplicate.get("status") or CommandStatus.SUBMITTED.value),
-            staleness_warning=None,
-        )
-
-    active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
-    if active:
-        error = _bff_error(
-            409, ErrorCode.RESOURCE_CONFLICT,
-            "A remediation command is already in flight for this intervention",
-            f"Command {active[0]['command_id']} is currently {active[0]['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete before retrying",
-        )
-        raise _foundation_bff_error(error, foundation_context=foundation_context)
-
-    staleness_warning = _check_read_surface_state()
-
-    command_envelope = foundation_context["command_envelope"]
-    idempotency_record = foundation_context["idempotency_record"]
-    idempotency_record = idempotency_record.with_status(
-        "succeeded",
-        result_ref=f"command:{command_envelope.command_id}",
-    )
-    foundation_context["idempotency_record"] = idempotency_record
-    command_id = command_envelope.command_id
-    submitted_at = utc_now()
-
-    auth_context = _command_runtime_auth_context(
-        command_id=command_id,
-        authorization=authorization,
-        mfa_token=x_mfa_token,
-        identity=identity,
-    )
-
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "mfa_verified": identity.mfa_verified,
-        "reason": cmd.audit_context.reason,
-        "incident_id": cmd.audit_context.incident_id,
-        "preconditions_checked": [
-            "authentication", "authorization", "two_man", "params_shape", "concurrent_safety"
-        ],
-        "timestamp": submitted_at,
-        "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
-        "auth": auth_context,
-        "foundation": _serialize_foundation_context(foundation_context),
+    command_payload = {
+        **payload,
+        "command": CommandType.REMEDIATE_SENTINEL_INTERVENTION.value,
+        "target": {
+            "type": ObjectType.SENTINEL_INTERVENTION.value,
+            "id": intervention_id,
+        },
+        "action": "remediate_sentinel_intervention",
+        "params": merged_params,
+        "audit_context": {
+            "reason": str(payload.get("reason") or "HIQ Sentinel remediation"),
+            "incident_id": str(payload.get("incident_id") or "").strip() or None,
+        },
     }
-    if precondition_evidence:
-        audit_record["precondition_evidence"] = precondition_evidence
-
-    record, active_after_precheck = command_store.submit_command_if_no_active_target(
-        command_id=command_id,
-        command_type=cmd.command,
-        target=cmd.target,
-        submitted_at=submitted_at,
-        params=stored_params,
-        audit_context=audit_record,
-        foundation_context=_serialize_foundation_context(foundation_context),
-    )
-    if active_after_precheck:
-        error = _bff_error(
-            409, ErrorCode.RESOURCE_CONFLICT,
-            "A remediation command is already in flight for this intervention",
-            f"Command {active_after_precheck['command_id']} is currently {active_after_precheck['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete before retrying",
-        )
-        raise _foundation_bff_error(error, foundation_context=foundation_context)
-    assert record is not None
-    background_tasks.add_task(_process_command_stub, command_id)
-
-    return _project_final_command_response(
-        command_id=command_id,
-        command=cmd.command,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
+    return _submit_final_command_admission(
+        background_tasks=background_tasks,
+        payload=command_payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        route=_FOUNDATION_COMMAND_ROUTE,
+        foundation_raw_payload={**payload, "intervention_id": intervention_id},
     )
 
 
@@ -54581,20 +54715,56 @@ def _confirm_token_expiry_from_record(record: Dict[str, Any]) -> Optional[dateti
     return submitted_at + timedelta(seconds=ttl_seconds)
 
 
+def _guarded_command_confirm_token_id(record: Dict[str, Any]) -> Optional[str]:
+    entry = get_catalog_entry(str(record.get("type") or ""))
+    if entry is None or not getattr(entry, "requires_confirm_token", False):
+        return None
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    evidence = (
+        audit.get("precondition_evidence")
+        if isinstance(audit.get("precondition_evidence"), dict)
+        else {}
+    )
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    token_id = str(
+        evidence.get("confirm_token_id")
+        or params.get("confirm_token_id")
+        or ""
+    ).strip()
+    return token_id or None
+
+
 def _confirm_token_lifecycle_payload(token_id: str) -> Dict[str, Any]:
     status = "available"
     expires_at: Optional[datetime] = None
     latest_record: Optional[Dict[str, Any]] = None
-    for record in _confirm_token_records(token_id):
-        record_type = record.get("type")
-        if record_type == CommandType.CONFIRM_TOKEN_CREATE.value:
-            status = "created"
-            expires_at = _confirm_token_expiry_from_record(record)
-        elif record_type == CommandType.CONFIRM_TOKEN_REDEEM.value:
+    for record in command_store._get_all_commands():
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        if (
+            target.get("type") == ObjectType.CONFIRM_TOKEN.value
+            and target.get("id") == token_id
+        ):
+            record_type = record.get("type")
+            if record_type == CommandType.CONFIRM_TOKEN_CREATE.value:
+                status = "created"
+                expires_at = _confirm_token_expiry_from_record(record)
+            elif record_type == CommandType.CONFIRM_TOKEN_REDEEM.value:
+                status = "redeemed"
+            elif record_type == CommandType.CONFIRM_TOKEN_DELETE.value:
+                status = "deleted"
+            latest_record = record
+            continue
+
+        # Before automatic redemption existed, guarded admissions persisted the
+        # validated token id on the command/audit record but did not append a
+        # RedeemConfirmToken record.  Treat that durable admission as consumed
+        # so an upgrade cannot grant the same token one additional use.
+        if (
+            status == "created"
+            and _guarded_command_confirm_token_id(record) == token_id
+        ):
             status = "redeemed"
-        elif record_type == CommandType.CONFIRM_TOKEN_DELETE.value:
-            status = "deleted"
-        latest_record = record
+            latest_record = record
 
     expired = False
     if expires_at is not None and status == "created":
@@ -56650,8 +56820,12 @@ def _management_fleet_autonomy(
     return "manual"
 
 
-def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
-    return _as_float(metrics.get("training_improvement_pct")) / 100.0
+def _training_improvement_delta(metrics: Dict[str, Any]) -> Optional[float]:
+    raw_val = metrics.get("training_improvement_pct")
+    if raw_val is None:
+        return None
+    val = _as_float(raw_val)
+    return val / 100.0
 
 
 _SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
@@ -57263,6 +57437,20 @@ def _build_persona_health_items(
             metadata,
             context_defaults,
         )
+        is_default = persona_id in ("persona-us-equity", "persona-tw-equity", "persona-crypto")
+        if not is_default:
+            keys_to_strip = {
+                "runtime_id", "runtime_binding_id", "legacy_paper_capital_pool_id", "capital_pool_id", "deployment_stage",
+                "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id",
+                "paper_ledger_id", "paperLedgerId", "paper_ledger", "paper_benchmark_budget", "paperBenchmarkBudget", "paper_budget",
+                "league_rank", "rank", "league_score",
+                "review_id", "review_type", "review", "inbox_id", "recommendation", "recommended_governance_action",
+                "ooda_stage", "ooda_status", "ooda",
+                "risk_flags", "risk_level", "violation_count", "risk",
+                "current_work",
+                "performance", "metrics", "pnl", "sharpe", "sortino", "max_drawdown", "win_rate", "trading_cost_bps", "stability_score", "human_interventions", "training_improvement_pct"
+            }
+            context_metadata = {k: v for k, v in context_metadata.items() if k not in keys_to_strip}
         league_entry = league_by_persona.get(persona_id, {})
         league_metrics = (
             league_entry.get("metrics")
@@ -57270,8 +57458,8 @@ def _build_persona_health_items(
             else {}
         )
         performance = (
-            context_metadata.get("performance")
-            if isinstance(context_metadata.get("performance"), dict)
+            metadata.get("performance")
+            if isinstance(metadata.get("performance"), dict)
             else {}
         )
         metrics = {**performance, **league_metrics}
@@ -58150,8 +58338,8 @@ def _project_persona_fleet_list_row(
     raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
     league_metrics = league_entry.get("metrics") if isinstance(league_entry.get("metrics"), dict) else {}
     performance = (
-        context_metadata.get("performance")
-        if isinstance(context_metadata.get("performance"), dict)
+        raw_metadata.get("performance")
+        if isinstance(raw_metadata.get("performance"), dict)
         else {}
     )
     telemetry_rollup = _management_telemetry_rollup(telemetry_summaries)
@@ -58626,6 +58814,20 @@ def _persona_fleet_slim_list_payload(
             raw_metadata,
             context_defaults,
         )
+        is_default = persona_id in ("persona-us-equity", "persona-tw-equity", "persona-crypto")
+        if not is_default:
+            keys_to_strip = {
+                "runtime_id", "runtime_binding_id", "legacy_paper_capital_pool_id", "capital_pool_id", "deployment_stage",
+                "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id",
+                "paper_ledger_id", "paperLedgerId", "paper_ledger", "paper_benchmark_budget", "paperBenchmarkBudget", "paper_budget",
+                "league_rank", "rank", "league_score",
+                "review_id", "review_type", "review", "inbox_id", "recommendation", "recommended_governance_action",
+                "ooda_stage", "ooda_status", "ooda",
+                "risk_flags", "risk_level", "violation_count", "risk",
+                "current_work",
+                "performance", "metrics", "pnl", "sharpe", "sortino", "max_drawdown", "win_rate", "trading_cost_bps", "stability_score", "human_interventions", "training_improvement_pct"
+            }
+            context_metadata = {k: v for k, v in context_metadata.items() if k not in keys_to_strip}
         league_entry = league_by_persona.get(persona_id, {})
         binding = _persona_fleet_first_binding_from_index(persona_id, bindings_by_persona)
         pool_id = (
@@ -58637,28 +58839,63 @@ def _persona_fleet_slim_list_payload(
         )
         declared_runtime_id = str(raw_metadata.get("runtime_id") or "").strip()
         declared_runtime_binding_id = str(raw_metadata.get("runtime_binding_id") or "").strip()
-        runtime = runtime_by_runtime_id.get(declared_runtime_id, {})
-        if not runtime:
-            runtime = runtime_by_binding.get(declared_runtime_binding_id, {})
-        if not runtime:
-            runtime = runtime_by_persona.get(persona_id, {})
-        if not runtime and binding:
-            runtime = runtime_by_binding.get(
-                str(binding.get("binding_id") or binding.get("id") or "").strip(),
-                {},
-            )
-        if not runtime:
-            runtime = runtime_by_pool.get(str(pool_id or ""), {})
+
+        # Resolve all bindings for the persona to match runtimes
+        p_bindings = bindings_by_persona.get(persona_id, [])
+        p_binding_keys = set()
+        for b in p_bindings:
+            for k in ("id", "binding_id", "persona_capital_binding_id"):
+                val = str(b.get(k) or "").strip()
+                if val:
+                    p_binding_keys.add(val)
+        if binding:
+            for k in ("id", "binding_id", "persona_capital_binding_id"):
+                val = str(binding.get(k) or "").strip()
+                if val:
+                    p_binding_keys.add(val)
+
+        # Gather all runtimes associated with this persona (handle multiple runtimes)
+        persona_runtimes = []
+        seen_r_ids = set()
+        for r in runtimes:
+            r_id = str(r.get("runtime_id") or r.get("id") or "").strip()
+            is_associated = (str(r.get("persona_id") or "").strip() == persona_id)
+            if is_associated and r_id and r_id not in seen_r_ids:
+                persona_runtimes.append(r)
+                seen_r_ids.add(r_id)
+
+        # Choose primary runtime for row details based on activity status priority
+        def runtime_priority(rt):
+            status = str(rt.get("status") or "").lower()
+            if status == "running":
+                return 0
+            if status in ("active", "bound"):
+                return 1
+            return 2
+
+        sorted_runtimes = sorted(persona_runtimes, key=runtime_priority)
+        runtime = sorted_runtimes[0] if sorted_runtimes else {}
+
         binding_ids = {
-            str(binding.get("id") or binding.get("binding_id") or "").strip()
+            str(b.get("id") or b.get("binding_id") or "").strip()
+            for b in p_bindings
         }
+        if binding:
+            binding_ids.add(str(binding.get("id") or binding.get("binding_id") or "").strip())
         binding_ids.discard("")
+
         capital_pool_ids = {str(pool_id or "").strip()}
         capital_pool_ids.discard("")
-        runtime_ids = {
-            str(runtime.get("runtime_id") or runtime.get("runtime_binding_id") or runtime.get("id") or "").strip()
-        }
-        runtime_ids.discard("")
+
+        runtime_ids = set()
+        for rt in persona_runtimes:
+            val = str(rt.get("runtime_id") or "").strip()
+            if val:
+                runtime_ids.add(val)
+        if runtime:
+            val = str(runtime.get("runtime_id") or "").strip()
+            if val:
+                runtime_ids.add(val)
         active_incidents = _persona_fleet_active_incidents_for_row(
             incidents=incidents,
             persona_id=persona_id,
