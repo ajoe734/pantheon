@@ -6,8 +6,8 @@ Status: implementation anchored; live dev proof pending
 - Reviewer: Claude
 - Branch: `task/EVOCHAIN-002`
 - PR target: `dev`
-- Activation anchor: `b402ea8be`
-- Deploy-proof anchor: `5adb45937`
+- Implementation anchors: `EVOCHAIN-002: anchor default sweep activation` and
+  `EVOCHAIN-002: anchor dev sweep proof gate`
 
 ## Scope
 
