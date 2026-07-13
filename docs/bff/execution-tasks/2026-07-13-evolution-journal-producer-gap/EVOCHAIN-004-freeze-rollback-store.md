@@ -1,0 +1,112 @@
+# EVOCHAIN-004 — Freeze / Rollback Canonical Store
+
+Status: ready for reviewer handoff
+
+Owner: Codex  
+Reviewer: Claude  
+Branch: `task/EVOCHAIN-004`  
+Merge target: `dev`
+
+## Delivered Contract
+
+The governance service now owns two separate canonical datasets:
+
+| Dataset | Dev/local store | Postgres owner table | Read API |
+|---|---|---|---|
+| Freeze orders | `$GOVERNANCE_DATA_DIR/freeze_orders.json` | `governance.freeze_orders` | `GET /api/governance/freeze-orders[/{id}]` |
+| Rollback request/outcome records | `$GOVERNANCE_DATA_DIR/rollbacks.json` | `governance.rollbacks` | `GET /api/governance/rollbacks[/{id}]` |
+
+List APIs return `200 []` for a healthy empty store. Freeze orders support
+`status` and `scope` filters. Rollbacks support `runtime_id`, `action_type`,
+and `status` filters. Detail reads return `404` for unknown IDs.
+
+The persistence builder follows `GOVERNANCE_STORE_BACKEND=json|postgres`.
+JSON is the dev/local recovery path; enforced staging/production posture uses
+the governance-owned Postgres tables through `PostgresJsonOwnerStore`.
+
+## BFF Read Semantics
+
+`ServiceBackedReadAdapter` registers canonical datasets `freeze_orders` and
+`all_rollbacks`. Both call the governance HTTP service first, using the
+already-deployed `PANTHEON_GOVERNANCE_APPROVAL_API_URL` as a compatible base
+URL fallback. Direct backend-owned store files are a secondary service-store
+path; the BFF-local snapshot is last-resort fallback only.
+
+Truth rules:
+
+- healthy `200 []` -> `source: service_client`, surface `status: ok`
+- healthy populated list -> canonical records, filters and ordering preserved
+- 404/null/non-list payload -> not available; never reported as healthy empty
+- service failure + strict mode -> `source: missing`, `status: unavailable`
+- service failure + fallback enabled -> `source: local_snapshot`, degraded
+
+This makes the Evolution Journal `freeze_orders` and `rollbacks` source
+surfaces `ok` even when the canonical stores contain zero records. When the
+other journal dependencies are also healthy, the composed journal surface is
+`ok` rather than permanently degraded by these two datasets.
+
+## Ownership Boundary
+
+FreezeOrder remains a governance quarantine object. The rollback dataset is a
+canonical request/outcome audit read model; it does not grant governance the
+right to mutate runtime state. The Rollback Controller authors immutable
+rollback requests, and Runtime Manager remains the exclusive writer of
+RuntimeBinding, position ownership, and telemetry cutover.
+
+New rollback records should use the canonical action types `replace`,
+`pause_then_replace`, or `liquidate_then_replace`. Existing seed records are
+passed through for compatibility.
+
+## Changed Scope
+
+- `.orchestrator/task-briefs/evochain_004.md`
+- `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`
+- `services/governance/record_store.py`
+- `services/governance/main.py`
+- `services/governance/contract.md`
+- `services/governance/test_freeze_rollback_store.py`
+- `services/control-plane/bff/read_store.py`
+- `services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py`
+- this task artifact
+
+Anchor commits:
+
+- `d7ee20512` — governance owner-store/read API layer
+- `f455cbb8f` — BFF service-client/surface-truth layer
+
+## Verification
+
+Executed after composing the task branch with the latest `origin/dev`:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q \
+  services/governance/test_freeze_rollback_store.py \
+  services/governance/test_governance_api.py \
+  services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py \
+  services/control-plane/bff/test_read_store_service_clients.py \
+  services/control-plane/bff/test_read_store_bootstrap_snapshot.py \
+  services/control-plane/bff/tests/test_bff_b3_evolution_journal.py \
+  services/control-plane/bff/test_evolution_center_contract.py
+```
+
+Result: `50 passed, 12 warnings in 66.43s`. Warnings are the existing FastAPI
+`on_event` deprecation notices from BFF startup/shutdown registration.
+
+Additional checks:
+
+- `git diff --check` — passed
+- branch reconciliation — `origin/dev` merged cleanly before final validation
+
+## Residual Risks / Follow-up
+
+- `ReadSurfaceStore.get_rollbacks(runtime_id)` and
+  `get_rollbacks_by_incident(incident_id)` still serve their legacy
+  per-runtime/per-incident datasets. This task's accepted scope is the EV-04
+  `list_all_rollbacks` / Evolution Journal path. Owner: control-plane
+  composition review with `EVOCHAIN-005`; expiry: 2026-07-20.
+- The existing `time_range` argument on `list_all_rollbacks` remains a v1
+  deferred no-op. Owner: evolution read-contract follow-up; expiry: when a
+  server-side time-window contract is approved.
+- Hosted dev curl/deployment proof is intentionally deferred to
+  `EVOCHAIN-011`, after `EVOCHAIN-005` adds governed write APIs and records can
+  be produced end-to-end.
