@@ -104,6 +104,17 @@ class TestPersonaCapitalBindingConstruction:
         b = make_binding(role="live_owner", allowed_deployment_scope="live")
         assert b.permits_deployment_to("paper") is False
 
+    def test_scope_ceiling_can_be_checked_before_activation(self):
+        binding = make_binding(role="live_owner", allowed_deployment_scope="canary")
+        assert binding.permits_scope_ceiling("paper") is True
+        assert binding.permits_scope_ceiling("canary") is True
+        assert binding.permits_scope_ceiling("live") is False
+
+    def test_role_ceiling_is_included_in_scope_check(self):
+        binding = make_binding(role="paper_owner", allowed_deployment_scope="paper")
+        assert binding.permits_scope_ceiling("paper") is True
+        assert binding.permits_scope_ceiling("canary") is False
+
     def test_to_dict_roundtrip(self):
         b = make_active_binding(mandate="grow alpha")
         d = b.to_dict()
