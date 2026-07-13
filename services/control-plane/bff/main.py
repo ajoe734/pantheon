@@ -53102,6 +53102,7 @@ def _loop_health_response_meta(
     *,
     health_records_available: bool,
     health_record_count: int,
+    accepted_controller_health_record_count: int,
     health_source: str,
 ) -> Dict[str, Any]:
     meta = dict(payload.get("meta") or {})
@@ -53119,19 +53120,19 @@ def _loop_health_response_meta(
         snapshot_at=snapshot_at,
         source=health_source if health_records_available else "missing",
     )
-    if health_records_available and health_record_count >= item_count:
+    if item_count and accepted_controller_health_record_count >= item_count:
         loop_health_surface = {
             "status": "ok",
             "source": "bff_composed",
             "truth_level": "controller_snapshot",
             "note": "Composed from loop catalog plus controller health records.",
         }
-    elif health_records_available:
+    elif accepted_controller_health_record_count:
         loop_health_surface = {
             "status": "degraded",
             "source": "bff_composed",
             "truth_level": "partial_controller_snapshot",
-            "note": "Some loops lack controller health snapshots; registry metadata remains visible without live liveness claims.",
+            "note": "Some loops lack accepted current controller health records; registry metadata remains visible without live liveness claims.",
             "staleness": {"served_from": "mixed", "last_known_at": snapshot_at},
         }
     else:
@@ -53146,7 +53147,8 @@ def _loop_health_response_meta(
     surfaces["loop_health"] = loop_health_surface
     surfaces["loop_inventory"] = registry_surface
     surfaces["loop_health_snapshots"] = snapshot_surface
-    meta["catalog"] = loop_inventory_meta()
+    catalog_meta = loop_inventory_meta()
+    meta["catalog"] = catalog_meta
     meta["truth_labels"] = truth_label_payload()
     meta["truth_source_policy"] = {
         "accepted_live_source_types": ["live_truth"],
@@ -53155,8 +53157,15 @@ def _loop_health_response_meta(
     }
     meta["coverage"] = {
         "loop_count": item_count,
-        "controller_health_record_count": health_record_count,
+        "canonical_loop_count": catalog_meta["inventory_counts"]["canonical_loop_count"],
+        "composite_overlay_count": catalog_meta["inventory_counts"]["composite_overlay_count"],
+        "inventory_entry_count": catalog_meta["inventory_counts"]["inventory_entry_count"],
+        "controller_health_record_count": accepted_controller_health_record_count,
+        "raw_health_record_count": health_record_count,
         "controller_health_records_available": health_records_available,
+        "accepted_controller_health_records_available": bool(
+            accepted_controller_health_record_count
+        ),
     }
     payload["meta"] = meta
     return payload
@@ -53201,6 +53210,11 @@ async def bff_v5_loop_health(
         payload,
         health_records_available=health_available,
         health_record_count=len(health_records),
+        accepted_controller_health_record_count=sum(
+            1
+            for record in records
+            if (record.get("controller_health") or {}).get("current_record_accepted")
+        ),
         health_source=health_source,
     )
 
@@ -53228,6 +53242,13 @@ async def bff_v5_loop_health_detail(
         payload,
         health_records_available=health_available,
         health_record_count=len(health_records),
+        accepted_controller_health_record_count=(
+            1
+            if ((payload.get("data") or {}).get("controller_health") or {}).get(
+                "current_record_accepted"
+            )
+            else 0
+        ),
         health_source=health_source,
     )
 
