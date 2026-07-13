@@ -1,0 +1,3050 @@
+{
+  "schema_version": 1,
+  "program_id": "loop-product-level-remediation-2026-07-13",
+  "generated_at": "2026-07-13T00:00:00Z",
+  "source_plan": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md",
+  "packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/INDEX.md",
+  "status": "ready_for_dispatch_after_merge",
+  "merge_targets": {
+    "pantheon": "dev",
+    "execute-plans": "dev"
+  },
+  "allowed_owners": [
+    "Codex",
+    "Codex2"
+  ],
+  "terminal_dependency_statuses": [
+    "done"
+  ],
+  "external_dependencies": [
+    "AG-GAP-005",
+    "AG-GAP-013",
+    "AG-GAP-014",
+    "EVOCHAIN-011",
+    "MGMT-SSE-001",
+    "OPENCLAW-CRON-WRITE-SCOPE",
+    "OPENCLAW-PERSONA-CRON-BACKFILL",
+    "OPENCLAW-OODA-PACKET-CLOSURE",
+    "OPS-EP-DEV-MAIN-RECONCILE-001",
+    "PINT-010-R2",
+    "PPL-ALLOC-009",
+    "PPL-ALLOC-010",
+    "PPL-ALLOC-011",
+    "PPL-ALLOC-012",
+    "PPL-ALLOC-013",
+    "TJ-E2E-012",
+    "TJ-E2E-014"
+  ],
+  "universal_non_goals": [
+    "No panel-only closure",
+    "No seed fixture as live proof",
+    "No approval gate bypass",
+    "No synthetic receipt as terminal execution proof",
+    "No live-capital or live-broker side effect"
+  ],
+  "universal_dispatch_rules": [
+    "start only after every dependency is done; superseded does not satisfy a dependency",
+    "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+    "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+    "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+    "deploy and verify exact target identity when the task changes a deployed capability"
+  ],
+  "task_count": 36,
+  "tasks": [
+    {
+      "id": "LOOP-PROD-000",
+      "title": "Canonical loop inventory and OODA overlay truth",
+      "summary_zh": "校正 loop catalog、BFF inventory 與 verification index：維持 12 個 L1 canonical loops，新增 per_persona_ooda 為 composite_overlay 並宣告 composed_of；archived task 不得被投影成 live maturity。",
+      "phase": "Loop Product-Level Remediation / Wave 0",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/deployment/loop-catalog.registry.json",
+        "services/control-plane/bff/loop_inventory.py",
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "docs/04"
+      ],
+      "acceptance": [
+        "catalog contains exactly twelve canonical loops and one composite OODA overlay with composed_of metadata",
+        "verification indexes and tests use the same 12+overlay classification",
+        "archived task completion cannot create controller liveness or maturity",
+        "L1 continuously-resident execution claim remains limited to Capital Pool Execution",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Reconcile the canonical catalog, OODA overlay classification, verification counts, and maturity projection tests.",
+      "wave": 0,
+      "fleet_lane": "loop-inventory-truth",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "registry-only with an unregistered OODA overlay",
+      "target_maturity": "contract",
+      "desired_state_sources": [
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "Pantheon_總索引版系統分析文件.md Per-Persona OODA",
+        "docs/deployment/loop-catalog.registry.json"
+      ],
+      "actual_state_sources": [
+        "/bff/v5/loop-inventory",
+        "/bff/v5/loop-health",
+        "verification index counts",
+        "ai-task-archive task states"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-000.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-001",
+      "title": "Durable controller truth substrate",
+      "summary_zh": "建立 tenant/environment scoped 的 durable controller record store、writer SDK 與 projector，記錄 desired/actual query、lease、dedupe、heartbeat/tick/success/failure/repair、backlog、deployment SHA 與 evidence truth level。",
+      "phase": "Loop Product-Level Remediation / Wave 0",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-000"
+      ],
+      "artifacts": [
+        "services/loop-control",
+        "services/control-plane/bff/loop_inventory.py",
+        "schemas/loop-controller-record.schema.json",
+        "docker-compose.yml"
+      ],
+      "acceptance": [
+        "Postgres-backed records survive worker, BFF, database, and full-stack restart",
+        "stale lease and duplicate writes cannot manufacture accepted liveness",
+        "writer stores exact controller instance, deployment SHA, backlog, lag, DLQ, readback, evidence refs, and freshness",
+        "BFF can query records without falling back to registry metadata",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Implement the durable loop-controller record contract, writer SDK, store, restart proof, and BFF read path.",
+      "wave": 0,
+      "fleet_lane": "controller-truth-store",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "registry-only or process-local controller metadata",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "loop catalog desired_state_sources",
+        "controller-specific desired-state queries",
+        "deployment ownership declarations"
+      ],
+      "actual_state_sources": [
+        "durable controller record store",
+        "controller writer SDK",
+        "downstream authoritative readback queries"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-002",
+      "title": "Product evidence schema and anti-false-close gate",
+      "summary_zh": "建立 machine-readable product evidence schema 與 supervisor closeout guard，拒絕 phantom cross-repo delivery、mock-only live claim、缺 terminal readback/restart/hosted/security/reviewer 或 unsupported maturity。",
+      "phase": "Loop Product-Level Remediation / Wave 0",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-000",
+        "LOOP-PROD-001"
+      ],
+      "artifacts": [
+        "schemas/product-evidence.schema.json",
+        "scripts/loop_done_guardrail.py",
+        "scripts/ai_status.py",
+        "scripts/test_loop_done_guardrail.py",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "guard rejects missing or stale requirement evidence and emits exact blocking requirement IDs",
+        "cross-repo artifact routing and merge-target ancestry are verified before done",
+        "frontend claims require exact hosted desktop/mobile, strict performance, accessibility, and network evidence",
+        "maturity may only be raised from accepted controller truth and reviewed evidence",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Ship the evidence schema, verifier, supervisor done gate integration, and negative regression suite.",
+      "wave": 0,
+      "fleet_lane": "evidence-closeout-guard",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "loop guard checks review_file but not complete product evidence",
+      "target_maturity": "contract",
+      "desired_state_sources": [
+        "master plan product gates G0-G6",
+        "task proof_required and non_goals",
+        "repository delivery gate rules"
+      ],
+      "actual_state_sources": [
+        "checksummed evidence.json manifests",
+        "merged PR and deployment metadata",
+        "controller truth records",
+        "hosted test reports"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-002/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-002.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-AUTH-001",
+      "title": "Strict dev auth cutover and exact BFF build identity",
+      "summary_zh": "沿用既有 /bff/auth/dev-login，將 hosted dev 切到 AUTH_STUB=false/strict；使用短效 role/tenant identities，移除 default all-role bearer，並在 /bff/version 暴露非敏感 git SHA、image digest、build time、environment、config posture。",
+      "phase": "Loop Product-Level Remediation / Wave 0",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-002"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "docker-compose.yml",
+        "deploy",
+        "docs/deployment/bff-strict-auth-build-identity.md",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-001"
+      ],
+      "acceptance": [
+        "hosted BFF runs strict auth with AUTH_STUB=false and rejects fixed or cross-environment identities",
+        "viewer, operator, approver, risk owner, operator A, and operator B use distinct short-lived scoped identities",
+        "anonymous, wrong tenant, missing MFA/approval, same-actor, expired and replayed two-person proofs fail closed",
+        "version endpoint and health evidence identify exact git SHA, image digest, build time, environment, and safe config fingerprint",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Cut hosted dev to governed scoped auth and make exact BFF build/config identity independently verifiable.",
+      "wave": 0,
+      "fleet_lane": "strict-auth-build-identity",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "auth stub and unknown BFF build identity",
+      "target_maturity": "proven-live",
+      "desired_state_sources": [
+        "dev auth deployment configuration",
+        "role/tenant policy",
+        "BFF build metadata supplied by deployment"
+      ],
+      "actual_state_sources": [
+        "/bff/auth/dev-login and /bff/me",
+        "/bff/version",
+        "BFF audit records",
+        "hosted RBAC/MFA/two-person matrix"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-AUTH-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-FE-001",
+      "title": "Gate-before-deploy safe execute-plans release",
+      "summary_zh": "重構 execute-plans dev release：exact candidate SHA integration gate 先通過，candidate pre-probe 後才 atomic switch，post-switch failure 自動 rollback；safe writes default false，browser 不含 bearer/client secret，並拒絕 out-of-order deploy。",
+      "phase": "Loop Product-Level Remediation / Wave 0",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-AUTH-001"
+      ],
+      "artifacts": [
+        "execute-plans/.github/workflows",
+        "execute-plans/scripts",
+        "execute-plans/public/deployment.json",
+        "execute-plans/e2e",
+        "execute-plans/docs/04/loop-product-level"
+      ],
+      "acceptance": [
+        "deployment cannot start until the exact SHA and artifact digest pass required integration checks",
+        "candidate assets, contract, browser, auth, and write posture are probed before live switch",
+        "post-switch failure restores and re-probes the prior SHA; a target-dev rollback drill passes",
+        "older or out-of-order SHA cannot replace a newer accepted release; emergency override is audited and cannot bypass integrity/auth",
+        "manifest shows real and dev-stub writes false by default and bundle/storage contains no bearer or privileged credential",
+        "hosted desktop 1440px and mobile 390px pass axe serious/critical zero, keyboard/focus, reduced motion, FE_INT_GATE_PERF_STRICT=1, and zero unexpected console/CORS/chunk/BFF errors",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Make the exact-SHA gate, candidate probe, atomic switch, rollback, safe auth, and hosted quality checks one fail-closed release path.",
+      "wave": 0,
+      "fleet_lane": "fe-safe-release",
+      "target_repo": "execute-plans",
+      "merge_target": "dev",
+      "loop_ids": [
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "failed post-switch deploy can remain live with unsafe write flags",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "GitHub dev head SHA",
+        "verified immutable frontend artifact",
+        "strict BFF compatibility and auth contract",
+        "previous accepted release"
+      ],
+      "actual_state_sources": [
+        "hosted deployment.json",
+        "release symlink target",
+        "integration-gate run and artifact digest",
+        "post-switch probes and rollback journal"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "execute-plans/docs/04/loop-product-level/LOOP-PROD-FE-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-FE-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-REC-001",
+      "title": "Full-stack loop recovery and fault-injection harness",
+      "summary_zh": "建立可重複的 target-dev recovery harness，在 outbox、downstream mutation、receipt、projection 各切點注入故障，並驗證 duplicate、lease expiry、timeout、worker/BFF/DB/full-stack restart。",
+      "phase": "Loop Product-Level Remediation / Wave 0",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002"
+      ],
+      "artifacts": [
+        "scripts/run_loop_product_recovery_matrix.py",
+        "scripts/test_loop_product_recovery_matrix.py",
+        "services/loop-control",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001"
+      ],
+      "acceptance": [
+        "harness injects failure before/after outbox persist, before/after downstream mutation, after mutation before receipt, and before projection",
+        "admitted commands have RPO=0 and recover within two declared test controller intervals",
+        "duplicates, retries, lease expiry, timeout, replay, and restarts create no duplicate canonical side effect",
+        "production cadence is unchanged and all injected effects remain target-dev/paper only",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Implement the shared failure matrix, deterministic injection points, recovery assertions, and evidence manifest output.",
+      "wave": 0,
+      "fleet_lane": "loop-recovery-harness",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "fragmented restart tests without uniform admitted-command guarantees",
+      "target_maturity": "contract",
+      "desired_state_sources": [
+        "task-specific desired state and admitted commands",
+        "failure matrix",
+        "accelerated test controller interval"
+      ],
+      "actual_state_sources": [
+        "canonical effects and receipts",
+        "controller records and DLQ",
+        "checksummed recovery evidence manifest"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-REC-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-SRC-001",
+      "title": "Source requirement reconciler and default scheduler",
+      "summary_zh": "把 persona/data requirement 當 desired state，預設 supervised reconciler/scheduler 持續建立與修復 connector、schedule，產生真實且有 provenance 的 normalized SourceRecord 與 SourceHealth。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-AUTH-001"
+      ],
+      "artifacts": [
+        "services/source_ingestion",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001"
+      ],
+      "acceptance": [
+        "new and changed requirements idempotently create or update canonical connectors and schedules",
+        "default deployment produces a real normalized record with source provenance and freshness",
+        "missed tick, connector failure, drift, duplicate, and restart paths repair or fail explicitly",
+        "loop health exposes heartbeat, lag, success/failure, deployment identity, and authoritative readback",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Productize requirement-to-record reconciliation with a default supervised scheduler and target-dev recovery proof.",
+      "wave": 1,
+      "fleet_lane": "source-ingestion-controller",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "persona source requirements",
+        "connector and cadence policy"
+      ],
+      "actual_state_sources": [
+        "source connector registry",
+        "schedule store",
+        "normalized SourceRecord store",
+        "SourceHealth and controller records"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-SRC-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-DIST-001",
+      "title": "Durable Strategy Distillation event consumer",
+      "summary_zh": "以 durable SourceRecord inbox/outbox 與預設 worker 擁有 distillation，僅更新 mutable StrategySpec draft head；支援 catch-up、out-of-order、duplicate、DLQ、restart 並保護 approved immutable artifact。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-SRC-001"
+      ],
+      "artifacts": [
+        "services/source_ingestion",
+        "services/research/strategy_spec",
+        "services/research/ingest",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001"
+      ],
+      "acceptance": [
+        "default consumer turns a real eligible SourceRecord into a traceable mutable draft",
+        "duplicate and out-of-order delivery converge to one correct draft head",
+        "catch-up, DLQ/replay, and worker/full-stack restart preserve events and lineage",
+        "approved immutable StrategySpec bytes and hash never change",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Add the durable event consumer, mutable-head write owner, catch-up/replay, immutable protection, and controller truth.",
+      "wave": 1,
+      "fleet_lane": "strategy-distillation-worker",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "strategy_distillation"
+      ],
+      "current_maturity": "api-only worker component",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "eligible normalized SourceRecord events",
+        "distillation policy and mutable draft head"
+      ],
+      "actual_state_sources": [
+        "durable distillation inbox/outbox",
+        "StrategySpec draft and lineage",
+        "approved immutable artifact hash",
+        "controller record"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-DIST-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-ALPHA-001",
+      "title": "Durable Alpha Replication and revalidation worker",
+      "summary_zh": "讓 reviewed immutable StrategySpec 進 durable replication queue，由預設 scheduled/command worker 執行非 stub revalidation，寫入真實 ExperimentRun 與 evidence lineage；production activation 保持 gate-closed。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-DIST-001"
+      ],
+      "artifacts": [
+        "services/research/alpha_replication",
+        "services/research/experiments",
+        "services/research/replication",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001"
+      ],
+      "acceptance": [
+        "scheduled and explicit work share one idempotent queue contract",
+        "real eligible input produces a non-stub ExperimentRun with immutable evidence lineage",
+        "retry, timeout, DLQ/replay, duplicate, stale spec, and restart are proven",
+        "no path activates production without the ordinary immutable approval and deployment gates",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Productize the durable replication queue, default revalidator, real ExperimentRun writeback, and safety/recovery proof.",
+      "wave": 1,
+      "fleet_lane": "alpha-replication-worker",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "alpha_replication"
+      ],
+      "current_maturity": "api-only revalidation logic",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "reviewed immutable StrategySpec snapshots",
+        "replication cadence and experiment policy"
+      ],
+      "actual_state_sources": [
+        "durable replication queue",
+        "ExperimentRun and evidence stores",
+        "controller health and DLQ"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-ALPHA-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-TEACH-001",
+      "title": "Fail-closed Persona Teaching on authoritative data",
+      "summary_zh": "移除 STUB1/STUB2、stub-ref 與 unconditional passed proof；evaluation 讀 canonical versioned dataset、freshness、threshold policy，資料不足即 fail closed，preview worker 預設啟動。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-SRC-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-ALPHA-001"
+      ],
+      "artifacts": [
+        "services/training-session",
+        "services/knowledge/evidence",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001"
+      ],
+      "acceptance": [
+        "no production path references STUB1, STUB2, stub-ref, or manufactures a passing proof",
+        "missing, stale, invalid, or insufficient data cannot pass commit admission",
+        "default worker records dataset, policy, thresholds, metrics, approval, and terminal persona readback",
+        "duplicate job, stale candidate, approval negative, worker restart, and rollback are proven",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Replace stub teaching proof with authoritative versioned data, fail-closed evaluation, default ownership, and terminal readback.",
+      "wave": 1,
+      "fleet_lane": "persona-teaching-worker",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "persona_teaching"
+      ],
+      "current_maturity": "api-only with stub data and auto-pass proof",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "governed teaching request",
+        "canonical dataset version",
+        "threshold and policy version",
+        "approval state"
+      ],
+      "actual_state_sources": [
+        "evaluation metrics and proof",
+        "persona governed target",
+        "training job store",
+        "controller record"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-TEACH-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-AGORA-001",
+      "title": "Durable Agora evidence, dataset, and handoff worker",
+      "summary_zh": "將 interaction、feedback、note、journal、insight 事件送入 tenant-scoped durable inbox，由預設 worker 產生 versioned dataset 與 evidence handoff；只可供 Observe/Learn，不得直接 deploy/trade。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-AUTH-001",
+        "AG-GAP-014"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/knowledge/evidence",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-001"
+      ],
+      "acceptance": [
+        "real interaction/feedback/note/journal/insight events produce versioned tenant-scoped evidence datasets",
+        "default worker is idempotent, restart-safe, replayable, and exposes backlog/DLQ",
+        "target-host Postgres persistence evidence survives full-stack restart",
+        "handoff authority is limited to Observe/Learn and cannot deploy, trade, or promote",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Add the durable Agora evidence worker, versioned dataset/handoff lineage, default deployment, and tenant/recovery proof.",
+      "wave": 1,
+      "fleet_lane": "agora-evidence-worker",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "agora_interaction_evidence"
+      ],
+      "current_maturity": "integrated stores without default evidence handoff owner",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "eligible tenant-scoped Agora interaction events",
+        "dataset extraction and handoff policy"
+      ],
+      "actual_state_sources": [
+        "durable evidence inbox",
+        "versioned datasets and handoffs",
+        "Postgres records",
+        "controller truth"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-AGORA-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-CONS-001",
+      "title": "Real-participant Consultation workflow",
+      "summary_zh": "移除自動製造 committee/memo/recommendation 的成功路徑；只有合格真實 participant/provider-authored transcript、memo 與 review evidence 才能 publish/handoff，provider 不可用時必須 waiting/blocked。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-AGORA-001"
+      ],
+      "artifacts": [
+        "services/consultation",
+        "services/control-plane/bff",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001"
+      ],
+      "acceptance": [
+        "only verifiably eligible participants/providers can author transcript and memo",
+        "unavailable participant/provider remains waiting or blocked and never auto-approves or publishes",
+        "publication and governance handoff require independent review evidence and terminal readback",
+        "default worker proves exactly-once, retry, replay, restart, tenant isolation, and advisory-only authority",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Replace manufactured consultation success with real authorship, reviewed publication, default worker ownership, and failure truth.",
+      "wave": 1,
+      "fleet_lane": "consultation-worker",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "consultation"
+      ],
+      "current_maturity": "api-only workflow can manufacture advisory success",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "submitted consultation request",
+        "eligible participant/provider policy",
+        "review and publication gates"
+      ],
+      "actual_state_sources": [
+        "participant assignment",
+        "authored transcript and memo",
+        "review evidence",
+        "publication/handoff receipt",
+        "controller record"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-CONS-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-AGORA-002",
+      "title": "Implement six deferred Strategy Workshop operations",
+      "summary_zh": "實作 v1.5 六個目前故意 501 的 operations：GET/POST versions、select version、POST research-runs、POST consultations、POST conclude；全部走 canonical store/command 並更新 OpenAPI/bundle/compat manifest。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-ALPHA-001",
+        "AG-GAP-005"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "contracts",
+        "schemas",
+        "docs/contracts/agora",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002"
+      ],
+      "acceptance": [
+        "all six operations perform canonical commands and return terminal authoritative readback instead of 501",
+        "RBAC, MFA, idempotency, stale revision, wrong tenant, and missing approval negatives pass",
+        "OpenAPI, contract bundle, generated hashes, and compatibility manifest are exact and green",
+        "no conclude path directly deploys or trades",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Implement the six canonical operations and close contract, governance, idempotency, and compatibility gaps.",
+      "wave": 1,
+      "fleet_lane": "strategy-workshop-bff",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "agora_interaction_evidence",
+        "consultation",
+        "alpha_replication"
+      ],
+      "current_maturity": "honest fail-closed 501 operations",
+      "target_maturity": "integrated",
+      "desired_state_sources": [
+        "Strategy Workshop v1.5 OpenAPI operations",
+        "version/research/consultation/conclude governance policy"
+      ],
+      "actual_state_sources": [
+        "canonical StrategySpec version store",
+        "ExperimentRun store",
+        "consultation store",
+        "conclusion receipt and audit"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-AGORA-002.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-AGORA-003",
+      "title": "Hosted Strategy Workshop generated client and actions",
+      "summary_zh": "在 execute-plans 更新 exact contract digest/generated client，完成六個 Strategy Workshop actions 的 terminal receipt/refetch、strict-auth desktop/mobile、degraded/error 與 compatibility gate。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-AGORA-002",
+        "LOOP-PROD-FE-001",
+        "AG-GAP-013",
+        "AG-GAP-014",
+        "OPS-EP-DEV-MAIN-RECONCILE-001"
+      ],
+      "artifacts": [
+        "execute-plans/src",
+        "execute-plans/e2e",
+        "execute-plans/docs/contracts/agora",
+        "execute-plans/docs/04/loop-product-level/LOOP-PROD-AGORA-003"
+      ],
+      "acceptance": [
+        "generated client digest exactly matches the deployed Pantheon contract bundle",
+        "all six hosted actions render availability, confirmation, terminal receipt/refetch, denial, stale, loading, empty, degraded, and failure states",
+        "strict-auth desktop/mobile DOM, network, audit, keyboard/focus, accessibility, and performance assertions pass",
+        "deployed exact SHA passes compatibility gate with no mock or snapshot fallback",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Sync the exact contract and prove all six Strategy Workshop operations as hosted strict-auth product actions.",
+      "wave": 1,
+      "fleet_lane": "strategy-workshop-fe",
+      "target_repo": "execute-plans",
+      "merge_target": "dev",
+      "loop_ids": [
+        "agora_interaction_evidence",
+        "consultation",
+        "alpha_replication"
+      ],
+      "current_maturity": "partial UI with deferred backend operations",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "deployed v1.5 contract bundle",
+        "authenticated Strategy Workshop user intent"
+      ],
+      "actual_state_sources": [
+        "generated client calls",
+        "canonical action receipts and refetch",
+        "hosted DOM/network/audit evidence"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "execute-plans/docs/04/loop-product-level/LOOP-PROD-AGORA-003/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-AGORA-003.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-IMIT-001",
+      "title": "Default Human Imitation and shadow evaluation chain",
+      "summary_zh": "讓 scheduler 自動發現合格 governed datasets，執行真實 shadow/OOS evaluator metrics，持久化 immutable candidate 與 lineage；不得靠 empty body，也不得繞過 experiment→approval→deployment。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-AGORA-001",
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-AGORA-002"
+      ],
+      "artifacts": [
+        "services/policy-learning",
+        "services/learning/imitation",
+        "services/research/imitation",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001"
+      ],
+      "acceptance": [
+        "scheduler discovers eligible governed datasets without an empty synthetic request body",
+        "real evaluator metrics and immutable candidate lineage are persisted",
+        "default worker exposes backlog, retry, DLQ, dedupe, restart, and target readback",
+        "production adapters remain disabled until normal experiment, approval, and deployment gates finish",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Productize dataset discovery, real shadow/OOS evaluation, immutable candidate writeback, default ownership, and safety gates.",
+      "wave": 1,
+      "fleet_lane": "imitation-shadow-worker",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "human_imitation_shadow_evaluation"
+      ],
+      "current_maturity": "api-only scheduler/service components",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "eligible governed trace datasets",
+        "shadow/OOS evaluation policy and cadence"
+      ],
+      "actual_state_sources": [
+        "versioned imitation dataset",
+        "evaluation metrics",
+        "immutable candidate and lineage",
+        "controller backlog/DLQ"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-IMIT-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-DEP-001",
+      "title": "Canonical deployment dispatcher and RuntimeBinding readback",
+      "summary_zh": "讓 deployment outbox worker 真正呼叫 runtime_manager_dispatch_adapter/canonical runtime authority，而非 receipt-only；成功前讀回 RuntimeBinding/post-state，支援 retry/DLQ/replay/restart/compensation/kill-wins。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-IMIT-001"
+      ],
+      "artifacts": [
+        "services/deployment",
+        "services/runtime-manager",
+        "services/execution/runtime-manager",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-DEP-001"
+      ],
+      "acceptance": [
+        "default dispatcher calls the canonical runtime authority and persists its terminal receipt",
+        "success requires authoritative RuntimeBinding/post-state readback; submitted is never shown running",
+        "duplicate, downstream-success-before-receipt, timeout, DLQ/replay, restart, compensation, rollback, and kill-wins pass",
+        "unsafe environment, unapproved artifact, missing MFA/two-person, and live-capital attempts fail closed",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Replace receipt-only deployment with canonical target dispatch, binding readback, default service ownership, and recovery/rollback proof.",
+      "wave": 1,
+      "fleet_lane": "deployment-dispatcher",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "promotion_deployment"
+      ],
+      "current_maturity": "api-only receipt consumer without apply side effect",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "approved immutable artifact",
+        "DeploymentPlan and environment policy",
+        "kill/safe-mode state"
+      ],
+      "actual_state_sources": [
+        "durable deployment outbox",
+        "runtime-manager command/receipt",
+        "RuntimeBinding and target post-state",
+        "controller record"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DEP-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-DEP-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-CAP-001",
+      "title": "First-class bounded paper DecisionSignalProducer",
+      "summary_zh": "建立非 SmokeStrategy/手工 script 的 first-class DecisionSignalProducer，發現 eligible paper bindings，攜帶 tenant/persona/binding/runtime/pool identities，確保 exactly-one worker、queue isolation、stop/restart，live broker/capital fail closed。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-REC-001",
+        "TJ-E2E-014"
+      ],
+      "artifacts": [
+        "services/execution/lean_runtime",
+        "services/runtime-manager",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001"
+      ],
+      "acceptance": [
+        "default bounded producer discovers only eligible paper bindings and emits schema-valid identity-complete signals",
+        "one binding has exactly one supervised worker and queues cannot leak across bindings",
+        "real paper signal reaches decision, order, fill, position, heartbeat, stop, and restart readback",
+        "all evidence asserts is_real_order=false and is_real_capital=false; live broker/capital paths remain fail closed",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Ship the first-class paper signal producer, binding discovery, exactly-one ownership, isolation, and full paper event/readback proof.",
+      "wave": 1,
+      "fleet_lane": "paper-signal-runtime",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "capital_pool_execution"
+      ],
+      "current_maturity": "manual signal injection around a partial paper runtime",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "eligible paper RuntimeBinding",
+        "paper signal policy and safe-mode state"
+      ],
+      "actual_state_sources": [
+        "DecisionSignal",
+        "decision/order/fill/position",
+        "worker lease/heartbeat",
+        "binding-scoped queues and controller record"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-CAP-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-TEL-001",
+      "title": "Default telemetry reconciliation and incident chain",
+      "summary_zh": "預設啟動 scheduler、consumer、incident listener，以真實 runtime/operator telemetry 比對 authoritative actual state，產生 DriftReport 與 dedup Incident；不可 empty-green/fixture，需 retry/DLQ/replay/restart/lag truth。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-CAP-001"
+      ],
+      "artifacts": [
+        "services/telemetry",
+        "services/reconciliation-drift",
+        "services/incidents",
+        "services/incident",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001"
+      ],
+      "acceptance": [
+        "default services consume real telemetry and compare non-empty authoritative actual sources",
+        "drift persists a report and one deduplicated incident with shared identity/correlation",
+        "empty or unavailable actual source reports degraded/failure and never green",
+        "retry, DLQ/replay, backlog/lag, incident recovery, worker/DB/full-stack restart, and controller truth pass",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Activate and productize the real telemetry-to-drift-to-incident chain with failure truth and recovery evidence.",
+      "wave": 1,
+      "fleet_lane": "telemetry-reconciliation-controller",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "telemetry_reconciliation"
+      ],
+      "current_maturity": "api-only and opt-in fixture-oriented consumers",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "runtime and deployment desired state",
+        "reconciliation policy and incident thresholds"
+      ],
+      "actual_state_sources": [
+        "durable telemetry",
+        "authoritative runtime/operator state",
+        "DriftReport",
+        "IncidentCase and controller records"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-TEL-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-TEL-002",
+      "title": "Canonical loop-run and Trade Journey lifecycle projector",
+      "summary_zh": "從真實 signal/decision/order/fill/position/reconciliation append events 投影 canonical loop-run 與 Trade Journey；維持單一 identity chain，manual/cron rebuild 只能標示 backfill，不能成為 live truth。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-TEL-001",
+        "TJ-E2E-014"
+      ],
+      "artifacts": [
+        "services/trade_journey",
+        "services/telemetry",
+        "services/control-plane/bff",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-002"
+      ],
+      "acceptance": [
+        "one real paper lifecycle produces one identity-consistent loop-run and multi-stage journey",
+        "projection consumes append-only canonical events, not incident records or manufactured fixtures",
+        "restart, duplicate, out-of-order, backfill, and replay converge without duplicate stages",
+        "manual/cron rebuild is labeled backfill and cannot satisfy live freshness or controller truth",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Build the canonical lifecycle projector and prove identity, freshness, restart, replay, and first-class Journey truth.",
+      "wave": 1,
+      "fleet_lane": "trade-lifecycle-projector",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "telemetry_reconciliation",
+        "capital_pool_execution"
+      ],
+      "current_maturity": "manual/backfill and incident-shadowed journey truth",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "canonical runtime lifecycle event contracts",
+        "journey/loop-run projection policy"
+      ],
+      "actual_state_sources": [
+        "append-only lifecycle events",
+        "loop-run projection",
+        "Trade Journey aggregate",
+        "freshness and projector controller record"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-002/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-TEL-002.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-EVO-001",
+      "title": "Real Evolution target-plane dispatcher",
+      "summary_zh": "approved EvolutionDecision 必須呼叫 canonical governance/deployment/runtime target plane，不得 synthetic SUBMITTED；預設 worker 持久化 terminal receipt、target post-state 與 formal journal link。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "EVOCHAIN-011",
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-TEL-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TEL-002"
+      ],
+      "artifacts": [
+        "services/evolution",
+        "services/governance",
+        "services/deployment",
+        "services/runtime-manager",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-EVO-001"
+      ],
+      "acceptance": [
+        "approved decisions dispatch to the correct canonical authority and read back terminal target state",
+        "SUBMITTED cannot be manufactured without actual delivery; no-op/dry-run use distinct states",
+        "cooldown, singleton, duplicate, retry, DLQ/replay, restart, compensation, and rollback pass",
+        "unauthorized, unapproved, wrong-target, unsafe environment, and live-capital attempts fail closed",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Implement the real evolution dispatcher, target readback, journal linkage, default worker, and governed recovery/rollback paths.",
+      "wave": 1,
+      "fleet_lane": "evolution-target-dispatcher",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "evolution"
+      ],
+      "current_maturity": "api-only with synthetic SUBMITTED result",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "approved EvolutionDecision",
+        "cooldown/singleton policy",
+        "freeze/risk-off/rollback/redeploy governance state"
+      ],
+      "actual_state_sources": [
+        "durable target command",
+        "canonical target-plane receipt/post-state",
+        "formal journal entry",
+        "controller record"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-EVO-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-EVO-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-BFF-001",
+      "title": "Authoritative BFF health monitoring and loop-health projection",
+      "summary_zh": "BFF monitor 使用各 downstream 真實 readiness contract，telemetry 具 canonical identities 並持久化 incident/recovery；/bff/v5/loop-health 讀 controller snapshots，不再 registry-only，清楚區分 stale/snapshot/scheduled/reconciled/live。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-TEL-001",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-EVO-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/bff",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-BFF-001"
+      ],
+      "acceptance": [
+        "each downstream probe follows its actual readiness contract and carries valid tenant/environment/component identity",
+        "probe failure, error-rate degradation, incident, recovery, and freshness transitions are durable",
+        "loop-health returns twelve canonical rows plus OODA overlay with controller records and no registry-only accepted liveness",
+        "outage, stale snapshot, BFF/worker/DB/full-stack restart, RPO, and recovery-time proof pass",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Make BFF and loop health authoritative, durable, identity-correct, and visibly honest across outage and restart.",
+      "wave": 1,
+      "fleet_lane": "bff-health-controller",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "api-only monitor and registry-only loop-health",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "downstream readiness contracts",
+        "loop controller record contract",
+        "monitor policy"
+      ],
+      "actual_state_sources": [
+        "health probes and durable monitor events",
+        "incident/recovery records",
+        "loop controller snapshots",
+        "/bff/v5/loop-health"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-BFF-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-BFF-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-OODA-001",
+      "title": "Per-Persona OODA schedule reconciliation and product proof",
+      "summary_zh": "在既有 cron→provider turn→packet 基礎上，將 eligible persona desired state reconcile 成 exact canonical schedules，修 missing/orphan jobs；一次 run 對應一次 real turn 與一個 packet/terminal failure，Act 只能 proposal。",
+      "phase": "Loop Product-Level Remediation / Wave 1",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-000",
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "OPENCLAW-CRON-WRITE-SCOPE",
+        "OPENCLAW-PERSONA-CRON-BACKFILL",
+        "OPENCLAW-OODA-PACKET-CLOSURE",
+        "LOOP-PROD-BFF-001"
+      ],
+      "artifacts": [
+        "services/control-plane/cron",
+        "services/control-plane/ooda",
+        "services/ooda",
+        "docker-compose.yml",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001"
+      ],
+      "acceptance": [
+        "eligible persona set converges to exactly the canonical cron set and repairs missing/orphan jobs",
+        "one cron run maps to one real provider turn and one packet or explicit terminal failure",
+        "Observe, Orient, Decide, Act-proposal-only, and Learn evidence are linked per persona",
+        "duplicate run, provider outage, orphan repair, worker/full-stack restart, and no direct LEAN/broker call are proven",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Productize the completed cron-to-packet substrate with desired-state reconciliation, overlay health, restart/orphan repair, and safety proof.",
+      "wave": 1,
+      "fleet_lane": "persona-ooda-controller",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "per_persona_ooda"
+      ],
+      "current_maturity": "integrated cron-to-packet substrate without registered/default live truth",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "eligible persona set",
+        "per-persona OODA cadence and provider policy"
+      ],
+      "actual_state_sources": [
+        "canonical cron jobs",
+        "provider turns",
+        "persisted OODA packets",
+        "orphan repair and controller records"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-OODA-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-PER-001",
+      "title": "Persona provisioning through binding and first-evaluation readback",
+      "summary_zh": "persona create 必須保持 provisioning，直到 canonical RuntimeBinding、paper worker 與 first evaluation schedule 全部 read back；使用真實 persona identity，不可 seed binding，失敗需 terminal/restart-safe。",
+      "phase": "Loop Product-Level Remediation / Wave 2",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-OODA-001",
+        "PPL-ALLOC-010",
+        "PPL-ALLOC-011"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/deployment",
+        "services/runtime-manager",
+        "services/control-plane/cron",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001"
+      ],
+      "acceptance": [
+        "create response remains provisioning until binding, worker, and first evaluation schedule are authoritatively read back",
+        "new dynamic persona identity propagates without seed name, pool, binding, or metric substitution",
+        "downstream failure reaches an explicit terminal lifecycle state and survives restart",
+        "duplicate create and retry converge to one persona, one binding, one worker, and one evaluation schedule",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Close create-paper provisioning with canonical binding, worker, first-evaluation schedule, dynamic identity, and terminal failure truth.",
+      "wave": 2,
+      "fleet_lane": "persona-provisioning-path",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "promotion_deployment",
+        "capital_pool_execution",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "partial provisioning with missing first evaluation schedule proof",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "create-paper persona specification",
+        "deployment and evaluation schedule policy"
+      ],
+      "actual_state_sources": [
+        "persona lifecycle state",
+        "RuntimeBinding",
+        "paper worker heartbeat",
+        "first evaluation schedule",
+        "controller records"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-PER-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-TJ-001",
+      "title": "Canonical Trade Journey governed action backend",
+      "summary_zh": "取代 default ACTION_DISPATCH_UNAVAILABLE；pause/cancel/escalate/retry/ack 依 action type 呼叫 canonical authorities，回傳 terminal receipt/refetch，保留 RBAC/MFA/idempotency/stale/live gate/partial failure。",
+      "phase": "Loop Product-Level Remediation / Wave 2",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-TEL-002",
+        "LOOP-PROD-EVO-001",
+        "LOOP-PROD-AUTH-001",
+        "TJ-E2E-014",
+        "LOOP-PROD-PER-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/trade_journey",
+        "services/runtime-manager",
+        "services/evolution",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-TJ-001"
+      ],
+      "acceptance": [
+        "each supported action maps to its canonical authority and returns terminal post-state readback",
+        "ACTION_DISPATCH_UNAVAILABLE is not the production default when the authority is healthy",
+        "RBAC, MFA, idempotency, stale revision, live-action feature gate, wrong tenant, and partial downstream failure pass",
+        "duplicate and downstream-success-before-receipt recovery produce no duplicate effect",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Implement the governed action dispatcher, authority mapping, terminal receipt/refetch, and full safety/recovery matrix.",
+      "wave": 2,
+      "fleet_lane": "trade-journey-actions-be",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution"
+      ],
+      "current_maturity": "default action dispatcher unavailable",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "Trade Journey action intent",
+        "journey revision and governance policy"
+      ],
+      "actual_state_sources": [
+        "canonical authority command",
+        "terminal receipt/post-state",
+        "journey refetch and audit"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TJ-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-TJ-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-TJ-002",
+      "title": "Hosted Trade Journey action controls",
+      "summary_zh": "在 execute-plans 加入 action availability、confirmation、terminal receipt/refetch、authenticated SSE reconnect，以及 partial-source/degraded/error UX；完成 desktop/mobile/a11y/strict auth evidence。",
+      "phase": "Loop Product-Level Remediation / Wave 2",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-TJ-001",
+        "LOOP-PROD-FE-001",
+        "MGMT-SSE-001",
+        "OPS-EP-DEV-MAIN-RECONCILE-001",
+        "LOOP-PROD-AGORA-003"
+      ],
+      "artifacts": [
+        "execute-plans/src",
+        "execute-plans/e2e",
+        "execute-plans/docs/04/loop-product-level/LOOP-PROD-TJ-002"
+      ],
+      "acceptance": [
+        "UI renders only authorized actions with explicit confirmation and terminal receipt/refetch",
+        "SSE reconnect/replay produces no duplicate stage or receipt card",
+        "desktop/mobile prove loading, empty, stale, denied, degraded, partial-source, terminal failure, and success",
+        "strict-auth, tenant, MFA, keyboard/focus, accessibility, performance, and zero unexpected browser/network errors pass",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Build and host the governed Trade Journey controls with terminal truth, resilient SSE, and complete product-state coverage.",
+      "wave": 2,
+      "fleet_lane": "trade-journey-actions-fe",
+      "target_repo": "execute-plans",
+      "merge_target": "dev",
+      "loop_ids": [
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution"
+      ],
+      "current_maturity": "journey UI lacks governed action controls",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "journey action availability contract",
+        "authenticated user intent and revision"
+      ],
+      "actual_state_sources": [
+        "action request/receipt/refetch",
+        "SSE event/replay",
+        "hosted UI states and audit"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "execute-plans/docs/04/loop-product-level/LOOP-PROD-TJ-002/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-TJ-002.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-MAI-001",
+      "title": "Hosted Management AI repair and dev-bridge backend proof",
+      "summary_zh": "在 hosted strict auth 下證明 debug read-only 與 repair 完整鏈：activate→prepare narrow clean worktree→forward metadata→sentinel write/readback→SA/SD→pending packet→supervisor processed receipt→archive→deactivate。",
+      "phase": "Loop Product-Level Remediation / Wave 2",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TJ-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/openclaw-adapter",
+        "scripts/verify_management_ai_repair.py",
+        "scripts/ai_status.py",
+        "docs/operations",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001"
+      ],
+      "acceptance": [
+        "kernel_debug provider work is read-only and repair requires active authorized kernel_repair",
+        "prepare returns a clean narrow task worktree and exact metadata forwarded to the conversation",
+        "harmless in-scope sentinel write/readback, SA/SD generation, pending packet, supervisor processing receipt, and archive all correlate",
+        "dot scope, shared checkout, wrong repo/branch/role/tenant/MFA, duplicate, and post-deactivation writes fail closed",
+        "BFF/adapter/supervisor restart preserves admitted work with RPO=0 and bounded recovery",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Prove the complete hosted Management AI repair and dev-bridge lifecycle with narrow scope, receipts, security negatives, and restart recovery.",
+      "wave": 2,
+      "fleet_lane": "management-ai-repair-be",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "per_persona_ooda",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "component/provider readiness without hosted repair sentinel closure",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "authorized kernel_debug/kernel_repair mode",
+        "declared repo-relative scope and expected branch",
+        "SA/SD generation request"
+      ],
+      "actual_state_sources": [
+        "prepared clean worktree metadata",
+        "OpenClaw conversation and sentinel readback",
+        "dev-bridge packet/receipt",
+        "supervisor archive and mode audit"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-MAI-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-MAI-002",
+      "title": "Hosted Management AI repair product UI",
+      "summary_zh": "在 execute-plans 呈現 mode/readiness、repair metadata、progress、receipt、deactivation與錯誤狀態；browser 不得直接連 OpenClaw，並證明 desktop/mobile/degraded/reconnect/rollback。",
+      "phase": "Loop Product-Level Remediation / Wave 2",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-MAI-001",
+        "LOOP-PROD-FE-001",
+        "MGMT-SSE-001",
+        "OPS-EP-DEV-MAIN-RECONCILE-001",
+        "LOOP-PROD-TJ-002"
+      ],
+      "artifacts": [
+        "execute-plans/src",
+        "execute-plans/e2e",
+        "execute-plans/docs/04/loop-product-level/LOOP-PROD-MAI-002"
+      ],
+      "acceptance": [
+        "UI uses only Pantheon BFF routes and never exposes a direct browser OpenClaw endpoint or credential",
+        "mode activation, preparation metadata, progress, receipt, archive, deactivation, denial, and failure states are truthful",
+        "authenticated desktop/mobile, SSE reconnect/replay, degraded behavior, rollback, a11y, strict performance, and browser/network assertions pass",
+        "hosted FE and BFF exact identities match the backend evidence chain",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Deliver the BFF-mediated Management AI repair UX and prove the whole hosted state, error, reconnect, and rollback matrix.",
+      "wave": 2,
+      "fleet_lane": "management-ai-repair-fe",
+      "target_repo": "execute-plans",
+      "merge_target": "dev",
+      "loop_ids": [
+        "per_persona_ooda",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "partial Management AI UI without hosted repair closure",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "BFF mode/readiness/repair contracts",
+        "authorized user intent"
+      ],
+      "actual_state_sources": [
+        "BFF-mediated progress and receipts",
+        "SSE reconnect/replay",
+        "hosted UI and audit evidence"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "execute-plans/docs/04/loop-product-level/LOOP-PROD-MAI-002/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-MAI-002.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-VERIFY-KNOW-001",
+      "title": "Target-dev Knowledge spine product verifier",
+      "summary_zh": "在 clean target-dev 驗證 Scenario A：real source→schedule→SourceRecord→distillation draft→reviewed replication→ExperimentRun→teaching/consultation/evidence handoff，含 duplicate/source/provider failure/restart/immutable protection。",
+      "phase": "Loop Product-Level Remediation / Wave 2",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-SRC-001",
+        "LOOP-PROD-DIST-001",
+        "LOOP-PROD-ALPHA-001",
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-AGORA-001",
+        "LOOP-PROD-AGORA-002",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-IMIT-001",
+        "LOOP-PROD-BFF-001"
+      ],
+      "artifacts": [
+        "scripts/verify_loop_product_knowledge_spine.py",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-KNOW-001"
+      ],
+      "acceptance": [
+        "one dynamic run traverses every Scenario A canonical authority with shared lineage",
+        "duplicate, source failure, provider unavailable, stale draft, immutable protection, DLQ/replay, and restart assertions pass",
+        "all segment controller records are fresh and match terminal canonical readbacks",
+        "verifier emits a checksummed machine evidence manifest and safe cleanup instructions",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Run and archive the complete target-dev Knowledge spine product drill with failure and recovery branches.",
+      "wave": 2,
+      "fleet_lane": "verify-knowledge-spine",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation"
+      ],
+      "current_maturity": "component/integrated fragments",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "Scenario A run specification",
+        "dynamic persona/source/provider identities"
+      ],
+      "actual_state_sources": [
+        "canonical source, draft, experiment, teaching, consultation, dataset/handoff records",
+        "controller truth for every segment"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-KNOW-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-VERIFY-KNOW-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-VERIFY-EXEC-001",
+      "title": "Target-dev Execution spine product verifier",
+      "summary_zh": "在 clean target-dev 驗證 Scenario B：create→plan→binding→worker→signal/decision/order/fill/position→telemetry/Journey→incident/postmortem/evolution→real target command，含 stack restart/isolation/rollback/no-live-capital。",
+      "phase": "Loop Product-Level Remediation / Wave 2",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-PER-001",
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-TEL-001",
+        "LOOP-PROD-TEL-002",
+        "LOOP-PROD-EVO-001",
+        "LOOP-PROD-BFF-001",
+        "PPL-ALLOC-012"
+      ],
+      "artifacts": [
+        "scripts/verify_loop_product_execution_spine.py",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001"
+      ],
+      "acceptance": [
+        "one dynamic persona completes the full canonical Scenario B identity chain",
+        "full-stack restart, duplicate command, binding isolation, stop, timeout, DLQ/replay, rollback, and degraded behavior pass",
+        "evolution ends at a real governed target post-state, not SUBMITTED",
+        "all orders and capital are paper/dev with explicit false real-order and real-capital assertions",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Run and archive the full target-dev paper Execution spine, recovery matrix, isolation, rollback, and no-live-capital proof.",
+      "wave": 2,
+      "fleet_lane": "verify-execution-spine",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "partial paper runtime with manual gaps",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "Scenario B dynamic create-paper specification",
+        "safe paper signal and evolution policies"
+      ],
+      "actual_state_sources": [
+        "persona, plan, binding, worker, lifecycle events, telemetry, journey, incident, postmortem, evolution command/post-state"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-VERIFY-EXEC-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-VERIFY-HUMAN-001",
+      "title": "Target-dev Human interaction and learning verifier",
+      "summary_zh": "驗證 Scenario C：interaction→durable evidence→dataset/handoff→consultation或shadow evaluation→human decision→journal/OODA Learn；涵蓋 tenant/provider/unauthorized/rejected proposal 與 no direct deploy/trade。",
+      "phase": "Loop Product-Level Remediation / Wave 2",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-AGORA-001",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-IMIT-001",
+        "PINT-010-R2"
+      ],
+      "artifacts": [
+        "scripts/verify_loop_product_human_spine.py",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-HUMAN-001"
+      ],
+      "acceptance": [
+        "one dynamic interaction produces tenant-scoped evidence, governed learning/consultation, human decision, journal, and Learn linkage",
+        "provider unavailable, wrong tenant, unauthorized identity, rejected proposal, duplicate, and restart paths pass",
+        "no evidence, consultation, imitation, or OODA path directly deploys or trades",
+        "hosted and backend identities, receipts, controller truth, and evidence manifest correlate",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Run and archive the Human interaction and learning product scenario with governance, rejection, tenant, and recovery branches.",
+      "wave": 2,
+      "fleet_lane": "verify-human-learning",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "cross-service fragments without one target-host proof",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "Scenario C dynamic interaction and reviewer identities",
+        "learning and consultation governance policy"
+      ],
+      "actual_state_sources": [
+        "evidence/dataset/handoff",
+        "consultation/shadow result",
+        "human decision",
+        "journal and Learn attribution"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-HUMAN-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-VERIFY-HUMAN-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-VERIFY-OODA-001",
+      "title": "Multi-persona OODA overlay product verifier",
+      "summary_zh": "至少以三個動態 persona 各自完成 real OODA packet chain，驗證 duplicate cron、orphan repair、restart、provider outage、Learn attribution，並確認 Act 僅 proposal、無直接執行。",
+      "phase": "Loop Product-Level Remediation / Wave 2",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-OODA-001",
+        "LOOP-PROD-VERIFY-KNOW-001",
+        "LOOP-PROD-VERIFY-EXEC-001",
+        "LOOP-PROD-MAI-001"
+      ],
+      "artifacts": [
+        "scripts/verify_loop_product_persona_ooda.py",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-OODA-001"
+      ],
+      "acceptance": [
+        "at least three personas independently close real Observe/Orient/Decide/Act-proposal/Learn packet chains",
+        "duplicate cron, orphan repair, worker/full-stack restart, provider outage, and replay preserve exactly-once packet identity",
+        "Learn evidence remains attributed to the correct persona without seed substitution",
+        "Act produces only a governed proposal and no direct LEAN, broker, capital, or deployment mutation",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Run the multi-persona OODA overlay drill and archive independence, repair, outage, restart, attribution, and proposal-only proof.",
+      "wave": 2,
+      "fleet_lane": "verify-persona-ooda",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "per_persona_ooda"
+      ],
+      "current_maturity": "single-path integrated proof",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "three eligible dynamic personas and OODA schedules",
+        "provider and proposal-only policy"
+      ],
+      "actual_state_sources": [
+        "canonical cron jobs/runs",
+        "provider turns",
+        "OODA packets",
+        "Learn evidence and controller records"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-OODA-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-VERIFY-OODA-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-PPL-001",
+      "title": "Persona promotion and allocation product closeout",
+      "summary_zh": "消費既有 PPL-ALLOC-009..013，不重建；彙整 real attribution、ranking snapshot join、terminal allocation與 authoritative weights/restart、first evaluation schedule、legitimate two-man containment post-state、hosted create/paper/review/allocation UX。",
+      "phase": "Loop Product-Level Remediation / Wave 3",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "PPL-ALLOC-009",
+        "PPL-ALLOC-010",
+        "PPL-ALLOC-011",
+        "PPL-ALLOC-012",
+        "PPL-ALLOC-013",
+        "LOOP-PROD-PER-001",
+        "LOOP-PROD-VERIFY-EXEC-001",
+        "LOOP-PROD-FE-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/closeout/PPL",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-PPL-001"
+      ],
+      "acceptance": [
+        "all five existing PPL dependencies are done with evidence and none is replaced by weaker proof",
+        "one dynamic persona joins real attribution, ranking snapshot, terminal weights, and first evaluation schedule",
+        "two legitimate distinct operators admit containment and terminal safe post-state survives restart",
+        "strict-auth hosted desktop/mobile create, paper, review, real allocation, denial, degraded, and rollback evidence correlates to exact deployments",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Produce the superseding PPL product evidence packet only after every existing dependency and terminal product path passes.",
+      "wave": 3,
+      "fleet_lane": "closeout-persona-allocation",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "active PPL tasks with unresolved terminal readback and schedule evidence",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "PPL product specification and active task acceptance",
+        "dynamic persona/pool/allocation intent"
+      ],
+      "actual_state_sources": [
+        "attribution, ranking snapshot, allocation proposal/approval/apply/readback",
+        "evaluation schedule",
+        "containment signatures/post-state",
+        "hosted evidence"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PPL-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-PPL-001.md",
+      "requires_human_ops_signoff": true
+    },
+    {
+      "id": "LOOP-PROD-TJ-003",
+      "title": "Trade Journey superseding product closeout",
+      "summary_zh": "保留已完成 TJ-E2E-012 為舊 evidence，不重開；以 TJ-E2E-014、新 canonical projector/actions/UI 與 execution verifier 產生新的 product closeout。",
+      "phase": "Loop Product-Level Remediation / Wave 3",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "TJ-E2E-012",
+        "TJ-E2E-014",
+        "LOOP-PROD-TJ-001",
+        "LOOP-PROD-TJ-002",
+        "LOOP-PROD-VERIFY-EXEC-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/closeout/TRADE-JOURNEY",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-TJ-003"
+      ],
+      "acceptance": [
+        "one real paper trade forms one canonical correlated multi-stage journey without manual live backfill",
+        "governed actions, replay, restart, SSE reconnect, partial-source, data-quality, and terminal failure pass",
+        "strict-auth desktop/mobile evidence identifies exact deployed FE/BFF SHAs",
+        "closeout explicitly supersedes only the product claim, not historical TJ-E2E-012 records",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Archive the new Trade Journey product closeout after producer, lifecycle truth, actions, hosted UX, and recovery all pass.",
+      "wave": 3,
+      "fleet_lane": "closeout-trade-journey",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution"
+      ],
+      "current_maturity": "prior closeout predates producer/action gaps",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "Trade Journey product specification",
+        "one dynamic paper lifecycle and governed action matrix"
+      ],
+      "actual_state_sources": [
+        "canonical journey stages",
+        "action receipts/readback",
+        "SSE replay",
+        "data quality and hosted evidence"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TJ-003/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-TJ-003.md",
+      "requires_human_ops_signoff": true
+    },
+    {
+      "id": "LOOP-PROD-PINT-001",
+      "title": "Persona Interaction reconciled hosted product closeout",
+      "summary_zh": "只透過 OPS-EP-DEV-MAIN-RECONCILE-001→PINT-010-R2 收斂；以 exact reconciled/deployed commit、green integration gate，驗證 consultation/disagreement/revision/paper validation/journal/audit/degraded+rollback desktop/mobile。",
+      "phase": "Loop Product-Level Remediation / Wave 3",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "OPS-EP-DEV-MAIN-RECONCILE-001",
+        "PINT-010-R2",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-VERIFY-HUMAN-001",
+        "LOOP-PROD-FE-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/closeout/PERSONA-INTERACTION",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-PINT-001"
+      ],
+      "acceptance": [
+        "branch reconciliation and PINT-010-R2 are done with a green exact-SHA integration gate",
+        "hosted flow proves consultation, disagreement, proposal revision, paper validation, journal reflection, and audit readback",
+        "desktop/mobile strict-auth, denial, degraded, restart/reconnect, and rollback pass",
+        "no main-only or non-hosted commit is presented as deployed dev evidence",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Close Persona Interaction only from the reconciled dev commit and complete hosted product evidence.",
+      "wave": 3,
+      "fleet_lane": "closeout-persona-interaction",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "agora_interaction_evidence",
+        "consultation",
+        "persona_teaching"
+      ],
+      "current_maturity": "blocked on branch reconciliation and hosted proof",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "PINT feature chain and reconciled execute-plans dev commit",
+        "authenticated interaction scenario"
+      ],
+      "actual_state_sources": [
+        "deployed exact FE/BFF identities",
+        "consultation/disagreement/revision/validation/journal/audit records",
+        "hosted evidence"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PINT-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-PINT-001.md",
+      "requires_human_ops_signoff": true
+    },
+    {
+      "id": "LOOP-PROD-MAI-003",
+      "title": "Management AI/OpenClaw product closeout",
+      "summary_zh": "彙整 exact BFF/FE SHAs、repair sentinel、SA/SD→task→supervisor receipts、debug/repair security negatives、restart/rollback 與 residual risk，形成 Management AI product closeout。",
+      "phase": "Loop Product-Level Remediation / Wave 3",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-MAI-001",
+        "LOOP-PROD-MAI-002",
+        "LOOP-PROD-VERIFY-OODA-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/closeout/MANAGEMENT-AI",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-003"
+      ],
+      "acceptance": [
+        "exact deployed BFF and FE identities match the successful hosted repair chain",
+        "sentinel, SA/SD, task packet, pending/processed receipts, task archive, and deactivation correlate",
+        "read-only debug and repair security negative matrix passes before and after deactivation",
+        "restart, RPO/recovery, degraded, rollback, cleanup, and residual risks are independently reviewed",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Publish the Management AI product closeout only after the complete hosted repair, UI, security, restart, and rollback evidence passes.",
+      "wave": 3,
+      "fleet_lane": "closeout-management-ai",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "per_persona_ooda",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "component readiness without full hosted closeout",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "Management AI/OpenClaw product runbook",
+        "authorized debug and repair scenarios"
+      ],
+      "actual_state_sources": [
+        "mode/worktree/conversation/sentinel/dev-bridge/supervisor receipts",
+        "hosted UI evidence",
+        "security and rollback records"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-003/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-MAI-003.md",
+      "requires_human_ops_signoff": true
+    },
+    {
+      "id": "LOOP-PROD-CLOSE-001",
+      "title": "Global 12-loop plus OODA product closeout",
+      "summary_zh": "從 clean target-dev 重跑四大 scenarios；12 canonical loops 加 OODA overlay 全部要有 current controller records、無 registry-only truth，maturity 僅由 evidence 推導，並取得獨立 Human/Ops verdict。",
+      "phase": "Loop Product-Level Remediation / Wave 4",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-VERIFY-KNOW-001",
+        "LOOP-PROD-VERIFY-EXEC-001",
+        "LOOP-PROD-VERIFY-HUMAN-001",
+        "LOOP-PROD-VERIFY-OODA-001",
+        "LOOP-PROD-PPL-001",
+        "LOOP-PROD-TJ-003",
+        "LOOP-PROD-PINT-001",
+        "LOOP-PROD-MAI-003"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/closeout",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-CLOSE-001"
+      ],
+      "acceptance": [
+        "all primary dependencies and required external dependencies are done, never superseded to a weaker outcome",
+        "clean target-dev rerun passes Knowledge, Execution, Human Interaction, and Management Repair scenarios",
+        "twelve canonical loop rows plus OODA overlay have fresh controller records and no accepted registry-only/snapshot/seed truth",
+        "exact PR, checks, merge SHAs, FE/BFF/image identities, evidence checksums, reviewer verdicts, and residual risks are archived",
+        "independent Human/Ops accepts zero unresolved blocking product risk; otherwise the program remains active",
+        "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+        "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+        "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+        "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+        "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+        "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+      ],
+      "next": "Run the clean global product drill, reconcile evidence-derived maturity, obtain Human/Ops review, and close only with zero blocking product gaps.",
+      "wave": 4,
+      "fleet_lane": "global-loop-product-closeout",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "program planning baseline",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "master plan exit criteria",
+        "all primary and external task evidence",
+        "clean target-dev scenario specifications"
+      ],
+      "actual_state_sources": [
+        "controller truth for 12 canonical loops and OODA overlay",
+        "four scenario evidence manifests",
+        "PPL/TJ/PINT/MAI closeouts",
+        "exact release identities and Human/Ops verdict"
+      ],
+      "proof_required": [
+        "focused and adjacent local validation",
+        "merged PR and merge SHA",
+        "target deployment identity where applicable",
+        "canonical request, receipt, and terminal downstream readback correlation",
+        "duplicate and restart/recovery evidence",
+        "failure, degraded, rollback or compensation evidence",
+        "security negative evidence and independent review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+        "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+        "deploy and verify exact target identity when the task changes a deployed capability"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CLOSE-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-CLOSE-001.md",
+      "requires_human_ops_signoff": true
+    }
+  ]
+}

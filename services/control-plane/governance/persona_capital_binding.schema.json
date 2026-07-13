@@ -24,6 +24,11 @@
       "type": "string",
       "description": "The capital pool being bound to."
     },
+    "capital_sleeve_id": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Durable allocation-sleeve identity within the capital pool."
+    },
     "role": {
       "type": "string",
       "enum": ["advisor", "paper_owner", "live_owner"],

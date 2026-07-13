@@ -48,3 +48,22 @@ Screenshot: [AG-UIPOL-003-hosted-proposal.png](./AG-UIPOL-003-hosted-proposal.pn
 - unconditional-partial grep gate -> no matches in the workspace route/generator
 - focused execute-plans Vitest -> 107 passed
 - execute-plans production Vite build -> passed with pre-existing bundle/CSS warnings
+
+## Follow-up: enum vocabulary aligned to spec (2026-07-13)
+
+The proof run above still shows the BFF returning `complete` / `unavailable`
+(the FE mapped these to the `full` / `missing` labels the screenshot shows).
+That is a schema-vocabulary gap against the task spec, which calls for the
+BFF to emit `full` / `partial` / `missing` directly. A follow-up pass renamed
+the `dataAvailability` enum end-to-end (schema, generator, router validator,
+and both test suites) from `complete`/`unavailable` to `full`/`missing`,
+fixed `agora.strategy.summary` to only claim a strategy is present when a
+`workshop_store` positively confirms it (defaulting to present when no
+`workshop_store` is wired, instead of always claiming present), and made
+every known-but-unwired source (`agora.candidate.members`,
+`winner_branch.*`, `agora.positions.summary`, `agora.shadow.outcomes`)
+explicitly report `wired: false` rather than relying on silent absence.
+No FE-side re-verification was needed: the wire values change, the FE
+labels do not.
+
+Re-verified: `python3 -m pytest integrations/openclaw/skills/agora/trading_room_workspace/test_skill.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_locale_contract.py -q` -> 59 passed; `grep -n '"partial"' integrations/openclaw/skills/agora/trading_room_workspace/skill.py services/control-plane/bff/agora/trading_room/router.py` shows only conditional derivation branches and the enum validator, no unconditional default.
