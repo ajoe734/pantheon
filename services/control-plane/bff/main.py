@@ -23402,6 +23402,7 @@ def _capital_bff_action_command(
     identity: Any,
     payload: Dict[str, Any],
     command_type: CommandType,
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> Dict[str, Any]:
     """Submit a resource action through the command store and return the receipt."""
     request_hash = _stable_json_hash({
@@ -23459,10 +23460,17 @@ def _capital_bff_action_command(
         command_type=command_type,
         target=target,
         submitted_at=submitted_at,
-        params={"action_id": action_id, **payload},
+        params={
+            "entity_type": entity_type.value,
+            "entity_id": entity_id,
+            "action_id": action_id,
+            **payload,
+        },
         audit_context=audit_record,
         foundation_context=foundation_ctx,
     )
+    if background_tasks is not None:
+        background_tasks.add_task(_process_command_stub, command_id)
     result = _project_final_command_response(
         command_id=command_id,
         command=command_type,
@@ -24066,6 +24074,7 @@ async def bff_create_rebalance(
 @app.post("/bff/rebalances/{rebalance_id}/apply", status_code=202)
 async def bff_apply_rebalance_proposal(
     rebalance_id: str,
+    background_tasks: BackgroundTasks,
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -24093,6 +24102,7 @@ async def bff_apply_rebalance_proposal(
         identity=identity,
         payload={**payload, "approval_ref": approval_ref, "rollback_target": rebalance.get("rollback_target")},
         command_type=CommandType.REBALANCE_ACTION,
+        background_tasks=background_tasks,
     )
 
 
