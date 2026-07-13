@@ -35,6 +35,8 @@ class CommandType(str, Enum):
     EXECUTE_EVOLUTION_ACTION = "ExecuteEvolutionAction"
     APPROVE_MUTATION = "ApproveMutation"
     REJECT_MUTATION = "RejectMutation"
+    REVIEW_MUTATION = "ReviewMutation"
+    EXECUTE_MUTATION = "ExecuteMutation"
     RECORD_SPONSOR_DECISION = "RecordSponsorDecision"
     REMEDIATE_SENTINEL_INTERVENTION = "RemediateSentinelIntervention"
     CAPITAL_POOL_ACTION = "CapitalPoolAction"
@@ -254,6 +256,26 @@ class ApproveMutationCommandPayload(BaseModel):
 class RejectMutationCommandPayload(BaseModel):
     command_type: Literal["RejectMutation"]
     decision_id: str
+    note: Optional[str] = None
+
+
+class ReviewMutationCommandPayload(BaseModel):
+    command_type: Literal["ReviewMutation"]
+    decision_id: str
+    approval_decision_id: str
+    note: Optional[str] = None
+
+
+class ExecuteMutationCommandPayload(BaseModel):
+    command_type: Literal["ExecuteMutation"]
+    decision_id: str
+    has_active_runtime: bool = False
+    active_binding_id: Optional[str] = None
+    freeze_mode: str = "governance_only"
+    rollback_action_type: Optional[str] = None
+    fallback_artifact_id: Optional[str] = None
+    fallback_artifact_version: Optional[str] = None
+    force_stage_freeze: bool = False
     note: Optional[str] = None
 
 

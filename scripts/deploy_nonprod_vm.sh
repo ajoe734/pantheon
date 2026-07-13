@@ -869,10 +869,47 @@ REMOTE_DB
 dump_dev_root_failure_diagnostics() {
   info "dev root compose ps after failure"
   docker compose -p pantheon -f docker-compose.yml ps || true
+  info "evolution daily sweep scheduler logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 evolution-daily-sweep-scheduler || true
   info "operator-bff logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 operator-bff || true
   info "postgres logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 postgres || true
+}
+
+verify_dev_evolution_daily_sweep() {
+  local compose=(docker compose -p pantheon -f docker-compose.yml)
+  local attempt
+  local logs=""
+  local status=""
+
+  for attempt in $(seq 1 30); do
+    logs="$("${compose[@]}" logs --no-color --since=10m evolution-daily-sweep-scheduler 2>&1 || true)"
+    if printf '%s\n' "$logs" | grep -Fq '"tick":'; then
+      status="$(curl -fsS http://127.0.0.1:18093/api/evolution/sweep-status 2>/dev/null || true)"
+      if python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+assert payload.get("last_success_at")
+assert int(payload.get("total_sweeps_run") or 0) >= 1
+' "$status" 2>/dev/null; then
+        info "evolution daily sweep scheduler emitted a successful tick"
+        printf '%s\n' "$logs"
+        info "evolution daily sweep status"
+        printf '%s\n' "$status"
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+
+  info "evolution daily sweep scheduler did not emit a successful tick"
+  "${compose[@]}" ps -a evolution evolution-daily-sweep-scheduler || true
+  printf '%s\n' "$logs"
+  printf '%s\n' "$status"
+  return 1
 }
 
 docker_storage_diagnostics() {
@@ -970,6 +1007,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    verify_dev_evolution_daily_sweep \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     # Prove the Trade Journey action ledger is genuinely durable on the dev
     # PostgreSQL instance and that clock-drift diagnostics survive the built

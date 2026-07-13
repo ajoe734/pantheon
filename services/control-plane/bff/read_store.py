@@ -11187,7 +11187,57 @@ class ReadSurfaceStore:
                 bindings_by_id,
                 ["runtime_id", "runtime_binding_id", "binding_id", "id"],
             )
-        bindings = [binding for key, binding in bindings_by_id.items() if key]
+        persona_by_capital_binding_id = {
+            str(binding.get("binding_id") or binding.get("id") or "").strip(): str(
+                binding.get("persona_id") or ""
+            ).strip()
+            for binding in self.list_bindings(
+                include_market_persona_defaults=include_market_persona_defaults,
+            )
+            if str(binding.get("binding_id") or binding.get("id") or "").strip()
+            and str(binding.get("persona_id") or "").strip()
+        }
+        persona_by_runtime_id: Dict[str, str] = {}
+        persona_by_declared_runtime_binding_id: Dict[str, str] = {}
+        for persona in self.list_personas(
+            include_market_persona_defaults=include_market_persona_defaults,
+        ):
+            persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+            if not persona_id:
+                continue
+            metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+            runtime_id = str(
+                metadata.get("runtime_id") or persona.get("runtime_id") or ""
+            ).strip()
+            runtime_binding_id = str(
+                metadata.get("runtime_binding_id")
+                or persona.get("runtime_binding_id")
+                or ""
+            ).strip()
+            if runtime_id:
+                persona_by_runtime_id[runtime_id] = persona_id
+            if runtime_binding_id:
+                persona_by_declared_runtime_binding_id[runtime_binding_id] = persona_id
+        bindings = []
+        for key, binding in bindings_by_id.items():
+            if not key:
+                continue
+            projected = json.loads(json.dumps(binding))
+            if not str(projected.get("persona_id") or "").strip():
+                persona_binding_id = str(
+                    projected.get("persona_capital_binding_id")
+                    or projected.get("binding_id")
+                    or ""
+                ).strip()
+                runtime_id = str(projected.get("runtime_id") or "").strip()
+                persona_id = (
+                    persona_by_capital_binding_id.get(persona_binding_id)
+                    or persona_by_runtime_id.get(runtime_id)
+                    or persona_by_declared_runtime_binding_id.get(persona_binding_id)
+                )
+                if persona_id:
+                    projected["persona_id"] = persona_id
+            bindings.append(projected)
         if deployment_mode:
             bindings = [
                 b for b in bindings

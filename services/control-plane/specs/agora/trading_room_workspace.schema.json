@@ -103,7 +103,7 @@
         "widgetCount": {"type": "integer", "minimum": 0},
         "rationale": {"type": "string"},
         "rationaleKey": {"type": "string", "minLength": 1},
-        "dataAvailability": {"enum": ["complete", "partial", "unavailable"]},
+        "dataAvailability": {"enum": ["full", "partial", "missing"]},
         "warnings": {
           "type": "array",
           "items": {"type": "string"}
@@ -150,7 +150,7 @@
           "minLength": 1,
           "description": "Logical allowlisted data-source ID; arbitrary URLs are forbidden."
         },
-        "dataAvailability": {"enum": ["complete", "partial", "unavailable"]},
+        "dataAvailability": {"enum": ["full", "partial", "missing"]},
         "query": {
           "type": "object",
           "required": ["filters"],
@@ -203,7 +203,7 @@
       "type": "object",
       "required": ["status", "sources"],
       "properties": {
-        "status": {"enum": ["complete", "partial", "unavailable"]},
+        "status": {"enum": ["full", "partial", "missing"]},
         "sources": {
           "type": "array",
           "items": {
@@ -211,7 +211,7 @@
             "required": ["dataSource", "status"],
             "properties": {
               "dataSource": {"type": "string", "minLength": 1},
-              "status": {"enum": ["complete", "partial", "unavailable"]},
+              "status": {"enum": ["full", "partial", "missing"]},
               "reasonCode": {"type": "string", "minLength": 1},
               "reason": {"type": "string"}
             },
@@ -288,7 +288,7 @@
           "type": "array",
           "items": {"type": "string"}
         },
-        "dataAvailability": {"enum": ["complete", "partial", "unavailable"]},
+        "dataAvailability": {"enum": ["full", "partial", "missing"]},
         "status": {"enum": ["preview", "accepted", "rejected", "superseded"]}
       },
       "additionalProperties": false
