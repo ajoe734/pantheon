@@ -67,8 +67,18 @@ def main(argv: list[str] | None = None) -> int:
     agent = derive_agent(args.run_id)
     task_id = derive_task_id(command)
 
-    heartbeat_path = Path(args.heartbeat_path)
-    status_path = Path(args.status_path)
+    heartbeat_path = Path(args.heartbeat_path).resolve()
+    status_path = Path(args.status_path).resolve()
+
+    workspace_path = os.environ.get("PANTHEON_WORKTREE_ROOT") or os.environ.get("ORCH_WORKSPACE_PATH")
+    if workspace_path:
+        workspace_path = Path(workspace_path).resolve()
+        try:
+            os.chdir(workspace_path)
+            print(f"worker_runner: isolated working directory to {workspace_path}", file=sys.stderr)
+        except OSError as exc:
+            print(f"worker_runner: failed to isolate working directory to {workspace_path}: {exc}", file=sys.stderr)
+
     interval = max(1.0, float(args.heartbeat_interval_seconds or 15.0))
     started_at = utc_now()
     child: subprocess.Popen[str] | None = None
@@ -119,7 +129,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         publish("starting")
-        child = subprocess.Popen(command, text=True)
+        child = subprocess.Popen(
+            command,
+            text=True,
+            cwd=str(workspace_path) if workspace_path else None,
+        )
         status["child_pid"] = child.pid
         publish("running")
         next_heartbeat = time.monotonic() + interval
