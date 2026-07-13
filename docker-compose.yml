@@ -1306,6 +1306,9 @@ services:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
       INCIDENT_DATA_DIR: /data/incidents
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
+      POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-json}
     volumes:
       - evolution-data:/data/evolution
       - incident-data:/data/incidents

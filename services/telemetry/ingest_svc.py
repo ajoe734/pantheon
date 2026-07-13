@@ -257,6 +257,7 @@ class TelemetryIngestService:
         binding_store: Optional[RuntimeBindingProtocol] = None,
         runtime_summary_store: Optional[RuntimeSummaryProjectionStore] = None,
         trade_episode_projection_store: Optional[TradeEpisodeProjectionStore] = None,
+        lineage_write_store: Optional[Any] = None,
         dedup_max_size: int = 500_000,
         replay_dlq_on_start: bool = False,
         dlq_replay_tag_filter: Optional[str] = None,
@@ -297,6 +298,13 @@ class TelemetryIngestService:
         runtime_summary_store : RuntimeSummaryProjectionStore, optional
             Telemetry-owned read model updated after validated paper telemetry
             is accepted, used by the BFF runtime-state surfaces.
+        lineage_write_store : LineageReadService, optional
+            LIN-003 live lineage write path. When provided, every accepted
+            event (and its resolved RuntimeBinding, if not already a graph
+            node) is admitted into this lineage graph immediately, so the
+            deployed lineage read surface resolves newly-ingested events
+            without waiting for a static corpus reload. Failures here are
+            logged and never fail the ingest call.
         dedup_max_size : int
             Maximum number of event_ids tracked for idempotent deduplication.
             When exceeded, the oldest half of tracked IDs are evicted.
@@ -345,6 +353,7 @@ class TelemetryIngestService:
         self._binding_store = binding_store
         self._runtime_summary_store = runtime_summary_store
         self._trade_episode_projection_store = trade_episode_projection_store
+        self._lineage_write_store = lineage_write_store
 
         # Write function
         self._write_fn = write_fn or self._default_write_fn
@@ -427,7 +436,9 @@ class TelemetryIngestService:
         except jsonschema.SchemaError as e:
             return False, f"Schema error: {e.message}"
 
-    def _validate_evidence_contract(self, event: dict[str, Any]) -> tuple[bool, Optional[str]]:
+    def _validate_evidence_contract(
+        self, event: dict[str, Any]
+    ) -> tuple[bool, Optional[str], Optional[Any]]:
         """
         Validate TEL-001A evidence contract (E-1 through E-6).
 
@@ -435,44 +446,46 @@ class TelemetryIngestService:
         authoritative RuntimeBinding record and all identity fields plus the
         temporal window are cross-checked.
 
-        Returns (valid, error_message).
+        Returns (valid, error_message, binding). ``binding`` is the resolved
+        RuntimeBinding record (or None) so callers with a lineage_write_store
+        (LIN-003) can admit it without a second authoritative lookup.
         """
         event_type = event.get("event_type")
         if event_type in TRADE_JOURNAL_EVENT_TYPES:
-            return True, None
+            return True, None, None
 
         # E-1: Minimal binding identity (field presence)
         binding_id = event.get("binding_id")
         if not binding_id:
-            return False, "Missing binding_id (Evidence E-1)"
+            return False, "Missing binding_id (Evidence E-1)", None
 
         required_identity = ["runtime_id", "capital_pool_id", "artifact_id", "artifact_version"]
         missing = [f for f in required_identity if not event.get(f)]
         if missing:
-            return False, f"Missing binding identity fields: {missing} (Evidence E-1)"
+            return False, f"Missing binding identity fields: {missing} (Evidence E-1)", None
 
         # E-2: Deployment stage and execution mode proof (field presence + enum)
         deployment_stage = event.get("deployment_stage")
         if not deployment_stage or deployment_stage not in ("paper", "canary", "live", "frozen"):
-            return False, f"Invalid deployment_stage: {deployment_stage} (Evidence E-2)"
+            return False, f"Invalid deployment_stage: {deployment_stage} (Evidence E-2)", None
         execution_mode = event.get("execution_mode")
         if not execution_mode or execution_mode not in ("paper", "canary", "live", "frozen"):
-            return False, f"Invalid execution_mode: {execution_mode} (Evidence E-2)"
+            return False, f"Invalid execution_mode: {execution_mode} (Evidence E-2)", None
         if execution_mode != deployment_stage:
             return False, (
                 f"execution_mode/deployment_stage mismatch: execution_mode {execution_mode!r} must match deployment_stage "
                 f"{deployment_stage!r} (Evidence E-2)"
-            )
+            ), None
 
         # E-3: Governance admissibility
         if not event.get("plan_id") or not event.get("persona_capital_binding_id"):
-            return False, "Missing governance admissibility fields (Evidence E-3)"
+            return False, "Missing governance admissibility fields (Evidence E-3)", None
 
         # E-5: Rollback lineage consistency
         rollback_parent = event.get("rollback_parent")
         rollback_action_type = event.get("rollback_action_type")
         if (rollback_parent is not None) != (rollback_action_type is not None):
-            return False, "rollback_parent and rollback_action_type must both be set or both absent (Evidence E-5)"
+            return False, "rollback_parent and rollback_action_type must both be set or both absent (Evidence E-5)", None
 
         # --- RuntimeBinding authoritative cross-validation (requires binding_store) ---
         if self._binding_store is not None:
@@ -481,7 +494,7 @@ class TelemetryIngestService:
                 return False, (
                     f"binding_id {binding_id!r} not found in RuntimeBinding store — "
                     f"event cannot be attributed to an authoritative binding (Evidence E-1)"
-                )
+                ), None
 
             # E-1 cross-check: all identity fields must match the canonical binding
             identity_fields = (
@@ -504,7 +517,7 @@ class TelemetryIngestService:
                 return False, (
                     f"RuntimeBinding identity mismatch for {binding_id!r}: "
                     f"{'; '.join(mismatches)} (Evidence E-1)"
-                )
+                ), None
 
             # E-2 cross-check: deployment_stage must equal binding.deployment_mode
             binding_mode = getattr(binding, "deployment_mode", None)
@@ -512,13 +525,13 @@ class TelemetryIngestService:
                 return False, (
                     f"deployment_stage {deployment_stage!r} does not match binding "
                     f"deployment_mode {binding_mode!r} (Evidence E-2)"
-                )
+                ), None
             binding_execution_mode = getattr(binding, "execution_mode", None) or binding_mode
             if execution_mode != binding_execution_mode:
                 return False, (
                     f"execution_mode {execution_mode!r} does not match binding "
                     f"execution_mode {binding_execution_mode!r} (Evidence E-2)"
-                )
+                ), None
 
             # E-4: Temporal window — event.created_at must fall within
             # [binding.effective_at, binding.retired_at]
@@ -530,14 +543,16 @@ class TelemetryIngestService:
                 return False, (
                     f"Event created_at {event_ts!r} precedes binding effective_at "
                     f"{effective_at!r} — temporal violation (Evidence E-4)"
-                )
+                ), None
             if event_ts and retired_at and event_ts > retired_at:
                 return False, (
                     f"Event created_at {event_ts!r} is after binding retired_at "
                     f"{retired_at!r} — temporal violation (Evidence E-4)"
-                )
+                ), None
 
-        return True, None
+            return True, None, binding
+
+        return True, None, None
 
     async def ingest(self, event: dict[str, Any], timeout: Optional[float] = None) -> bool:
         """
@@ -584,7 +599,7 @@ class TelemetryIngestService:
             return False
 
         # 2. Evidence contract validation (field presence + RuntimeBinding cross-check)
-        valid, error_msg = self._validate_evidence_contract(event)
+        valid, error_msg, resolved_binding = self._validate_evidence_contract(event)
         if not valid:
             # Classify the tag based on the error type
             err_lower = error_msg.lower()
@@ -631,6 +646,12 @@ class TelemetryIngestService:
                 self._runtime_summary_store.project_event(event)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Runtime summary projection failed for event %s: %s", event_id, exc)
+
+        if self._lineage_write_store is not None:
+            try:
+                self._lineage_write_store.admit_telemetry_event(event, resolved_binding)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Lineage live-write admission failed for event %s: %s", event_id, exc)
 
         if self._trade_episode_projection_store is not None:
             has_episode = (

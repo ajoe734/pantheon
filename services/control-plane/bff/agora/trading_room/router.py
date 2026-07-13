@@ -460,6 +460,29 @@ def _normalize_widget_data_availability(widget: Dict[str, Any]) -> None:
         widget["dataAvailability"] = _normalize_data_availability_value(widget["dataAvailability"])
 
 
+def _normalize_views_legacy_data_availability(views: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Migrate persisted pre-rename complete/unavailable dataAvailability values
+    to full/missing wherever a raw store record surfaces them (workspace load,
+    version rollback), so legacy records don't 422 on unrelated mutations that
+    revalidate the whole view."""
+    for view in views:
+        if "dataAvailability" in view:
+            view["dataAvailability"] = _normalize_data_availability_value(view["dataAvailability"])
+        for widget in view.get("widgets") or []:
+            _normalize_widget_data_availability(widget)
+    return views
+
+
+def _normalize_revision_proposal_legacy_data_availability(proposal: Dict[str, Any]) -> Dict[str, Any]:
+    if "dataAvailability" in proposal:
+        proposal["dataAvailability"] = _normalize_data_availability_value(proposal["dataAvailability"])
+    for spec_key in ("beforeSpec", "proposedSpec"):
+        spec = proposal.get(spec_key)
+        if isinstance(spec, dict):
+            _normalize_widget_data_availability(spec)
+    return proposal
+
+
 def _stable_hash(payload: Any) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
@@ -954,14 +977,16 @@ def _workspace_data_freshness(
     tenant_id: str,
     user_id: str,
     workshop_store: Optional[Any] = None,
+    assessed_at: str = "",
 ) -> Dict[str, Any]:
     """Combine caller source-health evidence with locally queryable surfaces.
 
-    The three keys the BFF can verify itself (decision events, evidence refs,
-    and workshop-store strategy summary) are always assigned from that local
-    truth, never from ``reported`` -- a caller cannot forge ``full`` for a
-    surface the BFF already knows how to check. Sources the BFF has no local
-    signal for still take the caller-reported value via ``setdefault``.
+    Every key in the result is assigned from local BFF truth, never from
+    ``reported`` -- a caller cannot forge ``full``/``partial`` for any
+    source. Sources this deployment has no local verification path for
+    (workshop store unwired, or one of the nine source families the BFF
+    does not query at all) are conservatively reported as ``missing``
+    rather than trusting caller-supplied health.
     """
     resolved = copy.deepcopy(reported)
     events = store.list_decision_events(page_size=10_000).get("items") or []
@@ -976,30 +1001,98 @@ def _workspace_data_freshness(
         "rowCount": len(strategy_events),
         "reason": "scoped TradingRoomStore decision-event query",
     }
-    resolved["agora.research.evidence_refs"] = {
-        "wired": True,
-        "rowCount": len(evidence_refs),
-        "reason": "workspace generation evidence refs",
-    }
-    has_strategy = True
+    has_ready_strategy = False
+    verified_evidence_ref_ids: Optional[set] = None
     if workshop_store is not None and hasattr(workshop_store, "list_sessions"):
-        has_strategy = False
-        try:
-            sessions, _ = workshop_store.list_sessions(
-                user_id=user_id,
-                tenant_id=tenant_id,
-                status=None,
-                limit=100,
+        verified_evidence_ref_ids = set()
+        matched_sessions: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        # Page through every session in scope and collect every session that
+        # matches this strategy_id -- a matching session may not be on the
+        # first page, and the caller's own strategy may have more than one
+        # session (e.g. an older non-ready session alongside a newer ready
+        # one), so stopping at the first match found can hide a later ready
+        # session behind an earlier non-ready one.
+        for _ in range(1000):  # hard bound against a runaway/looping cursor
+            try:
+                page, cursor = workshop_store.list_sessions(
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                    status=None,
+                    cursor=cursor,
+                    limit=100,
+                )
+            except Exception:
+                page, cursor = [], None
+            matched_sessions.extend(
+                session
+                for session in page
+                if str(session.get("strategy_id") or "").strip() == strategy_id
             )
-            if any(str(s.get("strategy_id") or "").strip() == strategy_id for s in sessions):
-                has_strategy = True
-        except Exception:
-            pass
+            if not cursor:
+                break
+        for matched_session in matched_sessions:
+            workshop_id = str(matched_session.get("workshop_id") or "")
+            if not workshop_id:
+                continue
+            readiness: Optional[Dict[str, Any]] = (
+                workshop_store.get_latest_readiness_assessment(workshop_id)
+                if hasattr(workshop_store, "get_latest_readiness_assessment")
+                else None
+            )
+            if not isinstance(readiness, dict) and (
+                hasattr(workshop_store, "list_events")
+                and hasattr(workshop_store, "get_latest_completeness_snapshot")
+            ):
+                from ..strategy_workshop.router import _build_readiness_assessment
+
+                try:
+                    readiness = _build_readiness_assessment(
+                        session=matched_session,
+                        events=workshop_store.list_events(workshop_id),
+                        snapshot=workshop_store.get_latest_completeness_snapshot(workshop_id),
+                        assessed_at=assessed_at,
+                        assessment_version=1,
+                    )
+                except Exception:
+                    readiness = None
+            if isinstance(readiness, dict) and _gate_state(readiness, "trading_room") == "ready":
+                has_ready_strategy = True
+                for ref in readiness.get("evidence_refs") or []:
+                    if isinstance(ref, dict):
+                        ref_id = str(ref.get("ref_id") or "").strip()
+                        if ref_id:
+                            verified_evidence_ref_ids.add(ref_id)
+                break
     resolved["agora.strategy.summary"] = {
-        "wired": True,
-        "rowCount": 1 if has_strategy else 0,
-        "reason": "ready StrategySpec version used for workspace generation",
+        "wired": workshop_store is not None,
+        "rowCount": 1 if has_ready_strategy else 0,
+        "reason": (
+            "ready StrategySpec version (trading_room gate ready) used for workspace generation"
+            if workshop_store is not None
+            else "workshop store not wired in current BFF deployment; readiness cannot be verified"
+        ),
     }
+    if verified_evidence_ref_ids is None:
+        # workshop_store isn't wired in this deployment at all -- there is no
+        # local signal to cross-check evidence refs against, so this source
+        # is conservatively unverified rather than trusting the
+        # caller-supplied evidence_refs count (same posture as the nine
+        # unwired sources below).
+        resolved["agora.research.evidence_refs"] = {
+            "wired": False,
+            "rowCount": 0,
+            "reason": "workshop store not wired in current BFF deployment; evidence refs cannot be verified",
+        }
+    else:
+        verified_count = sum(
+            1 for ref in evidence_refs if str(ref).strip() in verified_evidence_ref_ids
+        )
+        resolved["agora.research.evidence_refs"] = {
+            "wired": True,
+            "rowCount": verified_count,
+            "reason": "workspace generation evidence refs verified against the scoped ready readiness assessment",
+        }
     all_known_sources = {
         "agora.candidate.members",
         "winner_branch.score_breakdown",
@@ -1012,14 +1105,15 @@ def _workspace_data_freshness(
         "agora.shadow.outcomes",
     }
     for source in all_known_sources:
-        resolved.setdefault(
-            source,
-            {
-                "wired": False,
-                "rowCount": 0,
-                "reason": f"source {source} is not wired in current BFF deployment",
-            }
-        )
+        # The BFF has no local query path for any of these sources today --
+        # always report them as unverified/missing regardless of what the
+        # caller claims, rather than trusting a caller-forged `wired`/
+        # `rowCount` via setdefault.
+        resolved[source] = {
+            "wired": False,
+            "rowCount": 0,
+            "reason": f"source {source} is not wired in current BFF deployment",
+        }
     return resolved
 
 
@@ -1577,6 +1671,15 @@ def _apply_workspace_layout_ops(
                 errors.append(f"operations[{index}].payload.widgetSpec must be an object")
                 continue
             _normalize_widget_data_availability(widget_spec)
+            widget_errors = _validate_widget(
+                widget_spec,
+                now=now,
+                path=f"operations[{index}].payload.widgetSpec",
+                require_data_availability=True,
+            )
+            if widget_errors:
+                errors.extend(widget_errors)
+                continue
             target_view.setdefault("widgets", []).append(widget_spec)
 
         elif op_name == "replace_chart_spec":
@@ -1756,7 +1859,9 @@ def create_trading_room_router(
         scope = _workspace_scope(identity)
         if not _record_visible_to_scope(record, scope):
             _raise_workspace_forbidden("workspace", workspace_id)
-        return record["workspace"], scope
+        workspace = record["workspace"]
+        _normalize_views_legacy_data_availability(workspace.get("views") or [])
+        return workspace, scope
 
     def _load_revision_proposal_for_identity(
         *,
@@ -1775,7 +1880,8 @@ def create_trading_room_router(
         scope = _workspace_scope(identity)
         if not _record_visible_to_scope(record, scope):
             _raise_workspace_forbidden("widget_revision_proposal", proposal_id)
-        return record["proposal"], scope
+        proposal = _normalize_revision_proposal_legacy_data_availability(record["proposal"])
+        return proposal, scope
 
     def _require_workspace_etag(if_match: Optional[str], workspace: Dict[str, Any]) -> str:
         ErrorCode = _error_code_enum()
@@ -2149,6 +2255,7 @@ def create_trading_room_router(
             tenant_id=scope["tenant_id"],
             user_id=scope["user_id"],
             workshop_store=workshop_store,
+            assessed_at=now,
         )
         generation = _generate_workspace_proposal(
             strategy_id=strategy_id,
@@ -2927,6 +3034,8 @@ def create_trading_room_router(
             tenant_id=scope["tenant_id"],
             user_id=scope["user_id"],
         )
+        for version in versions:
+            _normalize_views_legacy_data_availability(version.get("views") or [])
         return {
             "data": versions,
             "meta": _meta(
@@ -2976,7 +3085,9 @@ def create_trading_room_router(
                 "workspace_version_not_found",
             )
 
-        restored_views = copy.deepcopy(target.get("views") or [])
+        restored_views = _normalize_views_legacy_data_availability(
+            copy.deepcopy(target.get("views") or [])
+        )
         validation_errors: List[str] = []
         for view_index, view in enumerate(restored_views):
             validation_errors.extend(_validate_view(view, now=utc_now(), path=f"views[{view_index}]"))

@@ -462,17 +462,45 @@ def _find_postmortem_bridge_decision(
     postmortem: Postmortem,
     bridge_key: str,
     decision_id: str,
+    incident: IncidentCase,
 ) -> EvolutionDecision | None:
+    target_type = "candidate_artifact"
+    target_id = postmortem.artifact_id
+    from services.evolution.postmortem_bridge import _incident_cluster_key
+    cluster = _incident_cluster_key(postmortem.to_dict(), incident.to_dict())
+
+    def validate_decision(dec: EvolutionDecision) -> bool:
+        meta = dec.metadata or {}
+        if not (
+            meta.get("postmortem_bridge_key") == bridge_key
+            and dec.target_type == target_type
+            and dec.target_id == target_id
+            and meta.get("incident_cluster_id") == cluster
+        ):
+            return False
+            
+        if dec.linked_postmortem_id == postmortem.postmortem_id:
+            return True
+            
+        if dec.linked_postmortem_id:
+            other_pm = incident_store.get_postmortem(dec.linked_postmortem_id)
+            if other_pm is not None:
+                other_inc = incident_store.get_incident(other_pm.incident_id)
+                if other_inc is not None:
+                    other_cluster = _incident_cluster_key(other_pm.to_dict(), other_inc.to_dict())
+                    if other_cluster == cluster:
+                        return True
+        return False
+
     if postmortem.linked_evolution_decision_id:
         linked = store.get(postmortem.linked_evolution_decision_id)
-        if linked is not None:
+        if linked is not None and validate_decision(linked):
             return linked
     direct = store.get(decision_id)
-    if direct is not None:
+    if direct is not None and validate_decision(direct):
         return direct
     for decision in store.list_all():
-        metadata = decision.metadata or {}
-        if metadata.get("postmortem_bridge_key") == bridge_key:
+        if validate_decision(decision):
             return decision
     return None
 
@@ -655,15 +683,23 @@ def propose_from_postmortem_published(
     metadata = proposal_payload.get("metadata") or {}
     bridge_key = str(metadata.get("postmortem_bridge_key") or "")
     decision_id = str(proposal_payload["decision_id"])
+    
+    conflict = store.get(decision_id)
     existing = _find_postmortem_bridge_decision(
         postmortem=postmortem,
         bridge_key=bridge_key,
         decision_id=decision_id,
+        incident=incident,
     )
     if existing is not None:
         _link_postmortem_to_decision(postmortem.postmortem_id, existing.decision_id)
         response.status_code = 200
         return _decision_to_response(existing)
+    elif conflict is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Decision ID {decision_id} is already occupied by an unrelated decision",
+        )
 
     return propose(ProposeRequest(**proposal_payload))
 
