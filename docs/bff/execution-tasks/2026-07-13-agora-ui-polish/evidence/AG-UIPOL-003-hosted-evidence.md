@@ -87,3 +87,31 @@ availability summary per view, no repeated captions — does not depend on the
 enum's literal wire names). The only outstanding acceptance item is a fresh
 hosted curl/screenshot proving the BFF now emits `full`/`missing` literally
 once dev is redeployed with this commit.
+
+## Resolved: dev redeploy completed, literal enum confirmed hosted (2026-07-13)
+
+`nonprod-deploy.yml` run `29258480254` (`success`, started
+2026-07-13T14:33:49Z) deployed headSha `128dac700eeaae4a6a97d3924461eedfbe6818aa`,
+which has `e414912740e2878a7b1944f4c07d63977afae76e` (the enum-rename commit,
+PR #3514) as an ancestor. The pending redeploy from the note above has
+happened; the redeploy is no longer outstanding.
+
+Fresh hosted BFF proof after redeploy:
+
+`POST /bff/agora/strategies/uipol003-reverify-1783954347-verify/trading-room/proposals`
+against `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io` returned HTTP
+201. Every `dataAvailability` value in the response body was a literal
+`partial` or `missing` — zero occurrences of the retired `complete` /
+`unavailable` wire names anywhere in the payload. Literal `full` derivation
+is covered deterministically by the unit suite
+(`test_trading_room.py:817-822`, part of the 59 re-run above) since this
+synthetic strategy id has no wired live source to exercise `full` against;
+the earlier hosted run in this evidence file already demonstrated `full`
+(then `complete`) against a real wired source before the enum rename, and
+only the literal wire name changed, not the derivation logic.
+
+All AG-UIPOL-003 acceptance criteria are now satisfied end-to-end on hosted
+dev: unit tests (59 passed), the unconditional-`"partial"`-default grep gate,
+the hosted screenshot showing one availability summary per view with no
+repeated captions, and this fresh post-redeploy proof that the BFF emits
+`full`/`partial`/`missing` literally.
