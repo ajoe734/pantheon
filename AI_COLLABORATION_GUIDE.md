@@ -329,6 +329,23 @@ Working tree durability:
 - if `dev` advances, rebase or merge the task branch as committed work;
   do not make `git stash pop` the normal preservation path
 
+Cross-repo FE task PRs (`ajoe734/execute-plans`):
+
+- `execute-plans` mirrors the same `task/<TASK-ID>` → `dev` model as
+  this repo. Its GitHub-configured default branch is `dev`, not `main`;
+  `.orchestrator/multi_repo_registry.py` records this as
+  `default_branch` for the `execute_plans` repo id, which is what
+  `scripts/ai_status.py`'s `done`-finalize gate uses to verify a task
+  branch's HEAD merged into the correct target before allowing closeout.
+- open FE task PRs with `--base dev`, the same as a pantheon task PR.
+  Do not PR a `task/<TASK-ID>` branch straight into `execute-plans`
+  `main` — that bypasses the integration line and is the dev/main drift
+  root cause fixed by `OPS-EP-BRANCH-TARGETING-001` (a stale `main`
+  value in the registry previously made the `done` gate check ancestry
+  against the wrong branch).
+- `execute-plans` `main` is promoted separately and is not a valid
+  direct target for a task PR.
+
 ### Discussion Planning Mode
 
 `discussion_planning` is additive. It does not replace the current execution lifecycle.
