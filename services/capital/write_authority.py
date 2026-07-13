@@ -16,6 +16,29 @@ WRITE_AUTHORITY_MATRIX: Dict[Tuple[str, str], List[str]] = {
     ("PersonaCapitalBinding", "create"): ["persona.admin"],
     ("PersonaCapitalBinding", "activate"): ["persona.admin"],
     ("PersonaCapitalBinding", "update_status"): ["persona.admin"],
+    ("Rebalance", "create"): [
+        "operator",
+        "approver",
+        "admin",
+        "capital.operator",
+        "capital.admin",
+    ],
+    ("Rebalance", "apply"): [
+        "operator",
+        "approver",
+        "admin",
+        "capital.operator",
+        "capital.admin",
+    ],
+    ("Containment", "create"): [
+        "operator",
+        "approver",
+        "reviewer",
+        "admin",
+        "capital.operator",
+        "capital.admin",
+        "risk.admin",
+    ],
 }
 
 

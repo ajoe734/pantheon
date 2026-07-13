@@ -17,6 +17,11 @@ from persona_capital_binding import PersonaCapitalBinding, PersonaCapitalBinding
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 
+try:
+    from .allocation_store import AllocationAuthorityStore
+except ImportError:
+    from allocation_store import AllocationAuthorityStore  # type: ignore
+
 _UTC = datetime.timezone.utc
 
 
@@ -229,6 +234,24 @@ class PostgresCapitalAuditStore:
         return events
 
 
+class PostgresAllocationAuthorityStore(AllocationAuthorityStore):
+    """Postgres JSONB owner store for the atomic allocation aggregate."""
+
+    def __init__(
+        self,
+        dsn: str,
+        table: str = "capital.allocation_authority",
+        bootstrap: bool = True,
+    ) -> None:
+        records = PostgresJsonOwnerStore(
+            dsn=dsn,
+            table=table,
+            owner_service="capital-pool-svc",
+            bootstrap=bootstrap,
+        )
+        super().__init__(owner_store=records)
+
+
 def _capital_backend() -> str:
     return os.getenv("CAPITAL_STORE_BACKEND", "json").strip().lower()
 
@@ -284,4 +307,19 @@ def build_capital_audit_store(path: Path) -> JsonlCapitalAuditStore | PostgresCa
         dsn=dsn,
         table=os.getenv("CAPITAL_AUDIT_TABLE", "capital.audit_events"),
         bootstrap=_bootstrap_env("CAPITAL_AUDIT_BOOTSTRAP"),
+    )
+
+
+def build_allocation_authority_store(
+    path: Path,
+) -> AllocationAuthorityStore | PostgresAllocationAuthorityStore:
+    backend = _capital_backend()
+    if backend in ("", "json"):
+        return AllocationAuthorityStore(path=path)
+    if backend != "postgres":
+        raise ValueError("CAPITAL_STORE_BACKEND must be json or postgres")
+    return PostgresAllocationAuthorityStore(
+        dsn=_capital_dsn(),
+        table=os.getenv("CAPITAL_ALLOCATION_STORE_TABLE", "capital.allocation_authority"),
+        bootstrap=_bootstrap_env("CAPITAL_STORE_BOOTSTRAP"),
     )

@@ -34,30 +34,58 @@ from persona_capital_binding import (  # type: ignore
 try:
     from .models import (
         ActivateBindingRequest,
+        AllocationBody,
+        AllocationListResponse,
+        ApplyRebalanceRequest,
         BindingAdmissibilityResponse,
         CapitalPoolBody,
+        ContainmentBody,
+        CreateContainmentRequest,
         CreateBindingRequest,
         CreateCapitalPoolRequest,
+        CreateRebalanceRequest,
         PersonaCapitalBindingBody,
+        RebalanceApplyReceipt,
+        RebalanceBody,
         UpdateBindingStatusRequest,
         UpdateCapitalPoolStatusRequest,
         WriteAuthorityResponse,
     )
-    from .pg_store import build_capital_audit_store, build_capital_binding_store, build_capital_pool_store
+    from .allocation_store import AllocationAuthorityError, AllocationAuthorityStore
+    from .pg_store import (
+        build_allocation_authority_store,
+        build_capital_audit_store,
+        build_capital_binding_store,
+        build_capital_pool_store,
+    )
     from .write_authority import is_authorized, matrix_as_list
 except ImportError:
     from models import (  # type: ignore
         ActivateBindingRequest,
+        AllocationBody,
+        AllocationListResponse,
+        ApplyRebalanceRequest,
         BindingAdmissibilityResponse,
         CapitalPoolBody,
+        ContainmentBody,
+        CreateContainmentRequest,
         CreateBindingRequest,
         CreateCapitalPoolRequest,
+        CreateRebalanceRequest,
         PersonaCapitalBindingBody,
+        RebalanceApplyReceipt,
+        RebalanceBody,
         UpdateBindingStatusRequest,
         UpdateCapitalPoolStatusRequest,
         WriteAuthorityResponse,
     )
-    from pg_store import build_capital_audit_store, build_capital_binding_store, build_capital_pool_store  # type: ignore
+    from allocation_store import AllocationAuthorityError, AllocationAuthorityStore  # type: ignore
+    from pg_store import (  # type: ignore
+        build_allocation_authority_store,
+        build_capital_audit_store,
+        build_capital_binding_store,
+        build_capital_pool_store,
+    )
     from write_authority import is_authorized, matrix_as_list  # type: ignore
 
 log = logging.getLogger(__name__)
@@ -78,6 +106,7 @@ DATA_DIR = _resolve_data_dir()
 POOL_STORE_PATH = DATA_DIR / "capital_pools.json"
 BINDING_STORE_PATH = DATA_DIR / "persona_capital_bindings.json"
 AUDIT_LOG_PATH = DATA_DIR / "capital_audit.jsonl"
+ALLOCATION_AUTHORITY_PATH = DATA_DIR / "capital_allocation_authority.json"
 STORE_BACKEND = os.getenv("CAPITAL_STORE_BACKEND", "json").strip().lower() or "json"
 PERSISTENCE_POSTURE = require_persistence_posture("capital")
 
@@ -89,6 +118,7 @@ class CapitalServiceError(ValueError):
 pool_store = build_capital_pool_store(POOL_STORE_PATH)
 binding_store = build_capital_binding_store(BINDING_STORE_PATH)
 audit_store = build_capital_audit_store(AUDIT_LOG_PATH)
+allocation_authority_store = build_allocation_authority_store(ALLOCATION_AUTHORITY_PATH)
 
 
 class CapitalBoundaryService:
@@ -97,11 +127,13 @@ class CapitalBoundaryService:
         *,
         pool_store: CapitalPoolStore,
         binding_store: PersonaCapitalBindingStore,
+        allocation_store: AllocationAuthorityStore,
         audit_log_path: Path,
         audit_store: Any,
     ) -> None:
         self.pool_store = pool_store
         self.binding_store = binding_store
+        self.allocation_store = allocation_store
         self.audit_log_path = audit_log_path
         self.audit_store = audit_store
 
@@ -256,6 +288,111 @@ class CapitalBoundaryService:
         )
         return updated
 
+    def create_rebalance(self, body: CreateRebalanceRequest) -> Dict[str, Any]:
+        self._authorize("Rebalance", "create", body.actor_role)
+        self.pool_store.require(body.capital_pool_id)
+        record, replayed = self.allocation_store.create_rebalance(
+            body.model_dump(mode="json")
+        )
+        if not replayed:
+            self._emit(
+                event_type="rebalance_proposal_created",
+                resource_type="Rebalance",
+                resource_id=record["rebalance_id"],
+                actor_id=body.actor_id,
+                actor_role=body.actor_role,
+                detail={
+                    "capital_pool_id": body.capital_pool_id,
+                    "request_hash": body.request_hash,
+                    "line_count": len(record.get("lines") or []),
+                },
+            )
+        return record
+
+    def list_rebalances(
+        self,
+        *,
+        capital_pool_id: str | None = None,
+        status: str | None = None,
+    ) -> list[Dict[str, Any]]:
+        return self.allocation_store.list_rebalances(
+            capital_pool_id=capital_pool_id,
+            status=status,
+        )
+
+    def get_rebalance(self, rebalance_id: str) -> Dict[str, Any]:
+        return self.allocation_store.get_rebalance(rebalance_id)
+
+    def apply_rebalance(
+        self,
+        rebalance_id: str,
+        body: ApplyRebalanceRequest,
+    ) -> Dict[str, Any]:
+        self._authorize("Rebalance", "apply", body.actor_role)
+        payload = body.model_dump(mode="json")
+        payload["audit_ref"] = (
+            str(payload.get("audit_ref") or "").strip()
+            or f"capital-audit:{rebalance_id}:{body.command_id}"
+        )
+        receipt, replayed = self.allocation_store.apply_rebalance(rebalance_id, payload)
+        if not replayed:
+            self._emit(
+                event_type="rebalance_applied",
+                resource_type="Rebalance",
+                resource_id=rebalance_id,
+                actor_id=body.actor_id,
+                actor_role=body.actor_role,
+                detail={
+                    "capital_pool_id": receipt["capital_pool_id"],
+                    "command_id": body.command_id,
+                    "approval_ref": receipt.get("approval_ref"),
+                    "receipt_ref": receipt["receipt_ref"],
+                    "audit_ref": receipt["audit_ref"],
+                    "authoritative_capital_readback": True,
+                },
+            )
+        return receipt
+
+    def list_allocations(
+        self,
+        *,
+        capital_pool_id: str | None = None,
+        persona_id: str | None = None,
+    ) -> list[Dict[str, Any]]:
+        return self.allocation_store.list_allocations(
+            capital_pool_id=capital_pool_id,
+            persona_id=persona_id,
+        )
+
+    def create_containment(self, body: CreateContainmentRequest) -> Dict[str, Any]:
+        self._authorize("Containment", "create", body.actor_role)
+        payload = body.model_dump(mode="json")
+        record, replayed = self.allocation_store.create_containment(payload)
+        if not replayed:
+            self._emit(
+                event_type="capital_containment_executed",
+                resource_type="Containment",
+                resource_id=record["containment_id"],
+                actor_id=body.actor_id,
+                actor_role=body.actor_role,
+                detail={
+                    "persona_id": body.persona_id,
+                    "capital_pool_id": body.capital_pool_id,
+                    "action": body.action,
+                    "state": record["state"],
+                    "receipt_ref": record["receipt_ref"],
+                    "audit_ref": record["audit_ref"],
+                },
+            )
+        return record
+
+    def list_containments(
+        self,
+        *,
+        persona_id: str | None = None,
+    ) -> list[Dict[str, Any]]:
+        return self.allocation_store.list_containments(persona_id=persona_id)
+
     def current_live_owner(self, pool_id: str) -> PersonaCapitalBinding | None:
         self.pool_store.require(pool_id)
         return self.binding_store.live_owner_for_pool(pool_id)
@@ -378,6 +515,8 @@ register_fastapi_health_routes(
     metrics=lambda: {
         "capital_pool_count": len(get_capital_service().list_pools()),
         "binding_count": len(get_capital_service().list_bindings()),
+        "allocation_count": len(get_capital_service().list_allocations()),
+        "rebalance_count": len(get_capital_service().list_rebalances()),
     },
     details=lambda: {
         "data_dir": str(DATA_DIR),
@@ -391,6 +530,7 @@ def get_capital_service() -> CapitalBoundaryService:
     return CapitalBoundaryService(
         pool_store=pool_store,
         binding_store=binding_store,
+        allocation_store=allocation_authority_store,
         audit_log_path=AUDIT_LOG_PATH,
         audit_store=audit_store,
     )
@@ -399,6 +539,9 @@ def get_capital_service() -> CapitalBoundaryService:
 def _raise_http_error(exc: Exception) -> None:
     if isinstance(exc, PermissionError):
         raise HTTPException(status_code=403, detail=str(exc))
+    explicit_status = getattr(exc, "status_code", None)
+    if isinstance(explicit_status, int):
+        raise HTTPException(status_code=explicit_status, detail=str(exc))
     message = str(exc)
     if "not found" in message.lower():
         raise HTTPException(status_code=404, detail=message)
@@ -409,6 +552,7 @@ CAPITAL_HTTP_ERRORS = (
     CapitalServiceError,
     CapitalPoolError,
     PersonaCapitalBindingError,
+    AllocationAuthorityError,
     ValueError,
     PermissionError,
 )
@@ -545,13 +689,116 @@ def update_binding_status(
         _raise_http_error(exc)
 
 
+def _allocation_list_response(records: List[Dict[str, Any]]) -> AllocationListResponse:
+    return AllocationListResponse(
+        items=[AllocationBody(**record) for record in records],
+        count=len(records),
+        snapshot_at=CapitalBoundaryService._utc_now(),
+        source="capital_service",
+        authoritative_capital_readback=True,
+    )
+
+
+@app.post("/api/rebalances", response_model=RebalanceBody, status_code=201)
+def create_rebalance(body: CreateRebalanceRequest) -> RebalanceBody:
+    try:
+        return RebalanceBody(**get_capital_service().create_rebalance(body))
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/rebalances", response_model=List[RebalanceBody])
+def list_rebalances(
+    capital_pool_id: Optional[str] = None,
+    status: Optional[str] = None,
+) -> List[RebalanceBody]:
+    records = get_capital_service().list_rebalances(
+        capital_pool_id=capital_pool_id,
+        status=status,
+    )
+    return [RebalanceBody(**record) for record in records]
+
+
+@app.get("/api/rebalances/{rebalance_id}", response_model=RebalanceBody)
+def get_rebalance(rebalance_id: str) -> RebalanceBody:
+    try:
+        return RebalanceBody(**get_capital_service().get_rebalance(rebalance_id))
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.post(
+    "/api/rebalances/{rebalance_id}/apply",
+    response_model=RebalanceApplyReceipt,
+)
+def apply_rebalance(
+    rebalance_id: str,
+    body: ApplyRebalanceRequest,
+) -> RebalanceApplyReceipt:
+    try:
+        return RebalanceApplyReceipt(
+            **get_capital_service().apply_rebalance(rebalance_id, body)
+        )
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/allocations", response_model=AllocationListResponse)
+def list_allocations(
+    capital_pool_id: Optional[str] = None,
+    persona_id: Optional[str] = None,
+) -> AllocationListResponse:
+    records = get_capital_service().list_allocations(
+        capital_pool_id=capital_pool_id,
+        persona_id=persona_id,
+    )
+    return _allocation_list_response(records)
+
+
+@app.get(
+    "/api/capital-pools/{pool_id}/allocations",
+    response_model=AllocationListResponse,
+)
+def list_pool_allocations(
+    pool_id: str,
+    persona_id: Optional[str] = None,
+) -> AllocationListResponse:
+    service = get_capital_service()
+    try:
+        service.get_pool(pool_id)
+        records = service.list_allocations(
+            capital_pool_id=pool_id,
+            persona_id=persona_id,
+        )
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+    return _allocation_list_response(records)
+
+
+@app.post("/api/containments", response_model=ContainmentBody, status_code=201)
+def create_containment(body: CreateContainmentRequest) -> ContainmentBody:
+    try:
+        return ContainmentBody(**get_capital_service().create_containment(body))
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/containments", response_model=List[ContainmentBody])
+def list_containments(
+    persona_id: Optional[str] = None,
+) -> List[ContainmentBody]:
+    records = get_capital_service().list_containments(persona_id=persona_id)
+    return [ContainmentBody(**record) for record in records]
+
+
 @app.get("/api/capital/write-authority", response_model=WriteAuthorityResponse)
 def write_authority() -> WriteAuthorityResponse:
     return WriteAuthorityResponse(
         matrix=matrix_as_list(),
         description=(
             "CapitalPool writes require capital.admin. PersonaCapitalBinding "
-            "writes require persona.admin. BFF and runtime consumers stay on read paths."
+            "writes require persona.admin. Governed BFF operator, approver, and admin "
+            "calls may create/apply rebalances and execute risk-decreasing containment."
         ),
     )
 
