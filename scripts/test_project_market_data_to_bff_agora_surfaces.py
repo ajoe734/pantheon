@@ -12,7 +12,7 @@ def _record(source_id: str, symbol: str, date: str, close: float) -> dict:
         "source_id": source_id,
         "connector_id": "tw-twse-tpex-official-market",
         "metadata": {
-            "ingest_run_id": "ingest-live-001",
+            "source_ingest_run_id": "ingest-live-001",
             "normalized_row": {
                 "dataset": "tw_price_daily", "date": date, "available_time": date,
                 "symbol": symbol, "market": "TW", "venue": "TWSE", "name": "TSMC",
