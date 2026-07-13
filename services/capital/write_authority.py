@@ -11,11 +11,44 @@ from typing import Dict, List, Tuple
 
 
 WRITE_AUTHORITY_MATRIX: Dict[Tuple[str, str], List[str]] = {
-    ("CapitalPool", "create"): ["capital.admin"],
+    ("CapitalPool", "create"): [
+        "operator",
+        "approver",
+        "admin",
+        "capital.admin",
+    ],
     ("CapitalPool", "update_status"): ["capital.admin"],
-    ("PersonaCapitalBinding", "create"): ["persona.admin"],
+    ("PersonaCapitalBinding", "create"): [
+        "operator",
+        "approver",
+        "admin",
+        "persona.admin",
+    ],
     ("PersonaCapitalBinding", "activate"): ["persona.admin"],
     ("PersonaCapitalBinding", "update_status"): ["persona.admin"],
+    ("Rebalance", "create"): [
+        "operator",
+        "approver",
+        "admin",
+        "capital.operator",
+        "capital.admin",
+    ],
+    ("Rebalance", "apply"): [
+        "operator",
+        "approver",
+        "admin",
+        "capital.operator",
+        "capital.admin",
+    ],
+    ("Containment", "create"): [
+        "operator",
+        "approver",
+        "reviewer",
+        "admin",
+        "capital.operator",
+        "capital.admin",
+        "risk.admin",
+    ],
 }
 
 

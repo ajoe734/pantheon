@@ -26,10 +26,13 @@ The canonical JSON schema lives at:
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from threading import RLock
 from typing import Any, Dict, List, Optional
 
 
@@ -186,51 +189,67 @@ class CapitalPoolStore:
     def __init__(self, path: Optional[Path] = None) -> None:
         self._pools: Dict[str, CapitalPool] = {}
         self._path = path
+        self._lock = RLock()
         if path and path.exists():
             self._load(path)
 
     # ---- CRUD ----
 
     def create(self, pool: CapitalPool) -> CapitalPool:
-        if pool.pool_id in self._pools:
-            raise CapitalPoolError(f"Pool already exists: {pool.pool_id}")
-        errors = validate_pool(pool)
-        if errors:
-            raise CapitalPoolError(f"Invalid pool: {errors}")
-        self._pools[pool.pool_id] = pool
-        self._save()
-        return pool
+        with self._lock:
+            if pool.pool_id in self._pools:
+                raise CapitalPoolError(f"Pool already exists: {pool.pool_id}")
+            errors = validate_pool(pool)
+            if errors:
+                raise CapitalPoolError(f"Invalid pool: {errors}")
+            snapshot = dict(self._pools)
+            self._pools[pool.pool_id] = pool
+            try:
+                self._save()
+            except Exception:
+                self._pools = snapshot
+                raise
+            return pool
 
     def get(self, pool_id: str) -> Optional[CapitalPool]:
-        return self._pools.get(pool_id)
+        with self._lock:
+            return self._pools.get(pool_id)
 
     def require(self, pool_id: str) -> CapitalPool:
-        pool = self.get(pool_id)
-        if pool is None:
-            raise CapitalPoolError(f"Pool not found: {pool_id}")
-        return pool
+        with self._lock:
+            pool = self.get(pool_id)
+            if pool is None:
+                raise CapitalPoolError(f"Pool not found: {pool_id}")
+            return pool
 
     def list(self, owner_id: Optional[str] = None, status: Optional[str] = None) -> List[CapitalPool]:
-        pools = list(self._pools.values())
-        if owner_id:
-            pools = [p for p in pools if p.owner_id == owner_id]
-        if status:
-            pools = [p for p in pools if p.status == status]
-        return pools
+        with self._lock:
+            pools = list(self._pools.values())
+            if owner_id:
+                pools = [p for p in pools if p.owner_id == owner_id]
+            if status:
+                pools = [p for p in pools if p.status == status]
+            return pools
 
     def update_status(self, pool_id: str, new_status: str) -> CapitalPool:
         """
         Transition pool lifecycle status.
         Valid transitions: active <-> suspended, active/suspended -> archived.
         """
-        pool = self.require(pool_id)
-        _validate_status_transition(pool.status, new_status)
-        updated = CapitalPool(
-            **{**pool.to_dict(), "status": new_status, "updated_at": utc_now()},
-        )
-        self._pools[pool_id] = updated
-        self._save()
-        return updated
+        with self._lock:
+            pool = self.require(pool_id)
+            _validate_status_transition(pool.status, new_status)
+            updated = CapitalPool(
+                **{**pool.to_dict(), "status": new_status, "updated_at": utc_now()},
+            )
+            snapshot = dict(self._pools)
+            self._pools[pool_id] = updated
+            try:
+                self._save()
+            except Exception:
+                self._pools = snapshot
+                raise
+            return updated
 
     # ---- Single-runtime query helper ----
 
@@ -240,23 +259,49 @@ class CapitalPoolStore:
         Callers (e.g. runtime-manager) must check this before creating a new
         RuntimeBinding for the pool.
         """
-        pool = self.require(pool_id)
-        return bool(pool.single_runtime_enforced)
+        with self._lock:
+            pool = self.require(pool_id)
+            return bool(pool.single_runtime_enforced)
 
     # ---- Persistence ----
 
     def _save(self) -> None:
         if self._path:
             records = [p.to_dict() for p in self._pools.values()]
-            self._path.write_text(json.dumps(records, indent=2))
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_name = tempfile.mkstemp(
+                dir=str(self._path.parent),
+                prefix=f".{self._path.name}.",
+                suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(records, handle, indent=2, ensure_ascii=True)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp_name, self._path)
+                try:
+                    directory_fd = os.open(str(self._path.parent), os.O_RDONLY)
+                except OSError:
+                    directory_fd = None
+                if directory_fd is not None:
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+            finally:
+                if os.path.exists(temp_name):
+                    os.unlink(temp_name)
 
     def _load(self, path: Path) -> None:
-        data = json.loads(path.read_text())
-        if not isinstance(data, list):
-            raise CapitalPoolError(f"Expected JSON array in {path}")
-        for record in data:
-            pool = CapitalPool.from_dict(record)
-            self._pools[pool.pool_id] = pool
+        with self._lock:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                raise CapitalPoolError(f"Expected JSON array in {path}")
+            for record in data:
+                pool = CapitalPool.from_dict(record)
+                self._pools[pool.pool_id] = pool
 
 
 # ---------------------------------------------------------------------------
