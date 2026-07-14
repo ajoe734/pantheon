@@ -60,6 +60,39 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_payload_gin
         ON telemetry_events USING GIN (payload);
     """,
+    # Loop controller records table for durable controller truth substrate
+    """
+    CREATE TABLE IF NOT EXISTS loop_controller_records (
+        loop_id             TEXT        NOT NULL,
+        tenant_id           TEXT        NOT NULL,
+        environment         TEXT        NOT NULL,
+        controller_id       TEXT        NOT NULL,
+        controller_name     TEXT        NOT NULL,
+        deployment_sha      TEXT        NOT NULL,
+        desired_state_query TEXT,
+        actual_state_query  TEXT,
+        last_heartbeat_at   TIMESTAMPTZ,
+        last_tick_at        TIMESTAMPTZ,
+        last_success_at     TIMESTAMPTZ,
+        last_failure_at     TIMESTAMPTZ,
+        last_failure_reason TEXT,
+        last_repair_at      TIMESTAMPTZ,
+        last_repair_reason  TEXT,
+        backlog             INTEGER,
+        lag                 INTEGER,
+        dlq_count           INTEGER,
+        evidence_refs       JSONB       NOT NULL DEFAULT '[]'::jsonb,
+        truth_level         TEXT        NOT NULL,
+        lease_expires_at    TIMESTAMPTZ,
+        payload             JSONB       NOT NULL DEFAULT '{}'::jsonb,
+        updated_at          TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (loop_id, tenant_id, environment)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_loop_controller_records_updated_at
+        ON loop_controller_records (updated_at DESC);
+    """,
 ]
 
 async def run():

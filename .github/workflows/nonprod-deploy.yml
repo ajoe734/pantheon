@@ -205,36 +205,44 @@ jobs:
               ;;
           esac
 
-      - name: Dev Agora workshop restart persistence smoke
+      - name: Dev Agora governance restart persistence smoke
         if: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') }}
         env:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/code/pantheon' }}
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
         run: |
           set -euo pipefail
-          idem="agora-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          workshop_id="$(
-            curl -fsS -X POST "${DEV_BFF_URL}/bff/agora/workshops" \
-              -H 'Authorization: Bearer agora-deploy-smoke:operator' \
-              -H "Idempotency-Key: ${idem}" \
-              -H 'Content-Type: application/json' \
-              --data '{"initial_message":"Versioned dev restart-persistence smoke"}' \
-              | jq -er '.data.workshop_id'
-          )"
+          workshop_id="deploy-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          tenant_id="pantheon-dev"
+          user_id="pantheon-dev-browser"
+          printf -v remote_dir_q '%q' "${DEV_REMOTE_DIR}"
+          printf -v workshop_id_q '%q' "${workshop_id}"
+          printf -v tenant_id_q '%q' "${tenant_id}"
+          printf -v user_id_q '%q' "${user_id}"
           gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
             --zone "${DEV_ZONE}" \
             --project "${GCP_DEPLOY_PROJECT_ID}" \
             --ssh-flag=-T \
-            --command "docker inspect pantheon-operator-bff-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -q '^AGORA_WORKSHOP_STORE_BACKEND=postgres$' && docker logs pantheon-operator-bff-1 2>&1 | grep -q 'Agora workshop store initialized backend=postgres' && cd /home/lupin/code/pantheon && docker compose -p pantheon -f docker-compose.yml restart operator-bff"
+            --command "set -euo pipefail; docker inspect pantheon-operator-bff-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -F -x 'AGORA_WORKSHOP_STORE_BACKEND=postgres' >/dev/null; docker inspect pantheon-operator-bff-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -F -x 'AGORA_GOVERNANCE_STORE_BACKEND=postgres' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F 'Agora workshop store initialized backend=postgres' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F 'Agora governance store initialized backend=postgres' >/dev/null; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py seed --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}; docker compose -p pantheon -f docker-compose.yml restart operator-bff"
+          ready=false
           for attempt in $(seq 1 30); do
-            if curl -fsS "${DEV_BFF_URL}/readyz" >/dev/null; then break; fi
+            if curl -fsS "${DEV_BFF_URL}/readyz" >/dev/null; then
+              ready=true
+              break
+            fi
             sleep 2
           done
-          test "$(curl -fsS "${DEV_BFF_URL}/bff/agora/workshops/${workshop_id}" -H 'Authorization: Bearer agora-deploy-smoke:operator' | jq -er '.data.workshop_id')" = "${workshop_id}"
-          echo "Workshop ${workshop_id} survived operator-bff restart." >> "$GITHUB_STEP_SUMMARY"
+          test "${ready}" = true
+          gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            --ssh-flag=-T \
+            --command "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}"
+          echo "Workshop ${workshop_id} and proposal proposal-${workshop_id} survived operator-bff restart with exactly-once replay and pending outbox recovery." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize auto-deploy
         if: github.event_name == 'push'

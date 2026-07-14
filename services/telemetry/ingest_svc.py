@@ -370,7 +370,7 @@ class TelemetryIngestService:
         )
 
         # Idempotent deduplication by event_id
-        self._seen_event_ids: set[str] = set()
+        self._seen_event_ids: dict[str, dict[str, Any]] = {}
         self._dedup_max_size = dedup_max_size
 
         # State
@@ -582,8 +582,65 @@ class TelemetryIngestService:
         #    counted or written more than once within this service instance.
         event_id = event.get("event_id")
         if event_id and event_id in self._seen_event_ids:
+            # 0.a. Validate schema on duplicate retry
+            valid_schema, schema_err = self._validate_event(event)
+            if not valid_schema:
+                self._total_rejected += 1
+                self._dlq.reject(
+                    event=event,
+                    tags=[TAG_SCHEMA_VIOLATION],
+                    reason=f"Schema validation failed on duplicate retry: {schema_err}",
+                )
+                log.warning(f"Ingest duplicate retry rejected (schema): {schema_err}")
+                return False
+
+            # 0.b. Validate evidence contract on duplicate retry
+            valid_ev, ev_err, resolved_binding = self._validate_evidence_contract(event)
+            if not valid_ev:
+                err_lower = ev_err.lower()
+                if "temporal" in err_lower or "effective_at" in err_lower or "retired_at" in err_lower:
+                    tag = TAG_TEMPORAL_VIOLATION
+                elif "binding" in err_lower or "mismatch" in err_lower or "not found" in err_lower:
+                    tag = TAG_BINDING_MISMATCH
+                else:
+                    tag = TAG_SCHEMA_VIOLATION
+
+                self._total_rejected += 1
+                self._dlq.reject(
+                    event=event,
+                    tags=[tag],
+                    reason=f"Evidence contract violation on duplicate retry: {ev_err}",
+                )
+                log.warning(f"Ingest duplicate retry rejected (evidence): {ev_err}")
+                return False
+
+            # 0.c. Reject same-ID content mismatch
+            original_event = self._seen_event_ids[event_id]
+            mismatch = False
+            for k in (set(event.keys()) | set(original_event.keys())):
+                if k == "created_at":
+                    continue
+                if event.get(k) != original_event.get(k):
+                    mismatch = True
+                    break
+            if mismatch:
+                self._total_rejected += 1
+                self._dlq.reject(
+                    event=event,
+                    tags=[TAG_SCHEMA_VIOLATION],
+                    reason=f"Content mismatch for duplicate event_id={event_id}",
+                )
+                log.warning(f"Ingest duplicate retry rejected (content mismatch for event_id={event_id})")
+                return False
+
             self._total_duplicates += 1
             log.debug(f"Ingest skipped (duplicate event_id): {event_id}")
+            if self._lineage_write_store is not None:
+                try:
+                    # Lineage repair must use the immutable originally accepted payload
+                    self._lineage_write_store.admit_telemetry_event(original_event, resolved_binding)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Lineage live-write admission failed for duplicate event %s: %s", event_id, exc)
             return True  # idempotent: already delivered, treat as success
 
         # 1. Schema validation
@@ -633,12 +690,12 @@ class TelemetryIngestService:
 
         # Track event_id for idempotent dedup after successful enqueue
         if event_id:
-            self._seen_event_ids.add(event_id)
+            self._seen_event_ids[event_id] = event
             # Evict oldest half when the dedup set exceeds its size limit
             if len(self._seen_event_ids) > self._dedup_max_size:
-                evict = list(self._seen_event_ids)[: self._dedup_max_size // 2]
+                evict = list(self._seen_event_ids.keys())[: self._dedup_max_size // 2]
                 for eid in evict:
-                    self._seen_event_ids.discard(eid)
+                    self._seen_event_ids.pop(eid, None)
 
         self._total_ingested += 1
         if self._runtime_summary_store is not None:
@@ -908,7 +965,7 @@ class TelemetryIngestService:
             # Clear the event_id from the dedup set so replay can re-enqueue it.
             eid = event.get("event_id")
             if eid:
-                self._seen_event_ids.discard(eid)
+                self._seen_event_ids.pop(eid, None)
             ok = await self.ingest(event, timeout=5.0)
             if ok:
                 count += 1

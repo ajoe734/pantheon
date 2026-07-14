@@ -70,6 +70,9 @@ frozen（或明確的 containment 狀態），且 receipt 帶 entity/audit 參�
 
 - Final guarded-admission repair: PR #3536, merge commit
   `0e8c06603eb7ede8fd226837e439282e70fefc80`.
+- Restart safe rebalance apply and post-apply readback fix: PR #3568, merge commit
+  `3e4d1dfccda84b1fc225837bb6dcb9309209f04d`.
+- Action catalog and CommandType catalog invariant fixes (catalog/admission target mismatch, server-managed CommandType catalog tests exclusion): current task branch commits.
 - Exact-SHA dev root deployment: run `29268814057`, success.
 - Exact-SHA BFF restart: run `29270122636`, success; workflow log and public
   `/bff/version` both verified the exact merge SHA.
@@ -84,6 +87,7 @@ frozen（或明確的 containment 狀態），且 receipt 帶 entity/audit 參�
   upgrade.
 - Sanitized evidence:
   `docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive/PPL-ALLOC-011-HOSTED-EVIDENCE-2026-07-13.json`.
+- Validation: Pytest run executing `test_action_catalog.py`, `test_bff_mgmt_ops_006_operator_actions_contract.py` (16 passed), and the broader test suite `test_bff_rebalance_proposals.py`, `test_bff_emergency_containment.py`, `test_bff_b1_007_security_hardening.py`, `test_bff_b5_001_security_hardening.py`, `test_bff_two_man_sign_race_contract.py`, `test_v5_interventions.py`, `test_bff_b5_humangate_commands.py` (135 passed).
 
 The accepted boundary is the current single-writer dev runtime and durable host
 volume. This task does not claim multi-replica command-store coordination,
