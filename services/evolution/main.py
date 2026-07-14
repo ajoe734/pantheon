@@ -1529,6 +1529,68 @@ def cancel_proposal(decision_id: str, body: CancelRequest):
     return _decision_to_response(decision)
 
 
+def _trigger_research_retrain(decision) -> None:
+    def run():
+        try:
+            import urllib.request
+            import json
+            
+            research_url = os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://research-orchestrator-svc:8101")
+            
+            # 1. Create a task in research-orchestrator
+            task_body = {
+                "title": f"Evolution Retrain Task {decision.decision_id}",
+                "objective": f"Perform evolutionary retrain for {decision.target_id}",
+                "source_refs": [{"type": "evolution_decision", "id": decision.decision_id}],
+                "actor_id": "evolution-dispatch-worker",
+                "idempotency_key": f"task-{decision.decision_id}"
+            }
+            task_req = urllib.request.Request(
+                f"{research_url}/api/research-orchestrator/tasks",
+                data=json.dumps(task_body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(task_req, timeout=10) as resp:
+                task_data = json.loads(resp.read().decode("utf-8"))
+            
+            work_item_id = task_data.get("task_id")
+            if not work_item_id:
+                log.error("Failed to get task_id from research task creation: %s", task_data)
+                return
+            
+            # 2. Dispatch a run in research-orchestrator
+            run_body = {
+                "adapter": "stub",
+                "requested_mode": "stub",
+                "dispatch_mode": "stub",
+                "input_refs": [{"type": "strategy_artifact", "id": decision.target_id}],
+                "parameters": {
+                    "decision_id": decision.decision_id,
+                    "target_artifact_id": decision.target_id,
+                    "target_version": decision.target_version,
+                    "work_item_id": work_item_id
+                },
+                "actor_id": "evolution-dispatch-worker",
+                "idempotency_key": f"run-{decision.decision_id}"
+            }
+            run_req = urllib.request.Request(
+                f"{research_url}/api/research-orchestrator/tasks/{work_item_id}/runs",
+                data=json.dumps(run_body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(run_req, timeout=10) as resp:
+                run_data = json.loads(resp.read().decode("utf-8"))
+            
+            log.info("Successfully triggered research run for decision %s, run_id=%s", decision.decision_id, run_data.get("run_id"))
+        except Exception as e:
+            log.error("Failed to trigger research retrain for decision %s: %s", decision.decision_id, e)
+
+    import threading
+    threading.Thread(target=run, name=f"retrain-trigger-{decision.decision_id}").start()
+
+
 # --- Execute -----------------------------------------------------------------
 
 @app.post("/api/evolution/proposals/{decision_id}/execute", response_model=DecisionResponse)
@@ -1547,7 +1609,6 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
     -----------
     - Decision must be in ``approved`` state.
     - actor_role must be in the execution-roles set
-      (evolution_controller or operator).
     - Cooldown and observation-window timestamps are set automatically
       from the canonical policy; callers cannot override them.
 
@@ -1581,6 +1642,8 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
             force_stage_freeze=body.force_stage_freeze,
         )
         store.put(decision)
+        if str(_enum_value(decision.action_type)) == "retrain":
+            _trigger_research_retrain(decision)
     except (EvolutionDecisionError, EvolutionControllerError) as exc:
         raise _domain_error(exc) from exc
     log.info(
