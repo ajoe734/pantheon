@@ -1,0 +1,290 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/registry/strategy-artifact/v1",
+  "title": "Pantheon Evolvable Strategy Artifact",
+  "description": "A deployable strategy payload registered as the existing execution_bundle artifact type.",
+  "type": "object",
+  "required": [
+    "artifact_schema_version",
+    "artifact_id",
+    "strategy_id",
+    "version",
+    "algorithm_ref",
+    "strategy_logic",
+    "parameters",
+    "mutation_surface",
+    "lineage"
+  ],
+  "properties": {
+    "artifact_schema_version": {
+      "const": "1.0"
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "algorithm_ref": {
+      "type": "object",
+      "required": [
+        "engine",
+        "repository",
+        "commit",
+        "path",
+        "entrypoint",
+        "signal_interface",
+        "signal_schema_version",
+        "logic_interpreter"
+      ],
+      "properties": {
+        "engine": {
+          "const": "lean"
+        },
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entrypoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signal_interface": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signal_schema_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logic_interpreter": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "strategy_logic": {
+      "type": "object",
+      "required": [
+        "kind",
+        "lookback_parameter",
+        "threshold_parameter",
+        "positive_action",
+        "non_positive_action"
+      ],
+      "properties": {
+        "kind": {
+          "const": "close_to_close_momentum"
+        },
+        "lookback_parameter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "threshold_parameter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "positive_action": {
+          "enum": ["BUY", "SELL", "HOLD"]
+        },
+        "non_positive_action": {
+          "enum": ["BUY", "SELL", "HOLD"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "parameters": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {"type": "string"},
+          {"type": "number"},
+          {"type": "integer"},
+          {"type": "boolean"},
+          {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          }
+        ]
+      }
+    },
+    "mutation_surface": {
+      "type": "object",
+      "required": [
+        "controls",
+        "immutable_parameters"
+      ],
+      "properties": {
+        "controls": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "parameter_key",
+                  "value_type",
+                  "current_value",
+                  "allowed_range",
+                  "step"
+                ],
+                "properties": {
+                  "parameter_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                  },
+                  "value_type": {"const": "integer"},
+                  "current_value": {"type": "integer"},
+                  "allowed_range": {
+                    "type": "object",
+                    "required": ["min", "max"],
+                    "properties": {
+                      "min": {"type": "integer"},
+                      "max": {"type": "integer"}
+                    },
+                    "additionalProperties": false
+                  },
+                  "step": {"type": "integer", "minimum": 1}
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "parameter_key",
+                  "value_type",
+                  "current_value",
+                  "allowed_range",
+                  "step"
+                ],
+                "properties": {
+                  "parameter_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                  },
+                  "value_type": {"const": "number"},
+                  "current_value": {"type": "number"},
+                  "allowed_range": {
+                    "type": "object",
+                    "required": ["min", "max"],
+                    "properties": {
+                      "min": {"type": "number"},
+                      "max": {"type": "number"}
+                    },
+                    "additionalProperties": false
+                  },
+                  "step": {"type": "number", "exclusiveMinimum": 0}
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "immutable_parameters": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "lineage": {
+      "type": "object",
+      "properties": {
+        "parent_registry_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "source_run_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "source_dataset_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "source_strategy_spec_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        {"required": ["parent_registry_ids"]},
+        {"required": ["source_run_ids"]},
+        {"required": ["source_dataset_refs"]},
+        {"required": ["source_strategy_spec_id"]}
+      ]
+    },
+    "binding_intent": {
+      "description": "Non-authoritative target for a later governed DeploymentPlan; this object never mutates RuntimeBinding.",
+      "type": "object",
+      "required": [
+        "persona_id",
+        "persona_capital_binding_id",
+        "observed_placeholder_artifact_id",
+        "observed_at",
+        "evidence_ref",
+        "replacement_task_id"
+      ],
+      "properties": {
+        "persona_id": {"type": "string", "minLength": 1},
+        "persona_name": {"type": "string", "minLength": 1},
+        "persona_capital_binding_id": {"type": "string", "minLength": 1},
+        "observed_runtime_binding_id": {"type": "string", "minLength": 1},
+        "observed_runtime_id": {"type": "string", "minLength": 1},
+        "observed_deployment_plan_id": {"type": "string", "minLength": 1},
+        "observed_capital_pool_id": {"type": "string", "minLength": 1},
+        "observed_placeholder_artifact_id": {"type": "string", "minLength": 1},
+        "observed_placeholder_artifact_version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+        "observed_binding_status": {"type": "string", "minLength": 1},
+        "observed_deployment_mode": {"enum": ["paper", "canary", "live", "frozen"]},
+        "observed_effective_at": {"type": "string", "format": "date-time"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "evidence_ref": {"type": "string", "minLength": 1},
+        "replacement_task_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "provenance_refs": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
+}
