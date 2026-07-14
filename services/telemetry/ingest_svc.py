@@ -584,6 +584,13 @@ class TelemetryIngestService:
         if event_id and event_id in self._seen_event_ids:
             self._total_duplicates += 1
             log.debug(f"Ingest skipped (duplicate event_id): {event_id}")
+            if self._lineage_write_store is not None:
+                valid, error_msg, resolved_binding = self._validate_evidence_contract(event)
+                if valid:
+                    try:
+                        self._lineage_write_store.admit_telemetry_event(event, resolved_binding)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("Lineage live-write admission failed for duplicate event %s: %s", event_id, exc)
             return True  # idempotent: already delivered, treat as success
 
         # 1. Schema validation

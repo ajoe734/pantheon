@@ -36,6 +36,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi.testclient import TestClient
@@ -61,6 +63,13 @@ from services.incident.incident import IncidentStore
 from services.incident.reference_validation import CanonicalReferenceValidator
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
 from services.incidents.main import app
+
+@pytest.fixture(autouse=True)
+def isolate_worker_paths(tmp_path, monkeypatch):
+    """Ensure no tests leak or read from the shared developer/runtime state paths."""
+    tmp_state = tmp_path / "threshold_sweep_state_isolated.json"
+    monkeypatch.setattr("services.evolution.threshold_sweep_worker.DEFAULT_STATE_PATH", str(tmp_state))
+    monkeypatch.setattr("services.incidents.main.store", IncidentStore(path=None))
 
 _SCHEMA_PATH = str(
     Path(__file__).resolve().parents[1] / "telemetry" / "telemetry_event.schema.json"
@@ -1282,3 +1291,196 @@ def test_run_tick_filters_duplicate_thresholds_with_diagnostic():
     assert result["candidates"] == 1
     # Check that warning was logged
     assert any("warning: duplicate threshold entry" in d for d in result["diagnostics"])
+
+
+# ---------------------------------------------------------------------------
+# Post-merge Acceptance Review Additions (repros and fixes)
+# ---------------------------------------------------------------------------
+
+def test_telemetry_duplicate_retry_repairs_lineage():
+    """Verify that duplicate ingest retries in TelemetryIngestService still
+    admit the event to lineage, allowing retries to repair an absent lineage node."""
+    from services.telemetry.lineage_read import LineageReadService
+    import types
+    import asyncio
+
+    lineage_store = LineageReadService()
+
+    class FakeBindingStore:
+        def get_binding(self, binding_id):
+            return types.SimpleNamespace(
+                binding_id=binding_id,
+                runtime_id="rt-1",
+                capital_pool_id="pool-1",
+                artifact_id="art-1",
+                artifact_version="1.0.0",
+                deployment_mode="paper",
+                execution_mode="paper",
+                effective_at="2026-07-01T00:00:00Z",
+                retired_at=None,
+                plan_id="plan-1",
+                persona_capital_binding_id="pcb-1",
+            )
+
+    ingest = TelemetryIngestService(
+        schema_path=_SCHEMA_PATH,
+        binding_store=FakeBindingStore(),
+        lineage_write_store=lineage_store
+    )
+
+    event = {
+        "event_id": f"evt-duplicate-retry-{uuid.uuid4().hex[:8]}",
+        "event_type": "drawdown_snapshot",
+        "created_at": "2026-07-13T00:00:00Z",
+        "execution_mode": "paper",
+        "binding_id": "rb-1",
+        "runtime_id": "rt-1",
+        "capital_pool_id": "pool-1",
+        "artifact_id": "art-1",
+        "artifact_version": "1.0.0",
+        "deployment_stage": "paper",
+        "plan_id": "plan-1",
+        "persona_capital_binding_id": "pcb-1",
+        "trace_id": "trace-1",
+        "target": {"strategy_id": "art-1"},
+        "metrics": {"drawdown_pct": 0.15},
+    }
+
+    async def run():
+        ok1 = await ingest.ingest(event)
+        assert ok1 is True
+
+        # Manually clear the lineage store to simulate lineage loss or desync
+        lineage_store.graph = type(lineage_store.graph)()
+        assert lineage_store.graph.get_node("telemetry_event", event["event_id"]) is None
+
+        # Run duplicate ingest (seen_event_ids will match)
+        ok2 = await ingest.ingest(event)
+        assert ok2 is True
+
+        # Confirm the lineage store has been repaired by duplicate retry re-admitting it!
+        assert lineage_store.graph.get_node("telemetry_event", event["event_id"]) is not None
+
+    asyncio.run(run())
+
+
+def test_load_thresholds_rejects_governance_invalid_signal_type(tmp_path):
+    """Verify that live config entries with invalid signal_type values are dropped fail-closed."""
+    cfg = tmp_path / "cfg.json"
+    bad_entry = dict(THRESHOLDS[0])
+    bad_entry["signal_type"] = "invalid_action_signal"
+    cfg.write_text(json.dumps({"thresholds": [bad_entry]}), encoding="utf-8")
+    assert load_thresholds(str(cfg)) == []
+
+
+def test_load_thresholds_rejects_side_effecting_telemetry_event_type(tmp_path):
+    """Verify that live config entries with side-effecting telemetry_event_types
+    (such as kill_switch_action or pause_triggered) are dropped fail-closed to prevent side-effects."""
+    cfg = tmp_path / "cfg.json"
+
+    for side_effecting_type in ["kill_switch_action", "pause_triggered", "liquidate_triggered", "manual_override"]:
+        bad_entry = dict(THRESHOLDS[0])
+        bad_entry["telemetry_event_type"] = side_effecting_type
+        cfg.write_text(json.dumps({"thresholds": [bad_entry]}), encoding="utf-8")
+        assert load_thresholds(str(cfg)) == [], f"Should have rejected side-effecting type {side_effecting_type}"
+
+
+def test_run_tick_fails_closed_on_write_ahead_log_write_error(tmp_path):
+    """Verify that run_tick fails closed (records an error and skips incident post)
+    if the write-ahead log fails to save to disk."""
+    summary = _summary()
+    def fetch(*_args, **_kwargs):
+        return [summary]
+
+    from unittest import mock
+    with mock.patch("services.evolution.threshold_sweep_worker._save_pending_evidence", side_effect=OSError("disk full")):
+        result = run_tick(
+            telemetry_api_url="http://telemetry.test",
+            incidents_api_url="http://incidents.test",
+            thresholds=THRESHOLDS,
+            baselines=BASELINES,
+            fetch_summaries=fetch,
+            state_path=str(tmp_path / "state.json"),
+            now=_NOW,
+        )
+        assert result["errors"] >= 1
+        assert any("fail-closed: write-ahead log failed" in d for d in result["diagnostics"])
+
+
+def test_run_tick_retains_undelivered_incidents_across_day_rollover(tmp_path):
+    """Verify that pending deliveries (delivered=False) are NOT lost on day rollover."""
+    state_path = str(tmp_path / "state.json")
+    prior_day = (_NOW - timedelta(days=1)).date().isoformat()
+    pending = {
+        "evt-prior-day": {
+            "window_bucket": prior_day,
+            "telemetry_event": {
+                "event_id": "evt-prior-day",
+                "event_type": "drawdown_snapshot",
+                "created_at": "2026-07-12T00:00:00Z",
+                "execution_mode": "paper",
+                "binding_id": "rb-evochain-001",
+                "runtime_id": "runtime-evochain-001",
+                "capital_pool_id": "pool-evochain-001",
+                "artifact_id": "artifact-evochain-001",
+                "artifact_version": "1.0.0",
+                "deployment_stage": "paper",
+                "plan_id": "plan-evochain-001",
+                "persona_capital_binding_id": "pcb-evochain-001",
+                "trace_id": "trace-prior-day",
+                "target": {"strategy_id": "artifact-evochain-001"},
+                "metrics": {"drawdown_pct": 0.18},
+            },
+            "threshold_snapshot": {
+                "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1",
+                "signal_type": "performance_degradation",
+                "metric_name": "rolling_drawdown_multiple",
+                "comparator": "gt",
+                "raw_observed_value": 0.18,
+                "observed_value": 1.5,
+                "threshold_value": 1.25,
+                "window": "paper-daily-sweep:2026-07-12",
+                "breached": True,
+                "note": "dedupe_key=rb-evochain-001:rolling_drawdown_multiple:paper-daily-sweep:2026-07-12",
+            },
+            "delivered": False
+        }
+    }
+
+    from services.evolution.threshold_sweep_worker import _save_pending_evidence, _load_pending_evidence
+    _save_pending_evidence(state_path, pending)
+
+    def fetch_empty(*_args, **_kwargs):
+        return []
+
+    admitted_events = []
+    posted_incidents = []
+
+    def admit(_url, event, **_kwargs):
+        admitted_events.append(event)
+        return {"status": 202, "body": {}}
+
+    def post(_url, payload, **_kwargs):
+        posted_incidents.append(payload)
+        return {"status": 201, "body": {}}
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch_empty,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=state_path,
+        now=_NOW,
+    )
+
+    assert len(posted_incidents) == 1
+    assert posted_incidents[0]["telemetry_event"]["event_id"] == "evt-prior-day"
+    assert result["incidents_created"] == 1
+
+    updated_pending = _load_pending_evidence(state_path)
+    assert "evt-prior-day" in updated_pending
+    assert updated_pending["evt-prior-day"]["delivered"] is True
+

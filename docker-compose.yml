@@ -853,15 +853,14 @@ services:
       # dev-only client credentials for a short-lived JWT through
       # POST /bff/auth/dev-login.
       #
-      # Dev tier defaults: permissive legacy bearer acceptance without auth
-      # stub bypass. This rejects anonymous protected-route reads while still
-      # accepting the legacy dev browser token
-      # (VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer).
+      # Dev tier defaults to strict JWT auth without a stub bypass.
       # Staging/prod compose files must explicitly export
       # PANTHEON_BFF_AUTH_STUB=false and PANTHEON_BFF_AUTH_MODE=strict.
       PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}
-      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-permissive}
-      PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}
+      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}
+      # Kernel capabilities must be supplied explicitly for an authorized
+      # operator/admin identity; public viewer sessions remain read-only.
+      PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-}
       PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
       PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
