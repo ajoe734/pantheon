@@ -179,12 +179,11 @@ def _seed_real_summary(store: RuntimeSummaryProjectionStore, **event_overrides) 
 # load_thresholds — fail-closed on bad live config; disabled entries dropped
 # ---------------------------------------------------------------------------
 
-def test_default_config_file_loads_governed_thresholds():
+def test_default_config_file_keeps_uncalibrated_pnl_disabled():
     thresholds = load_thresholds(DEFAULT_CONFIG_PATH)
     by_metric = {threshold["metric_name"]: threshold for threshold in thresholds}
-    assert set(by_metric) == {"rolling_drawdown_multiple", "rolling_pnl_floor"}
-    assert by_metric["rolling_pnl_floor"]["threshold_value"] == -5000.0
-    assert "EVOLOOP-005-governed-baselines.md" in by_metric["rolling_pnl_floor"]["policy_source"]
+    assert set(by_metric) == {"rolling_drawdown_multiple"}
+    assert "EVOLOOP-005-governed-baselines.md" in by_metric["rolling_drawdown_multiple"]["policy_source"]
 
 
 def test_load_thresholds_missing_file_fails_closed():
