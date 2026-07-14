@@ -12,9 +12,12 @@ Run:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
+import time
+import urllib.error
 import uuid
 from pathlib import Path
 
@@ -37,6 +40,7 @@ from services.evolution.dispatch_worker import (  # noqa: E402
     fetch_boundary,
     dispatch_decision,
     run_poll,
+    healthcheck,
 )
 from services.evolution.main import app  # noqa: E402
 
@@ -339,7 +343,15 @@ class TestRunPoll:
         item = result["dispatch_items"][0]
         assert item["decision_id"] == decision_id
         assert item["resulting_state"] == "executed"
-        assert item["execution_result"] is not None
+        assert item["execution_plane"] == "research"
+        assert item["execution_result"]["status"] == "submitted"
+        assert item["execution_result"]["plane"] == "research"
+        assert item["execution_result"]["execution_ref_id"] == (
+            f"dispatch-{decision_id}"
+        )
+        assert item["execution_result"]["executed_at"] is not None
+        assert item["cooldown_ends_at"] is not None
+        assert item["observation_window_ends_at"] is not None
 
         # Confirm the decision state is now 'executed' in the store.
         decision = evo_main.store.get(decision_id)
@@ -403,17 +415,20 @@ class TestRunPoll:
         assert result["dispatched"] == 0
         assert result["decisions_found"] == 0  # proposed decisions not in approved list
 
-    def test_run_poll_idempotent_on_second_call(self):
-        """A second poll after dispatch finds no approved decisions (already executed)."""
+    def test_run_poll_idempotent_after_store_restart(self):
+        """A fresh worker/service store does not redispatch an executed decision."""
         decision_id = _propose_and_approve(action_type="retrain", risk_level="low")
 
         import services.evolution.dispatch_worker as dw
+
+        post_calls: list[str] = []
 
         def fake_get(url, timeout_seconds=10.0):
             path = url.split("127.0.0.1:8093")[-1]
             return client.get(path).json()
 
         def fake_post(url, payload, timeout_seconds=30.0):
+            post_calls.append(url)
             path = url.split("127.0.0.1:8093")[-1]
             resp = client.post(path, json=payload)
             if resp.status_code >= 400:
@@ -423,12 +438,21 @@ class TestRunPoll:
 
         orig_get = dw._http_get
         orig_post = dw._http_post
+        orig_store = evo_main.store
         dw._http_get = fake_get  # type: ignore[attr-defined]
         dw._http_post = fake_post  # type: ignore[attr-defined]
         try:
             first = run_poll(api_url="http://127.0.0.1:8093", actor_id="test-worker")
+            assert orig_store._storage_path is not None
+            evo_main.store = evo_main.EvolutionDecisionStore(
+                storage_path=str(orig_store._storage_path)
+            )
             second = run_poll(api_url="http://127.0.0.1:8093", actor_id="test-worker")
+            restarted_decision = evo_main.store.get(decision_id)
+            assert restarted_decision is not None
+            persisted = restarted_decision.to_dict()
         finally:
+            evo_main.store = orig_store
             dw._http_get = orig_get  # type: ignore[attr-defined]
             dw._http_post = orig_post  # type: ignore[attr-defined]
 
@@ -437,6 +461,51 @@ class TestRunPoll:
         assert second["decisions_found"] == 0
         assert second["dispatched"] == 0
         assert second["errors"] == []
+        assert len(post_calls) == 1
+        assert persisted["execution_result"]["execution_ref_id"] == (
+            f"dispatch-{decision_id}"
+        )
+        executed_steps = [
+            step for step in persisted["review_chain"] if step["step_type"] == "executed"
+        ]
+        assert len(executed_steps) == 1
+        assert executed_steps[0]["actor_id"] == "test-worker"
+
+    def test_run_poll_fails_closed_when_boundary_is_unreachable(self):
+        """A boundary read failure must never fall through to /execute."""
+        decision_id = _propose_and_approve(action_type="retrain", risk_level="low")
+
+        import services.evolution.dispatch_worker as dw
+
+        post_calls: list[str] = []
+
+        def fake_get(url, timeout_seconds=10.0):
+            if url.endswith("?has_active_runtime=false"):
+                raise urllib.error.URLError("boundary unavailable")
+            path = url.split("127.0.0.1:8093")[-1]
+            return client.get(path).json()
+
+        def fake_post(url, payload, timeout_seconds=30.0):
+            post_calls.append(url)
+            raise AssertionError("fail-closed poll must not call /execute")
+
+        orig_get = dw._http_get
+        orig_post = dw._http_post
+        dw._http_get = fake_get  # type: ignore[attr-defined]
+        dw._http_post = fake_post  # type: ignore[attr-defined]
+        try:
+            result = run_poll(api_url="http://127.0.0.1:8093", actor_id="test-worker")
+        finally:
+            dw._http_get = orig_get  # type: ignore[attr-defined]
+            dw._http_post = orig_post  # type: ignore[attr-defined]
+
+        assert result["decisions_found"] == 1
+        assert result["dispatched"] == 0
+        assert post_calls == []
+        assert result["errors"] == [
+            f"decision_id={decision_id} boundary_fetch_error=<urlopen error boundary unavailable>"
+        ]
+        assert evo_main.store.get(decision_id).decision_state.value == "approved"
 
     def test_followthrough_visible_in_observation_report(self):
         """After dispatch, observation report confirms execution_result and windows."""
@@ -467,3 +536,74 @@ class TestRunPoll:
             "eligible_for_next_decision",
             "pending_observation",
         }
+
+
+class TestHealthcheck:
+    def test_healthcheck_accepts_recent_success(self, monkeypatch, tmp_path):
+        health_file = tmp_path / "dispatch-health.json"
+        health_file.write_text(
+            json.dumps({"status": "ok", "ticks": 1}), encoding="utf-8"
+        )
+        monkeypatch.setenv("EVOLUTION_DISPATCH_HEALTH_FILE", str(health_file))
+        monkeypatch.setenv("EVOLUTION_DISPATCH_INTERVAL_SECONDS", "30")
+
+        assert healthcheck() == 0
+
+    @pytest.mark.parametrize("status", ["starting", "degraded"])
+    def test_healthcheck_rejects_non_ok_state(
+        self, monkeypatch, tmp_path, status
+    ):
+        health_file = tmp_path / "dispatch-health.json"
+        health_file.write_text(
+            json.dumps({"status": status, "ticks": 1}), encoding="utf-8"
+        )
+        monkeypatch.setenv("EVOLUTION_DISPATCH_HEALTH_FILE", str(health_file))
+
+        assert healthcheck() == 1
+
+    def test_healthcheck_rejects_stale_success(self, monkeypatch, tmp_path):
+        health_file = tmp_path / "dispatch-health.json"
+        health_file.write_text(
+            json.dumps({"status": "ok", "ticks": 1}), encoding="utf-8"
+        )
+        stale_at = time.time() - 91
+        os.utime(health_file, (stale_at, stale_at))
+        monkeypatch.setenv("EVOLUTION_DISPATCH_HEALTH_FILE", str(health_file))
+        monkeypatch.setenv("EVOLUTION_DISPATCH_INTERVAL_SECONDS", "30")
+
+        assert healthcheck() == 1
+
+
+class TestMainLoopFailure:
+    def test_unreachable_api_logs_degraded_tick_without_dispatch(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        import services.evolution.dispatch_worker as dw
+
+        health_file = tmp_path / "dispatch-health.json"
+        post_calls: list[str] = []
+
+        def unreachable_get(url, timeout_seconds=10.0):
+            raise urllib.error.URLError("evolution api unavailable")
+
+        def fail_if_posted(url, payload, timeout_seconds=30.0):
+            post_calls.append(url)
+            raise AssertionError("unreachable API tick must not dispatch")
+
+        monkeypatch.setattr(dw, "_http_get", unreachable_get)
+        monkeypatch.setattr(dw, "_http_post", fail_if_posted)
+        monkeypatch.setenv("EVOLUTION_API_URL", "http://127.0.0.1:1")
+        monkeypatch.setenv("EVOLUTION_DISPATCH_MAX_TICKS", "1")
+        monkeypatch.setenv("EVOLUTION_DISPATCH_HEALTH_FILE", str(health_file))
+
+        assert dw.main() == 0
+
+        tick = json.loads(capsys.readouterr().out)
+        persisted_health = json.loads(health_file.read_text(encoding="utf-8"))
+        assert post_calls == []
+        assert tick["health"]["status"] == "degraded"
+        assert tick["result"]["dispatched"] == 0
+        assert tick["result"]["dispatch_items"] == []
+        assert "evolution api unavailable" in tick["result"]["errors"][0]
+        assert persisted_health["status"] == "degraded"
+        assert "evolution api unavailable" in persisted_health["last_failure_reason"]

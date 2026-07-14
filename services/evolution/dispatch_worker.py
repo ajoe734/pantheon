@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -172,9 +173,10 @@ def run_poll(
             )
             execution_plane = boundary.get("execution_plane", "unknown")
         except Exception as exc:  # noqa: BLE001
-            boundary = {}
-            execution_plane = "unknown"
             errors.append(f"decision_id={decision_id} boundary_fetch_error={exc}")
+            # Fail closed: the boundary read is part of the execution gate.  If
+            # it cannot be verified, do not attempt the mutating /execute call.
+            continue
 
         try:
             result = dispatch_decision(
@@ -218,6 +220,46 @@ def _write_health(path: str, state: dict[str, Any]) -> None:
             json.dump(state, fh, indent=2)
     except OSError:
         pass
+
+
+def healthcheck() -> int:
+    """Return success only after a recent, error-free dispatch poll."""
+    health_file = os.getenv("EVOLUTION_DISPATCH_HEALTH_FILE", "")
+    interval_seconds = _env_int(
+        "EVOLUTION_DISPATCH_INTERVAL_SECONDS", 30, minimum=1
+    )
+    if not health_file:
+        print("EVOLUTION_DISPATCH_HEALTH_FILE is not configured", file=sys.stderr)
+        return 1
+
+    try:
+        with open(health_file, encoding="utf-8") as fh:
+            state = json.load(fh)
+        age_seconds = max(0.0, time.time() - os.path.getmtime(health_file))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"evolution dispatch health unavailable: {exc}", file=sys.stderr)
+        return 1
+
+    if not isinstance(state, dict):
+        print("evolution dispatch health payload is not an object", file=sys.stderr)
+        return 1
+
+    max_age_seconds = max(60, interval_seconds * 3)
+    if state.get("status") != "ok" or state.get("ticks", 0) < 1:
+        print(
+            "evolution dispatch health is not ready: "
+            f"status={state.get('status')} ticks={state.get('ticks')}",
+            file=sys.stderr,
+        )
+        return 1
+    if age_seconds > max_age_seconds:
+        print(
+            "evolution dispatch health is stale: "
+            f"age_seconds={age_seconds:.1f} max_age_seconds={max_age_seconds}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 
 
 def main() -> int:
@@ -290,4 +332,12 @@ def main() -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through compose/smoke.
+    if sys.argv[1:] == ["healthcheck"]:
+        raise SystemExit(healthcheck())
+    if sys.argv[1:]:
+        print(
+            "usage: python -m services.evolution.dispatch_worker [healthcheck]",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     raise SystemExit(main())
