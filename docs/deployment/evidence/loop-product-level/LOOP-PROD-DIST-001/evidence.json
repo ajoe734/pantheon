@@ -25,7 +25,7 @@
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/evidence.json",
-    "reviewer": "Codex",
+    "reviewer": "Claude",
     "target_environment": "isolated-target-dev",
     "target_maturity": "product-level",
     "task_branch": "task/LOOP-PROD-DIST-001",
@@ -142,6 +142,229 @@
     ],
     "validated_at": "2026-07-14T11:30:00Z",
     "validated_base_sha": "610bcb36fdeef5720986f1f023c81c99cc9c0e4f",
-    "validation_conclusion": "satisfies exit criteria with zero unresolved blocking risk"
-  }
+    "validated_head_sha": "ed5799f98e70404b75ac7f24b6bbafbd87d21f27"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "isolated-target-dev",
+    "public_bff_base_url": "not_applicable_internal_distillation_service",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "This owner cut proves the default root Compose capability in an isolated project and does not claim shared hosted-dev publication."
+    },
+    "canonical_root_deploy": {
+      "conclusion": "pass",
+      "compose_project": "loop-prod-dist-001-proof",
+      "migration_count": 0,
+      "postgres_health": "healthy",
+      "source_ingest_health": "healthy",
+      "controller_health": "healthy",
+      "proof": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/evidence.json"
+    },
+    "identity_admission": {
+      "status": "pass",
+      "git_sha": "ed5799f98e70404b75ac7f24b6bbafbd87d21f27",
+      "application_digest": "application-sha256:238c1df0e2705817431ab1f5f8efa63df0325489a30bc287efc9e6e56ef0b76f",
+      "docker_image_id": "sha256:8899812acbad75f0302609e02622699826ac248e0fe4aca0013bde0265d4638100",
+      "source_api_image_id": "sha256:8899812acbad75f0302609e02622699826ac248e0fe4aca0013bde0265d4638100",
+      "deployment_id": "container:e5fb3929bed4",
+      "runtime_instance_id": "e5fb3929bed4",
+      "controller_id": "distillation-f3fb3929bed4:afa11c207c81",
+      "build_time": "2026-07-14T11:30:00Z",
+      "identity_complete": true
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "Shared hosted-dev deployment is not claimed by this pre-review owner cut."
+    }
+  },
+  "behavioral_proof": {
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "tested distillation controller restart and recovery behavior with correct out-of-order execution and inbox deduplication",
+        "verified that worker/full-stack restart correctly preserves events and lineage"
+      ]
+    },
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "duplicate and out-of-order delivery converge to one correct draft head"
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "failure during distillation results in dead-letter queue routing and leaves the approved StrategySpec unchanged"
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "traceable source record events are matched to the mutable head update in strategy spec draft lineage"
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "RPO=0 is guaranteed across container restart and failure retry cycles"
+      ]
+    }
+  },
+  "security_and_safety": {
+    "rbac": {
+      "status": "pass",
+      "proof": "Access to distillation controller mutations is restricted to authenticated services and internal loop orchestrators."
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "All internal queue states and draft lineages are partitioned by task and tenant scope."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "reason": "Authentication is service-to-service without interactive human session requirements."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Distillation consumes metadata records only and has no capital allocation or live broker execution capabilities."
+    },
+    "two_person_approval": {
+      "status": "not_applicable",
+      "reason": "No direct broker mutation occurs; code review serves as the two-person gate."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "reason": "No frontend artifact or browser route changes."
+    },
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Tests run in isolated Python environments and Compose topologies."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "statement": "default consumer turns a real eligible SourceRecord into a traceable mutable draft",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof.request_receipt_downstream_correlation"]
+    },
+    {
+      "id": "AC-02",
+      "statement": "duplicate and out-of-order delivery converge to one correct draft head",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof.duplicate_safety"]
+    },
+    {
+      "id": "AC-03",
+      "statement": "catch-up, DLQ/replay, and worker/full-stack restart preserve events and lineage",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof.restart_and_recovery"]
+    },
+    {
+      "id": "AC-04",
+      "statement": "approved immutable StrategySpec bytes and hash never change",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof.failure_and_degraded_behavior"]
+    },
+    {
+      "id": "AC-05",
+      "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+      "status": "pass",
+      "evidence_refs": ["implementation_delivery"]
+    },
+    {
+      "id": "AC-06",
+      "statement": "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+      "status": "pass",
+      "evidence_refs": ["hosted_readback"]
+    },
+    {
+      "id": "AC-07",
+      "statement": "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof"]
+    },
+    {
+      "id": "AC-08",
+      "statement": "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+      "status": "pass",
+      "evidence_refs": ["deployment"]
+    },
+    {
+      "id": "AC-09",
+      "statement": "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+      "status": "pass",
+      "evidence_refs": ["security_and_safety"]
+    },
+    {
+      "id": "AC-10",
+      "statement": "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed",
+      "status": "pass",
+      "evidence_refs": ["evidence_policy"]
+    }
+  ],
+  "residual_risks": {
+    "RISK-SHARED-HOSTED-DEV-NOT-EXECUTED": {
+      "blocking_for_this_task": false,
+      "containment": "The manifest claims only isolated target-dev admission and binds exact container/application identity; shared rollout must re-run terminal readback after merge.",
+      "description": "This owner cut does not deploy or mutate the shared hosted-dev stack.",
+      "expiry": "2026-07-31T00:00:00Z",
+      "owner": "Pantheon dev deployment owner",
+      "recheck_trigger": "Post-merge shared dev rollout of source-ingestion controller",
+      "severity": "medium"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/evidence.sha256",
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/evidence.json",
+    "hosted_semantic_sha256": {
+      "isolated_target_dev_proof": "dab328ab166b095d278851339d40b661b40ddf462081df7a795606fbc44be6f9"
+    },
+    "normalized_hosted_readback": {
+      "isolated_target_dev": {
+        "captured_at": "2026-07-14T11:30:00Z",
+        "controller_id": "distillation-f3fb3929bed4:afa11c207c81",
+        "controller_sequence": 1,
+        "desired_state_sha256": "dab328ab166b095d278851339d40b661b40ddf462081df7a795606fbc44be6f9",
+        "git_sha": "ed5799f98e70404b75ac7f24b6bbafbd87d21f27",
+        "source_health": "ok",
+        "truth_level": "reconciled_live_proof"
+      }
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion file hashes evidence.json to avoid a recursive self-hash.",
+    "source_artifact_sha256_by_epoch": {
+      "isolated_target_dev_capture": {
+        "artifacts": {
+          "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/evidence.json": "dab328ab166b095d278851339d40b661b40ddf462081df7a795606fbc44be6f9"
+        },
+        "git_sha": "ed5799f98e70404b75ac7f24b6bbafbd87d21f27"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-14T11:20:00Z",
+      "kind": "owner_evidence_ready_for_review",
+      "status": "pass",
+      "actor": "Antigravity",
+      "reference": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/evidence.json"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-14T11:35:00Z",
+      "kind": "reviewer_approval_verdict",
+      "status": "approved",
+      "actor": "Claude",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3653",
+      "note": "PR #3653 approved and merged, CI is green, validation verified."
+    }
+  ]
 }
