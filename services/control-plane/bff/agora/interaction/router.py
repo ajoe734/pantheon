@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Literal, Optional
@@ -16,7 +15,7 @@ from ..governance.router import (
     authoritative_approval_availability,
     build_proposal_record,
 )
-from ..governance.store import ProposalConflict, ProposalStore
+from ..governance.store import ProposalConflict, ProposalStore, payload_fingerprint
 
 
 class ContextRef(BaseModel):
@@ -54,19 +53,11 @@ class SubmitInteractionRequest(EligibilityRequest):
     context_refs: List[ContextRef] = Field(min_length=1)
 
 
-class InteractionStore:
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._contexts: Dict[str, Dict[str, Any]] = {}
-        self._commands: Dict[str, Dict[str, Any]] = {}
+class InteractionStore(ProposalStore):
+    """Backward-compatible isolated store for unit tests."""
 
-    def once(self, scope: str, key: str, build: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
-        compound = f"{scope}:{key}"
-        with self._lock:
-            bucket = self._contexts if scope.startswith("context:") else self._commands
-            if compound not in bucket:
-                bucket[compound] = build()
-            return json.loads(json.dumps(bucket[compound]))
+    def __init__(self) -> None:
+        super().__init__(backend="off")
 
 
 def _persona_id(persona: Dict[str, Any]) -> str:
@@ -85,7 +76,9 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                               proposal_store: ProposalStore,
                               interaction_store: Optional[InteractionStore] = None) -> APIRouter:
     router = APIRouter(tags=["agora-interaction"])
-    store = interaction_store or InteractionStore()
+    # The production proposal store also owns command idempotency/outbox state,
+    # so restarts and independent BFF workers share one durable truth.
+    store = interaction_store or proposal_store
     proposals = proposal_store
 
     def scope(auth: Optional[str], tenant: Optional[str]) -> Any:
@@ -146,17 +139,22 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         if not idempotency_key:
             from models import ErrorCode
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "Idempotency-Key header is required", "missing_idempotency_key")
-        canonical = json.dumps([ref.model_dump() for ref in body.context_refs], sort_keys=True)
+        request_payload = body.model_dump(mode="json")
+        canonical = json.dumps(request_payload, sort_keys=True)
         def build() -> Dict[str, Any]:
             if body.workshop_id:
                 session = session_for(body.workshop_id, resolved)
             else:
                 strategy = next((r for r in body.context_refs if r.type == "strategy"), None)
-                wid = str(uuid.uuid4())
-                session = workshop_store.create_session({"workshop_id": wid, "tenant_id": resolved.tenant_id,
-                    "user_id": resolved.user_id, "strategy_id": strategy.id if strategy else None,
-                    "active_strategy_spec_registry_id": strategy.id if strategy else None,
-                    "selected_version_id": strategy.version_id if strategy else None, "status": "open"})
+                wid = "ws_" + hashlib.sha256(
+                    f"{resolved.tenant_id}:{resolved.user_id}:{idempotency_key}".encode()
+                ).hexdigest()[:24]
+                session = workshop_store.get_session(wid)
+                if session is None:
+                    session = workshop_store.create_session({"workshop_id": wid, "tenant_id": resolved.tenant_id,
+                        "user_id": resolved.user_id, "strategy_id": strategy.id if strategy else None,
+                        "active_strategy_spec_registry_id": strategy.id if strategy else None,
+                        "selected_version_id": strategy.version_id if strategy else None, "status": "open"})
             strategy = next((r for r in body.context_refs if r.type == "strategy"), None)
             if strategy and session.get("selected_version_id") not in (None, strategy.version_id):
                 from models import ErrorCode
@@ -164,7 +162,18 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             return {"workshop_id": session["workshop_id"], "context_refs": [r.model_dump() for r in body.context_refs],
                     "context_digest": hashlib.sha256(canonical.encode()).hexdigest(), "environment": body.environment,
                     "verified": True, "resolved_at": utc_now()}
-        data = store.once(f"context:{resolved.tenant_id}:{resolved.user_id}", idempotency_key, build)
+        try:
+            result = store.once(
+                f"context:{resolved.tenant_id}:{resolved.user_id}",
+                idempotency_key,
+                payload_fingerprint(request_payload),
+                build,
+            )
+        except ProposalConflict as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+        data = result.data
+        if result.run_side_effects:
+            store.complete_side_effects(f"context:{resolved.tenant_id}:{resolved.user_id}", idempotency_key)
         return {"data": data, "meta": {"snapshot_at": utc_now(), "capability": "agora.persona.interaction.v1"}}
 
     @router.post("/bff/agora/interactions/participants:eligible")
@@ -185,11 +194,16 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         trace_id: str,
         proposal_snapshot: Optional[Dict[str, Any]] = None,
         proposal_etag: Optional[str] = None,
+        occurred_at: Optional[str] = None,
     ) -> None:
         from agora.strategy_workshop.router import _ws_publish
 
+        event_time = occurred_at or utc_now()
         # 1. opinion_requested event
-        req_event_id = f"evt-{uuid.uuid4().hex[:12]}"
+        def deterministic_event_id(stage: str) -> str:
+            return "evt-" + hashlib.sha256(f"{interaction_id}:{stage}".encode()).hexdigest()[:20]
+
+        req_event_id = deterministic_event_id("requested")
         requested_event = {
             "spec_version": "1.0",
             "event_id": req_event_id,
@@ -202,7 +216,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             "status": "open",
             "no_capital_authority_proof": "persona_interaction_event_no_capital_or_order_authority",
             "trace_id": trace_id,
-            "created_at": utc_now()
+            "created_at": event_time
         }
         workshop_store.create_event({
             "event_id": req_event_id,
@@ -239,7 +253,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
 
         for idx, pid in enumerate(participants):
             is_last = (idx == len(participants) - 1)
-            offered_event_id = f"evt-{uuid.uuid4().hex[:12]}"
+            offered_event_id = deterministic_event_id(f"opinion:{idx}:{pid}")
             opinion_event_ids.append(offered_event_id)
 
             if has_degraded:
@@ -288,7 +302,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 "status": status,
                 "no_capital_authority_proof": "persona_interaction_event_no_capital_or_order_authority",
                 "trace_id": trace_id,
-                "created_at": utc_now()
+                "created_at": event_time
             }
             workshop_store.create_event({
                 "event_id": offered_event_id,
@@ -302,7 +316,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             })
 
         # 3. thread_closed event
-        closed_event_id = f"evt-{uuid.uuid4().hex[:12]}"
+        closed_event_id = deterministic_event_id("closed")
         closed_event = {
             "spec_version": "1.0",
             "event_id": closed_event_id,
@@ -315,7 +329,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             "status": "closed",
             "no_capital_authority_proof": "persona_interaction_event_no_capital_or_order_authority",
             "trace_id": trace_id,
-            "created_at": utc_now()
+            "created_at": event_time
         }
         workshop_store.create_event({
             "event_id": closed_event_id,
@@ -366,7 +380,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             "risk_notes": risk_notes,
             "conditions": conditions,
             "evidence_refs": evidence_refs,
-            "freshness": utc_now()
+            "freshness": event_time
         }
 
         if mode == "propose_action" and proposal_snapshot:
@@ -455,10 +469,14 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             from models import ErrorCode
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "One or more participants are ineligible", "participant_eligibility_failed")
         
-        trace_id = session.get("openclaw_session_id") or f"trace-{uuid.uuid4().hex[:12]}"
+        command_scope = f"command:{resolved.tenant_id}:{resolved.user_id}"
+        request_payload = body.model_dump(mode="json")
+        command_fingerprint = payload_fingerprint(request_payload)
 
         def build() -> Dict[str, Any]:
-            interaction_id = body.interaction_id or str(uuid.uuid4())
+            interaction_id = body.interaction_id or "int_" + hashlib.sha256(
+                f"{command_scope}:{idempotency_key}".encode()
+            ).hexdigest()[:24]
             data = {"interaction_id": interaction_id, "workshop_id": body.workshop_id,
                     "mode": body.mode, "topic": body.topic, "participants": body.participant_persona_ids,
                     "context_refs": [r.model_dump() for r in body.context_refs], "status": "queued",
@@ -517,6 +535,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 proposal = proposals.create(
                     proposal,
                     f"interaction:{idempotency_key}",
+                    fingerprint=command_fingerprint,
                 )
             except ProposalConflict as exc:
                 raise HTTPException(409, detail=str(exc)) from exc
@@ -525,11 +544,12 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                     current=proposal,
                     decisions=get_read_store().list_approval_decisions(),
                 )
-            except Exception as exc:
-                raise HTTPException(
-                    503,
-                    detail="authoritative approval store is unavailable",
-                ) from exc
+            except Exception:
+                availability = {
+                    "refs": [], "ready": False,
+                    "reason": "authoritative_approval_store_unavailable",
+                    "missing_required_reviewers": list(proposal.get("required_reviewers") or []),
+                }
             proposal_view = {
                 **proposal,
                 "available_approval_decision_refs": availability["refs"],
@@ -547,23 +567,45 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 "proposal_etag": proposals.etag(proposal),
             })
             return data
-        data = store.once(f"command:{resolved.tenant_id}:{resolved.user_id}", idempotency_key, build)
+        try:
+            result = store.once(command_scope, idempotency_key, command_fingerprint, build)
+        except ProposalConflict as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+        data = result.data
+        trace_id = session.get("openclaw_session_id") or f"trace-{data['interaction_id']}"
 
-        # Trigger simulated async debate and synthesis
-        background_tasks.add_task(
-            simulate_interaction_debate_and_synthesis,
-            workshop_id=body.workshop_id,
-            interaction_id=data["interaction_id"],
-            topic=body.topic,
-            mode=body.mode,
-            participants=body.participant_persona_ids,
-            context_refs=body.context_refs,
-            tenant_id=resolved.tenant_id,
-            user_id=resolved.user_id,
-            trace_id=trace_id,
-            proposal_snapshot=data.get("proposal"),
-            proposal_etag=data.get("proposal_etag"),
-        )
+        if result.run_side_effects:
+            def run_side_effects() -> None:
+                try:
+                    simulate_interaction_debate_and_synthesis(
+                        workshop_id=body.workshop_id,
+                        interaction_id=data["interaction_id"],
+                        topic=body.topic,
+                        mode=body.mode,
+                        participants=body.participant_persona_ids,
+                        context_refs=body.context_refs,
+                        tenant_id=resolved.tenant_id,
+                        user_id=resolved.user_id,
+                        trace_id=trace_id,
+                        proposal_snapshot=data.get("proposal"),
+                        proposal_etag=data.get("proposal_etag"),
+                        occurred_at=data["submitted_at"],
+                    )
+                except Exception:
+                    store.release_side_effects(command_scope, idempotency_key)
+                    raise
+                else:
+                    store.complete_side_effects(command_scope, idempotency_key)
+
+            # Run the claimed deterministic outbox work before acknowledging.
+            # This avoids leaving an undrained pending row if the process exits
+            # after returning 202; a failed run is released and safely retried.
+            try:
+                run_side_effects()
+            except ValueError as exc:
+                if "event_id reused" in str(exc):
+                    raise HTTPException(409, detail=str(exc)) from exc
+                raise
 
         return {"data": data, "meta": {"snapshot_at": utc_now(), "capability": "agora.persona.interaction.v1"}}
 

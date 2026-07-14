@@ -75,8 +75,12 @@ class ProposeApprovalRequest(BaseModel):
     risk_level: RiskLevel = RiskLevel.LOW
     capital_pool_id: Optional[str] = None
     persona_id: Optional[str] = None
-    tenant_id: Optional[str] = Field(default=None, min_length=1)
-    owner_user_id: Optional[str] = Field(default=None, min_length=1)
+    tenant_id: str = Field(default="pantheon-system", min_length=1)
+    owner_user_id: str = Field(default="pantheon-system", min_length=1)
+    proposal_id: Optional[str] = Field(default=None, min_length=1)
+    proposal_revision: Optional[int] = Field(default=None, ge=1)
+    proposal_content_digest: Optional[str] = Field(default=None, min_length=1)
+    validation_result_digest: Optional[str] = Field(default=None, min_length=1)
 
 
 class AcceptReviewRequest(BaseModel):
@@ -136,8 +140,13 @@ class ApprovalDecisionResponse(BaseModel):
     capital_pool_id: Optional[str]
     persona_id: Optional[str]
     metadata: Optional[Dict[str, Any]]
-    tenant_id: Optional[str]
-    owner_user_id: Optional[str]
+    tenant_id: str
+    owner_user_id: str
+    proposal_id: Optional[str]
+    proposal_revision: Optional[int]
+    proposal_content_digest: Optional[str]
+    validation_result_digest: Optional[str]
+    revoked_at: Optional[str]
 
 
 class WriteAuthorityEntry(BaseModel):
