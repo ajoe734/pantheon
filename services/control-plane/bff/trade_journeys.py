@@ -1377,17 +1377,17 @@ def create_trade_journeys_router(
         for event in events:
             if not isinstance(event, dict):
                 return _err(400, "VALIDATION_FAILED", "Each event must be a JSON object")
-            
+
             # 1. Required fields validation
             for field in ("event_id", "journey_id", "tenant_id", "environment", "occurred_at"):
                 val = event.get(field)
                 if not isinstance(val, str) or not val.strip():
                     return _err(400, "VALIDATION_FAILED", f"Event missing required field: {field}")
-            
+
             # 2. Tenant scope check
             if not _tenant_allowed(identity, event["tenant_id"]):
                 return _err(403, "FORBIDDEN", f"Tenant access denied for tenant: {event['tenant_id']}")
-                
+
             # 3. Timezone-aware ISO-8601 validation
             for ts_field in ("occurred_at", "recorded_at"):
                 val = event.get(ts_field)
@@ -1398,7 +1398,7 @@ def create_trade_journeys_router(
                             return _err(400, "VALIDATION_FAILED", f"{ts_field} must be timezone-aware")
                     except Exception:
                         return _err(400, "VALIDATION_FAILED", f"Invalid ISO-8601 format for {ts_field}")
-                        
+
             # 4. stage validation (if stage present)
             stage = event.get("stage")
             if stage is not None and stage not in STAGES:
@@ -1412,7 +1412,7 @@ def create_trade_journeys_router(
 
             event_id = norm_event["event_id"]
             fingerprint = repr(_canonical(norm_event))
-            
+
             # Check duplicate within the batch
             if event_id in batch_ids:
                 if batch_ids[event_id] != fingerprint:
@@ -1426,16 +1426,16 @@ def create_trade_journeys_router(
             return _err(503, "STORE_UNCONFIGURED", "Events store path is not configured")
         store_path = Path(store_path_str)
         lock_path = store_path.with_suffix(".lock")
-        
+
         try:
             # Ensure the directory exists
             store_path.parent.mkdir(parents=True, exist_ok=True)
             with open(lock_path, "w") as lock_file:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                
+
                 # Now we hold the lock!
                 existing = load_store_events(store_path)
-                
+
                 # Check conflict with existing store events
                 existing_normalized = {}
                 for ev in existing:
@@ -1466,7 +1466,7 @@ def create_trade_journeys_router(
                     merged_dict.values(),
                     key=lambda event: (event.get("occurred_at") or "", event.get("event_id") or "")
                 )
-                
+
                 write_store_atomic(store_path, merged_list)
         except Exception as exc:
             return _err(500, "WRITE_FAILED", f"Failed to write events to store: {exc}")

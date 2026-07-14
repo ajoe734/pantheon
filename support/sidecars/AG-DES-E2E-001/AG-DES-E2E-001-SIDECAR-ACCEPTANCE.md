@@ -1,12 +1,12 @@
 # AG-DES-E2E-001 — Acceptance Packet and Dependency Map
 
-**Sidecar kind:** acceptance_packet  
-**Sidecar task:** AG-DES-E2E-001-SIDECAR-ACCEPTANCE  
-**Parent task:** AG-DES-E2E-001  
-**Parent owner:** Claude2  
-**Parent reviewer:** Claude  
-**Prepared by:** Claude (sidecar owner)  
-**Date:** 2026-06-21  
+**Sidecar kind:** acceptance_packet
+**Sidecar task:** AG-DES-E2E-001-SIDECAR-ACCEPTANCE
+**Parent task:** AG-DES-E2E-001
+**Parent owner:** Claude2
+**Parent reviewer:** Claude
+**Prepared by:** Claude (sidecar owner)
+**Date:** 2026-06-21
 **Authority doc:** `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/06_winner_branch_e2e_and_isolation.md`
 
 ---

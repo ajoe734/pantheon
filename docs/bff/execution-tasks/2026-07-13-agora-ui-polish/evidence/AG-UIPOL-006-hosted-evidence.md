@@ -61,3 +61,9 @@ Artifact SHA-256:
 - `npx vitest run src/agora/TradingDeskLayout.test.tsx src/agora/pages/trading-room/TradingRoomPage.test.tsx src/agora/trading-room/WorkspaceLayoutProposalDrawer.test.tsx src/agora/trading-room/workspaceLayoutProposal.test.ts src/agora/widgets/ChartSpecRenderer.test.tsx src/lib/bff-v1/agora/ask.test.ts src/lib/bff-v1/agora/workshops.test.ts` -> 129/129 passed.
 - `AG_UIPOL_006_HOSTED=1 AG_UIPOL_006_LAYOUT_WRITE=1 AG_UIPOL_006_FE_BASE_URL=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io AG_UIPOL_006_EXPECTED_COMMIT=886e357f6861e835e95877f975f419872b4543b6 npx playwright test e2e/agora-ui-polish-hosted.spec.ts` -> 6/6 passed.
 - No execution or write routes were called, confirming compliance with non-goals.
+
+## Owner finalization
+
+- Confirmed execute-plans PR #314 and PR #316 are `MERGED` into `dev` (checked via `gh pr view --repo ajoe734/execute-plans`).
+- Confirmed this evidence commit is an ancestor of `origin/dev` in the pantheon repo.
+- Re-read the acceptance criteria in `AG-UIPOL-006-shell-command-servant-layout-control.md`; all five are satisfied by the hosted proof above. Closing this task to `done`.

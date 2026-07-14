@@ -100,13 +100,13 @@ class LoopControllerStore:
         conn = await asyncpg.connect(self.dsn)
         try:
             async with conn.transaction():
-                # We enforce lease safety: if the existing lease is active, we cannot overwrite it 
+                # We enforce lease safety: if the existing lease is active, we cannot overwrite it
                 # unless the request comes from the same controller_id or the lease has expired.
                 # Stale lease and duplicate writes cannot manufacture accepted liveness.
                 # We also ensure heartbeats cannot be written out-of-order or late.
                 # Use FOR UPDATE to prevent TOCTOU race.
                 now = datetime.now(timezone.utc)
-                
+
                 # Fetch existing lease to compare
                 existing = await conn.fetchrow(
                     """

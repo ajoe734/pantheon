@@ -1,11 +1,11 @@
 # Pathreon Agora — Claude Design UI Requirement V10
 ## Expert Strategy Dialogue / 高階交易策略共同建構工作區
 
-> 版本：V10  
-> 日期：2026-06-18  
-> 適用對象：Claude Design、UI/UX 設計、VS Code 前端開發、Pantheon BFF / Research Plane 團隊  
-> 使用者可見產品名稱：Pathreon Agora  
-> 後端能力來源：Pantheon `dev` Research / Registry / Governance / Execution planes  
+> 版本：V10
+> 日期：2026-06-18
+> 適用對象：Claude Design、UI/UX 設計、VS Code 前端開發、Pantheon BFF / Research Plane 團隊
+> 使用者可見產品名稱：Pathreon Agora
+> 後端能力來源：Pantheon `dev` Research / Registry / Governance / Execution planes
 > 取代範圍：本文件取代 V9 中過度簡化的策略對話範例；保留「對話優先、複雜工具隱藏」原則，但將對話能力提升到專業交易員可接受的研究深度。
 
 ---

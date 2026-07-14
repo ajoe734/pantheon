@@ -1,9 +1,9 @@
 # Pathreon Agora — Claude Design UI Requirement V2
 
-> 文件目的：交付 Claude Design 產出 Agora 前端 UI 設計稿。  
-> 版本：V2 / Strategy-Lens + Personalized Trading Desk 版  
-> 日期：2026-05-20  
-> 範圍：只設計 Agora，不設計 Pathreon Management。  
+> 文件目的：交付 Claude Design 產出 Agora 前端 UI 設計稿。
+> 版本：V2 / Strategy-Lens + Personalized Trading Desk 版
+> 日期：2026-05-20
+> 範圍：只設計 Agora，不設計 Pathreon Management。
 > 重要原則：Agora 是交易員的個人 AI 交易桌，不是 Management 後台，也不是散戶聊天工具。
 
 ---
@@ -1177,4 +1177,3 @@ Agora 是交易員的一張 AI 交易桌。
 ```
 
 AI 會根據每個交易員、每個策略 lens、每個工作階段，生成不同 dashboard、不同 widget、不同監控邏輯。交易員調整它，AI 記住它，並用 Shadow / Journal / Training 產生高價值訓練資料。
-

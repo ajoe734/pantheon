@@ -1297,7 +1297,7 @@ def test_unassigned_runtime_telemetry_isolation_and_no_seed_leaks(
     persona_custom = "persona-custom-empty"
     runtime_unassigned = "runtime-devloop-unassigned"
     runtime_binding_unassigned = "rb-devloop-unassigned"
-    
+
     def write_store(name: str, payload: object) -> Path:
         path = tmp_path / name
         path.write_text(json.dumps(payload), encoding="utf-8")
@@ -1611,7 +1611,7 @@ def test_canonical_binding_precedence_and_mixed_topology(
     assert assigned_perf["pnl"] == 0.0
     assert assigned_perf["max_drawdown"] == 0.0
     assert assigned_perf["total_trades"] == 0
-    
+
     # Absent persona-owned evidence on custom persona must not leak seed values
     assert fleet_rows[persona_test]["perf_delta"] is None
 
@@ -1626,6 +1626,6 @@ def test_canonical_binding_precedence_and_mixed_topology(
     }
     assert ranking_rows[persona_missing]["eligible"] is False
     assert ranking_rows[persona_missing]["metrics"]["telemetry_coverage_count"] == 0
-    
+
     assert ranking_rows[persona_test]["eligible"] is True
     assert ranking_rows[persona_test]["source_confidence"] == "formal"

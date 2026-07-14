@@ -1,14 +1,14 @@
 # AG-FE-TR-002 Acceptance and Dependency Map (Sidecar)
 
-**Parent task:** `AG-FE-TR-002` - Candidate review and entry/position/exit queues  
-**Parent owner:** `Claude`  
-**Parent reviewer:** `Codex`  
-**Parent status at packet time:** `in_progress`  
-**Sidecar task:** `AG-FE-TR-002-SIDECAR-ACCEPTANCE`  
-**Sidecar owner:** `Codex`  
-**Sidecar reviewer:** `Claude`  
-**Helper kind:** `acceptance_packet`  
-**Generated:** `2026-06-22`  
+**Parent task:** `AG-FE-TR-002` - Candidate review and entry/position/exit queues
+**Parent owner:** `Claude`
+**Parent reviewer:** `Codex`
+**Parent status at packet time:** `in_progress`
+**Sidecar task:** `AG-FE-TR-002-SIDECAR-ACCEPTANCE`
+**Sidecar owner:** `Codex`
+**Sidecar reviewer:** `Claude`
+**Helper kind:** `acceptance_packet`
+**Generated:** `2026-06-22`
 **Mutates canonical truth:** `no`
 
 This is a support artifact only. It does not modify L1 canonical truth, OpenAPI,

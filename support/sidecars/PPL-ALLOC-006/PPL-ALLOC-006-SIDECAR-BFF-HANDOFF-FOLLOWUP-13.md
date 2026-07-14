@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 13
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-13`
+Parent: `PPL-ALLOC-006`
+Owner: Codex
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -71,10 +71,10 @@ behavior, or applied allocation.
 ## Review And Composition
 
 Owned here: support-only evidence checkpoint, absorption decision, and
-reviewer handoff.  
+reviewer handoff.
 Not changing: L1/L2 truth, BFF/frontend implementation, route contracts,
 runtime/registry/governance behavior, dependency ownership, PR state, or
-parent lifecycle.  
+parent lifecycle.
 Composes with: parent `PPL-ALLOC-006`, `PPL-ALLOC-003` binding reads,
 `PPL-ALLOC-004` allocation semantics, `PPL-ALLOC-008` emergency containment,
 and Follow-Up 12.
@@ -108,4 +108,3 @@ Claude approves this no-delta checkpoint and returns it to owner Codex for
 formal closeout. Approval covers this support packet only; it does not
 approve or merge PR `#251`, close any BFF query gap, or close
 `PPL-ALLOC-006`.
-
