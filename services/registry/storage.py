@@ -32,16 +32,16 @@ class RegistryStore:
 
     # -- Write operations -------------------------------------------------
 
-    def put(self, entry: RegistryEntry) -> None:
-        with self._lock:
-            self._entries[entry.registry_id] = entry
-            self._strategy_index.setdefault(entry.strategy_id, [])
-            if entry.registry_id not in self._strategy_index[entry.strategy_id]:
-                self._strategy_index[entry.strategy_id].append(entry.registry_id)
+    def _put_unlocked(self, entry: RegistryEntry) -> None:
+        self._entries[entry.registry_id] = entry
+        self._strategy_index.setdefault(entry.strategy_id, [])
+        if entry.registry_id not in self._strategy_index[entry.strategy_id]:
+            self._strategy_index[entry.strategy_id].append(entry.registry_id)
 
-    def create(self, payload: RegistryEntryCreate, registry_id: str) -> RegistryEntry:
+    @staticmethod
+    def _new_entry(payload: RegistryEntryCreate, registry_id: str) -> RegistryEntry:
         now = utc_now_iso()
-        entry = RegistryEntry(
+        return RegistryEntry(
             registry_id=registry_id,
             artifact_type=payload.artifact_type,
             strategy_id=payload.strategy_id,
@@ -57,8 +57,29 @@ class RegistryStore:
             created_at=now,
             updated_at=now,
         )
+
+    def put(self, entry: RegistryEntry) -> None:
+        with self._lock:
+            self._put_unlocked(entry)
+
+    def create(self, payload: RegistryEntryCreate, registry_id: str) -> RegistryEntry:
+        entry = self._new_entry(payload, registry_id)
         self.put(entry)
         return entry
+
+    def create_if_absent(
+        self,
+        payload: RegistryEntryCreate,
+        registry_id: str,
+    ) -> tuple[RegistryEntry, bool]:
+        """Atomically create an entry, or return the existing entry unchanged."""
+        with self._lock:
+            existing = self._entries.get(registry_id)
+            if existing is not None:
+                return existing, False
+            entry = self._new_entry(payload, registry_id)
+            self._put_unlocked(entry)
+            return entry, True
 
     def update(self, entry: RegistryEntry) -> None:
         entry.updated_at = utc_now_iso()

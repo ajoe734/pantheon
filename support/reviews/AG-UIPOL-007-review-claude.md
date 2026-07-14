@@ -372,3 +372,81 @@ src/agora/pages/trading-room/TradingRoomPage.test.tsx` in that clone
 (78/78 pass); checked `gh run view 29296291902 --log-failed` and
 compared against the unrelated `dev`-push run `29292140834` from the
 same window to confirm the integration-gate failure is environment-wide
+
+## Round 4 — PR #322 update, commit `41abb334` ("add missing i18n translation entries for trading room page")
+
+Artifact under review: same `ajoe734/execute-plans` PR #322
+(`task/AG-UIPOL-007` → `dev`), now at commit `41abb334` (new commit on
+top of round 3's `73a7fb6a`). Diff for this commit touches only
+`src/i18n/locales/en-US.ts` and `src/i18n/locales/zh-TW.ts`.
+
+### Blocking finding #1 (hardcoded copy / i18n) — resolved
+
+Diffed `dev...task/AG-UIPOL-007` for `TradingRoomPage.tsx` to enumerate
+exactly which `t("agora.tradingRoom....")` call sites this task
+introduced (as opposed to pre-existing calls already on `dev`): the same
+eleven keys flagged in round 3 —
+`candidates.headers.{currentState,aiFitScore,nextEvent,evidenceReferences,governedActions,loading}`,
+`lenses.dashboard.recipeB.{hypothesisNarrative,siliconWafers,substrates,aiGpu}`,
+`lenses.meta.recipeSampleBadge`. Cloned the PR branch at `41abb334`,
+loaded both locale files as JS modules, and resolved all eleven dotted
+key paths against each: every key now exists in both `en-US.ts` and
+`zh-TW.ts` with distinct, real translations (e.g. `aiFitScore` → "AI Fit
+Score:" / "AI 契合度評分:", `hypothesisNarrative` → the full English
+sentence / a genuine Traditional Chinese translation, not a duplicate of
+the English default). `aiGpu` is "AI GPU" in both locales, which is
+correct — it's an acronym/brand term, not untranslated copy. This closes
+finding #1 for the fourth and final time; no further recurrence found in
+this task's own diff.
+
+Separately noted for the record (not part of this task's scope, so not
+blocking): a same-methodology scan of every `t("agora.tradingRoom...")`
+call in the full file — not just the calls this task's diff introduced —
+turned up 10 pre-existing keys (`lenses.meta.{thesisLabel,rulesLabel}`
+and `page.states.{all,new_candidate,to_discuss,deep_research,monitoring,shadow,parked,excluded}`)
+that are also missing locale entries and fall back to a hardcoded
+zh-TW `defaultValue` in every locale. Confirmed via `gh api
+.../compare/dev...task/AG-UIPOL-007` that none of these call sites are
+part of this task's diff — they predate AG-UIPOL-007 on `dev`. Flagging
+for a follow-up task rather than this one.
+
+### Required-before-close finding #4 (hosted evidence) — unchanged, still open
+
+Still blocked on a human-triggered dev FE `workflow_dispatch` redeploy,
+same as rounds 2 and 3. Not actionable by the owner; not treated as a
+blocker on this round's approval, consistent with prior rounds' handling
+of this same gap on `AG-UIPOL-007`/`003`.
+
+### Test/CI verification
+
+Cloned the PR branch at `41abb334` and ran `npx vitest run
+src/agora/pages/trading-room/TradingRoomPage.test.tsx`: 78/78 pass,
+matching the task brief's claim. All three required PR checks (`Commit
+trailers`, `Generated files guard`, `Smoke acceptance`) are green on the
+current head (run `29298523555`); no integration-gate run attached to
+this update.
+
+## Verdict (round 4)
+
+**Approved — moving to `review_approved`.** Finding #1, the sole
+remaining blocker from round 3, is now genuinely resolved: all eleven
+flagged keys have real `en-US`/`zh-TW` entries, verified by resolving
+each dotted key path against both locale files rather than just
+grepping for presence. Findings #2, #3, and #5 were already resolved in
+earlier rounds. Finding #4 (hosted evidence) remains open but is a
+known, human-gated limitation outside the owner's control, not a defect
+in this submission — Antigravity should finalize once the PR merges;
+hosted evidence should be captured as a fast-follow once a human
+triggers the dev FE redeploy.
+
+LLM-Agent: Claude
+Task-ID: AG-UIPOL-007
+Reviewer: Claude
+Verified: `gh pr view 322` / `gh pr checks 322` (ajoe734/execute-plans,
+all 3 required checks pass); `gh api .../compare/dev...task/AG-UIPOL-007`
+to isolate exactly which `t()` call sites this task introduced; cloned
+the PR branch at `41abb334`, resolved all eleven flagged dotted key
+paths against both `en-US.ts`/`zh-TW.ts` as loaded JS modules (all
+present, real translations); ran `npx vitest run
+src/agora/pages/trading-room/TradingRoomPage.test.tsx` in that clone
+(78/78 pass)
