@@ -36,3 +36,46 @@ def test_threshold_sweep_producer_forwards_metric_max_age_env_in_root_compose() 
         producer["environment"]["EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS"]
         == "${EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS:-172800}"
     )
+
+
+def test_threshold_sweep_producer_compose_shape_matches_acceptance_criteria() -> None:
+    """Full compose-shape assertion for the EVOCHAIN-001 acceptance criterion
+    ("compose service ships with EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS
+    default 86400 and its own logs"), not just the metric-max-age env forward
+    already covered above (round-8 review: "add complete compose acceptance
+    assertions"). "Its own logs" means its own container process (a distinct
+    `command`/service entry, not aliased onto another service's process),
+    which stdout-logs per-tick JSON via `main()` under `docker compose logs`."""
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    producer = compose["services"]["evolution-threshold-sweep-producer"]
+
+    assert "profiles" not in producer  # default-on, not opt-in
+    assert producer["build"]["dockerfile"] == "services/evolution/Dockerfile"
+    assert producer["command"] == ["python", "-m", "services.evolution.threshold_sweep_worker"]
+    assert producer["restart"] == "unless-stopped"
+
+    assert producer["environment"]["EVOCHAIN_TELEMETRY_API_URL"] == "http://telemetry:8083"
+    assert producer["environment"]["EVOCHAIN_INCIDENTS_API_URL"] == "http://incidents:8090"
+    assert (
+        producer["environment"]["EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS"]
+        == "${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}"
+    )
+
+    # Config/baselines are bind-mounted read-only so an operator can retune
+    # threshold values by editing the host files and restarting this one
+    # service, no image rebuild; state is on a named volume so the WAL
+    # (and its quarantine tombstones) survive a container restart.
+    assert "./services/evolution/config:/workspace/services/evolution/config:ro" in producer["volumes"]
+    assert "evolution-data:/data/evolution" in producer["volumes"]
+    assert (
+        producer["environment"]["EVOCHAIN_THRESHOLD_SWEEP_STATE_PATH"]
+        == "/data/evolution/threshold_sweep_state.json"
+    )
+
+    assert producer["depends_on"]["telemetry"]["condition"] == "service_healthy"
+    assert producer["depends_on"]["incidents"]["condition"] == "service_healthy"
+
+    # This is its own service/process, not folded into evolution-daily-sweep
+    # -scheduler's command or cadence — a distinct compose log stream.
+    scheduler = compose["services"]["evolution-daily-sweep-scheduler"]
+    assert producer["command"] != scheduler["command"]

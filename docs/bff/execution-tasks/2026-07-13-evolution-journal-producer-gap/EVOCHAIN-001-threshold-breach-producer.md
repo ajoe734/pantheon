@@ -1,10 +1,13 @@
 # EVOCHAIN-001 — Threshold-breach producer (telemetry -> incidents)
 
-Status: fully implemented and verified. All review points from Codex (rounds 1-5)
-have been resolved. LIN-003 has successfully landed, adding the live telemetry
-lineage write path and resolving the default-validator platform blocker (the default
-CanonicalReferenceValidator now returns 201 for a live-ingested breach event).
-All tests pass locally and compose volume mounting persists the sweep state.
+Status: implemented; round-8 review fixes applied and awaiting re-review on
+PR #3620 (`task/EVOCHAIN-001` -> `dev`). Review points from rounds 1-7 have
+been resolved (see below); round-8 fixed 4 further points found during a
+merge-time re-review of that same PR. LIN-003 has successfully landed, adding
+the live telemetry lineage write path and resolving the default-validator
+platform blocker (the default CanonicalReferenceValidator now returns 201 for
+a live-ingested breach event). All tests pass locally and compose volume
+mounting persists the sweep state.
 
 Owner: Claude
 Reviewer: Codex
@@ -13,6 +16,9 @@ Depends on: none
 
 Source gap spec: `docs/04/pantheon_evolution_journal_producer_gap_2026-07-13/EVOLUTION_JOURNAL_PRODUCER_GAP.md`
 Execution packet: `docs/bff/execution-tasks/2026-07-13-evolution-journal-producer-gap/INDEX.md`
+PR: `ajoe734/pantheon#3620`, branch `task/EVOCHAIN-001` -> `dev`. Scope: this
+task only touches `services/evolution`, `services/incidents`, and
+`docker-compose.yml` (plus this doc); it does not touch any other service.
 
 ## Problem
 
@@ -570,6 +576,113 @@ marker. Covered by
 `test_evaluate_breaches_skips_summary_with_unparseable_heartbeat_timestamp`
 and `test_evaluate_breaches_skips_summary_with_future_heartbeat_timestamp`.
 
+## Round-8 review fixes (Codex, PR #3620 merge-time review, GitHub review 4691486924, 2026-07-14)
+
+Codex requested changes on 4 points; each is addressed below.
+
+### 1. Blocker — WAL quarantine was not durable
+
+`_load_pending_evidence()` (round-7 fix) correctly reserved a corrupt
+record's `event_id` in an in-memory `quarantined_event_ids` set, but
+`_save_pending_evidence()` was always called with only the currently-valid
+`pending` dict. Every prune (§2), new-candidate write-ahead-log save (§4), or
+post-delivery save (§5) therefore serialized `pending` alone and silently
+deleted the quarantined record from disk — the very next unrelated save
+after quarantine, not just a hypothetical later one. A later tick then
+reloaded a WAL with no record at all under that `event_id` and recomputed
+and posted a fresh payload under the same deterministic id, exactly the
+evidence-loss failure round-7 §1 was meant to close.
+
+Fixed: `_load_pending_evidence()` now returns `(valid, quarantined)`, where
+`quarantined` maps `event_id -> raw record as read from disk` (not just the
+id). A new `_full_state(pending, quarantined)` helper unions both back
+together, and every `_save_pending_evidence()` call site in `run_tick()`
+(prune, write-ahead log, both post-delivery saves) now writes
+`_full_state(...)` instead of `pending` alone, so a quarantine tombstone
+survives every subsequent save until the WAL is hand-repaired. Covered by
+`test_run_tick_persists_quarantine_tombstone_across_prune_and_delivery_saves`,
+a two-tick regression: tick 1 quarantines one corrupt record and, in the same
+tick, delivers an unrelated new candidate (triggering the exact
+prune/WAL/post-delivery saves that used to drop the tombstone); asserts the
+tombstone is still on disk unchanged afterward. Tick 2 re-runs and asserts
+the quarantined `event_id` is still refused (never admitted/posted) rather
+than recomputed.
+
+### 2. High — the incidents replay suite still deleted the configured persistent store
+
+`services/incidents/tests/test_incident_replay_suite.py`'s `clean_store`
+fixture imported the module-level `services.incidents.main.store` (bound to
+the real `/tmp/pantheon/incidents/incidents.json` unless
+`INCIDENTS_DATA_DIR` is overridden) and cleared/unlinked it before and after
+every test — the same class of hazard round-7 §5 already fixed in
+`test_main_routes.py`, but this second suite had not been converted. With an
+isolated `INCIDENTS_DATA_DIR`, this suite's own 17 tests still passed while
+leaving `incidents.json` deleted from disk afterward.
+
+Fixed: same pattern as `test_main_routes.py`'s `clean_store` — inject a
+fresh in-memory `IncidentStore(path=None)` via `monkeypatch.setattr` for both
+`services.incidents.main.store` (what the route handlers read) and this test
+module's own imported `store` name (what test assertions read), and drop the
+disk-deletion `_reset()` helper entirely. Verified manually that
+`/tmp/pantheon/incidents/incidents.json` is untouched after running this
+suite.
+
+### 3. Medium — canonical ThresholdSnapshot validation was fail-open for `breached`
+
+`evolution_decision.schema.json`'s `threshold_snapshots[].breached` is
+`type: boolean`, but `consumer.py::_is_breached()` coerced any truthy
+non-bool value (e.g. the string `"yes"`) into `True`, so a malformed
+producer payload — never actually validated as breached by the schema's own
+rules — could still open an `IncidentCase`.
+
+Fixed: `_is_breached()` now raises `IncidentConsumerError` for any present
+`breached` value that is not an actual `bool` (a missing key still defaults
+to `True`, unchanged). Covered by
+`test_consume_threshold_route_rejects_non_boolean_breached`
+(`services/incidents/test_main_routes.py`).
+
+### 4. Medium — dedupe trusted caller-controlled `incident_id` without identity equivalence
+
+`consumer.py::_incident_id()` accepts any producer-supplied explicit
+`incident_id` verbatim, and `ThresholdTelemetryIncidentConsumer.consume()`
+looked an existing incident up by that id alone, returning it as "the"
+duplicate (`created=False`) with no check that the new payload was actually
+about the same breach. A second payload reusing the same explicit id but
+describing a different `event_id`/`binding_id`/`metric_name` therefore
+silently discarded its own breach and reported success against an unrelated
+incident.
+
+Fixed: added `_require_same_incident_identity(existing, incident)`, called
+at both `get_incident()` lookup sites in `consume()` (the direct dedupe
+check and the create-race fallback). It requires the looked-up incident and
+the newly built one to share `binding_id`, `runtime_id`, and at least one
+`telemetry_event_id` before treating the lookup as a genuine duplicate;
+otherwise it raises `IncidentConsumerError` describing the collision instead
+of silently returning the unrelated incident. Covered by
+`test_consume_threshold_route_rejects_explicit_incident_id_collision_across_identities`,
+which reproduces the exact scenario: two fixture payloads sharing one
+explicit `incident_id` but different `event_id`/`binding_id`/`metric_name`;
+asserts the second is rejected (422) and the first incident is left
+unmodified.
+
+### Delivery hygiene
+
+- Added `test_threshold_sweep_producer_compose_shape_matches_acceptance_criteria`
+  (`services/evolution/test_compose_activation.py`): a complete compose-shape
+  assertion for `evolution-threshold-sweep-producer` (default-on, build,
+  command, restart policy, telemetry/incidents URLs, the
+  `EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400` default, the read-only
+  config bind mount, the named `evolution-data` state volume, and
+  `depends_on` health gates), not just the metric-max-age env forward the
+  round-7 test already covered.
+- Refreshed this document's stale round count/status header, PR/branch/scope
+  reference, and the "Local validation" test counts below (round-8: worker
+  file 69 tests, +1 over round-7's 68).
+- Corrected a stale residual-risk claim: `evolution-daily-sweep-scheduler`
+  was described below as still profile-gated, but EVOCHAIN-002 (merged, PR
+  #3516) already removed that gate — see the corrected "Residual risk"
+  section.
+
 ## Idempotency
 
 Dedupe key: `(binding_id, metric_name, threshold window, UTC day bucket)`.
@@ -625,14 +738,21 @@ Verified in `test_load_thresholds_missing_file_fails_closed`,
 
 ```sh
 python3 -m pytest services/evolution/test_threshold_sweep_worker.py -q
-# 68 passed (round-7: +6 new tests for fixes and regressions)
+# 69 passed (round-8: +1 new test — quarantine tombstone persists across
+# prune/new-candidate/delivery saves, two-tick regression)
 
 python3 -m pytest services/evolution -q
-# 195 passed (no regression in the rest of the evolution service)
+# 197 passed (round-8: +1 in the worker file above, +1 new compose-shape
+# acceptance test in test_compose_activation.py; no regression elsewhere)
 
 python3 -m pytest services/incidents -q
-# 57 passed (round-7: +5 new tests for the ThresholdSnapshot required-field
-# boundary; clean_store fixture no longer touches the real persistent store)
+# 59 passed (round-8: +2 new tests — non-boolean `breached` rejection,
+# explicit incident_id collision-across-identities rejection)
+
+python3 -m pytest services/incidents/tests/test_incident_replay_suite.py -q
+# 17 passed (round-8: replay-suite `clean_store` fixture converted to an
+# injected in-memory IncidentStore(path=None), same pattern as
+# test_main_routes.py; no longer deletes the configured persistent store)
 
 python3 -m pytest services/incident -q
 # 118 passed (no regression in the INC-001 domain layer)
@@ -646,14 +766,18 @@ docker compose config --quiet
 docker compose config --services | grep evolution-threshold-sweep-producer
 # evolution-threshold-sweep-producer
 
-git diff --check origin/dev...HEAD -- services/evolution/threshold_sweep_worker.py services/evolution/test_threshold_sweep_worker.py services/incidents/consumer.py services/incidents/test_main_routes.py
+git diff --check origin/dev...HEAD -- services/evolution/threshold_sweep_worker.py services/evolution/test_threshold_sweep_worker.py services/evolution/test_compose_activation.py services/incidents/consumer.py services/incidents/test_main_routes.py services/incidents/tests/test_incident_replay_suite.py
 # no output — trailing-whitespace/EOF issues cleaned up
 
-ls /tmp/pantheon/incidents/incidents.json
-# No such file or directory after running the full services/incidents suite
-# — confirms the round-7 fix (§5) leaves the shared persistent incident
-# store untouched (the round-2 fix only isolated 2 of the file's tests; the
-# autouse fixture itself still mutated the real store until round-7).
+rm -f /tmp/pantheon/incidents/incidents.json && python3 -m pytest services/incidents/test_main_routes.py services/incidents/tests/test_incident_replay_suite.py -q && ls /tmp/pantheon/incidents/incidents.json
+# 56 passed; `ls` reports "No such file or directory" — confirms round-7 §5
+# (test_main_routes.py) and round-8 §2 (the replay suite) both leave the
+# shared persistent incident store untouched. NOTE: this is scoped to these
+# two files, not the full `services/incidents` directory —
+# `test_evochain_003_delivery.py` (unrelated to this task, not touched by
+# it) drives real `/api/incidents/{id}/status` route calls against the
+# actual module-level `store` and does write `incidents.json`; round-8 only
+# scoped the fix to the file the review flagged (test_incident_replay_suite.py).
 ```
 
 ## Acceptance mapping
@@ -686,6 +810,13 @@ ls /tmp/pantheon/incidents/incidents.json
   The EVOCHAIN-001 unit test `test_consume_threshold_route_succeeds_against_default_reference_validator`
   verifies validator structure compatibility under mock-patched lookups, but does not itself
   exercise the live end-to-end wiring.
-- This task does not enable the daily sweep scheduler
-  (`evolution-daily-sweep-scheduler` is still profile-gated) or deploy to
-  dev; that is EVOCHAIN-002 and EVOCHAIN-011 respectively.
+- **Scheduler activation resolved:** this task never enabled the daily sweep
+  scheduler itself, but the claim that `evolution-daily-sweep-scheduler` is
+  still profile-gated is now stale — EVOCHAIN-002 (merged, PR #3516) removed
+  the `profiles: ["evolution-daily-sweep-scheduler"]` gate, so it now ships
+  default-on in `docker-compose.yml`, same as this task's own
+  `evolution-threshold-sweep-producer`. Covered by
+  `test_daily_sweep_scheduler_is_enabled_by_default_in_root_compose`
+  (`services/evolution/test_compose_activation.py`).
+- Deploying this stack to the shared `dev` environment is still separate
+  follow-up work (EVOCHAIN-011), not part of this task's scope.

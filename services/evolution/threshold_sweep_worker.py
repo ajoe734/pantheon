@@ -566,21 +566,25 @@ def default_post_incident(incidents_api_url: str, payload: Mapping[str, Any], *,
     return {"status": status, "body": json.loads(response_body) if response_body else {}}
 
 
-def _load_pending_evidence(path: str) -> tuple[dict[str, dict[str, Any]], set[str]]:
+def _load_pending_evidence(path: str) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     """Load previously-admitted evidence payloads, keyed by event_id.
 
-    Returns ``(valid, quarantined_event_ids)``. Fail-closed: unreadable,
-    malformed, or non-UTF8 state needs an explicit fail-closed diagnostic and
-    must raise ValueError. A structurally invalid *record* inside an
-    otherwise-readable WAL must never raise, but its event_id is reserved in
-    ``quarantined_event_ids`` rather than being silently forgotten: since the
-    dedupe key hashes deterministically to this same event_id, forgetting it
-    would let a later tick recompute a brand-new payload (from whatever the
-    live summary says right now) and cite it as if it were the original
-    frozen evidence, silently losing the corrupt record's real history.
+    Returns ``(valid, quarantined)``, where ``quarantined`` maps event_id to
+    the exact raw record read from disk. Fail-closed: unreadable, malformed,
+    or non-UTF8 state needs an explicit fail-closed diagnostic and must raise
+    ValueError. A structurally invalid *record* inside an otherwise-readable
+    WAL must never raise, but its raw value is reserved in ``quarantined``
+    rather than being silently forgotten: since the dedupe key hashes
+    deterministically to this same event_id, forgetting it would let a later
+    tick recompute a brand-new payload (from whatever the live summary says
+    right now) and cite it as if it were the original frozen evidence,
+    silently losing the corrupt record's real history. Callers must fold
+    ``quarantined`` back into every subsequent ``_save_pending_evidence``
+    write (see ``_full_state``) so an unrelated prune/candidate/delivery save
+    never drops the tombstone.
     """
     if not os.path.exists(path):
-        return {}, set()
+        return {}, {}
     try:
         with open(path, "r", encoding="utf-8") as handle:
             content = handle.read()
@@ -592,11 +596,11 @@ def _load_pending_evidence(path: str) -> tuple[dict[str, dict[str, Any]], set[st
         raise ValueError("WAL load failed: state JSON root is not a mapping")
 
     valid: dict[str, dict[str, Any]] = {}
-    quarantined: set[str] = set()
+    quarantined: dict[str, Any] = {}
     for event_id, record in data.items():
         try:
             if not isinstance(record, Mapping):
-                quarantined.add(str(event_id))
+                quarantined[str(event_id)] = record
                 continue
             tel_event = record.get("telemetry_event")
             snap = record.get("threshold_snapshot")
@@ -611,7 +615,7 @@ def _load_pending_evidence(path: str) -> tuple[dict[str, dict[str, Any]], set[st
                 and str(tel_event["event_id"]) == str(event_id)
             )
             if not structurally_valid:
-                quarantined.add(str(event_id))
+                quarantined[str(event_id)] = record
                 continue
 
             # Only enforce type and payload validation if the record is undelivered (requires retry)
@@ -619,13 +623,29 @@ def _load_pending_evidence(path: str) -> tuple[dict[str, dict[str, Any]], set[st
                 event_type = tel_event.get("event_type")
                 metrics = tel_event.get("metrics")
                 if not isinstance(event_type, str) or not isinstance(metrics, Mapping):
-                    quarantined.add(str(event_id))
+                    quarantined[str(event_id)] = record
                     continue
             valid[str(event_id)] = dict(record)
         except Exception:
-            # Structurally invalid records must never raise; reserve the key.
-            quarantined.add(str(event_id))
+            # Structurally invalid records must never raise; reserve the raw value.
+            quarantined[str(event_id)] = record
     return valid, quarantined
+
+
+def _full_state(
+    pending: Mapping[str, dict[str, Any]], quarantined: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Merge live pending records with quarantined tombstones for a durable write.
+
+    ``pending`` and ``quarantined`` are always keyed by disjoint event_ids
+    (an id is either currently valid or currently quarantined), so this is a
+    plain union. Every ``_save_pending_evidence`` call must go through this
+    merge; writing ``pending`` alone silently deletes quarantine tombstones
+    from disk on the very next unrelated save.
+    """
+    merged = dict(quarantined)
+    merged.update(pending)
+    return merged
 
 
 def _save_pending_evidence(path: str, state: Mapping[str, dict[str, Any]]) -> None:
@@ -671,20 +691,21 @@ def run_tick(
     # 1. Load pending evidence (WAL state) first, as required by fail-closed rules.
     active_state_path = state_path if state_path is not None else DEFAULT_STATE_PATH
     try:
-        pending, quarantined_ids = _load_pending_evidence(active_state_path)
+        pending, quarantined = _load_pending_evidence(active_state_path)
     except ValueError as exc:
         result["errors"] += 1
         result["diagnostics"].append(f"fail-closed: {exc}")
         return result
 
-    if quarantined_ids:
+    if quarantined:
         result["diagnostics"].append(
-            f"warning: {len(quarantined_ids)} WAL record(s) are structurally invalid and "
-            f"quarantined (reserved, never recomputed): {sorted(quarantined_ids)}"
+            f"warning: {len(quarantined)} WAL record(s) are structurally invalid and "
+            f"quarantined (reserved, never recomputed): {sorted(quarantined)}"
         )
 
     # 2. Prune old records that were successfully delivered.
-    # Keep undelivered ones across days.
+    # Keep undelivered ones across days. Quarantined tombstones are never
+    # pruned by window/delivery state; they persist until the WAL is hand-repaired.
     state_pruned = False
     filtered_pending = {}
     for event_id, record in pending.items():
@@ -695,7 +716,7 @@ def run_tick(
     pending = filtered_pending
     if state_pruned:
         try:
-            _save_pending_evidence(active_state_path, pending)
+            _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
         except OSError as exc:
             result["diagnostics"].append(f"warning: failed to prune pending state: {exc}")
 
@@ -766,7 +787,7 @@ def run_tick(
     for payload in candidates:
         event = payload["telemetry_event"]
         event_id = event["event_id"]
-        if event_id in quarantined_ids:
+        if event_id in quarantined:
             result["errors"] += 1
             result["diagnostics"].append(
                 f"fail-closed: event_id {event_id} has a corrupt/unreadable prior WAL record; "
@@ -790,7 +811,7 @@ def run_tick(
             }
             pending[event_id] = record
             try:
-                _save_pending_evidence(active_state_path, pending)
+                _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
             except OSError as exc:
                 result["errors"] += 1
                 result["diagnostics"].append(
@@ -850,7 +871,7 @@ def run_tick(
                 result["incidents_created"] += 1
                 pending[event_id]["delivered"] = True
                 try:
-                    _save_pending_evidence(active_state_path, pending)
+                    _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
                 except OSError as exc:
                     result["diagnostics"].append(
                         f"warning: failed to save post-delivery state for event {event_id}: {exc}"
@@ -859,7 +880,7 @@ def run_tick(
                 result["incidents_deduped"] += 1
                 pending[event_id]["delivered"] = True
                 try:
-                    _save_pending_evidence(active_state_path, pending)
+                    _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
                 except OSError as exc:
                     result["diagnostics"].append(
                         f"warning: failed to save post-delivery state for event {event_id}: {exc}"

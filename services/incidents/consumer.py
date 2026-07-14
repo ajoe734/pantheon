@@ -86,6 +86,7 @@ class ThresholdTelemetryIncidentConsumer:
 
         existing = self._store.get_incident(incident.incident_id)
         if existing is not None:
+            _require_same_incident_identity(existing, incident)
             return ThresholdIncidentResult(incident=existing, created=False)
 
         try:
@@ -93,6 +94,7 @@ class ThresholdTelemetryIncidentConsumer:
         except IncidentError as exc:
             existing = self._store.get_incident(incident.incident_id)
             if existing is not None:
+                _require_same_incident_identity(existing, incident)
                 return ThresholdIncidentResult(incident=existing, created=False)
             raise IncidentConsumerError(str(exc)) from exc
 
@@ -601,6 +603,28 @@ def _incident_id(payload: Mapping[str, Any], event_id: str, metric_name: str) ->
     return f"inc-threshold-{uuid.uuid5(uuid.NAMESPACE_URL, seed).hex[:12]}"
 
 
+def _require_same_incident_identity(existing: IncidentCase, incident: IncidentCase) -> None:
+    """Reject a caller-supplied ``incident_id`` that collides across identities.
+
+    A producer may pass an explicit ``incident_id`` (``_incident_id`` above
+    trusts it verbatim), so two payloads for entirely different events/
+    bindings/metrics can hash to the same id. Looking that id up and treating
+    whatever is stored under it as "the" duplicate — without checking it is
+    actually the same breach — silently discards the new breach and reports
+    a fabricated dedupe (round-8 review point 4). Same breach means: same
+    binding, same runtime, and at least one shared telemetry_event_id.
+    """
+    same_binding = existing.binding_id == incident.binding_id
+    same_runtime = existing.runtime_id == incident.runtime_id
+    shared_evidence = bool(set(existing.telemetry_event_ids) & set(incident.telemetry_event_ids))
+    if not (same_binding and same_runtime and shared_evidence):
+        raise IncidentConsumerError(
+            f"incident_id {incident.incident_id!r} conflicts with an existing incident "
+            "for a different binding_id/runtime_id/telemetry_event_id; refusing to treat "
+            "this as a duplicate of an unrelated incident"
+        )
+
+
 def _title(payload: Mapping[str, Any], event: Mapping[str, Any], metric_name: str) -> str:
     explicit = _first_value(payload, event, keys=("title", "headline"))
     if explicit:
@@ -686,10 +710,19 @@ def _threshold_notes(threshold: Mapping[str, Any]) -> str:
 
 
 def _is_breached(threshold: Mapping[str, Any]) -> bool:
-    value = threshold.get("breached", True)
-    if isinstance(value, str):
-        return value.strip().lower() not in {"0", "false", "no"}
-    return bool(value)
+    if "breached" not in threshold:
+        return True
+    value = threshold["breached"]
+    # The governance schema (evolution_decision.schema.json threshold_snapshots[].
+    # breached) declares this field `type: boolean`. Coercing arbitrary truthy
+    # values (e.g. the string "yes") let a malformed producer payload open an
+    # IncidentCase from a snapshot that was never actually validated as
+    # breached (round-8 review point 3); reject anything but an actual bool.
+    if not isinstance(value, bool):
+        raise IncidentConsumerError(
+            f"threshold_snapshot.breached must be a boolean per the governance schema, got {value!r}"
+        )
+    return value
 
 
 def _looks_like_threshold(value: Mapping[str, Any]) -> bool:

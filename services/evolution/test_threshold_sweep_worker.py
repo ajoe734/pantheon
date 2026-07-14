@@ -1914,6 +1914,106 @@ def test_run_tick_quarantines_corrupt_wal_record_instead_of_recomputing_under_sa
     assert on_disk == corrupt_state
 
 
+def test_run_tick_persists_quarantine_tombstone_across_prune_and_delivery_saves(tmp_path):
+    """A quarantine tombstone must survive every subsequent save triggered by
+    an unrelated candidate or delivery, in the same tick or a later one, not
+    just the tick that first quarantined it (round-8 review point 1). Before
+    the fix, ``_save_pending_evidence`` always wrote only the currently-valid
+    ``pending`` dict, so the very next prune/new-candidate/delivery save
+    silently dropped the quarantine tombstone from disk; a later tick then
+    reloaded a WAL with no record under that id at all and recomputed and
+    posted a fresh payload under the same deterministic event_id."""
+    state_path = tmp_path / "state.json"
+
+    summary = _summary(drawdown=0.30, pnl=-600.0)
+    candidates, _ = evaluate_breaches(
+        [summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    drawdown_candidate = next(
+        c for c in candidates if c["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
+    )
+    pnl_candidate = next(
+        c for c in candidates if c["threshold_snapshot"]["metric_name"] == "rolling_pnl_floor"
+    )
+    quarantined_event_id = drawdown_candidate["telemetry_event"]["event_id"]
+    fresh_event_id = pnl_candidate["telemetry_event"]["event_id"]
+
+    # A corrupt undelivered WAL record under the drawdown event_id: missing
+    # the inner event_id, so it cannot be structurally validated.
+    corrupt_record = {
+        "window_bucket": "2026-07-13",
+        "telemetry_event": {"event_type": "drawdown_snapshot", "metrics": {"drawdown_pct": 0.30}},
+        "threshold_snapshot": {"metric_name": "rolling_drawdown_multiple"},
+        "delivered": False,
+    }
+    state_path.write_text(json.dumps({quarantined_event_id: corrupt_record}), encoding="utf-8")
+
+    admit_calls = []
+    post_calls = []
+
+    def fetch(*_args, **_kwargs):
+        return [summary]
+
+    def admit(_url, event, **_kwargs):
+        admit_calls.append(event["event_id"])
+        return {"status": 202, "body": {}}
+
+    def post(_url, payload, **_kwargs):
+        post_calls.append(payload["telemetry_event"]["event_id"])
+        return {"status": 201, "body": {}}
+
+    from services.evolution.threshold_sweep_worker import _load_pending_evidence
+
+    # Tick 1: the drawdown candidate is quarantined and refused; the pnl
+    # candidate is a genuinely new candidate, which triggers a write-ahead-log
+    # save before delivery and a second save after delivery — both of which
+    # must fold the quarantine tombstone back in.
+    result_1 = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=str(state_path),
+        now=_NOW,
+    )
+    assert admit_calls == [fresh_event_id]
+    assert post_calls == [fresh_event_id]
+    assert result_1["incidents_created"] == 1
+    assert result_1["errors"] >= 1
+    assert any("corrupt/unreadable prior WAL record" in d for d in result_1["diagnostics"])
+
+    on_disk_after_tick_1 = json.loads(state_path.read_text(encoding="utf-8"))
+    assert on_disk_after_tick_1[quarantined_event_id] == corrupt_record
+    assert on_disk_after_tick_1[fresh_event_id]["delivered"] is True
+
+    # Tick 2: with the tombstone intact on disk, the drawdown event_id must
+    # still be refused rather than recomputed/admitted/posted.
+    result_2 = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=str(state_path),
+        now=_NOW,
+    )
+    assert admit_calls == [fresh_event_id]
+    assert post_calls == [fresh_event_id]
+    assert result_2["incidents_created"] == 0
+    assert result_2["incidents_deduped"] == 1
+    assert result_2["errors"] >= 1
+    assert any("corrupt/unreadable prior WAL record" in d for d in result_2["diagnostics"])
+
+    valid_after_tick_2, quarantined_after_tick_2 = _load_pending_evidence(str(state_path))
+    assert quarantined_event_id in quarantined_after_tick_2
+    assert valid_after_tick_2[fresh_event_id]["delivered"] is True
+
+
 # ---------------------------------------------------------------------------
 # Missing metric provenance is fail-open (round-7 review point 2)
 # ---------------------------------------------------------------------------

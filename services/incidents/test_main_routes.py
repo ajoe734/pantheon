@@ -265,6 +265,51 @@ def test_consume_threshold_route_rejects_unbreached_threshold():
     assert store.get_incident("inc-unbreached-threshold") is None
 
 
+def test_consume_threshold_route_rejects_explicit_incident_id_collision_across_identities():
+    """A producer-supplied explicit `incident_id` must not let a second
+    payload for an unrelated event/binding/metric silently masquerade as a
+    duplicate of the first (round-8 review point 4). Reusing the same id for
+    a different binding_id/runtime_id/telemetry_event_id must be rejected,
+    not treated as created=false against the unrelated first incident."""
+    shared_id = "inc-collision-001"
+    first = _threshold_fixture()
+    first["incident_id"] = shared_id
+
+    r1 = client.post("/api/incidents/consume-threshold", json=first)
+    assert r1.status_code == 201, r1.text
+
+    second = _threshold_fixture()
+    second["incident_id"] = shared_id
+    second["telemetry_event"]["event_id"] = "tel-threshold-fixture-002-unrelated"
+    second["telemetry_event"]["runtime_binding_id"] = "rb-threshold-fixture-paper-002-unrelated"
+    second["telemetry_event"]["runtime_id"] = "runtime-threshold-fixture-002-unrelated"
+    second["threshold_snapshot"]["metric_name"] = "rolling_pnl_floor"
+
+    r2 = client.post("/api/incidents/consume-threshold", json=second)
+
+    assert r2.status_code == 422
+    assert "conflicts with an existing incident" in r2.text
+    # The first incident must remain exactly as originally created — not
+    # overwritten and not falsely reported as a dedupe target.
+    assert store.get_incident(shared_id).binding_id == "rb-threshold-fixture-paper-001"
+
+
+def test_consume_threshold_route_rejects_non_boolean_breached():
+    """The governance schema (evolution_decision.schema.json threshold_snapshots[]
+    .breached) declares this field boolean-typed. A truthy non-bool value (e.g.
+    the string "yes") must be rejected rather than coerced into an open
+    incident (round-8 review point 3)."""
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-non-bool-breached"
+    payload["threshold_snapshot"]["breached"] = "yes"
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "breached" in r.text
+    assert store.get_incident("inc-non-bool-breached") is None
+
+
 def test_consume_threshold_route_rejects_empty_metric_name():
     payload = _threshold_fixture()
     payload["incident_id"] = "inc-empty-metric"
