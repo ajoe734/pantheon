@@ -366,6 +366,17 @@ def evaluate_breaches(
                 )
                 continue
 
+            # Validate metric provenance to avoid rollover mismatch
+            metric_binding_id = summary.get(f"{field}_binding_id")
+            current_binding_id = summary.get("binding_id") or summary.get("runtime_binding_id")
+            if metric_binding_id and current_binding_id and metric_binding_id != current_binding_id:
+                diagnostics.append(
+                    f"skip {identity['binding_id']}/{metric_name}: "
+                    f"metric provenance mismatch: metric binding {metric_binding_id!r} "
+                    f"does not match current summary binding {current_binding_id!r} (rollover)"
+                )
+                continue
+
             if _metric_is_stale(summary, field, now=moment, max_age_seconds=metric_max_age_seconds):
                 diagnostics.append(
                     f"skip {identity['binding_id']}/{metric_name}: "
@@ -528,27 +539,35 @@ def default_post_incident(incidents_api_url: str, payload: Mapping[str, Any], *,
 def _load_pending_evidence(path: str) -> dict[str, dict[str, Any]]:
     """Load previously-admitted evidence payloads, keyed by event_id.
 
-    Fail-closed like the other live-config loaders: a missing, unreadable, or
-    malformed state file yields an empty mapping (the worker simply loses its
-    retry-immutability guarantee for this tick, it never crashes or
-    fabricates a breach).
+    Fail-closed: unreadable, malformed, or non-UTF8 state needs an explicit
+    fail-closed diagnostic and must raise ValueError. Structurally invalid
+    records must never raise.
     """
+    if not os.path.exists(path):
+        return {}
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return {}
+            content = handle.read()
+            data = json.loads(content)
+    except (OSError, json.JSONDecodeError, UnicodeError) as exc:
+        raise ValueError(f"WAL load failed: unreadable/malformed/non-UTF8 state: {exc}")
+
     if not isinstance(data, Mapping):
-        return {}
+        raise ValueError("WAL load failed: state JSON root is not a mapping")
+
     valid: dict[str, dict[str, Any]] = {}
     for event_id, record in data.items():
-        if (
-            isinstance(record, Mapping)
-            and isinstance(record.get("telemetry_event"), Mapping)
-            and isinstance(record.get("threshold_snapshot"), Mapping)
-            and isinstance(record.get("window_bucket"), str)
-        ):
-            valid[str(event_id)] = dict(record)
+        try:
+            if (
+                isinstance(record, Mapping)
+                and isinstance(record.get("telemetry_event"), Mapping)
+                and isinstance(record.get("threshold_snapshot"), Mapping)
+                and isinstance(record.get("window_bucket"), str)
+            ):
+                valid[str(event_id)] = dict(record)
+        except Exception:
+            # Structurally invalid records must never raise
+            continue
     return valid
 
 
@@ -592,54 +611,17 @@ def run_tick(
         "diagnostics": [],
     }
 
-    active_thresholds = list(thresholds) if thresholds is not None else load_thresholds(config_path)
-    if not active_thresholds:
-        result["diagnostics"].append("no valid thresholds loaded from live config; skipping tick (fail-closed)")
-        return result
-
-    # Filter out duplicate (metric_name, window) entries to avoid silent collision on event_id.
-    seen_threshold_keys = set()
-    unique_thresholds = []
-    for t in active_thresholds:
-        key = (t.get("metric_name"), t.get("window"))
-        if key in seen_threshold_keys:
-            result["diagnostics"].append(
-                f"warning: duplicate threshold entry for metric_name={key[0]!r} window={key[1]!r} ignored"
-            )
-            continue
-        seen_threshold_keys.add(key)
-        unique_thresholds.append(t)
-    active_thresholds = unique_thresholds
-
-    active_baselines = baselines if baselines is not None else load_baselines(baselines_path)
-
-    try:
-        summaries = fetch_summaries(telemetry_api_url, timeout=timeout)
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
-        result["diagnostics"].append(f"telemetry fetch failed, skipping tick (fail-closed): {exc}")
-        return result
-
-    if not summaries:
-        result["diagnostics"].append("telemetry fetch returned zero active runtime summaries; nothing to evaluate")
-
-    result["summaries_evaluated"] = len(summaries)
-    candidates, diagnostics = evaluate_breaches(
-        summaries,
-        active_thresholds,
-        window_bucket=window_bucket,
-        baselines=active_baselines,
-        now=moment,
-        metric_max_age_seconds=metric_max_age_seconds,
-    )
-    result["candidates"] = len(candidates)
-    result["diagnostics"].extend(diagnostics)
-
+    # 1. Load pending evidence (WAL state) first, as required by fail-closed rules.
     active_state_path = state_path if state_path is not None else DEFAULT_STATE_PATH
-    pending = _load_pending_evidence(active_state_path)
+    try:
+        pending = _load_pending_evidence(active_state_path)
+    except ValueError as exc:
+        result["errors"] += 1
+        result["diagnostics"].append(f"fail-closed: {exc}")
+        return result
 
-    # Drop evidence recorded for a prior dedupe window ONLY if it has been successfully delivered.
-    # Undelivered (delivered=False) entries must be kept even if they belong to a prior day,
-    # so that we do not lose pending deliveries on recovery/day rollover.
+    # 2. Prune old records that were successfully delivered.
+    # Keep undelivered ones across days.
     state_pruned = False
     filtered_pending = {}
     for event_id, record in pending.items():
@@ -654,10 +636,58 @@ def run_tick(
         except OSError as exc:
             result["diagnostics"].append(f"warning: failed to prune pending state: {exc}")
 
-    # Collect all items to process.
-    # We will process:
-    # - Any entry in pending where delivered is False (pending deliveries)
-    # - Any candidate from evaluate_breaches that is not in pending
+    # 3. Determine if we should evaluate new breaches.
+    # Even if thresholds cannot be loaded or summaries cannot be fetched, we proceed to retry undelivered records!
+    should_evaluate = True
+
+    active_thresholds = list(thresholds) if thresholds is not None else load_thresholds(config_path)
+    if not active_thresholds:
+        result["diagnostics"].append("no valid thresholds loaded from live config; skipping new breach evaluation (fail-closed)")
+        should_evaluate = False
+
+    if should_evaluate:
+        # Filter out duplicate (metric_name, window) entries to avoid silent collision on event_id.
+        seen_threshold_keys = set()
+        unique_thresholds = []
+        for t in active_thresholds:
+            key = (t.get("metric_name"), t.get("window"))
+            if key in seen_threshold_keys:
+                result["diagnostics"].append(
+                    f"warning: duplicate threshold entry for metric_name={key[0]!r} window={key[1]!r} ignored"
+                )
+                continue
+            seen_threshold_keys.add(key)
+            unique_thresholds.append(t)
+        active_thresholds = unique_thresholds
+
+    active_baselines = baselines if baselines is not None else load_baselines(baselines_path)
+
+    summaries = []
+    if should_evaluate:
+        try:
+            summaries = fetch_summaries(telemetry_api_url, timeout=timeout)
+        except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+            result["diagnostics"].append(f"telemetry fetch failed, skipping new breach evaluation (fail-closed): {exc}")
+            should_evaluate = False
+
+    candidates = []
+    if should_evaluate:
+        if not summaries:
+            result["diagnostics"].append("telemetry fetch returned zero active runtime summaries; nothing to evaluate")
+
+        result["summaries_evaluated"] = len(summaries)
+        candidates, diagnostics = evaluate_breaches(
+            summaries,
+            active_thresholds,
+            window_bucket=window_bucket,
+            baselines=active_baselines,
+            now=moment,
+            metric_max_age_seconds=metric_max_age_seconds,
+        )
+        result["candidates"] = len(candidates)
+        result["diagnostics"].extend(diagnostics)
+
+    # 4. Collect all items to process.
     to_process = []
 
     # Add existing undelivered ones
