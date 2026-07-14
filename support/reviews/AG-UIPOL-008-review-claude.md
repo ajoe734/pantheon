@@ -1,6 +1,6 @@
-# AG-UIPOL-008 Review — Claude
+# AG-UIPOL-008 Review — Claude / Codex
 
-Reviewer: Claude.
+Reviewers: Claude (rounds 1–2), Codex (round 3).
 Owner: Antigravity.
 
 ## Scope of this review
@@ -178,3 +178,114 @@ Reviewer: Claude
 Verified: read `gh pr diff 315` (ajoe734/execute-plans); re-checked
 `parity-matrix.md` rows WB-04..WB-12, WB-14, WB-15A, TR-11, WB-19 against
 current file content (unchanged since round 1)
+
+## Round 3 — PRs #330/#331 and Pantheon PR #3599
+
+Artifacts reviewed:
+
+- `ajoe734/execute-plans` PR #330, merged into `dev` as
+  `4d4aa156222efaa000498b02c58b479ae16cf9b1`;
+- `ajoe734/execute-plans` PR #331, open at
+  `23de977f2c1fed848e2826a6bc8d5e087c4e5e38`;
+- `ajoe734/pantheon` PR #3599, open at
+  `40f78f5f78e7f9dd492e09fe4cb35112628db14a`.
+
+### Verification performed
+
+1. Read the combined frontend implementation at PR #331's exact head in a
+   clean detached worktree and compared it with V11 §§3–7, 9–11, and 15 plus
+   this task's acceptance criteria.
+2. Ran the focused component suite at that head:
+   `npx vitest run src/agora/widgets/ChartSpecRenderer.test.tsx
+   src/agora/components/TradeDecisionCard.test.tsx
+   src/agora/pages/trading-room/TradingRoomPage.test.tsx` — 3 files, 94 tests
+   passed.
+3. Read both open PRs' exact metadata and checks. PR #331 remained open while
+   this review was performed; PR #3599 was open and behind `dev`.
+4. Read the live frontend deployment manifest. It served execute-plans
+   `4d4aa156222efaa000498b02c58b479ae16cf9b1` at
+   `20260714T021139Z`, not PR #331's head.
+
+### Blocking — the final frontend head still has no live seven-view data path
+
+PR #331 correctly changes `ChartSpecRenderer.isSampleData` to default to
+`false`, but this exposes the still-open content gap rather than closing it:
+
+- `WorkspaceGridEditor.tsx:456-463` passes `undefined` for every widget whose
+  availability is not `unavailable`; it does not pass any source rows.
+- `ChartSpecRenderer.tsx:662-681` therefore converts those widgets to empty
+  rows and renders `ChartNotice` at the normal accepted-workspace call site.
+- `ChartNotice` then invents positive operational facts from `widgetType`
+  alone: `SYSTEM HEALTHY`, OOS stability `0.98`, `NO MIGRATIONS DETECTED`,
+  `EVIDENCE VALIDATED`, and “Integrity check: green”
+  (`ChartSpecRenderer.tsx:192-233`). With no rows or source result, those are
+  not honest unavailable states.
+- The fixed control strip similarly hard-codes `Data: Complete (10:42)` and
+  `Risk: Normal` (`WorkspaceGridEditor.tsx:992-1015`) rather than consuming
+  the task's source-derived availability/risk state.
+
+This does not satisfy Work items 1–3 or acceptance lines 66–69. Wire the
+scoped BFF data needed by Views A–G, or render truthful source-derived
+unknown/unavailable states without asserting unobserved health, migration,
+evidence, or risk facts. Then demonstrate all seven accepted views at the
+final deployed SHA.
+
+### Blocking — WB-14 and WB-15A are presentation stubs, not governed flows
+
+- Edit data range and add benchmark explicitly return `Mock Mode` toast text;
+  “view evidence” is also only a toast (`WorkspaceGridEditor.tsx:890-927`).
+- The “Servant” new-widget interpreter is a local two-branch string heuristic
+  (`WorkspaceGridEditor.tsx:474-539,929-937`).
+- Adjust and Plugin Request only display a toast and close the proposal
+  (`WorkspaceGridEditor.tsx:1469-1487`).
+- Accept queues a local draft `add_registered_widget` operation; durable
+  version creation remains a separate save action
+  (`WorkspaceGridEditor.tsx:743-760,814-839`).
+
+Implement or honestly retain drift for the complete operator menu and
+governed New Widget Proposal flow. Add tests proving reject/adjust/plugin
+request/accept behavior and that no workspace mutation happens before an
+accepted, versioned write.
+
+### Blocking — PR #3599 rewrites old evidence as if it proved the new code
+
+`parity-matrix.md` remains pinned to hosted
+`execute-plans@1a4265c770825818396badbdf960ec2deaa44763` and explicitly defines
+`E*`/`WV*` as captures from that deployment. PR #3599 reuses those old codes
+while changing TR-11, WB-04–WB-12, WB-14, WB-15A, and WB-19 to `match`, even
+though the live manifest currently serves PR #330 and there is no new
+AG-UIPOL-008 hosted evidence packet. Its PR body and commit also say PR #331
+was merged, but PR #331 is still open.
+
+Merge and deploy the accepted frontend head first, capture SHA-pinned hosted
+evidence for every acceptance bullet, then update the matrix's pin, evidence
+codes, outcome summary, and verdicts. Do not relabel AG-UIPOL-005's old
+screenshots as evidence for code they predate.
+
+### Required before close — the passing tests do not exercise the claimed gap
+
+The 94 focused tests pass, but `TradingRoomPage.test.tsx:75-79` mocks the real
+`ChartSpecRenderer`, its seven-view fixture contains only one generic widget
+per view, and the accepted-workspace assertion checks only the first widget.
+PR #330 changes only a translation assertion in that page suite. There is no
+task-scoped Playwright/hosted test walking the seven accepted views, the
+complete widget menu, or the New Widget Proposal flow.
+
+Add component/integration coverage with the real renderer and realistic
+per-view payloads, plus the Playwright/hosted proof required by the task
+packet.
+
+## Verdict (round 3)
+
+**Changes requested — reopening to owner (Antigravity).** The focused suite is
+green and PR #331 removes default sample rendering, but the seven-view live
+content, truthful status derivation, governed widget actions, New Widget flow,
+and final-SHA hosted evidence remain incomplete. PR #3599 must not merge with
+the affected rows marked `match` until those requirements are met.
+
+LLM-Agent: Codex
+Task-ID: AG-UIPOL-008
+Reviewer: Codex
+Verified: exact-head source review at execute-plans@23de977f; focused Vitest
+94/94; GitHub PR/check metadata; hosted deployment manifest at
+execute-plans@4d4aa156
