@@ -4,7 +4,7 @@ Status: final program gate; starts only after every dependency is done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `7047dbc047e41b2946d1dede909b9da52f543ddd2dc6c40aacb852edfa23af16`
+Canonical contract SHA-256: `9bb7682a944be61fc3eaa84efb071d88e711f550985cdb9183e3eba72daeded8`
 The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -74,9 +74,9 @@ finalization 才可完成第 48 個任務並宣告 program 完成。
 - baseline Knowledge, Execution, Human Interaction, and Management Repair scenarios pass from a clean target-dev baseline
 - every delivery has canonical fleet admission and exact task/run/worktree/scope/branch/PR/formal distinct-runtime review/merge/deployment provenance, with no planner-authored product artifact or duplicate repair
 - protected closeout binds incident fixture
-  `ce3f40be40a0628acdf5256b52ac8c60a2cdb12d026387c8e13c35261cf8ed96`
+  `4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624`
   and route-matrix fixture
-  `5b585571492594480ecd09c50b3fff71581d8571bef6a9fea27451cab009b428`
+  `8e465fc657e09e8be982181de5fd5929d2719392fcac472245df2c30563d3531`
 - coordinated credential-free auth passes with signed viewer cookies, exact
   browser-callsite coverage, safe writes false, separate privileged identities,
   one lease, zero leakage, and paired rollback
@@ -89,10 +89,7 @@ finalization 才可完成第 48 個任務並宣告 program 完成。
 - final execute-plans build and hosted desktop/mobile qualification are warning-free and within explicit bundle/performance/accessibility budgets
 - twelve canonical loops plus OODA overlay have fresh controller truth, real terminal readback, restart/duplicate/failure evidence, and no registry-only maturity
 - exact PRs, checks, merge/deploy identities, manifests, attestations, reviewer verdicts, residual risks, owners, and expiries are archived
-- the protected completion guard consumes the exact catalog-bound overlay,
-  exactly one append-only protected checkpoint-consumption record bound to the
-  checkpoint evidence/verdict and guard activation, immutable signoff-ID set,
-  and Human/Ops verdict bound
+- the protected completion guard consumes the exact catalog-bound program overlay; only CLOSE-002 appends exactly one checkpoint-consumption record bound to checkpoint evidence/verdict, guard activation, immutable verdict ID, verifier capability, signature algorithm, key and policy versions, signature, current revocation check, append-only ledger entry, immutable signoff-ID set, exact catalog, authority, closeout manifest, target, deployed identities, and authenticated Human or Ops actor
   to catalog, authority, manifest, target, and deployments
 - independent Human/Ops accepts zero unresolved blocking product risk
 
@@ -105,7 +102,7 @@ finalization 才可完成第 48 個任務並宣告 program 完成。
   credential-isolation/cutover/rollback matrix
 - exact FE/BFF/image/lease/attestation identities
 - checksummed evidence inventory and independent review
-- explicit Human/Ops final verdict
+- explicit signed Human or Ops final verdict with current revocation and append-only ledger proof
 
 Reviewer approval must set `review_file` under:
 

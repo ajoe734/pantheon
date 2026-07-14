@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from types import ModuleType
@@ -74,7 +75,7 @@ REQUIRED_NON_GOALS = {
 }
 SUPPORTED_REPOS = {"pantheon", "execute-plans"}
 ALLOWED_FLEET_ACTORS = ["Codex", "Codex2"]
-LIVE_ADMISSION_FIELDS = {
+LIVE_ADMISSION_MARKER_FIELDS = {
     "active_worker",
     "attempt",
     "branch",
@@ -106,6 +107,7 @@ LIVE_ADMISSION_FIELDS = {
     "runtime_admission",
     "dispatch_admission",
     "review_started_at",
+    "remote",
     "run_id",
     "started_at",
     "task_signature",
@@ -114,7 +116,7 @@ LIVE_ADMISSION_FIELDS = {
     "worker_run_id",
 }
 TASK_CONTRACT_FIELDS = REQUIRED_TASK_FIELDS - {"owner", "reviewer", "status", "next"}
-ACTIVITY_OUTBOX_SCHEMA_VERSION = 2
+ACTIVITY_OUTBOX_SCHEMA_VERSION = 3
 ACTIVITY_EVENT_TYPES = {
     "assign",
     "catalog_migration",
@@ -126,6 +128,7 @@ ACTIVITY_TRANSACTION_FIELDS = {
     "program_id",
     "catalog_sha256",
     "actor",
+    "actor_policy",
     "actor_policy_sha256",
     "created_at",
     "affected_state_projection_sha256",
@@ -143,6 +146,7 @@ ACTIVITY_COMMON_EVENT_FIELDS = {
     "program_id",
     "catalog_sha256",
     "transaction_id",
+    "actor_policy_sha256",
 }
 ACTIVITY_EVENT_EXTRA_FIELDS = {
     "assign": {
@@ -182,6 +186,7 @@ EXPECTED_EXECUTION_AUTHORITY = {
         "task_worktree",
         "declared_scope",
         "expected_branch",
+        "remote",
         "merge_target",
     ],
     "formal_review_required": True,
@@ -251,6 +256,10 @@ EXPECTED_COMPLETION_AUTHORITY = {
         "LOOP-PROD-CLOSE-002": "final_authority",
     },
     "checkpoint_consumption_required": True,
+    "dispatcher_pre_completion_policy": (
+        "reject_preexisting_consumption_or_program_completed"
+    ),
+    "consumption_writer_task_id": "LOOP-PROD-CLOSE-002",
     "checkpoint_consumption_state_key": "program_completion_checkpoint_consumptions",
     "checkpoint_consumption_record_contract": {
         "schema_version": 1,
@@ -274,6 +283,14 @@ EXPECTED_COMPLETION_AUTHORITY = {
             "consumer_task_id",
             "consumer_task_contract_sha256",
             "final_verdict_sha256",
+            "verdict_id",
+            "guard_verifier_capability_sha256",
+            "signature_algorithm",
+            "key_id",
+            "policy_version",
+            "signature",
+            "revocation_checked_at",
+            "ledger_entry_id",
             "actor_id",
             "actor_role",
             "consumed_at",
@@ -290,6 +307,14 @@ EXPECTED_COMPLETION_AUTHORITY = {
         "frontend_sha",
         "bff_sha",
         "attestation_policy",
+        "verdict_id",
+        "verifier_capability_sha256",
+        "signature_algorithm",
+        "key_id",
+        "policy_version",
+        "signature",
+        "revocation_checked_at",
+        "ledger_entry_id",
         "actor_id",
         "actor_role",
         "decision",
@@ -308,6 +333,11 @@ EXPECTED_AUTH_LIFECYCLE = {
     "browser_activation_task_id": "LOOP-PROD-BROWSER-AUTH-001",
     "bootstrap_proof_type": "protected_external_provisional_record",
     "bootstrap_requires_program_attestation": False,
+    "strict_auth_prebootstrap_semantics": (
+        "strict_auth_code_and_non_pristine_state_may_be_delivered_or_preserved_"
+        "independently; hosted_qualification_lease_lifecycle_and_browser_"
+        "activation_require_bootstrap"
+    ),
     "credential_lifecycle_may_create_initial_credentials": False,
     "required_direct_dependencies": {
         "LOOP-PROD-AUTH-BOOT-001": [
@@ -387,6 +417,64 @@ EXPECTED_DISPATCH_PREREQUISITE = {
             "activity_audit_lock_file",
         ],
         "shared_read_supported": True,
+        "admission_decision_contract": {
+            "schema_version": 1,
+            "required_fields": [
+                "schema_version",
+                "protocol_id",
+                "strict",
+                "lock_mode",
+                "task_ids",
+                "source_sha256",
+                "conflicts",
+                "allowed",
+                "reason_id",
+                "snapshot_sha256",
+            ],
+            "source_ids": [
+                "runtime_state",
+                "event_queue",
+                "approval_queue",
+            ],
+            "snapshot_algorithm": "sha256(canonical-json(source_sha256))",
+            "clear_reason_id": "clear",
+            "conflict_statuses": [
+                "queued",
+                "started",
+                "running",
+                "waiting_approval",
+                "suspended_approval",
+                "manual_pending",
+                "retry_backoff",
+                "stalled",
+                "fallback",
+                "admitted",
+            ],
+            "missing_empty_malformed_unreadable_or_foreign_source_policy": (
+                "reject"
+            ),
+        },
+        "capability_manifest_required_fields": [
+            "schema_version",
+            "protocol_id",
+            "module_path",
+            "lock_order",
+            "stable_lock_paths",
+            "shared_read_supported",
+            "api",
+            "writers",
+            "writer_registry_path",
+            "writer_registry_sha256",
+            "dispatcher_sha256",
+            "bootstrap_task_id",
+            "bootstrap_task_contract_sha256",
+            "bootstrap_completion_evidence_path",
+            "bootstrap_completion_evidence_sha256",
+            "merged_commit_sha",
+        ],
+        "writer_registry_path": (
+            ".orchestrator/runtime-task-audit-writer-registry.json"
+        ),
         "required_writer_paths": [
             ".orchestrator/runtime_state.py",
             ".orchestrator/supervisor.py",
@@ -406,7 +494,7 @@ EXPECTED_CONTRACT_FIXTURES = {
             "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
             "fixtures/browser-auth-incidents.v1.json"
         ),
-        "sha256": "ce3f40be40a0628acdf5256b52ac8c60a2cdb12d026387c8e13c35261cf8ed96",
+        "sha256": "4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624",
         "schema_version": 1,
         "fixture_set_id": "loop-product-browser-auth-incidents-v1",
         "required_fixture_ids": [
@@ -426,27 +514,128 @@ EXPECTED_CONTRACT_FIXTURES = {
             "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
             "fixtures/browser-auth-route-matrix.v1.json"
         ),
-        "sha256": "5b585571492594480ecd09c50b3fff71581d8571bef6a9fea27451cab009b428",
+        "sha256": "8e465fc657e09e8be982181de5fd5929d2719392fcac472245df2c30563d3531",
         "schema_version": 1,
         "fixture_set_id": "loop-product-browser-auth-route-matrix-v1",
         "required_fixture_ids": [
             "viewer-cookie-me-get",
-            "viewer-cookie-me-head-router-negative",
-            "viewer-cookie-shell-summary-get",
+            "viewer-cookie-strategies-get",
             "viewer-cookie-personas-get",
+            "viewer-cookie-capital-pools-get",
+            "viewer-cookie-rebalances-get",
+            "viewer-cookie-deployments-get",
+            "viewer-cookie-jobs-get",
+            "viewer-cookie-alerts-get",
             "viewer-cookie-incidents-get",
+            "viewer-cookie-audit-get",
+            "viewer-cookie-artifacts-get",
+            "viewer-cookie-runtimes-get",
+            "viewer-cookie-mcp-servers-get",
+            "viewer-cookie-mcp-tools-get",
+            "viewer-cookie-skills-get",
+            "viewer-cookie-channels-get",
+            "viewer-cookie-tools-get",
+            "viewer-cookie-ranking-formulas-get",
+            "viewer-cookie-research-experiments-get",
+            "viewer-cookie-agora-signals-get",
+            "viewer-cookie-agora-inbox-get",
+            "viewer-cookie-agora-journal-get",
+            "viewer-cookie-agora-postmortems-get",
+            "viewer-cookie-v5-loop-runs-get",
+            "viewer-cookie-v5-sentinel-findings-get",
+            "viewer-cookie-v5-interventions-get",
+            "viewer-cookie-v5-execution-persona-health-get",
+            "viewer-cookie-shell-summary-get",
+            "viewer-cookie-assistant-mode-get",
+            "viewer-cookie-assistant-providers-get",
+            "viewer-cookie-assistant-provider-usage-summary-get",
+            "viewer-cookie-assistant-orchestrator-status-get",
+            "viewer-cookie-assistant-dev-docs-packet-get",
+            "viewer-cookie-management-ai-conversations-get",
+            "viewer-cookie-management-ai-conversation-get",
+            "viewer-cookie-sse-replay-get",
+            "viewer-cookie-agora-ask-sessions-get",
+            "viewer-cookie-agora-daily-get",
+            "viewer-cookie-channels-param-get",
+            "viewer-cookie-capital-pools-param-get",
+            "viewer-cookie-ranking-formulas-param-get",
+            "viewer-cookie-rebalances-param-get",
+            "viewer-cookie-artifacts-param-get",
+            "viewer-cookie-evolution-programs-get",
+            "viewer-cookie-evolution-programs-param-get",
+            "viewer-cookie-jobs-param-get",
+            "viewer-cookie-research-experiments-param-get",
+            "viewer-cookie-v5-control-room-get",
+            "viewer-cookie-v5-execution-strategy-health-get",
+            "viewer-cookie-v5-loop-runs-param-get",
+            "viewer-cookie-v5-sentinel-findings-param-get",
+            "viewer-frontend-actions-param-param-param-post-deny",
+            "viewer-frontend-confirm-tokens-param-delete-deny",
+            "viewer-cookie-alerts-param-get",
+            "viewer-cookie-approvals-get",
+            "viewer-cookie-approvals-param-get",
+            "viewer-cookie-confirm-tokens-param-get",
+            "viewer-cookie-deployments-param-get",
+            "viewer-cookie-incidents-param-get",
+            "viewer-cookie-runtimes-param-get",
+            "viewer-frontend-alerts-param-acknowledge-post-deny",
+            "viewer-frontend-approvals-param-decide-post-deny",
+            "viewer-frontend-confirm-tokens-post-deny",
+            "viewer-frontend-confirm-tokens-param-redeem-post-deny",
+            "viewer-cookie-mcp-servers-param-get",
+            "viewer-cookie-mcp-tools-param-get",
+            "viewer-cookie-personas-param-get",
+            "viewer-cookie-strategies-param-get",
+            "viewer-cookie-skills-param-get",
+            "viewer-cookie-tools-param-get",
+            "viewer-cookie-v5-interventions-param-get",
+            "viewer-frontend-v5-interventions-param-decide-post-deny",
+            "viewer-frontend-v5-interventions-param-remediate-post-deny",
+            "viewer-cookie-me-head-router-negative",
             "viewer-cookie-logout-post",
+            "viewer-cookie-logout-replay-idempotent",
             "fixed-viewer-bearer-logout-deny",
             "viewer-refresh-cookie-post",
             "fixed-viewer-bearer-refresh-deny",
+            "post-logout-me-deny",
+            "post-logout-refresh-family-deny",
+            "viewer-refresh-cookie-replay-deny",
+            "expired-viewer-cookie-me-deny",
+            "wrong-origin-viewer-me-deny",
+            "wrong-origin-viewer-refresh-deny",
+            "missing-csrf-viewer-refresh-deny",
+            "wrong-csrf-viewer-logout-deny",
+            "viewer-refresh-role-upgrade-deny",
+            "viewer-refresh-capability-upgrade-deny",
             "anonymous-sse-liveness-get",
-            "viewer-cookie-sse-replay-get",
             "viewer-query-token-sse-deny",
-            "viewer-control-mode-activate-deny",
-            "viewer-repair-worktree-deny",
-            "viewer-approval-decide-deny",
-            "viewer-management-ask-stream-deny",
+            "fixed-viewer-bearer-sse-deny",
+            "expired-viewer-cookie-sse-deny",
+            "wrong-origin-viewer-cookie-sse-deny",
+            "viewer-cookie-sse-duplicate-replay-ids-fail",
+            "mixed-bearer-cookie-me-deny",
+            "raw-literal-viewer-cookie-me-deny",
+            "raw-literal-viewer-body-refresh-deny",
+            "near-match-viewer-subject-me-deny",
+            "method-override-viewer-logout-deny",
+            "exact-origin-viewer-preflight-allow",
             "cross-origin-viewer-preflight-deny",
+            "viewer-control-mode-activate-deny",
+            "viewer-control-mode-deactivate-deny",
+            "viewer-control-mode-passphrase-deny",
+            "viewer-repair-worktree-deny",
+            "viewer-tools-preview-deny",
+            "viewer-tools-validate-deny",
+            "viewer-tools-execute-deny",
+            "viewer-dev-docs-generate-deny",
+            "viewer-dev-bridge-task-packet-deny",
+            "viewer-management-ask-deny",
+            "viewer-management-ask-stream-deny",
+            "viewer-approval-decide-deny",
+            "viewer-approval-batch-decide-deny",
+            "viewer-v5-intervention-decide-deny",
+            "viewer-incident-rollback-deployment-deny",
+            "viewer-v1-command-deny",
         ],
         "required_by": [
             "LOOP-PROD-BROWSER-AUTH-001",
@@ -454,6 +643,26 @@ EXPECTED_CONTRACT_FIXTURES = {
         ],
     },
 }
+EXPECTED_INCIDENT_PROJECTION_FIELDS = [
+    "fixture_id",
+    "semantic_intent_key",
+    "repository",
+    "pr",
+    "expected_replay",
+]
+EXPECTED_INCIDENT_PROJECTION_SHA256 = (
+    "6d0273539fb9b21ab1bf93eaeaedfb94aa5ee3512f584efff63952da52512d6c"
+)
+EXPECTED_ROUTE_ROW_KEY_FIELDS = [
+    "method",
+    "path_template",
+    "frontend_callsite",
+    "identity_profile",
+    "transport_profile",
+    "origin_profile",
+    "cookie_profile",
+    "attack_classes",
+]
 EXPECTED_PREIMAGE_FIXTURE_PATH = (
     "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
     "fixtures/catalog-v1-migration-preimages.json"
@@ -473,7 +682,7 @@ REQUIRED_LOOP_IDS = set(EXPECTED_LOOP_SCOPE["canonical_l1_loop_ids"]) | set(
 )
 REQUIRED_AUTHORITY_DISPATCH_RULES = {
     "the planning and dispatch controller may plan, archive, dispatch, monitor, and review only; it must not implement any declared product artifact",
-    "implementation may be performed only by a supervisor-admitted fleet worker bound to the exact task, run, provider, slot, clean worktree, scope, branch, and merge target",
+    "implementation may be performed only by a supervisor-admitted fleet worker bound to the exact task, run, provider, slot, clean worktree, scope, branch, remote, and merge target",
     "owner and reviewer must be distinct admitted fleet runtime identities; a self-authored trailer, same-session subagent note, or planner review is not independent review",
     "open draft PRs, local diffs, and unmerged worktrees are inputs only; the admitted fleet must audit the exact head and may adopt, rewrite, or discard them",
 }
@@ -481,6 +690,24 @@ REQUIRED_AUTHORITY_DISPATCH_RULES = {
 
 class DispatchError(RuntimeError):
     """Fail-closed packet or live-state validation error."""
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise DispatchError(f"duplicate JSON key is forbidden: {key}")
+        result[key] = value
+    return result
+
+
+def strict_json_loads(raw: str | bytes, *, source: str) -> Any:
+    try:
+        return json.loads(raw, object_pairs_hook=_reject_duplicate_json_keys)
+    except DispatchError:
+        raise
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise DispatchError(f"invalid JSON in {source}: {exc}") from exc
 
 
 def iso_now() -> str:
@@ -504,11 +731,12 @@ def catalog_path() -> Path:
 
 def read_json(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_bytes()
     except FileNotFoundError as exc:
         raise DispatchError(f"JSON file not found: {path}") from exc
-    except json.JSONDecodeError as exc:
-        raise DispatchError(f"invalid JSON in {path}: {exc}") from exc
+    except OSError as exc:
+        raise DispatchError(f"JSON file is unreadable: {path}") from exc
+    payload = strict_json_loads(raw, source=str(path))
     if not isinstance(payload, dict):
         raise DispatchError(f"expected JSON object in {path}")
     return payload
@@ -559,13 +787,257 @@ def _content_addressed_json(path: Path, expected_sha256: str) -> dict[str, Any]:
         raise DispatchError(f"content-addressed fixture is unreadable: {path}") from exc
     if sha256_bytes(raw) != expected_sha256:
         raise DispatchError(f"content-addressed fixture digest mismatch: {path}")
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise DispatchError(f"content-addressed fixture is invalid JSON: {path}") from exc
+    payload = strict_json_loads(raw, source=str(path))
     if not isinstance(payload, dict):
         raise DispatchError(f"content-addressed fixture must be an object: {path}")
     return payload
+
+
+def validate_browser_incident_fixture(
+    payload: dict[str, Any],
+    reference: dict[str, Any],
+) -> None:
+    rows = payload.get("fixtures")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise DispatchError("browser incident fixtures must be an exact object list")
+    ids = [str(row.get("fixture_id")) for row in rows]
+    if ids != reference["required_fixture_ids"] or len(ids) != len(set(ids)):
+        raise DispatchError("browser incident fixture IDs are not exact")
+    fields = payload.get("immutable_projection_fields")
+    if fields != EXPECTED_INCIDENT_PROJECTION_FIELDS:
+        raise DispatchError("browser incident immutable projection fields are not exact")
+    projection = [{field: row.get(field) for field in fields} for row in rows]
+    if (
+        payload.get("immutable_projection_sha256")
+        != EXPECTED_INCIDENT_PROJECTION_SHA256
+        or canonical_json_sha256(projection) != EXPECTED_INCIDENT_PROJECTION_SHA256
+    ):
+        raise DispatchError("browser incident immutable PR/tree/replay projection changed")
+    by_id = {str(row["fixture_id"]): row for row in rows}
+    duplicate = by_id["pantheon-pr-3588-zero-tree-duplicate-3557-revert"]
+    effective = by_id["pantheon-pr-3587-effective-3557-revert"]
+    if (
+        duplicate["pr"]["head_tree_sha"] != effective["pr"]["head_tree_sha"]
+        or duplicate["pr"]["merge_tree_sha"]
+        != duplicate["pr"]["head_tree_sha"]
+        or duplicate["pr"]["merge_tree_sha"] != effective["pr"]["merge_tree_sha"]
+        or duplicate["expected_replay"]["effective_tree_delta"] is not False
+        or duplicate["expected_replay"]["second_deploy_forbidden"] is not True
+    ):
+        raise DispatchError("3587/3588 duplicate-repair graph semantics changed")
+    diagnosis = payload.get("diagnosis") or {}
+    if (
+        diagnosis.get("reason_id") != "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"
+        or "does not prove" not in str(diagnosis.get("not_proven") or "")
+    ):
+        raise DispatchError("hosted browser incident diagnosis is not exact")
+    archival = payload.get("evidence_archival_contract") or {}
+    if (
+        archival.get("status")
+        != "fleet_must_vendor_redacted_extracts_before_closeout"
+        or archival.get("index_path")
+        != "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/fixtures/evidence/browser-auth-incidents/run-29298450774/index.v1.json"
+        or archival.get("required_file_ids")
+        != [
+            "bff-authenticated-live-smoke",
+            "management-live-deep-validation",
+            "playwright-results",
+            "release-gate-summary",
+            "historical-get-results",
+            "sse-replay-results",
+        ]
+        or archival.get("network_independent_replay_required") is not True
+        or archival.get("redaction_and_secret_scan_required") is not True
+    ):
+        raise DispatchError("browser incident evidence archival contract is not exact")
+    for row in rows:
+        for case in row.get("request_cases") or []:
+            if (
+                not isinstance(case, dict)
+                or not isinstance((case.get("expected") or {}).get("http_status"), int)
+            ):
+                raise DispatchError(
+                    "incident replay must use one exact HTTP status, not alternatives"
+                )
+
+
+def validate_browser_route_fixture(
+    payload: dict[str, Any],
+    reference: dict[str, Any],
+) -> None:
+    rows = payload.get("rows")
+    if not isinstance(rows, list) or not rows or not all(
+        isinstance(row, dict) for row in rows
+    ):
+        raise DispatchError("browser route matrix rows must be a non-empty object list")
+    row_ids = [str(row.get("row_id") or "") for row in rows]
+    if (
+        row_ids != payload.get("required_row_ids")
+        or row_ids != reference["required_fixture_ids"]
+        or not all(row_ids)
+        or len(row_ids) != len(set(row_ids))
+    ):
+        raise DispatchError("browser route matrix row-ID union is not exact")
+    if payload.get("required_row_key_fields") != EXPECTED_ROUTE_ROW_KEY_FIELDS:
+        raise DispatchError("browser route matrix row-key fields are not exact")
+    required_generated = ["coverage_tags", "router_reached", "evidence_refs"]
+    profiles = {
+        "identity_profile": payload.get("identity_profiles"),
+        "transport_profile": payload.get("transport_profiles"),
+        "origin_profile": payload.get("origin_profiles"),
+        "cookie_profile": payload.get("cookie_profiles"),
+    }
+    if any(not isinstance(values, dict) or not values for values in profiles.values()):
+        raise DispatchError("browser route matrix profile dictionaries are incomplete")
+    computed_keys: list[str] = []
+    computed_pairs: set[tuple[str, str]] = set()
+    attack_union: set[str] = set()
+    for row in rows:
+        if any(field not in row for field in EXPECTED_ROUTE_ROW_KEY_FIELDS):
+            raise DispatchError("browser route matrix row-key projection is incomplete")
+        if any(field not in row for field in required_generated):
+            raise DispatchError("browser route matrix generated-row fields are incomplete")
+        if (
+            not isinstance(row["coverage_tags"], list)
+            or not row["coverage_tags"]
+            or len(row["coverage_tags"]) != len(set(map(str, row["coverage_tags"])))
+            or not isinstance(row["router_reached"], bool)
+            or not isinstance(row["evidence_refs"], list)
+            or not row["evidence_refs"]
+            or not isinstance(row["attack_classes"], list)
+            or len(row["attack_classes"])
+            != len(set(map(str, row["attack_classes"])))
+        ):
+            raise DispatchError("browser route matrix row evidence or attack shape is invalid")
+        method = str(row["method"])
+        path = str(row["path_template"])
+        if method != method.upper() or not path.startswith("/") or "*" in path:
+            raise DispatchError("browser route matrix method/path identity is invalid")
+        for field, values in profiles.items():
+            if row[field] not in values:
+                raise DispatchError(f"browser route matrix references unknown {field}")
+        computed_keys.append(
+            json.dumps(
+                {field: row[field] for field in EXPECTED_ROUTE_ROW_KEY_FIELDS},
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        computed_pairs.add((method, path))
+        attack_union.update(map(str, row["attack_classes"]))
+    if payload.get("required_row_keys") != sorted(computed_keys) or len(
+        computed_keys
+    ) != len(set(computed_keys)):
+        raise DispatchError("browser route matrix exact row-key union changed")
+    expected_pairs = [
+        {"method": method, "path_template": path}
+        for method, path in sorted(computed_pairs)
+    ]
+    if payload.get("required_path_method_pairs") != expected_pairs:
+        raise DispatchError("browser route matrix method/path union changed")
+    universe = payload.get("route_universe") or {}
+    if (
+        universe.get("coverage_rule")
+        != "exact_row_key_union_equals_required_row_keys"
+        or universe.get("coverage_status") != "complete"
+        or universe.get("missing_or_extra_rows_fail") is not True
+        or universe.get("wildcards_allowed") is not False
+        or universe.get("closeout_requires_coverage_status") != "complete"
+        or universe.get("required_generated_row_fields") != required_generated
+        or universe.get("pinned_frontend_manifest_entry_count") != 63
+    ):
+        raise DispatchError("browser route matrix exact coverage contract changed")
+    required_get_paths = payload.get("required_incident_get_paths")
+    historical_rows = [
+        row for row in rows if "historical_incident_get" in row["coverage_tags"]
+    ]
+    if (
+        not isinstance(required_get_paths, list)
+        or len(required_get_paths) != 27
+        or len(set(required_get_paths)) != 27
+        or [row["path_template"] for row in historical_rows] != required_get_paths
+        or any(row["method"] != "GET" for row in historical_rows)
+    ):
+        raise DispatchError("browser route matrix historical 27-GET union is not exact")
+    required_privileged = payload.get("required_privileged_negative_row_ids")
+    privileged_rows = [
+        row for row in rows if "privileged_negative" in row["coverage_tags"]
+    ]
+    if (
+        not isinstance(required_privileged, list)
+        or len(required_privileged) != 16
+        or len(set(required_privileged)) != 16
+        or [row["row_id"] for row in privileged_rows] != required_privileged
+        or any((row.get("expected") or {}).get("product_success") is not False for row in privileged_rows)
+    ):
+        raise DispatchError("browser route matrix privileged-negative union is not exact")
+    required_attacks = payload.get("required_attack_classes")
+    if (
+        not isinstance(required_attacks, list)
+        or len(required_attacks) != 13
+        or len(set(required_attacks)) != 13
+        or attack_union != set(required_attacks)
+    ):
+        raise DispatchError("browser route matrix attack-class union is not exact")
+    frontend_rows = [
+        row for row in rows if "frontend_manifest_callsite" in row["coverage_tags"]
+    ]
+    frontend_keys = [f"{row['method']} {row['path_template']}" for row in frontend_rows]
+    if (
+        len(frontend_rows) != 63
+        or sorted(frontend_keys)
+        != sorted(payload.get("required_frontend_manifest_route_keys") or [])
+        or len(frontend_keys) != len(set(frontend_keys))
+    ):
+        raise DispatchError("browser route matrix pinned frontend manifest union changed")
+    management_paths = payload.get("required_management_ai_get_paths")
+    if not isinstance(management_paths, list) or any(
+        ("GET", path) not in computed_pairs for path in management_paths
+    ):
+        raise DispatchError("browser route matrix Management AI GET union is incomplete")
+    paths = {str(row["path_template"]) for row in rows}
+    if "/bff/dashboard/summary" in paths or "/bff/management/shell-summary" not in paths:
+        raise DispatchError("browser route matrix uses a nonexistent boot route")
+    transports = payload["transport_profiles"]
+    if not {"raw_literal_cookie", "credential_shaped_json_body"}.issubset(transports):
+        raise DispatchError("browser route matrix raw-credential transports are incomplete")
+    by_id = {str(row["row_id"]): row for row in rows}
+    if (
+        by_id["viewer-cookie-me-head-router-negative"]["expected"]["product_success"]
+        is not False
+        or by_id["anonymous-sse-liveness-get"]["expected"]["product_success"]
+        is not False
+        or by_id["viewer-cookie-sse-replay-get"]["expected"]["product_success"]
+        is not True
+    ):
+        raise DispatchError("browser auth, router, liveness, and product outcomes are conflated")
+    logout = (payload.get("session_lifecycle_contract") or {}).get("logout") or {}
+    logout_row = by_id.get("viewer-cookie-logout-post") or {}
+    logout_expected = logout_row.get("expected") or {}
+    if (
+        logout.get("method") != "POST"
+        or logout.get("path_template") != "/bff/logout"
+        or logout.get("success_http_status") != 200
+        or logout.get("success_content_type") != "application/json"
+        or logout.get("success_json_body") != {"status": "logged_out"}
+        or logout.get("clear_cookie_profiles")
+        != ["viewer_session", "viewer_refresh"]
+        or logout.get("revoke_scope") != "exact_authenticated_refresh_family"
+        or logout.get("post_logout_denial_row_ids")
+        != ["post-logout-me-deny", "post-logout-refresh-family-deny"]
+        or logout_row.get("method") != "POST"
+        or logout_expected.get("router_status") != 200
+        or logout_expected.get("content_type") != "application/json"
+        or logout_expected.get("json_body") != {"status": "logged_out"}
+        or logout_expected.get("state_delta")
+        != "revoke_exact_access_session_and_refresh_family_then_clear_both_cookies"
+        or (by_id.get("post-logout-me-deny", {}).get("expected") or {}).get("router_status")
+        != 401
+        or (by_id.get("post-logout-refresh-family-deny", {}).get("expected") or {}).get("router_status")
+        != 401
+    ):
+        raise DispatchError("browser route matrix logout/refresh lifecycle is not exact")
 
 
 def validate_contract_fixtures(catalog: dict[str, Any]) -> None:
@@ -584,130 +1056,9 @@ def validate_contract_fixtures(catalog: dict[str, Any]) -> None:
         if actual_set_id != reference["fixture_set_id"]:
             raise DispatchError(f"{fixture_id} fixture-set identity mismatch")
         if fixture_id == "browser_auth_incidents_v1":
-            rows = payload.get("fixtures")
-            ids = [
-                str(row.get("fixture_id"))
-                for row in rows or []
-                if isinstance(row, dict)
-            ]
-            if ids != reference["required_fixture_ids"]:
-                raise DispatchError("browser incident fixture IDs are not exact")
-            by_id = {str(row["fixture_id"]): row for row in rows}
-            duplicate = by_id[
-                "pantheon-pr-3588-zero-tree-duplicate-3557-revert"
-            ]
-            effective = by_id["pantheon-pr-3587-effective-3557-revert"]
-            if (
-                duplicate["pr"]["head_tree_sha"]
-                != effective["pr"]["head_tree_sha"]
-                or duplicate["pr"]["merge_tree_sha"]
-                != duplicate["pr"]["head_tree_sha"]
-                or duplicate["pr"]["merge_tree_sha"]
-                != effective["pr"]["merge_tree_sha"]
-                or duplicate["expected_replay"]["effective_tree_delta"] is not False
-                or duplicate["expected_replay"]["second_deploy_forbidden"] is not True
-            ):
-                raise DispatchError("3587/3588 duplicate-repair graph semantics changed")
-            diagnosis = payload.get("diagnosis") or {}
-            if (
-                diagnosis.get("reason_id")
-                != "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"
-                or "does not prove" not in str(diagnosis.get("not_proven") or "")
-            ):
-                raise DispatchError("hosted browser incident diagnosis is not exact")
-            archival = payload.get("evidence_archival_contract") or {}
-            if (
-                archival.get("status") != "fleet_must_vendor_redacted_extracts_before_closeout"
-                or archival.get("index_path")
-                != "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/fixtures/evidence/browser-auth-incidents/run-29298450774/index.v1.json"
-                or archival.get("required_file_ids")
-                != [
-                    "bff-authenticated-live-smoke",
-                    "management-live-deep-validation",
-                    "playwright-results",
-                    "release-gate-summary",
-                    "historical-get-results",
-                    "sse-replay-results",
-                ]
-                or archival.get("network_independent_replay_required") is not True
-                or archival.get("redaction_and_secret_scan_required") is not True
-            ):
-                raise DispatchError("browser incident evidence archival contract is not exact")
-            request_cases = [
-                case
-                for row in rows
-                for case in row.get("request_cases") or []
-                if isinstance(case, dict)
-            ]
-            for case in request_cases:
-                status = (case.get("expected") or {}).get("http_status")
-                if not isinstance(status, int):
-                    raise DispatchError(
-                        "incident replay must use one exact HTTP status, not alternatives"
-                    )
+            validate_browser_incident_fixture(payload, reference)
         else:
-            rows = payload.get("rows")
-            row_ids = [
-                str(row.get("row_id"))
-                for row in rows or []
-                if isinstance(row, dict)
-            ]
-            missing = [
-                row_id
-                for row_id in reference["required_fixture_ids"]
-                if row_id not in row_ids
-            ]
-            if missing or len(row_ids) != len(set(row_ids)):
-                raise DispatchError(
-                    "browser route matrix required rows are missing or duplicated"
-                )
-            if any("*" in str(row.get("path_template") or "") for row in rows):
-                raise DispatchError("browser route matrix path wildcards are forbidden")
-            paths = {str(row.get("path_template")) for row in rows}
-            if "/bff/dashboard/summary" in paths or "/bff/management/shell-summary" not in paths:
-                raise DispatchError("browser route matrix uses a nonexistent boot route")
-            universe = payload.get("route_universe") or {}
-            if universe.get("coverage_rule") != (
-                "seed_declares_exact_union_for_fleet_generation; complete status enforces exact union"
-            ):
-                raise DispatchError("browser route matrix coverage rule is not exact")
-            if universe.get("coverage_status") != "planner_seed_incomplete_blocked":
-                raise DispatchError("browser route matrix must remain explicitly blocked until fleet generation")
-            if universe.get("closeout_requires_coverage_status") != "complete":
-                raise DispatchError("browser route matrix closeout status contract is missing")
-            if universe.get("required_generated_row_fields") != [
-                "coverage_tags",
-                "router_reached",
-                "evidence_refs",
-            ]:
-                raise DispatchError("browser route matrix generated-row field contract is not exact")
-            required_get_paths = payload.get("required_incident_get_paths")
-            if not isinstance(required_get_paths, list) or len(required_get_paths) != 27 or len(set(required_get_paths)) != 27:
-                raise DispatchError("browser route matrix must declare 27 exact historical GET paths")
-            required_privileged = payload.get("required_privileged_negative_row_ids")
-            if not isinstance(required_privileged, list) or len(required_privileged) != 16 or len(set(required_privileged)) != 16:
-                raise DispatchError("browser route matrix must declare 16 exact privileged-negative rows")
-            required_attacks = payload.get("required_attack_classes")
-            if not isinstance(required_attacks, list) or len(required_attacks) != 13 or len(set(required_attacks)) != 13:
-                raise DispatchError("browser route matrix must declare 13 exact attack classes")
-            transports = payload.get("transport_profiles") or {}
-            if not {"raw_literal_cookie", "credential_shaped_json_body"}.issubset(transports):
-                raise DispatchError("browser route matrix raw-credential transport profiles are incomplete")
-            by_id = {str(row["row_id"]): row for row in rows}
-            if (
-                by_id["viewer-cookie-me-head-router-negative"]["expected"]
-                ["product_success"]
-                is not False
-                or by_id["anonymous-sse-liveness-get"]["expected"]
-                ["product_success"]
-                is not False
-                or by_id["viewer-cookie-sse-replay-get"]["expected"]
-                ["product_success"]
-                is not True
-            ):
-                raise DispatchError(
-                    "browser auth, router, liveness, and product outcomes are conflated"
-                )
+            validate_browser_route_fixture(payload, reference)
 
 
 def validate_preimage_fixture(migration: dict[str, Any]) -> dict[str, Any]:
@@ -881,6 +1232,12 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
         if missing:
             raise DispatchError(
                 f"{task.get('id', f'tasks[{index}]')} missing fields: {', '.join(missing)}"
+            )
+        extra = sorted(set(task) - REQUIRED_TASK_FIELDS)
+        if extra:
+            raise DispatchError(
+                f"{task.get('id', f'tasks[{index}]')} has unbound fields: "
+                + ", ".join(extra)
             )
         task_id = str(task["id"]).strip()
         if not task_id.startswith("LOOP-PROD-"):
@@ -1410,6 +1767,39 @@ def _load_runtime_protocol_module(path: Path) -> ModuleType:
     return module
 
 
+def _is_lower_hex(value: Any, length: int) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == length
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _safe_repo_relative_path(value: Any, *, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise DispatchError(f"{label} is invalid")
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts or str(path) != value:
+        raise DispatchError(f"{label} must be a normalized repo-relative path")
+    return value
+
+
+def _git_output(root: Path, *args: str) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), *args],
+            check=False,
+            capture_output=True,
+        )
+    except OSError as exc:
+        raise DispatchError("runtime lock capability git verification is unavailable") from exc
+    if result.returncode != 0:
+        raise DispatchError(
+            "runtime lock capability git verification failed: " + " ".join(args[:2])
+        )
+    return result.stdout
+
+
 def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
     protocol = catalog["dispatch_prerequisite"]["protocol"]
     manifest_path = STATUS_ROOT / protocol["capability_manifest"]
@@ -1419,17 +1809,7 @@ def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
         if str(exc).startswith("JSON file not found:"):
             raise DispatchError("runtime lock capability manifest is missing") from exc
         raise
-    required_keys = {
-        "schema_version",
-        "protocol_id",
-        "module_path",
-        "lock_order",
-        "stable_lock_paths",
-        "shared_read_supported",
-        "api",
-        "writers",
-        "merged_commit_sha",
-    }
+    required_keys = set(protocol["capability_manifest_required_fields"])
     if set(manifest) != required_keys:
         raise DispatchError("runtime lock capability manifest schema is not exact")
     if (
@@ -1443,12 +1823,15 @@ def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
     ):
         raise DispatchError("runtime lock capability manifest contract mismatch")
     merge_sha = manifest.get("merged_commit_sha")
-    if (
-        not isinstance(merge_sha, str)
-        or len(merge_sha) != 40
-        or any(character not in "0123456789abcdef" for character in merge_sha)
-    ):
+    if not _is_lower_hex(merge_sha, 40):
         raise DispatchError("runtime lock capability merge identity is invalid")
+    if (
+        manifest.get("bootstrap_task_id")
+        != catalog["dispatch_prerequisite"]["task_id"]
+        or manifest.get("bootstrap_task_contract_sha256")
+        != catalog["dispatch_prerequisite"]["task_contract_sha256"]
+    ):
+        raise DispatchError("runtime lock capability bootstrap task binding mismatch")
     writers = manifest.get("writers")
     if not isinstance(writers, dict) or set(writers) != set(
         protocol["required_writer_paths"]
@@ -1459,9 +1842,7 @@ def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
             not isinstance(writer_path, str)
             or Path(writer_path).is_absolute()
             or ".." in Path(writer_path).parts
-            or not isinstance(expected_digest, str)
-            or len(expected_digest) != 64
-            or any(character not in "0123456789abcdef" for character in expected_digest)
+            or not _is_lower_hex(expected_digest, 64)
         ):
             raise DispatchError("runtime lock capability writer binding is invalid")
         target = STATUS_ROOT / writer_path
@@ -1475,6 +1856,104 @@ def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
             raise DispatchError(
                 f"runtime lock capability writer digest mismatch: {writer_path}"
             )
+    dispatcher_path = "scripts/dispatch_loop_product_level_remediation_2026-07-13.py"
+    executing_dispatcher_sha256 = sha256_bytes(Path(__file__).read_bytes())
+    if (
+        manifest.get("dispatcher_sha256") != executing_dispatcher_sha256
+        or writers.get(dispatcher_path) != executing_dispatcher_sha256
+    ):
+        raise DispatchError("runtime lock capability executing dispatcher binding mismatch")
+
+    registry_path = _safe_repo_relative_path(
+        manifest.get("writer_registry_path"),
+        label="runtime lock writer registry path",
+    )
+    if registry_path != protocol["writer_registry_path"]:
+        raise DispatchError("runtime lock writer registry path mismatch")
+    registry_digest = manifest.get("writer_registry_sha256")
+    if not _is_lower_hex(registry_digest, 64):
+        raise DispatchError("runtime lock writer registry digest is invalid")
+    registry = _content_addressed_json(
+        STATUS_ROOT / registry_path,
+        str(registry_digest),
+    )
+    if set(registry) != {
+        "schema_version",
+        "protocol_id",
+        "transaction_scope",
+        "direct_canonical_writes_forbidden",
+        "writers",
+    } or registry != {
+        "schema_version": 1,
+        "protocol_id": protocol["protocol_id"],
+        "transaction_scope": "complete_read_validate_mutate_replace",
+        "direct_canonical_writes_forbidden": True,
+        "writers": writers,
+    }:
+        raise DispatchError("runtime lock writer registry is not exact")
+
+    evidence_path = _safe_repo_relative_path(
+        manifest.get("bootstrap_completion_evidence_path"),
+        label="runtime lock bootstrap completion evidence path",
+    )
+    evidence_digest = manifest.get("bootstrap_completion_evidence_sha256")
+    if not _is_lower_hex(evidence_digest, 64):
+        raise DispatchError("runtime lock bootstrap completion evidence digest is invalid")
+    evidence = _content_addressed_json(
+        STATUS_ROOT / evidence_path,
+        str(evidence_digest),
+    )
+    if set(evidence) != {
+        "schema_version",
+        "task_id",
+        "task_contract_sha256",
+        "conclusion",
+        "worker_runtime_identity",
+        "reviewer_runtime_identity",
+        "checks_sha256",
+    }:
+        raise DispatchError("runtime lock bootstrap completion evidence schema is not exact")
+    if (
+        evidence.get("schema_version") != 1
+        or evidence.get("task_id") != catalog["dispatch_prerequisite"]["task_id"]
+        or evidence.get("task_contract_sha256")
+        != catalog["dispatch_prerequisite"]["task_contract_sha256"]
+        or evidence.get("conclusion") != "passed"
+        or evidence.get("worker_runtime_identity") not in ALLOWED_FLEET_ACTORS
+        or evidence.get("reviewer_runtime_identity") not in ALLOWED_FLEET_ACTORS
+        or evidence.get("worker_runtime_identity")
+        == evidence.get("reviewer_runtime_identity")
+        or not _is_lower_hex(evidence.get("checks_sha256"), 64)
+    ):
+        raise DispatchError("runtime lock bootstrap completion evidence is not exact")
+
+    repository_root = Path(
+        _git_output(STATUS_ROOT, "rev-parse", "--show-toplevel")
+        .decode("utf-8")
+        .strip()
+    ).resolve()
+    if repository_root != STATUS_ROOT:
+        raise DispatchError("runtime lock capability repository root is not exact")
+    _git_output(STATUS_ROOT, "cat-file", "-e", f"{merge_sha}^{{commit}}")
+    _git_output(
+        STATUS_ROOT,
+        "merge-base",
+        "--is-ancestor",
+        str(merge_sha),
+        "refs/remotes/origin/dev",
+    )
+    committed_bindings = {**writers, registry_path: registry_digest, evidence_path: evidence_digest}
+    for relative_path, expected_digest in committed_bindings.items():
+        committed_bytes = _git_output(
+            STATUS_ROOT,
+            "show",
+            f"{merge_sha}:{relative_path}",
+        )
+        if sha256_bytes(committed_bytes) != expected_digest:
+            raise DispatchError(
+                f"runtime lock capability merged blob mismatch: {relative_path}"
+            )
+
     override = str(os.environ.get("LOOP_PRODUCT_RUNTIME_PROTOCOL_MODULE") or "").strip()
     if override:
         if STATUS_ROOT == REPO_ROOT:
@@ -1518,17 +1997,45 @@ def shared_dispatch_locks(
         ) as admission:
             if not isinstance(admission, dict):
                 raise DispatchError("runtime admission guard returned no exact decision")
+            protocol = catalog["dispatch_prerequisite"]["protocol"]
+            decision_contract = protocol["admission_decision_contract"]
+            required_fields = set(decision_contract["required_fields"])
+            source_ids = decision_contract["source_ids"]
+            source_sha256 = admission.get("source_sha256")
+            conflicts = admission.get("conflicts")
+            exact_shape = bool(
+                set(admission) == required_fields
+                and admission.get("schema_version")
+                == decision_contract["schema_version"]
+                and admission.get("protocol_id") == protocol["protocol_id"]
+                and admission.get("strict") is True
+                and admission.get("lock_mode")
+                == ("shared" if shared else "exclusive")
+                and admission.get("task_ids") == task_ids
+                and isinstance(source_sha256, dict)
+                and list(source_sha256) == source_ids
+                and all(_is_lower_hex(value, 64) for value in source_sha256.values())
+                and isinstance(conflicts, list)
+                and all(isinstance(conflict, dict) for conflict in conflicts)
+                and len(conflicts) == len(
+                    {canonical_json_sha256(conflict) for conflict in conflicts}
+                )
+                and _is_lower_hex(admission.get("snapshot_sha256"), 64)
+                and admission.get("snapshot_sha256")
+                == canonical_json_sha256(source_sha256)
+                and isinstance(admission.get("allowed"), bool)
+                and isinstance(admission.get("reason_id"), str)
+                and bool(str(admission.get("reason_id")).strip())
+            )
+            if not exact_shape:
+                raise DispatchError("runtime admission decision schema is not exact")
             if (
                 admission.get("allowed") is not True
-                or admission.get("strict") is not True
-                or admission.get("shared") is not shared
-                or admission.get("protocol_id")
-                != catalog["dispatch_prerequisite"]["protocol"]["protocol_id"]
-                or admission.get("task_ids") != task_ids
-                or not isinstance(admission.get("snapshot_sha256"), str)
-                or len(str(admission.get("snapshot_sha256"))) != 64
+                or admission.get("reason_id")
+                != decision_contract["clear_reason_id"]
+                or conflicts != []
             ):
-                reason = admission.get("reason") or "runtime_admission_not_exact"
+                reason = admission.get("reason_id") or "runtime_admission_not_exact"
                 raise DispatchError(f"runtime admission blocked: {reason}")
             with module.canonical_task_state_lock_file(
                 STATUS_PATH,
@@ -1621,19 +2128,19 @@ def _read_activity_source(path: Path) -> str:
         ) from exc
 
 
-def activity_event_ids(*, since: datetime | None = None) -> set[str]:
+def activity_event_index(*, since: datetime | None = None) -> dict[str, str]:
+    """Index content-addressed audit events by ID and canonical payload digest."""
+
     event_payloads: dict[str, str] = {}
     for path in activity_log_sources(since=since):
         source_ids: set[str] = set()
         for line_number, line in enumerate(_read_activity_source(path).splitlines(), 1):
             if not line.strip():
                 continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise DispatchError(
-                    f"malformed activity audit JSON in {path}:{line_number}"
-                ) from exc
+            entry = strict_json_loads(
+                line,
+                source=f"activity audit {path}:{line_number}",
+            )
             if not isinstance(entry, dict):
                 raise DispatchError(
                     f"activity audit entry must be an object in {path}:{line_number}"
@@ -1645,6 +2152,20 @@ def activity_event_ids(*, since: datetime | None = None) -> set[str]:
                 raise DispatchError(
                     f"activity audit event_id is invalid in {path}:{line_number}"
                 )
+            if event_id.startswith("loop-product-event-"):
+                event_payload = {
+                    key: deepcopy(value)
+                    for key, value in entry.items()
+                    if key != "event_id"
+                }
+                expected_event_id = (
+                    "loop-product-event-" + canonical_json_sha256(event_payload)
+                )
+                if event_id != expected_event_id:
+                    raise DispatchError(
+                        "activity audit event_id payload binding mismatch in "
+                        f"{path}:{line_number}"
+                    )
             if event_id in source_ids:
                 raise DispatchError(
                     f"duplicate activity audit event_id {event_id} in {path}"
@@ -1657,7 +2178,27 @@ def activity_event_ids(*, since: datetime | None = None) -> set[str]:
                     f"conflicting activity audit event_id {event_id} across rotated logs"
                 )
             event_payloads[event_id] = payload_digest
-    return set(event_payloads)
+    return event_payloads
+
+
+def preflight_activity_events(
+    pending: dict[str, Any],
+    existing_events: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Return missing events only after every existing ID is an exact payload match."""
+
+    missing: list[dict[str, Any]] = []
+    for entry in pending["events"]:
+        event_id = str(entry["event_id"])
+        expected_digest = canonical_json_sha256(entry)
+        existing_digest = existing_events.get(event_id)
+        if existing_digest is None:
+            missing.append(entry)
+        elif existing_digest != expected_digest:
+            raise DispatchError(
+                f"activity audit event_id {event_id} has a conflicting payload"
+            )
+    return missing
 
 
 def parse_activity_timestamp(raw: Any) -> datetime:
@@ -1696,7 +2237,7 @@ def enqueue_activity_outbox(
     state: dict[str, Any],
     entries: list[dict[str, Any]],
     *,
-    program_id: str,
+    catalog: dict[str, Any],
     catalog_digest: str,
 ) -> None:
     pending = state.get("program_activity_outbox")
@@ -1705,9 +2246,20 @@ def enqueue_activity_outbox(
     if not entries:
         raise DispatchError("cannot enqueue an empty activity transaction")
     actor = str(os.environ.get("AI_NAME") or "").strip()
-    # The caller provides only program/catalog bindings; resolve the reviewed
-    # actor policy from the immutable two-fleet contract instead of defaulting.
-    actor_policy = ALLOWED_FLEET_ACTORS
+    program_id = str(catalog.get("program_id") or "").strip()
+    current_actor_policy = catalog.get("allowed_owners")
+    if (
+        not program_id
+        or not isinstance(current_actor_policy, list)
+        or not current_actor_policy
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for item in current_actor_policy
+        )
+        or len(current_actor_policy) != len(set(current_actor_policy))
+    ):
+        raise DispatchError("current catalog actor policy is not exact")
+    actor_policy = deepcopy(current_actor_policy)
     if actor not in actor_policy:
         raise DispatchError("AI_NAME must name an allowed fleet actor before any write")
 
@@ -1745,6 +2297,7 @@ def enqueue_activity_outbox(
         "program_id": program_id,
         "catalog_sha256": catalog_digest,
         "actor": actor,
+        "actor_policy": actor_policy,
         "actor_policy_sha256": actor_policy_sha256,
         "created_at": created_at,
         "affected_state_projection_sha256": affected_state_projection_sha256,
@@ -1760,6 +2313,7 @@ def enqueue_activity_outbox(
             "program_id": program_id,
             "catalog_sha256": catalog_digest,
             "transaction_id": transaction_id,
+            "actor_policy_sha256": actor_policy_sha256,
         }
         event["event_id"] = "loop-product-event-" + canonical_json_sha256(event)
         prepared.append(event)
@@ -1769,6 +2323,7 @@ def enqueue_activity_outbox(
         "program_id": program_id,
         "catalog_sha256": catalog_digest,
         "actor": actor,
+        "actor_policy": actor_policy,
         "actor_policy_sha256": actor_policy_sha256,
         "created_at": created_at,
         "affected_state_projection_sha256": affected_state_projection_sha256,
@@ -1798,10 +2353,20 @@ def validate_activity_outbox(
         or (require_current_catalog and bound_catalog != catalog_digest)
     ):
         raise DispatchError("program_activity_outbox catalog binding mismatch")
-    actor_policy = ALLOWED_FLEET_ACTORS
+    actor_policy = pending.get("actor_policy")
     if (
-        pending.get("actor") not in actor_policy
+        not isinstance(actor_policy, list)
+        or not actor_policy
+        or any(
+            not isinstance(item, str) or not item.strip() for item in actor_policy
+        )
+        or len(actor_policy) != len(set(actor_policy))
+        or pending.get("actor") not in actor_policy
         or pending.get("actor_policy_sha256") != canonical_json_sha256(actor_policy)
+        or (
+            require_current_catalog
+            and actor_policy != catalog.get("allowed_owners")
+        )
     ):
         raise DispatchError("program_activity_outbox actor policy binding mismatch")
     parse_activity_timestamp(pending.get("created_at"))
@@ -1829,6 +2394,8 @@ def validate_activity_outbox(
         event_id = entry.get("event_id")
         if transaction_id != pending.get("transaction_id"):
             raise DispatchError("program_activity_outbox transaction binding mismatch")
+        if entry.get("actor_policy_sha256") != pending.get("actor_policy_sha256"):
+            raise DispatchError("program_activity_outbox actor policy event mismatch")
         if not isinstance(event_id, str) or not event_id.strip() or event_id in event_ids:
             raise DispatchError("program_activity_outbox event_id is missing or duplicated")
         if any(not isinstance(entry.get(field), str) or not str(entry.get(field)).strip()
@@ -1899,6 +2466,7 @@ def validate_activity_outbox(
         "program_id": expected_program,
         "catalog_sha256": bound_catalog,
         "actor": pending["actor"],
+        "actor_policy": actor_policy,
         "actor_policy_sha256": pending["actor_policy_sha256"],
         "created_at": pending["created_at"],
         "affected_state_projection_sha256": pending[
@@ -1930,15 +2498,14 @@ def flush_activity_outbox(
     )
     events = pending["events"]
     earliest_event = min(parse_activity_timestamp(entry["ts"]) for entry in events)
-    existing = activity_event_ids(since=earliest_event)
+    existing = activity_event_index(since=earliest_event)
+    missing_events = preflight_activity_events(pending, existing)
     appended_count = 0
     fail_after = str(
         os.environ.get("LOOP_PRODUCT_DISPATCH_FAIL_AFTER_ACTIVITY_EVENT") or ""
     ).strip()
     fail_after_count = int(fail_after) if fail_after.isdigit() else 0
-    for entry in events:
-        if str(entry["event_id"]) in existing:
-            continue
+    for entry in missing_events:
         append_logs([entry])
         appended_count += 1
         if fail_after_count and appended_count == fail_after_count:
@@ -1948,6 +2515,11 @@ def flush_activity_outbox(
     if os.environ.get("LOOP_PRODUCT_DISPATCH_FAIL_AFTER_ACTIVITY_APPEND") == "1":
         raise DispatchError(
             "injected failure after activity append; status outbox remains pending"
+        )
+    final_index = activity_event_index(since=earliest_event)
+    if preflight_activity_events(pending, final_index):
+        raise DispatchError(
+            "activity audit transaction is incomplete; exact outbox remains pending"
         )
     current = read_json(STATUS_PATH)
     if current.get("program_activity_outbox") != pending:
@@ -2089,7 +2661,10 @@ def validate_additive_collision(
 
 
 def _has_live_admission(task: dict[str, Any]) -> bool:
-    return any(task.get(field) not in (None, "", 0, False, [], {}) for field in LIVE_ADMISSION_FIELDS)
+    return any(
+        task.get(field) not in (None, "", 0, False, [], {})
+        for field in LIVE_ADMISSION_MARKER_FIELDS
+    )
 
 
 def expected_migration_patches(migration: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2244,6 +2819,22 @@ def apply_catalog_migrations(
         for patch in patches:
             task_id = str(patch["task_id"])
             existing = active_by_id[task_id]
+            if (
+                existing.get("owner") not in ALLOWED_FLEET_ACTORS
+                or existing.get("reviewer") not in ALLOWED_FLEET_ACTORS
+                or existing.get("owner") == existing.get("reviewer")
+                or not isinstance(existing.get("next"), str)
+                or not existing["next"].strip()
+            ):
+                raise DispatchError(
+                    f"{migration_id} {task_id} mutable fleet assignment is invalid"
+                )
+            created_at = parse_activity_timestamp(existing.get("created_at"))
+            last_update = parse_activity_timestamp(existing.get("last_update"))
+            if last_update < created_at:
+                raise DispatchError(
+                    f"{migration_id} {task_id} mutable timestamps are not monotonic"
+                )
             contract_digest = task_contract_sha256(existing)
             if (
                 contract_digest == patch["after_task_contract_sha256"]
@@ -2287,14 +2878,6 @@ def apply_catalog_migrations(
             if set(existing) != expected_live_fields:
                 raise DispatchError(
                     f"{migration_id} {task_id} historical live-task schema changed"
-                )
-            if any(
-                not isinstance(existing.get(field), str)
-                or not str(existing.get(field)).strip()
-                for field in EXPECTED_PREIMAGE_MUTABLE_LIVE_FIELDS
-            ):
-                raise DispatchError(
-                    f"{migration_id} {task_id} mutable live preimage fields are invalid"
                 )
             modes.append("before")
 
@@ -2466,52 +3049,18 @@ def validate_checkpoint_consumptions(
     catalog: dict[str, Any],
     catalog_digest: str,
 ) -> None:
-    """Validate a protected consumption record separately from the immutable overlay."""
+    """Keep initial dispatch outside the protected completion-verifier authority."""
 
     state_key = str(catalog["completion_authority"]["checkpoint_consumption_state_key"])
     records = state.get(state_key)
-    if records in (None, {}):
-        if state.get("program_completed") is True:
-            raise DispatchError("program completion is missing its protected checkpoint consumption")
-        return
-    if not isinstance(records, dict) or set(records) != {str(catalog["program_id"])}:
-        raise DispatchError("program checkpoint consumption state is not exact")
-    record = records[str(catalog["program_id"])]
-    contract = catalog["completion_authority"]["checkpoint_consumption_record_contract"]
-    required = set(contract["required_binding_fields"])
-    if not isinstance(record, dict) or set(record) != required:
-        raise DispatchError("program checkpoint consumption record schema is not exact")
-    expected = expected_completion_overlay(catalog, catalog_digest)
-    fixed = {
-        "program_id": str(catalog["program_id"]),
-        "catalog_sha256": catalog_digest,
-        "completion_authority_sha256": completion_authority_sha256(catalog),
-        "completion_overlay_sha256": canonical_json_sha256(expected),
-        "checkpoint_task_id": contract["checkpoint_task_id"],
-        "guard_task_id": contract["guard_task_id"],
-        "consumer_task_id": contract["consumer_task_id"],
-        "checkpoint_task_contract_sha256": expected["task_contract_sha256_by_role"][contract["checkpoint_task_id"]],
-        "consumer_task_contract_sha256": expected["task_contract_sha256_by_role"][contract["consumer_task_id"]],
-    }
-    for field, value in fixed.items():
-        if record.get(field) != value:
-            raise DispatchError(f"program checkpoint consumption binding mismatch: {field}")
-    if record.get("actor_role") not in {"human_ops", "ops"}:
-        raise DispatchError("program checkpoint consumption requires protected Human/Ops actor role")
-    for field in (
-        "checkpoint_evidence_manifest_sha256",
-        "checkpoint_verdict_sha256",
-        "guard_activation_sha256",
-        "final_verdict_sha256",
-    ):
-        value = record.get(field)
-        if not isinstance(value, str) or len(value) != 64 or any(
-            character not in "0123456789abcdef" for character in value
-        ):
-            raise DispatchError(f"program checkpoint consumption digest is invalid: {field}")
-    for field in ("actor_id", "consumed_at", "nonce"):
-        if not isinstance(record.get(field), str) or not record[field].strip():
-            raise DispatchError(f"program checkpoint consumption field is invalid: {field}")
+    policy = catalog["completion_authority"].get("dispatcher_pre_completion_policy")
+    if policy != "reject_preexisting_consumption_or_program_completed":
+        raise DispatchError("dispatcher pre-completion policy is not exact")
+    if records not in (None, {}) or state.get("program_completed") is True:
+        raise DispatchError(
+            "preexisting program completion or checkpoint consumption requires the "
+            "protected LOOP-PROD-CLOSE-002 verifier; initial dispatcher refuses it"
+        )
 
 
 def materialize(
@@ -2686,7 +3235,8 @@ def main() -> int:
                 parse_activity_timestamp(event["ts"])
                 for event in validated_pending["events"]
             )
-            activity_event_ids(since=earliest)
+            existing_events = activity_event_index(since=earliest)
+            preflight_activity_events(validated_pending, existing_events)
             if args.apply and flush_activity_outbox(
                 state,
                 catalog,
@@ -2730,7 +3280,7 @@ def main() -> int:
         enqueue_activity_outbox(
             proposed,
             logs,
-            program_id=str(catalog["program_id"]),
+            catalog=catalog,
             catalog_digest=catalog_digest,
         )
         transaction = validate_activity_outbox(
@@ -2739,12 +3289,13 @@ def main() -> int:
             catalog_digest,
             require_current_catalog=True,
         )
-        activity_event_ids(
+        existing_events = activity_event_index(
             since=min(
                 parse_activity_timestamp(event["ts"])
                 for event in transaction["events"]
             )
         )
+        preflight_activity_events(transaction, existing_events)
         if file_signature(STATUS_PATH) != original_signature:
             raise DispatchError(
                 "ai-status.json changed concurrently; no write performed, rerun dispatch"

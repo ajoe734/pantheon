@@ -29,8 +29,10 @@ Source addendum:
 
 在 strict hosted auth 驗收之前建立受保護的外部 credential bootstrap。
 Fleet 可實作 validator、runbook 與 redacted negative tests，但只有獲授權
-Human/Ops 可以建立、撤銷或觀察外部 secret。缺少該授權時，本任務及其下游
-`LOOP-PROD-AUTH-001` 都維持 BLOCKED。
+Human/Ops 可以建立、撤銷或觀察外部 secret。`LOOP-PROD-AUTH-001` 的 strict-auth
+code 與其既有非 pristine 狀態可獨立交付或保留；缺少 provisional bootstrap
+record 時，hosted qualification、lease issuance、credential lifecycle 與 browser
+activation 必須維持 BLOCKED。
 
 這只產生 external provider/environment-protected 的 provisional bootstrap
 record；它不依賴 lease、program attestation、AUTH-OPS 或 final verdict，也不能

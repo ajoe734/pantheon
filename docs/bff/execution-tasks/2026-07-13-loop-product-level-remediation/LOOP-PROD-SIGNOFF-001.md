@@ -4,9 +4,7 @@ Status: ready for fleet dispatch after dependencies are done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `ac738326c6a24d398989c6d49ee4d5880333b16780d079e430d14d273f1d0ea5`
-
-Canonical contract SHA-256: `042d854bb5280f788c4f62b082c370c41f419e3ec39e9c06692855696f36f707`
+Canonical contract SHA-256: `0c8778be17460dacfccbef287de23d47eb3d275161107ae1c215b96248cda930`
 The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -65,7 +63,7 @@ target 與部署 identity 的 Human/Ops 判決；fleet 只能組裝請求，不�
   `guard_installer`, and CLOSE-002 `final_authority`; foreign overlay or
   conflicting task-local role fails closed
 - a protected server-side verdict can be created only by an authenticated authorized Human or Ops actor and never by a candidate artifact, fleet worker, repository secret, or self-authored JSON file
-- each verdict binds program, exact catalog digest, task, protected closeout-manifest digest, target, FE and BFF identities, attestation policy, actor, role, decision, issued time, expiry, and nonce
+- each verdict binds program, exact catalog digest, task, protected closeout-manifest digest, target, FE and BFF identities, attestation policy, immutable verdict ID, verifier capability, signature algorithm, key and policy versions, signature, current revocation check, append-only ledger entry, actor, role, decision, issued time, expiry, and nonce
 - review-approved to done and final program completion fail closed when any required verdict is missing, rejected, revoked, replayed, stale, unauthorized, or bound to another task, catalog, manifest, target, or deployment
 - pre-guard done remains checkpoint-only for program-completion semantics pending
   exact final re-verification;
@@ -77,7 +75,7 @@ target 與部署 identity 的 Human/Ops 判決；fleet 只能組裝請求，不�
 
 ## Required proof
 
-- schema, authorization, signature, binding, expiry, revocation, and concurrency tests
+- schema, authorization, signature, key and policy version, ledger lookup, binding, expiry, revocation, and concurrency tests
 - negative direct state-transition and candidate self-signing evidence
 - exact authority/overlay/checkpoint-consumption/guard-installer/signoff-set and
   unique final-authority readback

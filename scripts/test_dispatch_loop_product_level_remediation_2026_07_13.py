@@ -75,6 +75,26 @@ def _read(path: Path) -> bytes:
     return path.read_bytes() if path.is_file() else b""
 
 
+def _strict_object(raw: bytes):
+    def pairs(values):
+        result = {}
+        for key, value in values:
+            if key in result:
+                raise ValueError("duplicate key")
+            result[key] = value
+        return result
+    value = json.loads(raw, object_pairs_hook=pairs)
+    if not isinstance(value, dict):
+        raise ValueError("not object")
+    return value
+
+
+def _canonical_sha256(value) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 @contextmanager
 def tasks_runtime_admission_guard(
     config, task_ids, *, strict: bool, shared: bool, nonblocking: bool
@@ -88,23 +108,82 @@ def tasks_runtime_admission_guard(
         label="runtime_admission",
     ):
         sources = [
-            state_path,
-            Path(config["paths"]["event_queue"]),
-            Path(config["paths"]["approval_queue"]),
+            ("runtime_state", state_path),
+            ("event_queue", Path(config["paths"]["event_queue"])),
+            ("approval_queue", Path(config["paths"]["approval_queue"])),
         ]
-        bodies = [_read(path) for path in sources]
-        combined = b"\\x00".join(bodies)
-        target_is_admitted = any(task_id.encode("utf-8") in combined for task_id in task_ids)
-        forced_block = os.environ.get("LOOP_TEST_RUNTIME_BLOCK") == "1"
-        allowed = strict is True and not target_is_admitted and not forced_block
+        bodies = {source_id: _read(path) for source_id, path in sources}
+        source_sha256 = {
+            source_id: hashlib.sha256(body).hexdigest()
+            for source_id, body in bodies.items()
+        }
+        conflicts = []
+        reason_id = "clear"
+        conflict_statuses = {
+            "queued", "started", "running", "waiting_approval",
+            "suspended_approval", "manual_pending", "retry_backoff",
+            "stalled", "fallback", "admitted",
+        }
+        try:
+            if any(not body.strip() for body in bodies.values()):
+                raise ValueError("empty source")
+            runtime = _strict_object(bodies["runtime_state"])
+            if set(runtime) != {"schema_version", "workers"} or runtime["schema_version"] != 1 or not isinstance(runtime["workers"], list):
+                raise ValueError("runtime schema")
+            queue_rows = [
+                _strict_object(line)
+                for line in bodies["event_queue"].splitlines()
+                if line.strip()
+            ]
+            if not queue_rows:
+                raise ValueError("event queue schema")
+            approval = _strict_object(bodies["approval_queue"])
+            if set(approval) != {"schema_version", "requests"} or approval["schema_version"] != 1 or not isinstance(approval["requests"], list):
+                raise ValueError("approval schema")
+            candidates = [
+                ("runtime_state", item) for item in runtime["workers"]
+            ] + [
+                ("event_queue", item) for item in queue_rows
+            ] + [
+                ("approval_queue", item) for item in approval["requests"]
+            ]
+            for source_id, item in candidates:
+                if not isinstance(item, dict):
+                    raise ValueError("foreign row")
+                task_id = item.get("task_id")
+                status = item.get("status")
+                if task_id in task_ids and status in conflict_statuses:
+                    conflicts.append({
+                        "source_id": source_id,
+                        "task_id": task_id,
+                        "status": status,
+                    })
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            reason_id = "runtime_source_invalid"
+        if os.environ.get("LOOP_TEST_RUNTIME_BLOCK") == "1":
+            conflicts.append({
+                "source_id": "runtime_state",
+                "task_id": task_ids[0],
+                "status": "admitted",
+            })
+        conflicts = sorted(
+            conflicts,
+            key=lambda item: (item["source_id"], item["task_id"], item["status"]),
+        )
+        if conflicts and reason_id == "clear":
+            reason_id = "target_has_runtime_admission"
+        allowed = strict is True and reason_id == "clear" and not conflicts
         yield {
-            "allowed": allowed,
-            "strict": strict,
-            "shared": shared,
+            "schema_version": 1,
             "protocol_id": RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID,
+            "strict": strict,
+            "lock_mode": "shared" if shared else "exclusive",
             "task_ids": list(task_ids),
-            "snapshot_sha256": hashlib.sha256(combined).hexdigest(),
-            "reason": "allowed" if allowed else "target_has_runtime_admission",
+            "source_sha256": source_sha256,
+            "conflicts": conflicts,
+            "allowed": allowed,
+            "reason_id": reason_id,
+            "snapshot_sha256": _canonical_sha256(source_sha256),
         }
 
 
@@ -222,10 +301,82 @@ def install_runtime_protocol(root: Path) -> None:
         json.dumps({"schema_version": 1, "workers": []}) + "\n",
         encoding="utf-8",
     )
-    (orchestrator / "event-queue.jsonl").write_text("", encoding="utf-8")
+    (orchestrator / "event-queue.jsonl").write_text(
+        json.dumps({"schema_version": 1, "type": "queue_snapshot", "events": []})
+        + "\n",
+        encoding="utf-8",
+    )
     (orchestrator / "approval-queue.json").write_text(
         json.dumps({"schema_version": 1, "requests": []}) + "\n",
         encoding="utf-8",
+    )
+    writer_registry_path = orchestrator / "runtime-task-audit-writer-registry.json"
+    writer_registry = {
+        "schema_version": 1,
+        "protocol_id": RUNTIME_PROTOCOL_ID,
+        "transaction_scope": "complete_read_validate_mutate_replace",
+        "direct_canonical_writes_forbidden": True,
+        "writers": writer_digests,
+    }
+    writer_registry_path.write_text(
+        json.dumps(writer_registry, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    evidence_relative = (
+        "docs/deployment/evidence/loop-product-level/"
+        "LOOP-PROD-RUNTIME-BOOT-001/completion.json"
+    )
+    evidence_path = root / evidence_relative
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence = {
+        "schema_version": 1,
+        "task_id": "LOOP-PROD-RUNTIME-BOOT-001",
+        "task_contract_sha256": load_catalog()["dispatch_prerequisite"]
+        ["task_contract_sha256"],
+        "conclusion": "passed",
+        "worker_runtime_identity": "Codex2",
+        "reviewer_runtime_identity": "Codex",
+        "checks_sha256": "2" * 64,
+    }
+    evidence_path.write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    tracked = [*writer_digests, ".orchestrator/runtime-task-audit-writer-registry.json", evidence_relative]
+    subprocess.run(["git", "-C", str(root), "add", "--", *tracked], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=Runtime Test",
+            "-c",
+            "user.email=runtime-test@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "test runtime capability",
+        ],
+        check=True,
+    )
+    merged_commit_sha = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "update-ref",
+            "refs/remotes/origin/dev",
+            merged_commit_sha,
+        ],
+        check=True,
     )
     manifest = {
         "schema_version": 1,
@@ -244,7 +395,23 @@ def install_runtime_protocol(root: Path) -> None:
             "activity_audit_lock_file",
         ],
         "writers": writer_digests,
-        "merged_commit_sha": "1" * 40,
+        "writer_registry_path": (
+            ".orchestrator/runtime-task-audit-writer-registry.json"
+        ),
+        "writer_registry_sha256": hashlib.sha256(
+            writer_registry_path.read_bytes()
+        ).hexdigest(),
+        "dispatcher_sha256": writer_digests[
+            "scripts/dispatch_loop_product_level_remediation_2026-07-13.py"
+        ],
+        "bootstrap_task_id": "LOOP-PROD-RUNTIME-BOOT-001",
+        "bootstrap_task_contract_sha256": load_catalog()["dispatch_prerequisite"]
+        ["task_contract_sha256"],
+        "bootstrap_completion_evidence_path": evidence_relative,
+        "bootstrap_completion_evidence_sha256": hashlib.sha256(
+            evidence_path.read_bytes()
+        ).hexdigest(),
+        "merged_commit_sha": merged_commit_sha,
     }
     (orchestrator / "runtime-task-audit-lock-capability.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -505,8 +672,17 @@ def test_activity_outbox_recovers_crash_between_status_and_log() -> None:
             (root / "ai-status.json").read_text(encoding="utf-8")
         )
         assert len(program_tasks(interrupted_state)) == 48
-        assert interrupted_state["program_activity_outbox"]["schema_version"] == 2
-        assert len(interrupted_state["program_activity_outbox"]["events"]) == 49
+        outbox = interrupted_state["program_activity_outbox"]
+        assert outbox["schema_version"] == 3
+        assert outbox["actor_policy"] == load_catalog()["allowed_owners"]
+        assert outbox["actor_policy_sha256"] == canonical_sha256(
+            outbox["actor_policy"]
+        )
+        assert all(
+            event["actor_policy_sha256"] == outbox["actor_policy_sha256"]
+            for event in outbox["events"]
+        )
+        assert len(outbox["events"]) == 49
         assert (root / "ai-activity-log.jsonl").read_text(encoding="utf-8") == ""
 
         recovered = run_dispatch(root)
@@ -549,6 +725,7 @@ def test_activity_outbox_deduplicates_crash_after_log_append() -> None:
             .read_text(encoding="utf-8")
             .splitlines()
         ) == 49
+        exact_log = (root / "ai-activity-log.jsonl").read_bytes()
 
         recovered = run_dispatch(root)
 
@@ -558,6 +735,7 @@ def test_activity_outbox_deduplicates_crash_after_log_append() -> None:
             (root / "ai-status.json").read_text(encoding="utf-8")
         )
         assert recovered_state["program_activity_outbox"] is None
+        assert (root / "ai-activity-log.jsonl").read_bytes() == exact_log
         records = [
             json.loads(line)
             for line in (root / "ai-activity-log.jsonl")
@@ -566,6 +744,73 @@ def test_activity_outbox_deduplicates_crash_after_log_append() -> None:
         ]
         assert len(records) == 49
         assert len({record["event_id"] for record in records}) == 49
+
+
+def test_activity_outbox_same_id_different_payload_retains_outbox() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        interrupted = run_dispatch(
+            root,
+            extra_env={"LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT": "1"},
+        )
+        assert interrupted.returncode == 2
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        conflicting = deepcopy(state["program_activity_outbox"]["events"][0])
+        conflicting["message"] += " forged"
+        (root / "ai-activity-log.jsonl").write_text(
+            json.dumps(conflicting, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        recovered = run_dispatch(root, "--apply")
+
+        assert recovered.returncode == 2
+        assert "activity audit event_id payload binding mismatch" in recovered.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+        assert json.loads(status_before)["program_activity_outbox"] is not None
+
+
+@pytest.mark.parametrize("mutation", ["member", "order", "hash"])
+def test_activity_outbox_rejects_actor_policy_mutation(mutation: str) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        interrupted = run_dispatch(
+            root,
+            extra_env={"LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT": "1"},
+        )
+        assert interrupted.returncode == 2
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        outbox = state["program_activity_outbox"]
+        if mutation == "member":
+            outbox["actor_policy"] = ["Codex2"]
+            outbox["actor_policy_sha256"] = canonical_sha256(
+                outbox["actor_policy"]
+            )
+        elif mutation == "order":
+            outbox["actor_policy"] = list(reversed(outbox["actor_policy"]))
+            outbox["actor_policy_sha256"] = canonical_sha256(
+                outbox["actor_policy"]
+            )
+        else:
+            outbox["actor_policy_sha256"] = "0" * 64
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        recovered = run_dispatch(root, "--apply", extra_env={"AI_NAME": "Codex2"})
+
+        assert recovered.returncode == 2
+        assert "actor policy" in recovered.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
 @pytest.mark.parametrize(
@@ -1523,6 +1768,61 @@ def test_dry_run_validates_but_does_not_flush_a_valid_pending_outbox() -> None:
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
+@pytest.mark.parametrize(
+    ("audit_state", "expected_returncode"),
+    [
+        ("all_missing", 0),
+        ("partial", 0),
+        ("all_exact", 0),
+        ("conflict", 2),
+    ],
+)
+def test_dry_run_pending_outbox_preflight_is_zero_write(
+    audit_state: str,
+    expected_returncode: int,
+) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        interrupted = run_dispatch(
+            root,
+            "--apply",
+            extra_env={"LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT": "1"},
+        )
+        assert interrupted.returncode == 2
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        events = state["program_activity_outbox"]["events"]
+        selected: list[dict]
+        if audit_state == "all_missing":
+            selected = []
+        elif audit_state == "partial":
+            selected = events[:17]
+        elif audit_state == "all_exact":
+            selected = events
+        else:
+            conflicting = deepcopy(events[0])
+            conflicting["message"] += " conflicting-payload"
+            selected = [conflicting]
+        (root / "ai-activity-log.jsonl").write_text(
+            "".join(
+                json.dumps(event, ensure_ascii=False) + "\n" for event in selected
+            ),
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root, "--dry-run", extra_env={"AI_NAME": "Codex2"})
+
+        assert result.returncode == expected_returncode
+        if audit_state == "conflict":
+            assert "activity audit event_id payload binding mismatch" in result.stderr
+        else:
+            assert result.stderr == ""
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
 def test_dry_run_rejects_corrupt_pending_outbox_without_writes() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -1547,7 +1847,7 @@ def test_dry_run_rejects_corrupt_pending_outbox_without_writes() -> None:
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
-def test_outbox_recovery_uses_bound_assignment_after_reassignment() -> None:
+def test_codex2_recovers_codex_outbox_after_assignment_reassignment() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         prepare_status(root)
@@ -1563,11 +1863,18 @@ def test_outbox_recovery_uses_bound_assignment_after_reassignment() -> None:
         (root / "ai-status.json").write_text(
             json.dumps(state, indent=2) + "\n", encoding="utf-8"
         )
-        recovered = run_dispatch(root, "--apply")
+        recovered = run_dispatch(root, "--apply", extra_env={"AI_NAME": "Codex2"})
         assert recovered.returncode == 0, recovered.stderr
         after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
         assert after["program_activity_outbox"] is None
-        assert len((root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()) == 49
+        records = [
+            json.loads(line)
+            for line in (root / "ai-activity-log.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert len(records) == 49
+        assert {record["agent"] for record in records} == {"Codex"}
 
 
 @pytest.mark.parametrize("crash_after", [1, 24, 49])
@@ -1615,7 +1922,7 @@ def test_completion_overlay_tamper_and_consumption_schema_fail_closed() -> None:
         ).get("loop-product-level-remediation-2026-07-13", {})
 
 
-def test_valid_checkpoint_consumption_record_is_separate_from_overlay() -> None:
+def test_initial_dispatcher_rejects_signed_looking_checkpoint_consumption() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         prepare_status(root)
@@ -1624,41 +1931,43 @@ def test_valid_checkpoint_consumption_record_is_separate_from_overlay() -> None:
         state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
         catalog = load_catalog()
         program_id = catalog["program_id"]
-        overlay = state["program_completion_authorities"][program_id]
         contract = catalog["completion_authority"]["checkpoint_consumption_record_contract"]
-        record = {
-            "program_id": program_id,
-            "catalog_sha256": overlay["catalog_sha256"],
-            "completion_authority_sha256": overlay["completion_authority_sha256"],
-            "completion_overlay_sha256": canonical_sha256(overlay),
-            "checkpoint_task_id": contract["checkpoint_task_id"],
-            "checkpoint_task_contract_sha256": overlay["task_contract_sha256_by_role"][contract["checkpoint_task_id"]],
-            "checkpoint_evidence_manifest_sha256": "a" * 64,
-            "checkpoint_verdict_sha256": "b" * 64,
-            "guard_task_id": contract["guard_task_id"],
-            "guard_activation_sha256": "c" * 64,
-            "consumer_task_id": contract["consumer_task_id"],
-            "consumer_task_contract_sha256": overlay["task_contract_sha256_by_role"][contract["consumer_task_id"]],
-            "final_verdict_sha256": "d" * 64,
-            "actor_id": "ops-1",
-            "actor_role": "human_ops",
-            "consumed_at": "2026-07-14T00:00:00Z",
-            "nonce": "nonce-1",
-        }
+        record = {field: "a" * 64 for field in contract["required_binding_fields"]}
+        record.update(
+            {
+                "program_id": program_id,
+                "checkpoint_task_id": contract["checkpoint_task_id"],
+                "guard_task_id": contract["guard_task_id"],
+                "consumer_task_id": contract["consumer_task_id"],
+                "actor_id": "ops-1",
+                "actor_role": "human_ops",
+                "signature_algorithm": "ed25519",
+                "key_id": "ops-key-1",
+                "policy_version": "v1",
+                "consumed_at": "2026-07-14T00:00:00Z",
+                "revocation_checked_at": "2026-07-14T00:00:00Z",
+                "nonce": "nonce-1",
+            }
+        )
         state["program_completion_checkpoint_consumptions"] = {program_id: record}
         (root / "ai-status.json").write_text(
             json.dumps(state, indent=2) + "\n", encoding="utf-8"
         )
-        valid = run_dispatch(root, "--apply")
-        assert valid.returncode == 0, valid.stderr
-        state["program_completion_checkpoint_consumptions"][program_id]["actor_role"] = "Codex"
+        before = (root / "ai-status.json").read_bytes()
+        rejected = run_dispatch(root, "--apply")
+        assert rejected.returncode == 2
+        assert "protected LOOP-PROD-CLOSE-002 verifier" in rejected.stderr
+        assert (root / "ai-status.json").read_bytes() == before
+
+        state.pop("program_completion_checkpoint_consumptions")
+        state["program_completed"] = True
         (root / "ai-status.json").write_text(
             json.dumps(state, indent=2) + "\n", encoding="utf-8"
         )
         before = (root / "ai-status.json").read_bytes()
-        tampered = run_dispatch(root, "--apply")
-        assert tampered.returncode == 2
-        assert "Human/Ops actor role" in tampered.stderr
+        rejected = run_dispatch(root, "--apply")
+        assert rejected.returncode == 2
+        assert "protected LOOP-PROD-CLOSE-002 verifier" in rejected.stderr
         assert (root / "ai-status.json").read_bytes() == before
 
 

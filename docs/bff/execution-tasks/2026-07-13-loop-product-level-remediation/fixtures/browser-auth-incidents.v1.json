@@ -2,6 +2,14 @@
   "schema_version": 1,
   "fixture_set_id": "loop-product-browser-auth-incidents-v1",
   "canonicalization": "utf8-json-sort-keys-compact",
+  "immutable_projection_fields": [
+    "fixture_id",
+    "semantic_intent_key",
+    "repository",
+    "pr",
+    "expected_replay"
+  ],
+  "immutable_projection_sha256": "6d0273539fb9b21ab1bf93eaeaedfb94aa5ee3512f584efff63952da52512d6c",
   "diagnosis": {
     "observed_failure": "The fixed public-browser viewer subject was rejected by the hosted BFF before route RBAC because that BFF ran permissive auth while PR 3557 allowed the subject only in strict dev/local mode.",
     "reason_id": "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN",

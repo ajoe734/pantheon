@@ -22,6 +22,7 @@
       "scripts/ai_status.py",
       "scripts/dispatch_loop_product_level_remediation_2026-07-13.py",
       ".orchestrator/runtime-task-audit-lock-capability.json",
+      ".orchestrator/runtime-task-audit-writer-registry.json",
       ".orchestrator/test_runtime_state.py",
       ".orchestrator/test_supervisor.py",
       "scripts/test_ai_status.py",
@@ -32,7 +33,10 @@
       "exports exact protocol version 1 and rejects missing, partial, older, newer, or writer-digest-mismatched capability",
       "acquires runtime admission, canonical task state, and activity audit locks in that exact order using never-replaced stable inodes",
       "serializes every runtime queue/event, worker admission, approval, supervisor status, archive, audit append, scan, rotation, prune, replay, and outbox recovery writer",
+      "returns one exact schema-checked admission decision with ordered per-source digests, an aggregate snapshot digest, exact conflicts, and a stable reason_id derived from parsed runtime, queue, approval, task, and audit schemas",
       "fails closed on missing, empty, malformed, unreadable, default-substituted, busy, queued, running, admitted, approval-suspended, duplicate, empty, or foreign task/runtime state",
+      "binds the capability manifest, exhaustive writer registry, executing dispatcher bytes, writer blobs, bootstrap completion evidence, and dev ancestry to one exact merged commit; a self-authored or format-only manifest cannot satisfy the gate",
+      "wraps every canonical writer's complete read-validate-mutate-replace transaction and rejects direct canonical writes outside the registered protocol helpers",
       "process-level inode-replace, contention, crash, kill, restart, concurrent writer, rotation, and outbox recovery tests preserve newest truth with no lost or duplicated events",
       "exact merged bootstrap SHA passes a canonical strict live dry-run with zero writes before primary materialization is authorized"
     ],
@@ -60,6 +64,8 @@
     "proof_required": [
       "exact admitted task/run/provider/slot/worktree/scope/branch, PR, checks, merge SHA, and distinct-runtime review",
       "lock-order and stable-inode contention evidence",
+      "exact parsed admission decision and malformed-source reason-ID matrix",
+      "merged-commit ancestry, writer-blob, executing-dispatcher, capability-manifest, and exhaustive writer-registry bindings",
       "malformed/missing/runtime-busy matrix with no-write hashes",
       "concurrent writer, rotation, crash, restart, and outbox recovery matrix",
       "canonical live dry-run before/after hashes bound to the merged bootstrap SHA",

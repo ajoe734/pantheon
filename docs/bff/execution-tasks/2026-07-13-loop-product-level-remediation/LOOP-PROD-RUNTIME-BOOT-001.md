@@ -42,6 +42,8 @@ transaction so the unsafe transaction is never used to bootstrap its own lock.
 - `.orchestrator/watch_events.py`
 - `.orchestrator/supervisor_watchdog.py`
 - `scripts/ai_status.py`
+- `.orchestrator/runtime-task-audit-lock-capability.json`
+- `.orchestrator/runtime-task-audit-writer-registry.json`
 - `.orchestrator/test_runtime_state.py`
 - `.orchestrator/test_supervisor.py`
 - `scripts/test_ai_status.py`
@@ -56,8 +58,11 @@ transaction so the unsafe transaction is never used to bootstrap its own lock.
 - every `ai-status.json` writer, including `scripts/ai_status.py`, supervisor reassignment/finalization, archive transitions, and the loop dispatcher, uses the same never-replaced `.orchestrator/task-state.lock` inode
 - every append, scan, rotation, prune, recovery, and replay of `ai-activity-log.jsonl` and its rotated archives uses the same never-replaced `.orchestrator/activity-audit.lock` inode
 - one strict multi-task guard holds runtime serialization across queue, worker, execution-admission, and pending-approval inspection and across the nested task-state transaction
+- the guard parses each canonical runtime, queue, approval, task, and audit source with exact schemas and returns exactly one decision containing the protocol version, lock mode, ordered task IDs, ordered source digests, aggregate snapshot digest, exact conflict records, and stable reason ID; byte-substring scans and default-empty fallbacks are forbidden
 - missing, empty, malformed, unreadable, wrong-version, or default-substituted runtime state, event queue, approval queue, task state, or audit source fails closed
 - queued, running, admitted, approval-suspended, duplicate, empty, or foreign task IDs fail closed with exact reason IDs and no canonical write
+- the capability manifest and exhaustive writer registry bind every registered writer blob, the executing dispatcher bytes, bootstrap completion evidence, and `dev` ancestry to the same exact merged commit; a locally fabricated, format-valid, or self-reported manifest is rejected
+- each registered helper holds its stable sidecar across the complete load, validation, mutation, fsync, replace/append/rotation, and readback transaction; repository tests reject unregistered direct canonical writes
 - post-`os.replace` contenders remain serialized by stable sidecars; deterministic process-level tests reproduce the old inode race and prove the second transaction cannot cross it
 - crash, kill, restart, concurrent enqueue, concurrent status write, log rotation, and outbox recovery tests preserve the newest task/runtime/audit truth without lost or duplicated events
 - the exact merged bootstrap SHA passes the planning dispatcher's live strict dry-run against canonical state with zero writes before the 48-task materialization is authorized
@@ -67,6 +72,8 @@ transaction so the unsafe transaction is never used to bootstrap its own lock.
 - exact canonical task, admitted run/provider/slot/worktree/scope/branch, PR, checks, merge SHA, and distinct-runtime exact-head review
 - lock-order trace and process-level contention evidence for all three stable lock files
 - strict malformed/missing/runtime-busy matrix and no-write hashes
+- exact decision-schema/source-digest/conflict/reason-ID mutation matrix
+- merged-commit ancestry, writer-blob, executing-dispatcher, capability-manifest, and exhaustive writer-registry evidence
 - concurrent enqueue/status/outbox/rotation crash matrix
 - canonical live dry-run before/after hashes bound to the merged bootstrap SHA
 - redacted checksummed evidence manifest and residual-risk verdict
