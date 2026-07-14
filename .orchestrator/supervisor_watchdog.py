@@ -365,12 +365,25 @@ def restart_attempt_counts(attempts: list[dict[str, Any]], now: datetime, settin
     return {"window": in_window, "hour": in_hour}
 
 
-def budget_suppression_reason(watchdog_state: dict[str, Any], now: datetime, settings: dict[str, Any]) -> str | None:
+def budget_suppression_reason(
+    watchdog_state: dict[str, Any],
+    now: datetime,
+    settings: dict[str, Any],
+    pressure_reasons: list[str] | None = None,
+) -> str | None:
     circuit = watchdog_state.setdefault("circuit", {"open": False, "reason": None, "opened_at": None, "until": None})
     until = parse_utc_timestamp(str(circuit.get("until") or ""))
     if circuit.get("open") and until is not None and now < until:
-        return "watchdog_circuit_open"
-    if circuit.get("open") and (until is None or now >= until):
+        # A circuit opened for transient resource pressure (load spike, disk,
+        # etc.) should not have to wait out the full cooldown once this tick's
+        # pressure scan comes back clean. Only resource_pressure circuits get
+        # this early close; crash-loop / restart-budget circuits still must
+        # wait for `until` so a genuinely flapping supervisor stays suppressed.
+        circuit_reason = str(circuit.get("reason") or "")
+        pressure_cleared = circuit_reason.startswith("resource_pressure:") and not pressure_reasons
+        if not pressure_cleared:
+            return "watchdog_circuit_open"
+    if circuit.get("open"):
         circuit["open"] = False
         circuit["closed_at"] = isoformat_utc(now)
 
@@ -534,7 +547,7 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
         decision = "observe_only"
         reason = "supervisor_healthy"
     else:
-        budget_reason = budget_suppression_reason(watchdog_state, now, settings)
+        budget_reason = budget_suppression_reason(watchdog_state, now, settings, pressure_reasons)
         if budget_reason:
             decision = "suppress_restart"
             reason = budget_reason

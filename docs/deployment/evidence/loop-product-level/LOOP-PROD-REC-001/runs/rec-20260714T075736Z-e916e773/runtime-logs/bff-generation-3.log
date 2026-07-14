@@ -1,0 +1,6 @@
+INFO:agora.strategy_workshop.store:Agora workshop store initialized backend=memory store=MemoryWorkshopStore
+INFO:agora.governance.store:Agora governance store initialized backend=memory
+INFO:agora.trading_room.store:Agora trading-room store initialized backend=memory store=TradingRoomStore
+INFO:agora.dashboard.store:Agora dashboard recipe store initialized backend=off store=MemoryDashboardRecipeStore
+INFO:downstream_health_monitor:DownstreamHealthMonitor started (interval=30s, failure_threshold=3)
+INFO:downstream_health_monitor:DownstreamHealthMonitor stopped
