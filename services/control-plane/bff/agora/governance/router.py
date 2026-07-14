@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Literal, Optional
 
@@ -69,6 +70,108 @@ _TRANSITIONS = {
 }
 
 
+_APPROVAL_ACTION_ROLES = frozenset({"approver", "reviewer", "admin"})
+_APPROVED_OUTCOMES = frozenset({"approved", "approved_with_conditions"})
+_DECIDED_APPROVAL_STATES = frozenset({"approved", "decided"})
+_CANONICAL_TARGET_TYPES = {
+    "strategy": frozenset({"strategy", "strategy_spec"}),
+}
+_CANONICAL_REVIEWER_ROLES = {
+    "human": frozenset({"governance_reviewer", "risk_owner", "governance_committee"}),
+    "risk": frozenset({"risk", "risk_owner"}),
+}
+
+
+def _clean(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _approval_actor(record: Mapping[str, Any]) -> str:
+    return _clean(
+        record.get("reviewer")
+        or record.get("actor_id")
+        or record.get("decided_by")
+        or record.get("approved_by")
+    )
+
+
+def _validate_authoritative_approval_refs(
+    *,
+    current: Mapping[str, Any],
+    approval_refs: list[str],
+    get_approval_decision: Callable[[str], Optional[Mapping[str, Any]]],
+) -> list[str]:
+    clean_refs = list(dict.fromkeys(_clean(ref) for ref in approval_refs))
+    if not clean_refs or any(not ref for ref in clean_refs):
+        raise HTTPException(422, detail="approval requires authoritative approval refs")
+
+    proposer = _clean(current.get("proposer"))
+    required_reviewers = {
+        _clean(reviewer).lower()
+        for reviewer in current.get("required_reviewers", [])
+        if _clean(reviewer)
+    }
+    covered_reviewers: set[str] = set()
+
+    for approval_ref in clean_refs:
+        try:
+            record = get_approval_decision(approval_ref)
+        except Exception as exc:
+            raise HTTPException(
+                503,
+                detail="authoritative approval store is unavailable",
+            ) from exc
+        if not isinstance(record, Mapping):
+            raise HTTPException(
+                422,
+                detail=f"approval ref {approval_ref!r} is not authoritative",
+            )
+
+        record_id = _clean(record.get("decision_id") or record.get("id"))
+        if record_id != approval_ref:
+            raise HTTPException(422, detail="authoritative approval id mismatch")
+        if _clean(record.get("outcome") or record.get("decision")).lower() not in _APPROVED_OUTCOMES:
+            raise HTTPException(422, detail="authoritative approval is not approved")
+        if _clean(record.get("state") or record.get("decision_state")).lower() not in _DECIDED_APPROVAL_STATES:
+            raise HTTPException(422, detail="authoritative approval is not decided")
+        target_kind = _clean(current.get("target_kind")).lower()
+        accepted_target_types = _CANONICAL_TARGET_TYPES.get(
+            target_kind,
+            frozenset({target_kind}),
+        )
+        if _clean(record.get("target_type")).lower() not in accepted_target_types:
+            raise HTTPException(422, detail="authoritative approval target type mismatch")
+        if _clean(record.get("target_id")) != _clean(current.get("target_id")):
+            raise HTTPException(422, detail="authoritative approval target id mismatch")
+        if _clean(record.get("target_version")) != _clean(current.get("target_version")):
+            raise HTTPException(422, detail="authoritative approval target version mismatch")
+
+        reviewer = _approval_actor(record)
+        if not reviewer:
+            raise HTTPException(422, detail="authoritative approval reviewer is missing")
+        if proposer and reviewer == proposer:
+            raise HTTPException(403, detail="proposal self-approval is forbidden")
+        covered_reviewers.add(reviewer.lower())
+        actor_role = _clean(record.get("actor_role"))
+        if actor_role:
+            covered_reviewers.add(actor_role.lower())
+
+    missing_reviewers = {
+        reviewer
+        for reviewer in required_reviewers
+        if not _CANONICAL_REVIEWER_ROLES.get(
+            reviewer,
+            frozenset({reviewer}),
+        ).intersection(covered_reviewers)
+    }
+    if missing_reviewers:
+        raise HTTPException(
+            422,
+            detail=f"required authoritative reviewers missing: {sorted(missing_reviewers)}",
+        )
+    return clean_refs
+
+
 def create_governance_router(
     *,
     extract_identity: Callable[..., Any],
@@ -76,6 +179,7 @@ def create_governance_router(
     require_write_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
+    get_approval_decision: Callable[[str], Optional[Mapping[str, Any]]],
     store: Optional[ProposalStore] = None,
 ) -> APIRouter:
     from models import ErrorCode
@@ -192,15 +296,57 @@ def create_governance_router(
                 "AGORA_PROPOSAL_TERMINAL_STATE",
             )
 
-        approval_refs = [ref.strip() for ref in body.approval_refs if ref.strip()]
-        if body.action == "approve" and (
-            current["state"] != "validated" or not approval_refs
-        ):
-            raise bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Approval requires validated state and authoritative approval refs",
-                "AGORA_PROPOSAL_APPROVAL_PRECONDITION_FAILED",
+        authoritative_approval_refs: list[str] = []
+        if body.action == "approve":
+            if current["state"] != "validated":
+                raise bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "Approval requires validated state and authoritative approval refs",
+                    "AGORA_PROPOSAL_APPROVAL_PRECONDITION_FAILED",
+                )
+            roles = {
+                _clean(role).lower()
+                for role in getattr(identity, "roles", [])
+                if _clean(role)
+            }
+            if not roles.intersection(_APPROVAL_ACTION_ROLES):
+                raise bff_error(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Proposal approval requires an approver, reviewer, or admin role",
+                    "AGORA_PROPOSAL_APPROVER_ROLE_REQUIRED",
+                )
+            actor_id = _clean(getattr(identity, "operator_id", ""))
+            proposer_id = _clean(current.get("proposer"))
+            if not actor_id or not proposer_id:
+                raise bff_error(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Proposal approval identity could not be resolved",
+                    "AGORA_PROPOSAL_APPROVAL_IDENTITY_UNRESOLVED",
+                    precondition_failed="distinct_approver",
+                )
+            # ProposalStore is user-private. Delegated review tokens must retain
+            # the proposal's user_id scope while using a distinct operator_id.
+            if actor_id == proposer_id:
+                raise bff_error(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Proposal self-approval by its proposer is forbidden",
+                    "AGORA_PROPOSAL_SELF_APPROVAL_FORBIDDEN",
+                    precondition_failed="distinct_approver",
+                    suggestion="Route this proposal to a different approver",
+                    details_extra={
+                        "proposalId": proposal_id,
+                        "actorId": actor_id,
+                        "proposerId": proposer_id,
+                    },
+                )
+            authoritative_approval_refs = _validate_authoritative_approval_refs(
+                current=current,
+                approval_refs=body.approval_refs,
+                get_approval_decision=get_approval_decision,
             )
         if body.action == "validate" and not body.validation_result:
             raise bff_error(
@@ -216,43 +362,6 @@ def create_governance_router(
                 "modify requires proposed_value",
                 "AGORA_PROPOSAL_PROPOSED_VALUE_REQUIRED",
             )
-        if body.action == "approve":
-            roles = {
-                str(role).strip()
-                for role in getattr(identity, "roles", [])
-                if str(role).strip()
-            }
-            if not roles.intersection({"approver", "admin"}):
-                raise bff_error(
-                    403,
-                    ErrorCode.FORBIDDEN,
-                    "Proposal approval requires an approver role",
-                    "AGORA_PROPOSAL_APPROVER_ROLE_REQUIRED",
-                )
-            actor_id = str(getattr(identity, "operator_id", "") or "").strip()
-            proposer_id = str(current.get("proposer") or "").strip()
-            if not actor_id or not proposer_id:
-                raise bff_error(
-                    403,
-                    ErrorCode.FORBIDDEN,
-                    "Proposal approval identity could not be resolved",
-                    "AGORA_PROPOSAL_APPROVAL_IDENTITY_UNRESOLVED",
-                    precondition_failed="distinct_approver",
-                )
-            if actor_id == proposer_id:
-                raise bff_error(
-                    403,
-                    ErrorCode.FORBIDDEN,
-                    "A proposal cannot be approved by its proposer",
-                    "AGORA_PROPOSAL_SELF_APPROVAL_FORBIDDEN",
-                    precondition_failed="distinct_approver",
-                    suggestion="Route this proposal to a different approver",
-                    details_extra={
-                        "proposalId": proposal_id,
-                        "actorId": actor_id,
-                        "proposerId": proposer_id,
-                    },
-                )
         now = utc_now()
         next_row = {
             **current,
@@ -273,7 +382,11 @@ def create_governance_router(
                 "actor": resolved.operator_id,
                 "reason": body.reason,
                 "at": now,
-                "approval_refs": approval_refs,
+                "approval_refs": (
+                    authoritative_approval_refs
+                    if body.action == "approve"
+                    else [_clean(ref) for ref in body.approval_refs if _clean(ref)]
+                ),
             }
         ]
         if body.action == "validate":

@@ -191,6 +191,7 @@ def create_agora_router(
     router.include_router(create_governance_router(
         **_kw,
         require_write_role=require_write_role,
+        get_approval_decision=lambda approval_id: get_read_store().get_approval_decision(approval_id),
     ))
 
     return router

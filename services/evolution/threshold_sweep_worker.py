@@ -94,40 +94,11 @@ _COMPARATORS: dict[str, Callable[[float, float], bool]] = {
 # Kept in sync manually: a threshold whose telemetry_event_type falls outside
 # this set is dropped at load time (fail-closed) rather than admitted through
 # ingest with a type telemetry itself would reject.
+# Restricted to safe, non-side-effecting passive observation types for the sweep worker.
 _TELEMETRY_EVENT_TYPES = frozenset(
     {
         "pnl_snapshot",
         "drawdown_snapshot",
-        "slippage_observation",
-        "fill_observation",
-        "paper_order_simulated",
-        "paper_fill_simulated",
-        "fill_received",
-        "order_submitted",
-        "order_accepted",
-        "order_partially_filled",
-        "order_filled",
-        "order_canceled",
-        "order_cancelled",
-        "order_rejection",
-        "order_rejection_simulated",
-        "position_snapshot",
-        "position_snapshot_received",
-        "broker_position_snapshot",
-        "deploy_started",
-        "deploy_completed",
-        "runtime_health",
-        "rollback_started",
-        "rollback_completed",
-        "pause_triggered",
-        "liquidate_triggered",
-        "governance_decision",
-        "approval_action",
-        "manual_override",
-        "kill_switch_action",
-        "heartbeat",
-        "bracket_order_logged",
-        "telemetry_mirror_mismatch",
     }
 )
 
@@ -198,6 +169,16 @@ def load_thresholds(path: str | None = None) -> list[dict[str, Any]]:
             isinstance(entry.get(key), str)
             for key in ("metric_name", "signal_type", "policy_source", "summary_field")
         ):
+            continue
+        # Verify signal_type is a governance-valid ThresholdSignalType
+        if entry["signal_type"] not in {
+            "performance_degradation",
+            "execution_drift",
+            "feature_drift",
+            "human_correction",
+            "governance_incident",
+            "manual_review",
+        }:
             continue
         comparator = entry["comparator"]
         if not isinstance(comparator, str) or comparator not in _COMPARATORS:
@@ -572,16 +553,12 @@ def _load_pending_evidence(path: str) -> dict[str, dict[str, Any]]:
 
 
 def _save_pending_evidence(path: str, state: Mapping[str, dict[str, Any]]) -> None:
-    """Best-effort durable write; a failure here degrades to non-immutable
-    retry behavior next tick rather than raising (never crash the worker)."""
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(dict(state), handle, sort_keys=True)
-        os.replace(tmp_path, path)
-    except OSError:
-        pass
+    """Durable write. Raises OSError on write failure (fail-closed)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        json.dump(dict(state), handle, sort_keys=True)
+    os.replace(tmp_path, path)
 
 
 def run_tick(
@@ -659,30 +636,83 @@ def run_tick(
 
     active_state_path = state_path if state_path is not None else DEFAULT_STATE_PATH
     pending = _load_pending_evidence(active_state_path)
-    # Drop evidence recorded for a prior dedupe window: only the active
-    # window's event_ids can still legitimately retry.
-    state_pruned = any(record.get("window_bucket") != window_bucket for record in pending.values())
-    pending = {
-        event_id: record for event_id, record in pending.items() if record.get("window_bucket") == window_bucket
-    }
-    if state_pruned:
-        _save_pending_evidence(active_state_path, pending)
 
+    # Drop evidence recorded for a prior dedupe window ONLY if it has been successfully delivered.
+    # Undelivered (delivered=False) entries must be kept even if they belong to a prior day,
+    # so that we do not lose pending deliveries on recovery/day rollover.
+    state_pruned = False
+    filtered_pending = {}
+    for event_id, record in pending.items():
+        if record.get("window_bucket") == window_bucket or not record.get("delivered", False):
+            filtered_pending[event_id] = record
+        else:
+            state_pruned = True
+    pending = filtered_pending
+    if state_pruned:
+        try:
+            _save_pending_evidence(active_state_path, pending)
+        except OSError as exc:
+            result["diagnostics"].append(f"warning: failed to prune pending state: {exc}")
+
+    # Collect all items to process.
+    # We will process:
+    # - Any entry in pending where delivered is False (pending deliveries)
+    # - Any candidate from evaluate_breaches that is not in pending
+    to_process = []
+
+    # Add existing undelivered ones
+    for event_id, record in pending.items():
+        if not record.get("delivered", False):
+            to_process.append({
+                "telemetry_event": record["telemetry_event"],
+                "threshold_snapshot": record["threshold_snapshot"],
+                "is_retry": True
+            })
+
+    # Add new candidates
     for payload in candidates:
         event = payload["telemetry_event"]
         event_id = event["event_id"]
-        frozen = pending.get(event_id)
-        if frozen is not None:
-            # This event_id was already admitted through telemetry ingest on
-            # an earlier tick. Reuse that exact evidence instead of the
-            # freshly recomputed `created_at`/observed values above, so a
-            # retry can never post different content under the same
-            # event_id than what telemetry already durably recorded.
-            payload = {
-                "telemetry_event": frozen["telemetry_event"],
-                "threshold_snapshot": frozen["threshold_snapshot"],
+        if event_id in pending:
+            record = pending[event_id]
+            if record.get("delivered", False):
+                # Already successfully posted before
+                result["incidents_deduped"] += 1
+                continue
+            # If it's in pending and delivered is False, it's already in to_process via the loop above!
+        else:
+            # New candidate! Add to pending as undelivered and write-ahead log it.
+            record = {
+                "window_bucket": window_bucket,
+                "telemetry_event": event,
+                "threshold_snapshot": payload["threshold_snapshot"],
+                "delivered": False
             }
-            event = payload["telemetry_event"]
+            pending[event_id] = record
+            try:
+                _save_pending_evidence(active_state_path, pending)
+            except OSError as exc:
+                result["errors"] += 1
+                result["diagnostics"].append(
+                    f"fail-closed: write-ahead log failed for event {event_id}: {exc}"
+                )
+                # Remove from pending so we don't think it's saved
+                pending.pop(event_id)
+                continue
+
+            to_process.append({
+                "telemetry_event": event,
+                "threshold_snapshot": payload["threshold_snapshot"],
+                "is_retry": False
+            })
+
+    for item in to_process:
+        event = item["telemetry_event"]
+        event_id = event["event_id"]
+        payload = {
+            "telemetry_event": event,
+            "threshold_snapshot": item["threshold_snapshot"],
+        }
 
         try:
             admit_response = admit_telemetry_event(telemetry_api_url, event, timeout=timeout)
@@ -703,16 +733,6 @@ def run_tick(
             )
             continue
 
-        if frozen is None:
-            pending[event_id] = {
-                "window_bucket": window_bucket,
-                "telemetry_event": event,
-                "threshold_snapshot": payload["threshold_snapshot"],
-            }
-            # Write-ahead log: immediately save state to disk before sending
-            # the incident payload to the incident consumer.
-            _save_pending_evidence(active_state_path, pending)
-
         try:
             response = post_incident(incidents_api_url, payload, timeout=timeout)
         except urllib.error.HTTPError as exc:
@@ -727,8 +747,22 @@ def run_tick(
         status = response.get("status")
         if status == 201:
             result["incidents_created"] += 1
+            pending[event_id]["delivered"] = True
+            try:
+                _save_pending_evidence(active_state_path, pending)
+            except OSError as exc:
+                result["diagnostics"].append(
+                    f"warning: failed to save post-delivery state for event {event_id}: {exc}"
+                )
         elif status == 200:
             result["incidents_deduped"] += 1
+            pending[event_id]["delivered"] = True
+            try:
+                _save_pending_evidence(active_state_path, pending)
+            except OSError as exc:
+                result["diagnostics"].append(
+                    f"warning: failed to save post-delivery state for event {event_id}: {exc}"
+                )
         else:
             result["errors"] += 1
             result["diagnostics"].append(f"post_incident unexpected status={status}")
