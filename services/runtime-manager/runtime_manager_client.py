@@ -8,7 +8,8 @@ Transport modes
 ---------------
 1. HTTP mode: when ``PANTHEON_RUNTIME_MANAGER_URL`` is set, dispatches to the
    deployable Flask service surface in ``services/runtime-manager/main.py``.
-2. Local mode: otherwise instantiates ``RuntimeManagerService`` in-process.
+2. Explicit test/local mode: instantiates ``RuntimeManagerService`` in-process
+   only when the caller opts in with ``allow_local=True``.
 
 Both modes normalize responses to plain dictionaries so callers can keep one
 mutation path while tests stay lightweight.
@@ -61,8 +62,19 @@ class RuntimeManagerClient:
         base_url: Optional[str] = None,
         bearer_token: Optional[str] = None,
         timeout_seconds: Optional[int] = None,
+        require_remote: bool = False,
+        allow_local: bool = False,
     ) -> None:
         self._base_url = (base_url or os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "")).strip().rstrip("/")
+        if require_remote and allow_local:
+            raise RuntimeManagerClientError(
+                "require_remote and allow_local cannot both be enabled."
+            )
+        if not self._base_url and (require_remote or not allow_local):
+            raise RuntimeManagerClientError(
+                "PANTHEON_RUNTIME_MANAGER_URL is required; refusing an in-process "
+                "RuntimeManager fallback unless allow_local=True is explicit."
+            )
         self._auth = resolve_runtime_manager_auth(token=bearer_token)
         self._bearer_token = self._auth.token
         self._timeout_seconds = int(

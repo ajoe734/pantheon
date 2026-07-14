@@ -56,10 +56,18 @@ Approval lookups default to `${...}/approval_decisions.json`.
 
 Pool/runtime compatibility checks read:
 
-- `${CAPITAL_DATA_DIR|DEPLOYMENT_DATA_DIR|PANTHEON_GOVERNANCE_DATA_DIR}/capital_pools.json`
-- `${CAPITAL_DATA_DIR|DEPLOYMENT_DATA_DIR|PANTHEON_GOVERNANCE_DATA_DIR}/persona_capital_bindings.json`
+- `PANTHEON_CAPITAL_POOL_STORE_PATH`, or
+  `${CAPITAL_DATA_DIR|DEPLOYMENT_DATA_DIR|PANTHEON_GOVERNANCE_DATA_DIR}/capital_pools.json`
+- `PANTHEON_PERSONA_BINDING_STORE_PATH`, or
+  `${CAPITAL_DATA_DIR|DEPLOYMENT_DATA_DIR|PANTHEON_GOVERNANCE_DATA_DIR}/persona_capital_bindings.json`
 - `PANTHEON_RUNTIME_BINDING_STORE_PATH`, `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`,
   or `/tmp/pantheon/runtime-manager/bindings.json`
+
+The default Compose deployment mounts the Capital service's `capital-data`
+volume at `/data/capital:ro` and the Runtime Manager's `runtime-data` volume at
+`/data/runtime:ro`, with the exact store paths configured explicitly.  These
+are read-only composition inputs; the Deployment service does not own either
+store.
 
 Registry lookups are optional and use `PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH`.
 If that snapshot path is not configured, callers must embed `registry_entry` in
@@ -76,22 +84,46 @@ DEP-003 projection lookups read RuntimeBinding rows from
 does not treat a POST response as successful execution.  It reads the exact
 `RuntimeBinding`, paper fleet controller state where applicable, and the joined
 DEP-003 terminal projection before consuming the corresponding outbox event.
+The consumer requires a non-empty `PANTHEON_RUNTIME_MANAGER_URL` and always
+dispatches to that remote Runtime Manager authority; missing configuration is a
+startup/dispatch failure, never permission to create an in-process manager or
+write a local binding store.
+Its startup waits only for the unconditional Deployment and Runtime Manager
+authorities.  Paper fleet and Incident service reachability is conditional on
+the event being applied, so an unavailable conditional target fails closed and
+follows that event's retry/DLQ policy instead of blocking the consumer process
+from starting.
 
-Forward dispatch accepts loader readiness only when the canonical fetched plan
-contains literal `metadata.loader_checks_passed: true` (or the compatible
-top-level literal field with no contradiction).  Missing, false, string-valued,
-or conflicting assertions fail closed before a runtime-manager client is
-constructed.  This is an upstream attestation boundary; it is not a substitute
-for the future durable EX-001 LoaderReport.
+Forward dispatch does not accept caller- or plan-authored loader booleans as
+proof.  Before dispatch it reads and binds four canonical authorities: the
+exact DeploymentPlan; the approved Registry entry and its embedded,
+schema-valid, checksum-matching StrategyArtifact; the exact decided,
+unconditional, unrevoked, and unexpired Governance ApprovalDecision; and the
+active CapitalPool, admissibility result, and exact active
+PersonaCapitalBinding/scope.  Every plan, strategy, artifact/version, approval,
+pool, persona, binding, target, and scope identity must agree.  The resulting
+target-bound report and canonical SHA-256 digests are persisted as
+`metadata.authoritative_loader_attestation`, and Runtime Manager repeats the
+same four-authority verification at its write boundary.
+
+Every newly created `RuntimeBinding` is paper-only.  Canary/live movement needs
+a separate governed promotion/cutover verifier and cannot be represented by a
+non-empty reference, legacy `loader_checks_passed`, or copied metadata.  Forward
+replace, evolution, rollback, kill-switch fallback, replay, and response-loss
+recovery paths must reuse exact canonical paper lineage or fail closed without
+fabricating a binding.  Safety containment may pause an existing binding and
+raise an exact IncidentCase; it does not manufacture admission proof.
 
 Compensation events execute the DEP-002 owner-scoped command before their inbox
 receipt is written.  Abort mutates only `DeploymentPlan.status`; binding
 failure, rollback, and safe-mode commands mutate only their canonical runtime
-or incident owners.  Rollback additionally requires an exact
-`metadata.rollback_loader_attestation` (`artifact_id`, `artifact_version`,
-literal `passed: true`, and non-empty `proof_ref`) and prior binding/plan
-lineage.  Missing proof or a kill-wins state routes to paused safe mode plus an
-exact IncidentCase instead of a blind replacement.
+or incident owners.  Rollback additionally requires exact prior
+binding/plan/artifact lineage to a retired paper RuntimeBinding whose persisted
+`authoritative_loader_attestation` contains the matching four-authority
+identities and canonical digests.  A plan-authored fallback attestation is not
+proof.  Missing or ambiguous lineage, invalid canonical proof, or a kill-wins
+state fails closed and routes to paused safe mode plus an exact IncidentCase
+instead of a blind replacement.
 
 ## Tests
 

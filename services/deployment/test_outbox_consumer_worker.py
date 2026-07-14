@@ -33,12 +33,98 @@ def _load_worker():
 
 @pytest.fixture()
 def worker():
-    return _load_worker()
+    module = _load_worker()
+    with patch.object(
+        module,
+        "verify_deploy_authorities",
+        side_effect=lambda request, **_kwargs: _authority_report(request),
+    ):
+        yield module
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _authority_report(
+    request: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    report = {
+        "status": "passed",
+        "authority": "canonical_deployment_registry_governance_capital",
+        "plan_id": "plan-001",
+        "plan_status": "approved",
+        "target_stage": "paper",
+        "artifact_id": "artifact-001",
+        "artifact_version": "v1.0.0",
+        "strategy_id": "strategy-001",
+        "approval_decision_id": "approval-001",
+        "capital_pool_id": "pool-001",
+        "sponsor_persona_id": "persona-001",
+        "persona_capital_binding_id": "pcb-001",
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "paper",
+        "deployment_plan_sha256": "sha256:" + "0" * 64,
+        "registry_entry_sha256": "sha256:" + "1" * 64,
+        "approval_decision_sha256": "sha256:" + "2" * 64,
+        "capital_pool_sha256": "sha256:" + "3" * 64,
+        "capital_admissibility_sha256": "sha256:" + "4" * 64,
+        "persona_capital_binding_sha256": "sha256:" + "5" * 64,
+    }
+    if request:
+        for field in (
+            "plan_id",
+            "plan_status",
+            "target_stage",
+            "artifact_id",
+            "artifact_version",
+            "strategy_id",
+            "approval_decision_id",
+            "sponsor_persona_id",
+            "capital_pool_id",
+            "persona_capital_binding_id",
+            "persona_capital_binding_status",
+            "allowed_deployment_scope",
+        ):
+            if request.get(field) is not None:
+                report[field] = request[field]
+    return report
+
+
+def _binding_saga(**overrides: Any) -> dict[str, Any]:
+    saga = {
+        "saga_id": "saga-001",
+        "plan_id": "plan-001",
+        "approval_decision_id": "approval-001",
+        "strategy_id": "strategy-001",
+        "artifact_id": "artifact-001",
+        "artifact_version": "v1.0.0",
+        "capital_pool_id": "pool-001",
+        "target_stage": "paper",
+        "status": "awaiting_binding",
+    }
+    saga.update(overrides)
+    return saga
+
+
+def _binding_plan(**overrides: Any) -> dict[str, Any]:
+    plan = {
+        "plan_id": "plan-001",
+        "approval_decision_id": "approval-001",
+        "strategy_id": "strategy-001",
+        "artifact_id": "artifact-001",
+        "artifact_version": "v1.0.0",
+        "sponsor_persona_id": "persona-001",
+        "capital_pool_id": "pool-001",
+        "target_stage": "paper",
+        "status": "approved",
+        # A forged legacy assertion is intentionally ignored by production
+        # code; keeping it here guards against accidental trust regression.
+        "metadata": {"loader_checks_passed": True},
+    }
+    plan.update(overrides)
+    return plan
 
 
 def _outbox_record(event_id: str, sequence_no: int = 1) -> dict[str, Any]:
@@ -151,10 +237,50 @@ def _runtime_binding(**overrides: Any) -> dict[str, Any]:
         "execution_mode": "paper",
         "effective_at": "2026-07-14T08:00:00Z",
         "status": "active",
-        "metadata": {"allowed_deployment_scope": "paper"},
+        "metadata": {
+            "allowed_deployment_scope": "paper",
+            "strategy_id": "strategy-001",
+            "authoritative_loader_attestation": _authority_report(),
+        },
     }
     binding.update(overrides)
     return binding
+
+
+def _kill_ack(binding_id: str = "rb-001") -> dict[str, Any]:
+    return {
+        "ack_status": "acknowledged",
+        "capital_pool_id": "pool-001",
+        "safe_mode_after": "paused",
+        "runtime_status_after": "paused",
+        "runtime_binding_id": binding_id,
+    }
+
+
+def _fallback_plan() -> dict[str, Any]:
+    return {
+        "plan_id": "plan-fallback",
+        "status": "executed",
+        "target_stage": "paper",
+        "artifact_id": "artifact-fallback",
+        "artifact_version": "v0.9.0",
+        "strategy_id": "strategy-001",
+        "approval_decision_id": "approval-001",
+        "sponsor_persona_id": "persona-001",
+        "capital_pool_id": "pool-001",
+    }
+
+
+def _fallback_authority_report() -> dict[str, Any]:
+    return _authority_report(
+        {
+            **_fallback_plan(),
+            "plan_status": "executed",
+            "persona_capital_binding_id": "pcb-001",
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": "paper",
+        }
+    )
 
 
 def _compensation_projection(
@@ -488,19 +614,8 @@ class TestRunPoll:
         record["event"]["event_type"] = "runtime.binding.requested"
         record["event"]["aggregate_id"] = "saga-001"
 
-        mock_saga = {
-            "plan_id": "plan-001",
-            "saga_id": "saga-001",
-            "status": "awaiting_binding",
-        }
-        mock_plan = {
-            "plan_id": "plan-001",
-            "sponsor_persona_id": "persona-001",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "status": "approved",
-            "metadata": {"loader_checks_passed": True},
-        }
+        mock_saga = _binding_saga()
+        mock_plan = _binding_plan()
         mock_compat = {
             "ok": True,
             "persona_binding_id": "pcb-001",
@@ -530,6 +645,25 @@ class TestRunPoll:
             assert result["events_found"] == 1
             assert result["consumed"] == 1
             assert result["errors"] == []
+            authority_request = worker.verify_deploy_authorities.call_args.args[0]
+            assert authority_request == {
+                "plan_id": "plan-001",
+                "approval_decision_id": "approval-001",
+                "strategy_id": "strategy-001",
+                "artifact_id": "artifact-001",
+                "artifact_version": "v1.0.0",
+                "capital_pool_id": "pool-001",
+                "target_stage": "paper",
+                "plan_status": "approved",
+               "sponsor_persona_id": "persona-001",
+                "persona_capital_binding_id": "pcb-001",
+                "persona_capital_binding_status": "active",
+                "allowed_deployment_scope": "paper",
+            }
+            deploy_context = mock_dispatch.call_args.kwargs["deploy_context"]
+            assert deploy_context["sponsor_persona_id"] == "persona-001"
+            assert deploy_context["metadata"]["authoritative_loader_attestation"] == _authority_report()
+            assert "loader_checks_passed" not in deploy_context["metadata"]
             mock_fetch_saga.assert_called_once_with(api_url="http://localhost:8095", saga_id="saga-001", timeout_seconds=10.0)
             mock_fetch_plan.assert_called_once_with(api_url="http://localhost:8095", plan_id="plan-001", timeout_seconds=10.0)
             mock_compat_check.assert_called_once_with(
@@ -553,14 +687,8 @@ class TestRunPoll:
         record["event"]["event_type"] = "runtime.binding.requested"
         record["event"]["aggregate_id"] = "saga-001"
 
-        mock_saga = {"plan_id": "plan-001"}
-        mock_plan = {
-            "plan_id": "plan-001",
-            "sponsor_persona_id": "persona-001",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "metadata": {"loader_checks_passed": True},
-        }
+        mock_saga = _binding_saga()
+        mock_plan = _binding_plan()
         mock_compat = {
             "ok": False,
             "errors": ["missing capital binding"],
@@ -602,14 +730,8 @@ class TestRunPoll:
         record["event"]["event_type"] = "runtime.binding.requested"
         record["event"]["aggregate_id"] = "saga-001"
 
-        mock_saga = {"plan_id": "plan-001"}
-        mock_plan = {
-            "plan_id": "plan-001",
-            "sponsor_persona_id": "persona-001",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "metadata": {"loader_checks_passed": True},
-        }
+        mock_saga = _binding_saga()
+        mock_plan = _binding_plan()
         mock_compat = {
             "ok": True,
             "persona_binding_id": "pcb-001",
@@ -653,14 +775,8 @@ class TestRunPoll:
         record["event"]["event_type"] = "runtime.binding.requested"
         record["event"]["aggregate_id"] = "saga-001"
 
-        mock_saga = {"plan_id": "plan-001"}
-        mock_plan = {
-            "plan_id": "plan-001",
-            "sponsor_persona_id": "persona-001",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "metadata": {"loader_checks_passed": True},
-        }
+        mock_saga = _binding_saga()
+        mock_plan = _binding_plan()
         mock_compat = {
             "ok": True,
             "persona_binding_id": "pcb-001",
@@ -712,18 +828,8 @@ class TestRunPoll:
         record["event"]["event_type"] = "runtime.binding.requested"
         record["event"]["aggregate_id"] = "saga-001"
 
-        mock_saga = {
-            "plan_id": "plan-001",
-            "saga_id": "saga-001",
-            "status": "awaiting_binding",
-        }
-        mock_plan = {
-            "plan_id": "plan-001",
-            "sponsor_persona_id": "persona-001",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "metadata": {"loader_checks_passed": True},
-        }
+        mock_saga = _binding_saga()
+        mock_plan = _binding_plan()
         mock_compat = {
             "ok": True,
             "persona_binding_id": "pcb-001",
@@ -774,20 +880,11 @@ class TestRunPoll:
         record["event"].update(
             {"event_type": "runtime.binding.requested", "aggregate_id": "saga-001"}
         )
-        saga = {
-            "saga_id": "saga-001",
-            "plan_id": "plan-001",
-            "binding_id": "rb-existing",
-            "status": "awaiting_runtime_load",
-        }
-        plan = {
-            "plan_id": "plan-001",
-            "sponsor_persona_id": "persona-001",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "status": "executing",
-            "metadata": {"loader_checks_passed": True},
-        }
+        saga = _binding_saga(
+            binding_id="rb-existing",
+            status="awaiting_runtime_load",
+        )
+        plan = _binding_plan(status="executing")
         compat = {
             "ok": True,
             "persona_binding_id": "pcb-001",
@@ -821,19 +918,8 @@ class TestRunPoll:
         record["event"].update(
             {"event_type": "runtime.binding.requested", "aggregate_id": "saga-001"}
         )
-        saga = {
-            "saga_id": "saga-001",
-            "plan_id": "plan-001",
-            "status": "awaiting_binding",
-        }
-        plan = {
-            "plan_id": "plan-001",
-            "sponsor_persona_id": "persona-001",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "status": "approved",
-            "metadata": {"loader_checks_passed": True},
-        }
+        saga = _binding_saga()
+        plan = _binding_plan()
         compat = {
             "ok": True,
             "persona_binding_id": "pcb-001",
@@ -873,27 +959,11 @@ class TestRunPoll:
                 "payload": {"binding_id": "rb-001", "runtime_id": "rt-001"},
             }
         )
-        saga = {
-            "saga_id": "saga-001",
-            "plan_id": "plan-001",
-            "artifact_id": "artifact-001",
-            "artifact_version": "v1.0.0",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "binding_id": "rb-001",
-            "status": "awaiting_runtime_load",
-        }
-        binding = {
-            "binding_id": "rb-001",
-            "plan_id": "plan-001",
-            "runtime_id": "rt-001",
-            "artifact_id": "artifact-001",
-            "artifact_version": "v1.0.0",
-            "capital_pool_id": "pool-001",
-            "deployment_mode": "paper",
-            "execution_mode": "paper",
-            "status": "active",
-        }
+        saga = _binding_saga(
+            binding_id="rb-001",
+            status="awaiting_runtime_load",
+        )
+        binding = _runtime_binding()
         fleet = {
             "cycle_count": 2,
             "last_reconcile_at": "2026-07-14T08:00:00Z",
@@ -957,27 +1027,11 @@ class TestRunPoll:
                 "payload": {"binding_id": "rb-001"},
             }
         )
-        saga = {
-            "saga_id": "saga-001",
-            "plan_id": "plan-001",
-            "artifact_id": "artifact-001",
-            "artifact_version": "v1.0.0",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "binding_id": "rb-001",
-            "status": "awaiting_runtime_load",
-        }
-        binding = {
-            "binding_id": "rb-001",
-            "plan_id": "plan-001",
-            "runtime_id": "rt-001",
-            "artifact_id": "artifact-001",
-            "artifact_version": "v1.0.0",
-            "capital_pool_id": "pool-001",
-            "deployment_mode": "paper",
-            "execution_mode": "paper",
-            "status": "active",
-        }
+        saga = _binding_saga(
+            binding_id="rb-001",
+            status="awaiting_runtime_load",
+        )
+        binding = _runtime_binding()
         fleet = {
             "cycle_count": 3,
             "last_reconcile_at": "2026-07-14T08:00:00Z",
@@ -1016,6 +1070,184 @@ class TestRunPoll:
         assert result["retry_scheduled"] == 1
         assert "paper fleet post-state is not running yet" in " ".join(result["errors"])
         mock_active.assert_not_called()
+
+    def test_runtime_load_fleet_exhaustion_requests_compensation_before_dlq(self, worker):
+        record = _outbox_record("evt-load-fleet-exhausted", sequence_no=2)
+        record["delivery_attempts"] = 0
+        record["event"].update(
+            {
+                "event_type": "runtime.load.requested",
+                "aggregate_id": "saga-001",
+                "payload": {"binding_id": "rb-001"},
+            }
+        )
+        saga = {
+            "saga_id": "saga-001",
+            "plan_id": "plan-001",
+            "approval_decision_id": "approval-001",
+            "strategy_id": "strategy-001",
+            "artifact_id": "artifact-001",
+            "artifact_version": "v1.0.0",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+            "binding_id": "rb-001",
+            "status": "awaiting_runtime_load",
+            "current_step": "runtime_load_requested",
+        }
+        compensating = {
+            **saga,
+            "status": "compensating",
+            "current_step": "compensation_requested",
+            "compensation": {"command_type": "mark_binding_failed_inactive"},
+        }
+        binding = _runtime_binding()
+        fleet = {
+            "cycle_count": 3,
+            "last_reconcile_at": "2026-07-14T08:00:00Z",
+            "last_error": None,
+            "workers": [],
+        }
+        operations: list[str] = []
+
+        def _record_saga_failure(**_kwargs):
+            operations.append("saga_failure")
+            return {"command_type": "mark_binding_failed_inactive"}
+
+        def _dead_letter(**_kwargs):
+            operations.append("dead_letter")
+            return {"status": "dead_lettered"}, None
+
+        with (
+            patch.dict(
+                worker.os.environ,
+                {"PANTHEON_PAPER_FLEET_RECONCILER_URL": "http://fleet:8011"},
+            ),
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(
+                worker,
+                "fetch_applied_inbox",
+                return_value=[_applied_receipt(1)],
+            ),
+            patch.object(
+                worker,
+                "fetch_saga",
+                side_effect=[saga, saga, compensating],
+            ),
+            patch.object(worker, "fetch_paper_fleet_state", return_value=fleet),
+            patch.object(
+                worker, "record_saga_failure", side_effect=_record_saga_failure
+            ) as saga_failure,
+            patch.object(
+                worker, "_record_failure_best_effort", side_effect=_dead_letter
+            ),
+            patch.object(worker, "record_runtime_active") as runtime_active,
+            patch.object(worker, "RuntimeManagerClient") as client_class,
+        ):
+            client_class.return_value.get.return_value = binding
+            result = worker.run_poll(
+                api_url="http://localhost:8095",
+                consumer_name="test-consumer",
+                record_failures=True,
+                max_attempts=1,
+            )
+
+        assert result["dead_lettered"] == 1
+        assert operations == ["saga_failure", "dead_letter"]
+        assert saga_failure.call_args.kwargs["failed_step"] == "runtime_load_requested"
+        runtime_active.assert_not_called()
+
+    def test_runtime_load_projection_exhaustion_compensates_completed_saga_before_dlq(
+        self, worker
+    ):
+        record = _outbox_record("evt-load-projection-exhausted", sequence_no=2)
+        record["delivery_attempts"] = 0
+        record["event"].update(
+            {
+                "event_type": "runtime.load.requested",
+                "aggregate_id": "saga-001",
+                "payload": {"binding_id": "rb-001"},
+            }
+        )
+        saga = {
+            "saga_id": "saga-001",
+            "plan_id": "plan-001",
+            "approval_decision_id": "approval-001",
+            "strategy_id": "strategy-001",
+            "artifact_id": "artifact-001",
+            "artifact_version": "v1.0.0",
+            "capital_pool_id": "pool-001",
+            "target_stage": "canary",
+            "binding_id": "rb-001",
+            "status": "awaiting_runtime_load",
+            "current_step": "runtime_load_requested",
+        }
+        completed = {
+            **saga,
+            "status": "completed",
+            "current_step": "runtime_active",
+        }
+        compensating = {
+            **completed,
+            "status": "compensating",
+            "current_step": "compensation_requested",
+            "compensation": {"command_type": "request_rollback"},
+        }
+        binding = _runtime_binding(
+            deployment_mode="canary",
+            execution_mode="canary",
+            metadata={
+                "allowed_deployment_scope": "canary",
+                "strategy_id": "strategy-001",
+                "authoritative_loader_attestation": {
+                    **_authority_report(),
+                    "target_stage": "canary",
+                },
+            },
+        )
+        operations: list[str] = []
+
+        def _record_saga_failure(**_kwargs):
+            operations.append("saga_failure")
+            return {"command_type": "request_rollback"}
+
+        def _dead_letter(**_kwargs):
+            operations.append("dead_letter")
+            return {"status": "dead_lettered"}, None
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(
+                worker,
+                "fetch_applied_inbox",
+                return_value=[_applied_receipt(1)],
+            ),
+            patch.object(
+                worker,
+                "fetch_saga",
+                side_effect=[saga, completed, completed, compensating],
+            ),
+            patch.object(worker, "fetch_projection", return_value={}),
+            patch.object(worker, "record_runtime_active") as runtime_active,
+            patch.object(
+                worker, "record_saga_failure", side_effect=_record_saga_failure
+            ) as saga_failure,
+            patch.object(
+                worker, "_record_failure_best_effort", side_effect=_dead_letter
+            ),
+            patch.object(worker, "RuntimeManagerClient") as client_class,
+        ):
+            client_class.return_value.get.return_value = binding
+            result = worker.run_poll(
+                api_url="http://localhost:8095",
+                consumer_name="test-consumer",
+                record_failures=True,
+                max_attempts=1,
+            )
+
+        assert result["dead_lettered"] == 1
+        assert operations == ["saga_failure", "dead_letter"]
+        assert saga_failure.call_args.kwargs["failed_step"] == "runtime_active"
+        runtime_active.assert_called_once()
 
     def test_runtime_load_paused_by_kill_switch_fails_closed(self, worker):
         record = _outbox_record("evt-load-killed", sequence_no=2)
@@ -1077,47 +1309,13 @@ class TestRunPoll:
         mock_active.assert_not_called()
         mock_consume.assert_not_called()
 
-    @pytest.mark.parametrize(
-        ("plan", "expected"),
-        [
-            ({"metadata": {"loader_checks_passed": True}}, True),
-            ({"loader_checks_passed": True}, True),
-            ({"metadata": {"loader_checks_passed": False}}, False),
-            ({"metadata": {"loader_checks_passed": "true"}}, False),
-            ({"metadata": {}}, False),
-            ({"metadata": None}, False),
-            (
-                {
-                    "loader_checks_passed": False,
-                    "metadata": {"loader_checks_passed": True},
-                },
-                False,
-            ),
-        ],
-    )
-    def test_loader_attestation_accepts_only_literal_uncontradicted_true(
-        self, worker, plan, expected
-    ):
-        assert worker.loader_checks_attested(plan) is expected
-
-    def test_missing_loader_attestation_fails_before_runtime_client(self, worker):
-        record = _outbox_record("evt-loader-missing")
+    def test_forged_loader_boolean_cannot_bypass_authority_rejection(self, worker):
+        record = _outbox_record("evt-loader-forged")
         record["event"].update(
             {"event_type": "runtime.binding.requested", "aggregate_id": "saga-001"}
         )
-        saga = {
-            "saga_id": "saga-001",
-            "plan_id": "plan-001",
-            "status": "awaiting_binding",
-        }
-        plan = {
-            "plan_id": "plan-001",
-            "sponsor_persona_id": "persona-001",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "status": "approved",
-            "metadata": {},
-        }
+        saga = _binding_saga()
+        plan = _binding_plan(metadata={"loader_checks_passed": True})
         compat = {
             "ok": True,
             "persona_binding_id": "pcb-001",
@@ -1129,6 +1327,11 @@ class TestRunPoll:
             patch.object(worker, "fetch_saga", return_value=saga),
             patch.object(worker, "fetch_plan", return_value=plan),
             patch.object(worker, "run_compatibility_check", return_value=compat),
+            patch.object(
+                worker,
+                "verify_deploy_authorities",
+                side_effect=worker.DeployAuthorityError("checksum mismatch"),
+            ),
             patch.object(worker, "record_saga_failure") as saga_failure,
             patch.object(
                 worker,
@@ -1143,10 +1346,108 @@ class TestRunPoll:
             )
 
         assert result["dead_lettered"] == 1
-        assert "not authoritatively attested" in " ".join(result["errors"])
+        assert "deploy authority rejected: checksum mismatch" in " ".join(result["errors"])
         saga_failure.assert_called_once()
         client_class.assert_not_called()
         dispatch.assert_not_called()
+
+    def test_authority_unavailable_retries_before_runtime_client(self, worker):
+        record = _outbox_record("evt-authority-unavailable")
+        record["event"].update(
+            {"event_type": "runtime.binding.requested", "aggregate_id": "saga-001"}
+        )
+        compat = {
+            "ok": True,
+            "persona_binding_id": "pcb-001",
+            "persona_scope_ok": True,
+            "allowed_deployment_scope": "paper",
+        }
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(worker, "fetch_saga", return_value=_binding_saga()),
+            patch.object(worker, "fetch_plan", return_value=_binding_plan()),
+            patch.object(worker, "run_compatibility_check", return_value=compat),
+            patch.object(
+                worker,
+                "verify_deploy_authorities",
+                side_effect=worker.DeployAuthorityUnavailableError("registry timeout"),
+            ),
+            patch.object(worker, "record_saga_failure") as saga_failure,
+            patch.object(
+                worker,
+                "_record_failure_best_effort",
+                return_value=({"status": "pending"}, None),
+            ),
+            patch.object(worker, "RuntimeManagerClient") as client_class,
+        ):
+            result = worker.run_poll(
+                api_url="http://localhost:8095", consumer_name="test-consumer"
+            )
+
+        assert result["retry_scheduled"] == 1
+        assert "deploy authority unavailable: registry timeout" in " ".join(result["errors"])
+        saga_failure.assert_not_called()
+        client_class.assert_not_called()
+
+    def test_authority_unavailable_exhaustion_records_saga_before_dlq(self, worker):
+        record = _outbox_record("evt-authority-exhausted")
+        record["delivery_attempts"] = 2
+        record["event"].update(
+            {"event_type": "runtime.binding.requested", "aggregate_id": "saga-001"}
+        )
+        compat = {
+            "ok": True,
+            "persona_binding_id": "pcb-001",
+            "persona_scope_ok": True,
+            "allowed_deployment_scope": "paper",
+        }
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(worker, "fetch_saga", return_value=_binding_saga()),
+            patch.object(worker, "fetch_plan", return_value=_binding_plan()),
+            patch.object(worker, "run_compatibility_check", return_value=compat),
+            patch.object(
+                worker,
+                "verify_deploy_authorities",
+                side_effect=worker.DeployAuthorityUnavailableError("governance 503"),
+            ),
+            patch.object(worker, "record_saga_failure") as saga_failure,
+            patch.object(
+                worker,
+                "_record_failure_best_effort",
+                return_value=({"status": "dead_lettered"}, None),
+            ),
+            patch.object(worker, "RuntimeManagerClient") as client_class,
+        ):
+            result = worker.run_poll(
+                api_url="http://localhost:8095", consumer_name="test-consumer"
+            )
+
+        assert result["dead_lettered"] == 1
+        saga_failure.assert_called_once_with(
+            api_url="http://localhost:8095",
+            saga_id="saga-001",
+            reason="deploy authority unavailable: governance 503",
+            failed_step="binding_requested",
+            timeout_seconds=10.0,
+        )
+        client_class.assert_not_called()
+
+    def test_plan_saga_identity_mismatch_fails_before_authority_read(self, worker):
+        worker.verify_deploy_authorities.reset_mock()
+
+        with pytest.raises(worker.DeployAuthorityError, match="artifact_id mismatch"):
+            worker.verify_binding_deploy_authorities(
+                saga=_binding_saga(),
+                plan=_binding_plan(artifact_id="forged-artifact"),
+                persona_capital_binding_id="pcb-001",
+                persona_capital_binding_status="active",
+                allowed_deployment_scope="paper",
+                deployment_base_url="http://deployment:8095",
+                timeout_seconds=10.0,
+            )
+
+        worker.verify_deploy_authorities.assert_not_called()
 
     def test_sequence_block_never_mutates_or_burns_retry_budget(self, worker):
         record = _outbox_record("evt-comp-blocked", sequence_no=3)
@@ -1260,13 +1561,85 @@ class TestRunPoll:
             ),
             patch.object(worker, "RuntimeManagerClient") as client_class,
         ):
+            client_class.return_value.get.return_value = _runtime_binding(
+                status="failed"
+            )
             result = worker.run_poll(
                 api_url="http://localhost:8095", consumer_name="test-consumer"
             )
 
         assert result["consumed"] == 1
         execute.assert_not_called()
-        client_class.assert_not_called()
+        client_class.assert_called_once()
+        client_class.return_value.get.assert_called_once_with("rb-001")
+        client_class.return_value.transition.assert_not_called()
+        client_class.return_value.execute_kill_switch.assert_not_called()
+
+    def test_terminal_safe_mode_replay_reproves_incident_before_consume(self, worker):
+        record = _outbox_record("evt-comp-safe-replay", sequence_no=3)
+        record["event"].update(
+            {
+                "event_type": "deployment.compensation.requested",
+                "aggregate_id": "saga-001",
+            }
+        )
+        saga = {
+            **_compensating_saga("enter_safe_mode_and_raise_incident"),
+            "status": "failed",
+            "current_step": "compensated",
+        }
+        plan = {"plan_id": "plan-001", "status": "executed"}
+        paused = _runtime_binding(status="paused")
+        incident = worker._incident_payload(
+            saga=saga,
+            binding=paused,
+            event_id="evt-comp-safe-replay",
+            reason="original containment reason",
+        )
+        with (
+            patch.dict(
+                worker.os.environ,
+                {"PANTHEON_INCIDENTS_API_URL": "http://incidents:8090"},
+            ),
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(
+                worker,
+                "fetch_applied_inbox",
+                return_value=[_applied_receipt(1), _applied_receipt(2)],
+            ),
+            patch.object(worker, "fetch_saga", return_value=saga),
+            patch.object(worker, "fetch_plan", return_value=plan),
+            patch.object(
+                worker,
+                "fetch_projection",
+                return_value=_compensation_projection(saga, plan_status="executed"),
+            ),
+            patch.object(worker, "fetch_incident", return_value=incident) as fetch_incident,
+            patch.object(worker, "execute_compensation") as execute,
+            patch.object(
+                worker,
+                "consume_event",
+                return_value=_inbox_receipt("evt-comp-safe-replay"),
+            ) as consume,
+            patch.object(worker, "RuntimeManagerClient") as client_class,
+        ):
+            client_class.return_value.get.side_effect = [paused, paused]
+            client_class.return_value.get_safe_mode.return_value = {
+                "safe_mode_state": "paused"
+            }
+            result = worker.run_poll(
+                api_url="http://localhost:8095", consumer_name="test-consumer"
+            )
+
+        assert result["consumed"] == 1
+        execute.assert_not_called()
+        client_class.return_value.execute_kill_switch.assert_not_called()
+        fetch_incident.assert_called_once_with(
+            base_url="http://incidents:8090",
+            incident_id="inc-deployment-comp-saga-001",
+            timeout_seconds=10.0,
+        )
+        consume.assert_called_once()
 
 
 class TestExecuteCompensation:
@@ -1387,6 +1760,11 @@ class TestExecuteCompensation:
             artifact_version="v0.9.0",
             status="retired",
             effective_at="2026-07-13T08:00:00Z",
+            metadata={
+                "allowed_deployment_scope": "paper",
+                "strategy_id": "strategy-001",
+                "authoritative_loader_attestation": _fallback_authority_report(),
+            },
         )
         child = _runtime_binding(
             binding_id="rb-fallback",
@@ -1410,24 +1788,12 @@ class TestExecuteCompensation:
                 "target_version": "v0.9.0",
                 "action_type": "replace",
             },
-            "metadata": {
-                "rollback_loader_attestation": {
-                    "artifact_id": "artifact-fallback",
-                    "artifact_version": "v0.9.0",
-                    "passed": True,
-                    "proof_ref": "object-store://loader/proof-fallback",
-                }
-            },
         }
         with (
             patch.object(
                 worker,
                 "fetch_plan",
-                return_value={
-                    "plan_id": "plan-fallback",
-                    "artifact_id": "artifact-fallback",
-                    "artifact_version": "v0.9.0",
-                },
+                return_value=_fallback_plan(),
             ),
             patch.object(worker, "finalize_compensation") as finalize,
         ):
@@ -1443,10 +1809,144 @@ class TestExecuteCompensation:
 
         assert result == ("failed", "executed")
         request = client.rollback.call_args.args[0]
-        assert request["loader_checks_passed"] is True
         assert request["replacement_plan_id"] == "plan-fallback"
+        assert request["replacement_plan_status"] == "executed"
+        assert (
+            request["replacement_authority_attestation"]
+            == _fallback_authority_report()
+        )
         assert request["replacement_metadata"]["compensation_event_id"] == "evt-request_rollback"
         finalize.assert_called_once()
+
+    def test_kill_racing_rollback_contains_paused_child_and_finalizes(self, worker):
+        saga = _compensating_saga("request_rollback")
+        old = _runtime_binding()
+        retired = _runtime_binding(status="retired")
+        prior = _runtime_binding(
+            binding_id="rb-prior",
+            plan_id="plan-fallback",
+            runtime_id="rt-prior",
+            artifact_id="artifact-fallback",
+            artifact_version="v0.9.0",
+            status="retired",
+            effective_at="2026-07-13T08:00:00Z",
+            metadata={
+                "allowed_deployment_scope": "paper",
+                "strategy_id": "strategy-001",
+                "authoritative_loader_attestation": _fallback_authority_report(),
+            },
+        )
+        child = _runtime_binding(
+            binding_id="rb-fallback",
+            plan_id="plan-fallback",
+            runtime_id="rt-fallback",
+            artifact_id="artifact-fallback",
+            artifact_version="v0.9.0",
+            rollback_parent="rb-001",
+            rollback_action_type="replace",
+            status="paused",
+        )
+        client = MagicMock()
+        client.get.side_effect = [old, retired, child, child]
+        client.get_safe_mode.side_effect = [
+            {"safe_mode_state": "normal"},
+            {"safe_mode_state": "paused"},
+        ]
+        client.list_by_pool.return_value = [old, prior]
+        client.rollback.return_value = {"new_binding": child}
+        client.execute_kill_switch.return_value = {
+            "telemetry_ack": _kill_ack("rb-fallback")
+        }
+        plan = {
+            "plan_id": "plan-001",
+            "status": "executed",
+            "rollback": {
+                "target_artifact_id": "artifact-fallback",
+                "target_version": "v0.9.0",
+                "action_type": "replace",
+            },
+        }
+
+        def _return_payload(**kwargs):
+            return dict(kwargs["payload"])
+
+        with (
+            patch.object(
+                worker,
+                "fetch_plan",
+                return_value=_fallback_plan(),
+            ),
+            patch.object(worker, "create_incident", side_effect=_return_payload),
+            patch.object(worker, "finalize_compensation") as finalize,
+        ):
+            result = worker.execute_compensation(
+                api_url="http://deployment:8095",
+                saga=saga,
+                plan=plan,
+                event=self._event("request_rollback"),
+                client=client,
+                incident_url="http://incidents:8090",
+                timeout_seconds=10.0,
+            )
+
+        assert result == ("failed", "executed")
+        kill_request = client.execute_kill_switch.call_args.args[0]
+        assert kill_request["binding_id"] == "rb-001"
+        assert client.get.call_args_list[-1] == call("rb-fallback")
+        client.get_active_for_pool.assert_not_called()
+        finalize.assert_called_once()
+
+    def test_terminal_rollback_replay_reproves_paused_child_incident(self, worker):
+        saga = {
+            **_compensating_saga("request_rollback"),
+            "status": "failed",
+            "current_step": "compensated",
+        }
+        source = _runtime_binding(status="retired")
+        child = _runtime_binding(
+            binding_id="rb-fallback",
+            plan_id="plan-fallback",
+            runtime_id="rt-fallback",
+            artifact_id="artifact-fallback",
+            artifact_version="v0.9.0",
+            rollback_parent="rb-001",
+            rollback_action_type="replace",
+            status="paused",
+        )
+        plan = {
+            "plan_id": "plan-001",
+            "status": "executed",
+            "rollback": {
+                "target_artifact_id": "artifact-fallback",
+                "target_version": "v0.9.0",
+                "action_type": "replace",
+            },
+        }
+        event = self._event("request_rollback")
+        incident = worker._incident_payload(
+            saga=saga,
+            binding=child,
+            event_id=event["event_id"],
+            reason="original containment reason",
+        )
+        client = MagicMock()
+        client.get.side_effect = [source, child, child]
+        client.list_by_pool.return_value = [source, child]
+        client.get_safe_mode.return_value = {"safe_mode_state": "paused"}
+
+        with patch.object(worker, "fetch_incident", return_value=incident):
+            status = worker.verify_terminal_compensation_side_effects(
+                saga=saga,
+                plan=plan,
+                event=event,
+                client=client,
+                incident_url="http://incidents:8090",
+                timeout_seconds=10.0,
+            )
+
+        assert status == "executed"
+        client.get_active_for_pool.assert_not_called()
+        client.execute_kill_switch.assert_not_called()
 
     def test_safe_mode_requires_ack_readback_and_exact_incident(self, worker):
         saga = _compensating_saga("enter_safe_mode_and_raise_incident")
@@ -1454,9 +1954,7 @@ class TestExecuteCompensation:
         paused = _runtime_binding(status="paused")
         client = MagicMock()
         client.get.side_effect = [active, paused]
-        client.execute_kill_switch.return_value = {
-            "telemetry_ack": {"ack_status": "acknowledged"}
-        }
+        client.execute_kill_switch.return_value = {"telemetry_ack": _kill_ack()}
         client.get_safe_mode.return_value = {"safe_mode_state": "paused"}
 
         def _return_payload(**kwargs):
@@ -1482,6 +1980,59 @@ class TestExecuteCompensation:
         assert kill["idempotency_key"] == "idem-enter_safe_mode_and_raise_incident"
         finalize.assert_called_once()
 
+    def test_incident_response_loss_replay_keeps_kill_payload_stable(self, worker):
+        saga = _compensating_saga("request_rollback")
+        paused = _runtime_binding(status="paused")
+        event = self._event("request_rollback")
+        client = MagicMock()
+        client.execute_kill_switch.return_value = {"telemetry_ack": _kill_ack()}
+        client.get_safe_mode.return_value = {"safe_mode_state": "paused"}
+        client.get.return_value = paused
+        committed_incident = worker._incident_payload(
+            saga=saga,
+            binding=paused,
+            event_id=event["event_id"],
+            reason="rollback loader proof failed closed",
+        )
+
+        with patch.object(
+            worker,
+            "create_incident",
+            side_effect=[
+                urllib.error.URLError("incident response lost after commit"),
+                committed_incident,
+            ],
+        ):
+            with pytest.raises(urllib.error.URLError):
+                worker._contain_and_raise_incident(
+                    client=client,
+                    saga=saga,
+                    binding=paused,
+                    event_id=event["event_id"],
+                    event_idempotency_key=event["idempotency_key"],
+                    incident_url="http://incidents:8090",
+                    reason="rollback loader proof failed closed",
+                    timeout_seconds=10.0,
+                )
+            worker._contain_and_raise_incident(
+                client=client,
+                saga=saga,
+                binding=paused,
+                event_id=event["event_id"],
+                event_idempotency_key=event["idempotency_key"],
+                incident_url="http://incidents:8090",
+                reason="kill-switch safe mode won before rollback compensation: paused",
+                timeout_seconds=10.0,
+            )
+
+        kill_calls = client.execute_kill_switch.call_args_list
+        assert len(kill_calls) == 2
+        assert kill_calls[0].args[0] == kill_calls[1].args[0]
+        assert (
+            kill_calls[0].args[0]["context"]["reason"]
+            == "deployment_compensation_fail_closed"
+        )
+
     def test_kill_safe_mode_wins_over_rollback_compensation(self, worker):
         saga = _compensating_saga("request_rollback")
         active = _runtime_binding()
@@ -1492,9 +2043,7 @@ class TestExecuteCompensation:
             {"safe_mode_state": "paused"},
             {"safe_mode_state": "paused"},
         ]
-        client.execute_kill_switch.return_value = {
-            "telemetry_ack": {"ack_status": "acknowledged"}
-        }
+        client.execute_kill_switch.return_value = {"telemetry_ack": _kill_ack()}
         plan = {
             "plan_id": "plan-001",
             "status": "executed",
@@ -1524,7 +2073,7 @@ class TestExecuteCompensation:
 
         assert result == ("failed", "executed")
         client.rollback.assert_not_called()
-        client.list_by_pool.assert_not_called()
+        client.list_by_pool.assert_called_once_with("pool-001")
 
 
 # ---------------------------------------------------------------------------

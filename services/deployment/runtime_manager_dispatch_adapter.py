@@ -29,7 +29,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 _RM_DIR = str(Path(__file__).resolve().parent.parent / "runtime-manager")
 _REPO_ROOT = str(Path(__file__).resolve().parents[2])
@@ -131,6 +131,7 @@ def _build_deploy_request(
       target_stage, strategy_id, approval_decision_id
 
     ``deploy_context`` must contain:
+      sponsor_persona_id             — exact plan sponsor for governance binding
       persona_capital_binding_id   — active PersonaCapitalBinding id
       persona_capital_binding_status — must be "active"
       allowed_deployment_scope     — must be >= target_stage
@@ -142,12 +143,14 @@ def _build_deploy_request(
     """
     return {
         "plan_id": saga["plan_id"],
+        "approval_decision_id": saga["approval_decision_id"],
         "plan_status": deploy_context.get("plan_status") or "approved",
         "target_stage": saga["target_stage"],
         "artifact_id": saga["artifact_id"],
         "artifact_version": saga["artifact_version"],
         "capital_pool_id": saga["capital_pool_id"],
         "strategy_id": saga.get("strategy_id") or "",
+        "sponsor_persona_id": deploy_context["sponsor_persona_id"],
         "persona_capital_binding_id": deploy_context["persona_capital_binding_id"],
         "persona_capital_binding_status": deploy_context["persona_capital_binding_status"],
         "allowed_deployment_scope": deploy_context["allowed_deployment_scope"],
@@ -167,6 +170,8 @@ def validate_authoritative_readback(
     binding: Dict[str, Any],
     expected_binding_id: str,
     expected_persona_capital_binding_id: str | None = None,
+    expected_sponsor_persona_id: str | None = None,
+    expected_authority_report: Mapping[str, Any] | None = None,
 ) -> Optional[str]:
     """Return a fail-closed mismatch description for a RuntimeBinding readback.
 
@@ -192,6 +197,61 @@ def validate_authoritative_readback(
         for field, expected_value in expected.items()
         if binding.get(field) != expected_value
     ]
+    metadata = binding.get("metadata")
+    if not isinstance(metadata, Mapping):
+        mismatches.append("RuntimeBinding.metadata is required for authority readback")
+        return "; ".join(mismatches)
+    if metadata.get("strategy_id") != saga.get("strategy_id"):
+        mismatches.append(
+            f"metadata.strategy_id expected {saga.get('strategy_id')!r}, "
+            f"got {metadata.get('strategy_id')!r}"
+        )
+    attestation = metadata.get("authoritative_loader_attestation")
+    if not isinstance(attestation, Mapping):
+        mismatches.append("metadata.authoritative_loader_attestation is required")
+        return "; ".join(mismatches)
+    expected_attestation = {
+        "status": "passed",
+        "authority": "canonical_deployment_registry_governance_capital",
+        "plan_id": saga.get("plan_id"),
+        "target_stage": saga.get("target_stage"),
+        "artifact_id": saga.get("artifact_id"),
+        "artifact_version": saga.get("artifact_version"),
+        "strategy_id": saga.get("strategy_id"),
+        "approval_decision_id": saga.get("approval_decision_id"),
+        "capital_pool_id": saga.get("capital_pool_id"),
+    }
+    if expected_persona_capital_binding_id:
+        expected_attestation["persona_capital_binding_id"] = (
+            expected_persona_capital_binding_id
+        )
+    if expected_sponsor_persona_id:
+        expected_attestation["sponsor_persona_id"] = expected_sponsor_persona_id
+    mismatches.extend(
+        f"authority attestation {field} expected {expected_value!r}, "
+        f"got {attestation.get(field)!r}"
+        for field, expected_value in expected_attestation.items()
+        if attestation.get(field) != expected_value
+    )
+    digest_fields = (
+        "deployment_plan_sha256",
+        "registry_entry_sha256",
+        "approval_decision_sha256",
+        "capital_pool_sha256",
+        "capital_admissibility_sha256",
+        "persona_capital_binding_sha256",
+    )
+    for field in digest_fields:
+        value = str(attestation.get(field) or "")
+        if not value.startswith("sha256:") or len(value) != 71:
+            mismatches.append(f"authority attestation {field} is missing or invalid")
+        if (
+            expected_authority_report is not None
+            and expected_authority_report.get(field) != attestation.get(field)
+        ):
+            mismatches.append(
+                f"authority attestation {field} differs from pre-dispatch proof"
+            )
     return "; ".join(mismatches) or None
 
 
@@ -219,7 +279,8 @@ def dispatch_to_runtime_manager(
         rollback_action_type.
     client:
         RuntimeManagerClient instance.  If None, one is constructed using
-        environment defaults (PANTHEON_RUNTIME_MANAGER_URL).
+        the required remote PANTHEON_RUNTIME_MANAGER_URL. Durable dispatch
+        never falls back to an in-process RuntimeManagerService.
 
     Returns
     -------
@@ -229,7 +290,23 @@ def dispatch_to_runtime_manager(
         On idempotent replay (binding already existed), idempotent_replay=True.
     """
     if client is None:
-        client = RuntimeManagerClient()
+        client = RuntimeManagerClient(require_remote=True)
+
+    deploy_metadata = deploy_context.get("metadata")
+    expected_authority_report = (
+        deploy_metadata.get("authoritative_loader_attestation")
+        if isinstance(deploy_metadata, Mapping)
+        else None
+    )
+    if not isinstance(expected_authority_report, Mapping):
+        return DispatchResult(
+            outcome=DispatchOutcome.TERMINAL_ERROR,
+            error_message=(
+                "canonical authoritative_loader_attestation is required before "
+                "runtime-manager dispatch"
+            ),
+            error_code="DEPLOY_AUTHORITY_REPORT_REQUIRED",
+        )
 
     existing_binding_id: Optional[str] = saga.get("binding_id")
 
@@ -271,6 +348,8 @@ def dispatch_to_runtime_manager(
             expected_persona_capital_binding_id=deploy_context.get(
                 "persona_capital_binding_id"
             ),
+            expected_sponsor_persona_id=deploy_context.get("sponsor_persona_id"),
+            expected_authority_report=expected_authority_report,
         )
         if mismatch:
             return DispatchResult(
@@ -354,6 +433,8 @@ def dispatch_to_runtime_manager(
         expected_persona_capital_binding_id=deploy_context.get(
             "persona_capital_binding_id"
         ),
+        expected_sponsor_persona_id=deploy_context.get("sponsor_persona_id"),
+        expected_authority_report=expected_authority_report,
     )
     if mismatch:
         return DispatchResult(

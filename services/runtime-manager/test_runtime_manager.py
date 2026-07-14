@@ -24,7 +24,7 @@ for path in (SERVICE_DIR, EXEC_RUNTIME_DIR):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from runtime_manager_client import RuntimeManagerClient
+from runtime_manager_client import RuntimeManagerClient, RuntimeManagerClientError
 from service import RuntimeManagerError, RuntimeManagerService
 
 EXEC_RUNTIME_DIR_STR = str(EXEC_RUNTIME_DIR)
@@ -50,6 +50,9 @@ def _valid_deploy_request(**overrides):
         "target_stage": "paper",
         "artifact_id": "artifact-alpha",
         "artifact_version": "1.0.0",
+        "strategy_id": "strategy-alpha",
+        "approval_decision_id": "approval-alpha",
+        "sponsor_persona_id": "persona-alpha",
         "capital_pool_id": "pool-001",
         "persona_capital_binding_id": "pcb-001",
         "persona_capital_binding_status": "active",
@@ -59,6 +62,61 @@ def _valid_deploy_request(**overrides):
     }
     request.update(overrides)
     return request
+
+
+def _canonical_authority_report(request):
+    return {
+        "status": "passed",
+        "authority": "canonical_deployment_registry_governance_capital",
+        "plan_id": request["plan_id"],
+        "plan_status": request["plan_status"],
+        "target_stage": request["target_stage"],
+        "artifact_id": request["artifact_id"],
+        "artifact_version": request["artifact_version"],
+        "strategy_id": request["strategy_id"],
+        "approval_decision_id": request["approval_decision_id"],
+        "capital_pool_id": request["capital_pool_id"],
+        "sponsor_persona_id": request["sponsor_persona_id"],
+        "persona_capital_binding_id": request["persona_capital_binding_id"],
+        "persona_capital_binding_status": request[
+            "persona_capital_binding_status"
+        ],
+        "allowed_deployment_scope": request["allowed_deployment_scope"],
+        "deployment_plan_sha256": "sha256:" + "0" * 64,
+        "registry_entry_sha256": "sha256:" + "1" * 64,
+        "approval_decision_sha256": "sha256:" + "2" * 64,
+        "capital_pool_sha256": "sha256:" + "3" * 64,
+        "capital_admissibility_sha256": "sha256:" + "4" * 64,
+        "persona_capital_binding_sha256": "sha256:" + "5" * 64,
+    }
+
+
+def _seed_retired_rollback_target(
+    service,
+    *,
+    old_binding,
+    plan_id,
+    artifact_id,
+    artifact_version,
+    strategy_id="strategy-alpha",
+    allowed_deployment_scope="paper",
+):
+    request = _valid_deploy_request(
+        plan_id=plan_id,
+        artifact_id=artifact_id,
+        artifact_version=artifact_version,
+        strategy_id=strategy_id,
+        capital_pool_id=old_binding.capital_pool_id,
+        persona_capital_binding_id=old_binding.persona_capital_binding_id,
+        allowed_deployment_scope=allowed_deployment_scope,
+        runtime_id=f"rt-prior-{plan_id}",
+    )
+    request["metadata"] = {
+        "strategy_id": strategy_id,
+        "authoritative_loader_attestation": _canonical_authority_report(request),
+    }
+    prior = service.deploy(request, _allow_cutover_bypass=True)
+    return service.retire(prior.binding_id)
 
 
 def _valid_replace_request(current_binding_id, **overrides):
@@ -129,7 +187,8 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                 allowed_deployment_scope="live",
                 runtime_id="rt-canary-001",
                 promotion_gate=_valid_activation_gate(),
-            )
+            ),
+            _allow_non_paper_deploy=True,
         )
 
         self.assertEqual(binding.plan_id, "plan-canary-001")
@@ -160,7 +219,8 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                     target_stage="canary",
                     allowed_deployment_scope="live",
                     runtime_id="rt-canary-no-gate",
-                )
+                ),
+                _allow_non_paper_deploy=True,
             )
 
     def test_canary_deploy_requires_policy_scale_in_gate(self):
@@ -172,7 +232,8 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                     allowed_deployment_scope="live",
                     runtime_id="rt-canary-scale-bad",
                     promotion_gate=_valid_activation_gate(capital_scale_pct=12.0),
-                )
+                ),
+                _allow_non_paper_deploy=True,
             )
 
     def test_live_deploy_requires_canary_observation_gate(self):
@@ -184,8 +245,36 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                     allowed_deployment_scope="live",
                     runtime_id="rt-live-no-observation",
                     promotion_gate=_valid_activation_gate(capital_scale_pct=100.0, gross_scale_pct=100.0),
+                ),
+                _allow_non_paper_deploy=True,
+            )
+
+    def test_ordinary_canary_deploy_rejects_caller_supplied_gate_references(self):
+        with self.assertRaisesRegex(RuntimeManagerError, "paper-only"):
+            self.service.deploy(
+                _valid_deploy_request(
+                    plan_id="plan-canary-fake-authority",
+                    target_stage="canary",
+                    runtime_id="rt-canary-fake-authority",
+                    promotion_gate=_valid_activation_gate(),
                 )
             )
+        self.assertEqual(self.service.list_by_plan("plan-canary-fake-authority"), [])
+
+    def test_ordinary_live_deploy_rejects_even_complete_string_references(self):
+        gate = _valid_activation_gate(
+            canary_observation_ref="caller-controlled-canary-observation"
+        )
+        with self.assertRaisesRegex(RuntimeManagerError, "distinct-actor approval"):
+            self.service.deploy(
+                _valid_deploy_request(
+                    plan_id="plan-live-fake-authority",
+                    target_stage="live",
+                    runtime_id="rt-live-fake-authority",
+                    promotion_gate=gate,
+                )
+            )
+        self.assertEqual(self.service.list_by_plan("plan-live-fake-authority"), [])
 
     def test_deploy_records_allowed_risk_policy_evaluation(self):
         binding = self.service.deploy(
@@ -250,35 +339,57 @@ class RuntimeManagerServiceTests(unittest.TestCase):
 
         self.assertEqual(self.service.list_by_pool(pool_id), [])
 
-    def test_paused_kill_state_still_allows_paused_rollback_replacement(self):
-        original = self.service.deploy(
-            _valid_deploy_request(capital_pool_id="pool-kill-rollback")
-        )
-        self.service.execute_kill_switch(
-            {
-                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
-                "capital_pool_id": original.capital_pool_id,
-                "binding_id": original.binding_id,
-                "actor_id": "operator-kill-rollback",
-                "action_override": KillSwitchActionType.PAUSE.value,
-            }
-        )
+    def test_kill_first_forces_paused_replacement_for_every_rollback_action(self):
+        for action_type in (
+            "replace",
+            "pause_then_replace",
+            "liquidate_then_replace",
+        ):
+            with self.subTest(action_type=action_type):
+                suffix = action_type.replace("_", "-")
+                pool_id = f"pool-kill-rollback-{suffix}"
+                original = self.service.deploy(
+                    _valid_deploy_request(
+                        plan_id=f"plan-before-kill-{suffix}",
+                        capital_pool_id=pool_id,
+                        runtime_id=f"rt-before-kill-{suffix}",
+                    )
+                )
+                prior = _seed_retired_rollback_target(
+                    self.service,
+                    old_binding=original,
+                    plan_id=f"plan-safe-fallback-{suffix}",
+                    artifact_id=f"artifact-safe-fallback-{suffix}",
+                    artifact_version="1.0.0",
+                )
+                self.service.execute_kill_switch(
+                    {
+                        "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                        "capital_pool_id": pool_id,
+                        "binding_id": original.binding_id,
+                        "actor_id": "operator-kill-rollback",
+                        "action_override": KillSwitchActionType.PAUSE.value,
+                    }
+                )
 
-        result = self.service.rollback(
-            {
-                "current_binding_id": original.binding_id,
-                "action_type": "liquidate_then_replace",
-                "replacement_plan_id": "plan-safe-fallback",
-                "replacement_artifact_id": "artifact-safe-fallback",
-                "replacement_artifact_version": "1.0.0",
-                "replacement_persona_capital_binding_id": "pcb-001",
-                "replacement_allowed_deployment_scope": "paper",
-                "replacement_start_paused": True,
-            }
-        )
+                result = self.service.rollback(
+                    {
+                        "current_binding_id": original.binding_id,
+                        "action_type": action_type,
+                        "replacement_plan_id": f"plan-safe-fallback-{suffix}",
+                        "replacement_artifact_id": f"artifact-safe-fallback-{suffix}",
+                        "replacement_artifact_version": "1.0.0",
+                        "replacement_persona_capital_binding_id": "pcb-001",
+                        "replacement_allowed_deployment_scope": "paper",
+                        "replacement_authority_attestation": prior.metadata[
+                            "authoritative_loader_attestation"
+                        ],
+                    }
+                )
 
-        self.assertEqual(result["old_binding"]["status"], "retired")
-        self.assertEqual(result["new_binding"]["status"], "paused")
+                self.assertEqual(result["old_binding"]["status"], "retired")
+                self.assertEqual(result["new_binding"]["status"], "paused")
+                self.assertIsNone(self.service.get_active_for_pool(pool_id))
 
     def test_deploy_first_race_is_contained_before_kill_returns(self):
         pool_id = "pool-deploy-first-kill-race"
@@ -455,6 +566,14 @@ class RuntimeManagerServiceTests(unittest.TestCase):
     def test_rollback_replace_creates_replacement_and_retires_old_binding(self):
         original = self.service.deploy(_valid_deploy_request())
 
+        prior = _seed_retired_rollback_target(
+            self.service,
+            old_binding=original,
+            plan_id="plan-002",
+            artifact_id="artifact-beta",
+            artifact_version="2.0.0",
+        )
+
         result = self.service.rollback(
             {
                 "current_binding_id": original.binding_id,
@@ -462,8 +581,11 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                 "replacement_plan_id": "plan-002",
                 "replacement_artifact_id": "artifact-beta",
                 "replacement_artifact_version": "2.0.0",
-                "replacement_persona_capital_binding_id": "pcb-002",
-                "replacement_allowed_deployment_scope": "live",
+                "replacement_persona_capital_binding_id": "pcb-001",
+                "replacement_allowed_deployment_scope": "paper",
+                "replacement_authority_attestation": prior.metadata[
+                    "authoritative_loader_attestation"
+                ],
                 "replacement_runtime_id": "rt-002",
                 "replacement_metadata": {"rollback_receipt_id": "rollback-001"},
                 "replacement_strategy_id": "strategy-alpha",
@@ -486,8 +608,41 @@ class RuntimeManagerServiceTests(unittest.TestCase):
         )
         self.assertEqual(self.service.get_active_for_pool("pool-001").binding_id, result["new_binding"]["binding_id"])
 
+    def test_rollback_rejects_non_paper_source_before_target_resolution(self):
+        original = self.service.deploy(
+            _valid_deploy_request(
+                target_stage="canary",
+                promotion_gate=_valid_activation_gate(),
+            ),
+            _allow_non_paper_deploy=True,
+        )
+
+        with self.assertRaisesRegex(RuntimeManagerError, "paper-only"):
+            self.service.rollback(
+                {
+                    "current_binding_id": original.binding_id,
+                    "action_type": "replace",
+                    "replacement_plan_id": "plan-non-paper-target",
+                    "replacement_artifact_id": "artifact-non-paper-target",
+                    "replacement_artifact_version": "2.0.0",
+                    "replacement_persona_capital_binding_id": "pcb-001",
+                    "replacement_allowed_deployment_scope": "canary",
+                    "replacement_deployment_mode": "canary",
+                }
+            )
+
+        self.assertEqual(self.service.require(original.binding_id).status, "active")
+
     def test_rollback_liquidate_then_replace_start_paused_keeps_old_owner_until_confirmed(self):
         original = self.service.deploy(_valid_deploy_request())
+
+        prior = _seed_retired_rollback_target(
+            self.service,
+            old_binding=original,
+            plan_id="plan-003",
+            artifact_id="artifact-gamma",
+            artifact_version="3.0.0",
+        )
 
         result = self.service.rollback(
             {
@@ -496,8 +651,11 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                 "replacement_plan_id": "plan-003",
                 "replacement_artifact_id": "artifact-gamma",
                 "replacement_artifact_version": "3.0.0",
-                "replacement_persona_capital_binding_id": "pcb-003",
-                "replacement_allowed_deployment_scope": "live",
+                "replacement_persona_capital_binding_id": "pcb-001",
+                "replacement_allowed_deployment_scope": "paper",
+                "replacement_authority_attestation": prior.metadata[
+                    "authoritative_loader_attestation"
+                ],
                 "replacement_runtime_id": "rt-003",
                 "replacement_start_paused": True,
             }
@@ -541,7 +699,7 @@ class RuntimeManagerServiceTests(unittest.TestCase):
             result["foundation"]["idempotency_record"]["idempotency_key"],
             "idmp-runtime-ks-001",
         )
-        self.assertEqual(result["foundation"]["idempotency_record"]["status"], "succeeded")
+        self.assertEqual(result["foundation"]["idempotency_record"]["status"], "executing")
         self.assertEqual(result["foundation"]["policy_decision"]["decision"], "allow")
         self.assertEqual(result["foundation"]["audit_action"]["trace_id"], "trace-runtime-upstream-001")
         self.assertEqual(result["telemetry_ack"]["ack_status"], "fail_closed")
@@ -569,7 +727,7 @@ class RuntimeManagerClientTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def test_local_client_dispatches_deploy_and_transition_commands(self):
-        client = RuntimeManagerClient(base_url=None)
+        client = RuntimeManagerClient(base_url=None, allow_local=True)
 
         binding = client.deploy(_valid_deploy_request())
         transitioned = client.transition(binding["binding_id"], "pending_pause")
@@ -580,8 +738,16 @@ class RuntimeManagerClientTests(unittest.TestCase):
         self.assertEqual(client.list_by_pool("pool-001")[0]["binding_id"], binding["binding_id"])
         self.assertEqual(client.list_by_plan("plan-001")[0]["binding_id"], binding["binding_id"])
 
+    def test_client_refuses_implicit_local_runtime_fallback(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_RUNTIME_MANAGER_URL", None)
+            with self.assertRaisesRegex(
+                RuntimeManagerClientError, "PANTHEON_RUNTIME_MANAGER_URL is required"
+            ):
+                RuntimeManagerClient()
+
     def test_local_client_dispatches_forward_replace_by_runtime_id(self):
-        client = RuntimeManagerClient(base_url=None)
+        client = RuntimeManagerClient(base_url=None, allow_local=True)
         original = client.deploy(_valid_deploy_request())
 
         replaced = client.replace(
@@ -599,20 +765,118 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.store_path = Path(self.tempdir.name) / "bindings.json"
         self.main = _load_main_module(self.store_path)
+        self.authority_patcher = mock.patch.object(
+            self.main,
+            "verify_deploy_authorities",
+            side_effect=lambda request, **_kwargs: _canonical_authority_report(
+                request
+            ),
+        )
+        self.authority_patcher.start()
         self.client = self.main.app.test_client()
         self.auth = {"Authorization": "Bearer test-token:operator"}
 
     def tearDown(self) -> None:
+        self.authority_patcher.stop()
         self.tempdir.cleanup()
 
-    def test_deploy_route_requires_loader_checks_field(self):
+    def test_deploy_route_uses_authority_report_not_caller_loader_boolean(self):
         body = _valid_deploy_request()
-        body.pop("loader_checks_passed")
+        body["loader_checks_passed"] = False
 
         response = self.client.post("/api/runtimes/deploy", json=body, headers=self.auth)
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("loader_checks_passed", response.get_json()["error"]["message"])
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        self.assertEqual(
+            response.get_json()["metadata"]["authoritative_loader_attestation"],
+            _canonical_authority_report(body),
+        )
+
+    def test_deploy_route_fails_closed_when_authority_rejects(self):
+        self.main.verify_deploy_authorities.side_effect = self.main.DeployAuthorityError(
+            "registry artifact is not approved"
+        )
+        response = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(plan_id="plan-authority-rejected"),
+            headers=self.auth,
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.get_json()["error"]["code"], "DEPLOY_AUTHORITY_REJECTED"
+        )
+        self.assertEqual(
+            self.main._get_service().list_by_plan("plan-authority-rejected"), []
+        )
+
+    def test_deploy_route_retries_when_authority_is_unavailable(self):
+        self.main.verify_deploy_authorities.side_effect = (
+            self.main.DeployAuthorityUnavailableError("registry unavailable")
+        )
+        response = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(plan_id="plan-authority-unavailable"),
+            headers=self.auth,
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.get_json()["error"]["code"], "DEPLOY_AUTHORITY_UNAVAILABLE"
+        )
+        self.assertEqual(
+            self.main._get_service().list_by_plan("plan-authority-unavailable"), []
+        )
+
+    def test_deploy_route_requires_mfa_when_runtime_policy_enables_it(self):
+        with mock.patch.dict(
+            os.environ, {"PANTHEON_RUNTIME_MFA_REQUIRED": "true"}
+        ):
+            response = self.client.post(
+                "/api/runtimes/deploy",
+                json=_valid_deploy_request(plan_id="plan-paper-missing-mfa"),
+                headers=self.auth,
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["error"]["code"], "MFA_REQUIRED")
+        self.assertEqual(self.main._get_service().list_by_plan("plan-paper-missing-mfa"), [])
+
+    def test_internal_token_and_fake_gate_cannot_create_live_binding(self):
+        response = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(
+                plan_id="plan-http-live-fake-gate",
+                target_stage="live",
+                runtime_id="rt-http-live-fake-gate",
+                promotion_gate=_valid_activation_gate(
+                    canary_observation_ref="caller-controlled-observation"
+                ),
+            ),
+            headers={"Authorization": "Bearer runtime-control-internal"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("paper-only", response.get_json()["error"]["message"])
+        self.assertEqual(
+            self.main._get_service().list_by_plan("plan-http-live-fake-gate"), []
+        )
+
+    def test_operator_and_fake_gate_cannot_create_canary_binding(self):
+        response = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(
+                plan_id="plan-http-canary-fake-gate",
+                target_stage="canary",
+                runtime_id="rt-http-canary-fake-gate",
+                promotion_gate=_valid_activation_gate(),
+            ),
+            headers=self.auth,
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("paper-only", response.get_json()["error"]["message"])
+        self.assertEqual(
+            self.main._get_service().list_by_plan("plan-http-canary-fake-gate"), []
+        )
 
     def test_transition_route_requires_new_status(self):
         binding = self.client.post(
@@ -636,6 +900,14 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
             json=_valid_deploy_request(),
             headers=self.auth,
         ).get_json()
+        old_binding = self.main._get_service().require(created["binding_id"])
+        _seed_retired_rollback_target(
+            self.main._get_service(),
+            old_binding=old_binding,
+            plan_id="plan-004",
+            artifact_id="artifact-delta",
+            artifact_version="4.0.0",
+        )
 
         response = self.client.post(
             "/api/rollback",
@@ -643,10 +915,11 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
                 "current_binding_id": created["binding_id"],
                 "action_type": "replace",
                 "replacement_plan_id": "plan-004",
+                "replacement_plan_status": "approved",
                 "replacement_artifact_id": "artifact-delta",
                 "replacement_artifact_version": "4.0.0",
-                "replacement_persona_capital_binding_id": "pcb-004",
-                "replacement_allowed_deployment_scope": "live",
+                "replacement_persona_capital_binding_id": "pcb-001",
+                "replacement_allowed_deployment_scope": "paper",
                 "replacement_runtime_id": "rt-004",
             },
             headers=self.auth,
@@ -657,6 +930,78 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.assertEqual(payload["action_type"], "replace")
         self.assertEqual(payload["old_binding"]["status"], "retired")
         self.assertEqual(payload["new_binding"]["artifact_id"], "artifact-delta")
+
+    def test_rollback_route_rejects_arbitrary_artifact_without_prior_binding(self):
+        created = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(plan_id="plan-rollback-source"),
+            headers=self.auth,
+        ).get_json()
+
+        response = self.client.post(
+            "/api/rollback",
+            json={
+                "current_binding_id": created["binding_id"],
+                "action_type": "replace",
+                "replacement_plan_id": "plan-never-admitted",
+                "replacement_plan_status": "approved",
+                "replacement_artifact_id": "artifact-never-admitted",
+                "replacement_artifact_version": "9.9.9",
+                "replacement_persona_capital_binding_id": "pcb-001",
+                "replacement_allowed_deployment_scope": "paper",
+            },
+            headers=self.auth,
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("exactly one retired prior", response.get_json()["error"]["message"])
+        self.assertEqual(
+            self.main._get_service().require(created["binding_id"]).status,
+            "active",
+        )
+        self.assertEqual(len(self.main._get_service().list_all()), 1)
+
+    def test_rollback_route_rechecks_current_capital_authority_before_mutation(self):
+        created = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(plan_id="plan-rollback-recheck-source"),
+            headers=self.auth,
+        ).get_json()
+        _seed_retired_rollback_target(
+            self.main._get_service(),
+            old_binding=self.main._get_service().require(created["binding_id"]),
+            plan_id="plan-rollback-recheck-target",
+            artifact_id="artifact-rollback-recheck-target",
+            artifact_version="2.0.0",
+        )
+        self.main.verify_deploy_authorities.side_effect = (
+            self.main.DeployAuthorityError("PersonaCapitalBinding is revoked")
+        )
+
+        response = self.client.post(
+            "/api/rollback",
+            json={
+                "current_binding_id": created["binding_id"],
+                "action_type": "replace",
+                "replacement_plan_id": "plan-rollback-recheck-target",
+                "replacement_plan_status": "executed",
+                "replacement_artifact_id": "artifact-rollback-recheck-target",
+                "replacement_artifact_version": "2.0.0",
+                "replacement_persona_capital_binding_id": "pcb-001",
+                "replacement_allowed_deployment_scope": "paper",
+            },
+            headers=self.auth,
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.get_json()["error"]["code"], "DEPLOY_AUTHORITY_REJECTED"
+        )
+        self.assertEqual(
+            self.main._get_service().require(created["binding_id"]).status,
+            "active",
+        )
+        self.assertEqual(len(self.main._get_service().list_all()), 2)
 
     def test_forward_replace_route_preserves_path_runtime_and_lineage_boundary(self):
         created = self.client.post(
@@ -738,16 +1083,25 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.assertEqual(paused.status_code, 200, paused.get_json())
         self.assertEqual(paused.get_json()["status"], "paused")
 
+        _seed_retired_rollback_target(
+            self.main._get_service(),
+            old_binding=self.main._get_service().require(created["binding_id"]),
+            plan_id="plan-rt004-002",
+            artifact_id="artifact-rt004-replacement",
+            artifact_version="2.0.0",
+        )
+
         replace_response = self.client.post(
             "/api/rollback",
             json={
                 "current_binding_id": created["binding_id"],
                 "action_type": "replace",
                 "replacement_plan_id": "plan-rt004-002",
+                "replacement_plan_status": "approved",
                 "replacement_artifact_id": "artifact-rt004-replacement",
                 "replacement_artifact_version": "2.0.0",
-                "replacement_persona_capital_binding_id": "pcb-rt004-replacement",
-                "replacement_allowed_deployment_scope": "live",
+                "replacement_persona_capital_binding_id": "pcb-001",
+                "replacement_allowed_deployment_scope": "paper",
                 "replacement_runtime_id": "rt-rt004-002",
             },
             headers=self.auth,
@@ -784,17 +1138,16 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
             ),
             headers=self.auth,
         ).get_json()
-        canary = self.client.post(
-            "/api/runtimes/deploy",
-            json=_valid_deploy_request(
+        canary = self.main._get_service().deploy(
+            _valid_deploy_request(
                 plan_id="plan-fleet-canary",
                 target_stage="canary",
                 capital_pool_id="pool-fleet-canary",
                 runtime_id="rt-fleet-canary",
                 promotion_gate=_valid_activation_gate(),
             ),
-            headers=self.auth,
-        ).get_json()
+            _allow_non_paper_deploy=True,
+        ).to_dict()
         paused = self.client.post(
             "/api/runtimes/deploy",
             json=_valid_deploy_request(
@@ -1028,6 +1381,122 @@ class KillSwitchServiceTests(unittest.TestCase):
         self.assertEqual(result["telemetry_ack"]["ack_status"], "acknowledged")
         self.assertTrue(result["telemetry_ack"]["ack_received"])
 
+    def test_kill_safe_mode_blocks_direct_binding_reactivation(self):
+        binding = self._deploy_active_binding(pool_id="pool-no-reactivate")
+        self.service.execute_kill_switch(
+            {
+                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                "capital_pool_id": "pool-no-reactivate",
+                "actor_id": "operator-1",
+                "binding_id": binding.binding_id,
+            }
+        )
+
+        with self.assertRaisesRegex(RuntimeManagerError, "activation is blocked"):
+            self.service.transition(binding.binding_id, "active")
+
+        self.assertEqual(self.service.require(binding.binding_id).status, "paused")
+        self.assertEqual(
+            self.service.get_safe_mode("pool-no-reactivate"),
+            SafeModeState.PAUSED.value,
+        )
+
+    def test_stale_kill_resolves_sole_paused_rollback_replacement(self):
+        original = self._deploy_active_binding(pool_id="pool-paused-child")
+        prior = _seed_retired_rollback_target(
+            self.service,
+            old_binding=original,
+            plan_id="plan-paused-child",
+            artifact_id="artifact-paused-child",
+            artifact_version="2.0.0",
+        )
+        self.service.execute_kill_switch(
+            {
+                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                "capital_pool_id": "pool-paused-child",
+                "actor_id": "operator-first-kill",
+                "binding_id": original.binding_id,
+                "idempotency_key": "kill-paused-child-first",
+            }
+        )
+        rollback = self.service.rollback(
+            {
+                "current_binding_id": original.binding_id,
+                "action_type": "replace",
+                "replacement_plan_id": "plan-paused-child",
+                "replacement_artifact_id": "artifact-paused-child",
+                "replacement_artifact_version": "2.0.0",
+                "replacement_persona_capital_binding_id": "pcb-001",
+                "replacement_allowed_deployment_scope": "paper",
+                "replacement_authority_attestation": prior.metadata[
+                    "authoritative_loader_attestation"
+                ],
+            }
+        )
+        child_id = rollback["new_binding"]["binding_id"]
+        self.assertEqual(rollback["new_binding"]["status"], "paused")
+        self.assertEqual(rollback["old_binding"]["status"], "retired")
+
+        replay = self.service.execute_kill_switch(
+            {
+                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                "capital_pool_id": "pool-paused-child",
+                "actor_id": "operator-stale-kill",
+                "binding_id": original.binding_id,
+                "action_override": KillSwitchActionType.PAUSE.value,
+                "idempotency_key": "kill-paused-child-stale",
+            }
+        )
+
+        self.assertEqual(replay["telemetry_ack"]["ack_status"], "acknowledged")
+        self.assertEqual(replay["telemetry_ack"]["runtime_binding_id"], child_id)
+        self.assertEqual(self.service.require(child_id).status, "paused")
+
+    def test_rollback_first_then_stale_binding_kill_contains_current_owner(self):
+        original = self._deploy_active_binding(pool_id="pool-stale-kill")
+        prior = _seed_retired_rollback_target(
+            self.service,
+            old_binding=original,
+            plan_id="plan-before-stale-kill",
+            artifact_id="artifact-before-stale-kill",
+            artifact_version="2.0.0",
+        )
+        rollback = self.service.rollback(
+            {
+                "current_binding_id": original.binding_id,
+                "action_type": "replace",
+                "replacement_plan_id": "plan-before-stale-kill",
+                "replacement_artifact_id": "artifact-before-stale-kill",
+                "replacement_artifact_version": "2.0.0",
+                "replacement_persona_capital_binding_id": "pcb-001",
+                "replacement_allowed_deployment_scope": "paper",
+                "replacement_authority_attestation": prior.metadata[
+                    "authoritative_loader_attestation"
+                ],
+            }
+        )
+        replacement_id = rollback["new_binding"]["binding_id"]
+        self.assertEqual(rollback["old_binding"]["status"], "retired")
+        self.assertEqual(rollback["new_binding"]["status"], "active")
+
+        result = self.service.execute_kill_switch(
+            {
+                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                "capital_pool_id": "pool-stale-kill",
+                # The command was queued before rollback and names the retired
+                # lineage record rather than the new pool owner.
+                "binding_id": original.binding_id,
+                "actor_id": "operator-stale-kill",
+                "action_override": KillSwitchActionType.PAUSE.value,
+                "idempotency_key": "kill-after-rollback-stale-binding",
+            }
+        )
+
+        self.assertEqual(result["telemetry_ack"]["ack_status"], "acknowledged")
+        self.assertEqual(result["telemetry_ack"]["runtime_binding_id"], replacement_id)
+        self.assertEqual(self.service.require(replacement_id).status, "paused")
+        self.assertIsNone(self.service.get_active_for_pool("pool-stale-kill"))
+
     def test_execute_kill_switch_populates_audit_trail(self):
         self._deploy_active_binding()
         self.service.execute_kill_switch({
@@ -1059,6 +1528,7 @@ class KillSwitchServiceTests(unittest.TestCase):
             "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
             "capital_pool_id": "pool-without-active-runtime",
             "actor_id": "operator-1",
+            "idempotency_key": "kill-without-active-runtime",
         })
 
         self.assertIsNone(result["binding_action"])
@@ -1067,6 +1537,9 @@ class KillSwitchServiceTests(unittest.TestCase):
         self.assertTrue(result["telemetry_ack"]["fail_closed"])
         self.assertFalse(result["telemetry_ack"]["runtime_state_recorded"])
         self.assertFalse(result["telemetry_ack"]["capital_state_recorded"])
+        self.assertEqual(
+            result["foundation"]["idempotency_record"]["status"], "executing"
+        )
 
     def test_get_safe_mode_returns_normal_for_unknown_pool(self):
         state = self.service.get_safe_mode("pool-unknown")
@@ -1103,10 +1576,22 @@ class KillSwitchHttpRouteTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.store_path = Path(self.tempdir.name) / "bindings.json"
         self.main = _load_main_module(self.store_path)
+        self.authority_patcher = mock.patch.object(
+            self.main,
+            "verify_deploy_authorities",
+            return_value={
+                "status": "passed",
+                "authority": "test-canonical",
+                "persona_capital_binding_status": "active",
+                "allowed_deployment_scope": "live",
+            },
+        )
+        self.authority_patcher.start()
         self.client = self.main.app.test_client()
         self.auth = {"Authorization": "Bearer test-token:operator"}
 
     def tearDown(self) -> None:
+        self.authority_patcher.stop()
         self.tempdir.cleanup()
 
     def _deploy(self, pool_id="pool-ks-http"):
@@ -1375,7 +1860,7 @@ class KillSwitchDurabilityTests(unittest.TestCase):
             "foundation.command_recovery.replay_resumed",
         )
 
-    def test_kill_switch_replace_replay_after_replacement_create_does_not_duplicate_fallback(self):
+    def test_kill_switch_replace_request_replays_fail_closed_pause_without_fallback(self):
         svc1 = self._svc()
         binding = svc1.deploy(_valid_deploy_request(
             capital_pool_id="pool-replace-crash-replay",
@@ -1391,40 +1876,36 @@ class KillSwitchDurabilityTests(unittest.TestCase):
             "fallback_artifact_id": "artifact-fallback",
             "fallback_artifact_version": "1.0.0",
         }
-        original_retire = svc1._store.retire
+        original_action = svc1._execute_kill_switch_binding_action
 
-        def crash_before_old_binding_retire(binding_id, retired_at=None):
-            raise RuntimeError("simulated crash after replacement create before retire")
+        def crash_after_pause(command):
+            original_action(command)
+            raise RuntimeError("simulated crash after fail-closed pause")
 
-        svc1._store.retire = crash_before_old_binding_retire
+        svc1._execute_kill_switch_binding_action = crash_after_pause
 
         with self.assertRaisesRegex(RuntimeError, "simulated crash"):
             svc1.execute_kill_switch(request)
 
-        svc1._store.retire = original_retire
         after_crash = self._svc()
-        after_crash_active_fallbacks = [
-            item for item in after_crash.list_by_pool("pool-replace-crash-replay")
-            if item.status == "active" and item.artifact_id == "artifact-fallback"
-        ]
-        self.assertEqual(len(after_crash_active_fallbacks), 1)
-        self.assertEqual(after_crash.get(binding.binding_id).status, "active")
+        self.assertEqual(after_crash.get(binding.binding_id).status, "paused")
+        self.assertEqual(len(after_crash.list_by_pool("pool-replace-crash-replay")), 1)
 
         replayed = after_crash.execute_kill_switch(request)
 
         self.assertTrue(replayed["idempotent_replay"])
-        self.assertEqual(replayed["binding_action"]["replacement_binding"]["artifact_id"], "artifact-fallback")
-        self.assertEqual(after_crash.get(binding.binding_id).status, "retired")
-        after_replay_active_fallbacks = [
-            item for item in after_crash.list_by_pool("pool-replace-crash-replay")
-            if item.status == "active" and item.artifact_id == "artifact-fallback"
-        ]
-        self.assertEqual(len(after_replay_active_fallbacks), 1)
+        self.assertEqual(replayed["command"]["action_type"], "pause")
+        self.assertEqual(
+            replayed["binding_action"]["binding"]["binding_id"],
+            binding.binding_id,
+        )
+        self.assertEqual(after_crash.get(binding.binding_id).status, "paused")
+        self.assertEqual(len(after_crash.list_by_pool("pool-replace-crash-replay")), 1)
         recovered_snapshot = json.loads(self.ks_store_path.read_text())
         recovered_entry = recovered_snapshot["foundation_idempotency"]["idmp-replace-crash-replay-001"]
         self.assertEqual(recovered_entry["idempotency_record"]["status"], "succeeded")
 
-    def test_kill_switch_replace_replay_without_binding_id_recovers_old_binding_from_replacement(self):
+    def test_kill_switch_replace_without_binding_id_pauses_only_pool_owner(self):
         svc1 = self._svc()
         binding = svc1.deploy(_valid_deploy_request(
             capital_pool_id="pool-replace-crash-replay-optional-binding",
@@ -1439,49 +1920,25 @@ class KillSwitchDurabilityTests(unittest.TestCase):
             "fallback_artifact_id": "artifact-fallback",
             "fallback_artifact_version": "1.0.0",
         }
-        original_retire = svc1._store.retire
+        result = svc1.execute_kill_switch(request)
 
-        def crash_before_old_binding_retire(binding_id, retired_at=None):
-            raise RuntimeError("simulated crash after replacement create before retire")
-
-        svc1._store.retire = crash_before_old_binding_retire
-
-        with self.assertRaisesRegex(RuntimeError, "simulated crash"):
-            svc1.execute_kill_switch(request)
-
-        svc1._store.retire = original_retire
-        after_crash = self._svc()
-        active_bindings = [
-            item for item in after_crash.list_by_pool("pool-replace-crash-replay-optional-binding")
-            if item.status == "active"
-        ]
-        self.assertEqual(len(active_bindings), 2)
-
-        crash_snapshot = json.loads(self.ks_store_path.read_text())
-        crash_command = crash_snapshot["foundation_idempotency"][
-            "idmp-replace-crash-replay-optional-binding-001"
-        ]["result"]["command"]
-        self.assertNotIn("binding_id", crash_command)
-
-        replayed = after_crash.execute_kill_switch(request)
-
-        self.assertTrue(replayed["idempotent_replay"])
-        self.assertEqual(replayed["binding_action"]["binding"]["binding_id"], binding.binding_id)
-        self.assertEqual(after_crash.get(binding.binding_id).status, "retired")
-        active_fallbacks = [
-            item for item in after_crash.list_by_pool("pool-replace-crash-replay-optional-binding")
-            if item.status == "active" and item.artifact_id == "artifact-fallback"
-        ]
-        self.assertEqual(len(active_fallbacks), 1)
-        recovered_snapshot = json.loads(self.ks_store_path.read_text())
-        recovered_entry = recovered_snapshot["foundation_idempotency"][
-            "idmp-replace-crash-replay-optional-binding-001"
-        ]
-        self.assertEqual(recovered_entry["idempotency_record"]["status"], "succeeded")
+        self.assertEqual(result["command"]["action_type"], "pause")
+        self.assertNotIn("binding_id", result["command"])
         self.assertEqual(
-            recovered_snapshot["foundation_recovery_audit"][-1]["action_type"],
-            "foundation.command_recovery.replay_resumed",
+            result["command"]["metadata"]["requested_action"], "replace"
         )
+        self.assertEqual(
+            result["binding_action"]["binding"]["binding_id"], binding.binding_id
+        )
+        self.assertEqual(svc1.get(binding.binding_id).status, "paused")
+        self.assertEqual(
+            len(svc1.list_by_pool("pool-replace-crash-replay-optional-binding")),
+            1,
+        )
+
+        replayed = svc1.execute_kill_switch(request)
+        self.assertTrue(replayed["idempotent_replay"])
+        self.assertEqual(replayed["command"]["command_id"], result["command"]["command_id"])
 
     def test_corrupt_foundation_idempotency_entry_is_quarantined_on_boot(self):
         self.ks_store_path.write_text(json.dumps({

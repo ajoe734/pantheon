@@ -35,7 +35,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 # ---------------------------------------------------------------------------
 # Locate and import the execution-plane runtime_binding module
@@ -67,6 +67,7 @@ from kill_switch_controller import (  # noqa: E402
     KillSwitchActionType,
     KillSwitchError,
     SafeModeState,
+    SoftTriggerReason,
 )
 from services.foundation import (  # noqa: E402
     ActorRef,
@@ -747,6 +748,8 @@ class RuntimeManagerService:
         _allow_cutover_bypass: bool = False,
         _allow_activation_gate_bypass: bool = False,
         _allow_safe_mode_bypass: bool = False,
+        _allow_non_paper_deploy: bool = False,
+        _start_paused: bool = False,
     ) -> RuntimeBinding:
         """Atomically apply safe-mode precedence and create a RuntimeBinding."""
         with self._control_lock:
@@ -755,6 +758,8 @@ class RuntimeManagerService:
                 _allow_cutover_bypass=_allow_cutover_bypass,
                 _allow_activation_gate_bypass=_allow_activation_gate_bypass,
                 _allow_safe_mode_bypass=_allow_safe_mode_bypass,
+                _allow_non_paper_deploy=_allow_non_paper_deploy,
+                _start_paused=_start_paused,
             )
 
     def _deploy_once(
@@ -763,6 +768,8 @@ class RuntimeManagerService:
         _allow_cutover_bypass: bool = False,
         _allow_activation_gate_bypass: bool = False,
         _allow_safe_mode_bypass: bool = False,
+        _allow_non_paper_deploy: bool = False,
+        _start_paused: bool = False,
     ) -> RuntimeBinding:
         """Create a RuntimeBinding from a validated DeploymentPlan descriptor.
 
@@ -793,6 +800,12 @@ class RuntimeManagerService:
         rollback/containment.  Forward deployment must lose to any non-normal
         kill-switch state, including a kill that raced an already queued outbox
         command.
+
+        ``_allow_non_paper_deploy`` and ``_start_paused`` are internal-only
+        containment/cutover controls.  Ordinary new deployment is deliberately
+        paper-only: canary/live activation requires a separate governed path
+        that can verify MFA and distinct-actor approval rather than trusting
+        caller-supplied reference strings.
         """
         plan_id = request.get("plan_id", "")
         plan_status = request.get("plan_status", "")
@@ -810,7 +823,14 @@ class RuntimeManagerService:
         binding_metadata = dict(request.get("metadata") or {}) if isinstance(request.get("metadata"), dict) else {}
         execution_mode = str(request.get("execution_mode") or target_stage).strip().lower()
         if request.get("strategy_id"):
-            binding_metadata.setdefault("strategy_id", str(request.get("strategy_id")))
+            requested_strategy_id = str(request.get("strategy_id"))
+            metadata_strategy_id = str(binding_metadata.get("strategy_id") or "")
+            if metadata_strategy_id and metadata_strategy_id != requested_strategy_id:
+                raise RuntimeManagerError(
+                    "RuntimeBinding metadata.strategy_id conflicts with the "
+                    "authoritative deploy strategy_id."
+                )
+            binding_metadata["strategy_id"] = requested_strategy_id
 
         safe_mode = self._kill_switch.safe_mode_for(capital_pool_id).value
         if (
@@ -822,11 +842,17 @@ class RuntimeManagerService:
                 f"capital_pool_id={capital_pool_id!r}; containment wins over queued deploy."
             )
 
-        # Pre-condition 1: plan status
-        if plan_status not in ("approved", "executing"):
+        # Pre-condition 1: plan status. A rollback child may truthfully point
+        # at the already-executed historical plan whose exact target is being
+        # restored; forward deployments still require approved/executing.
+        allowed_plan_statuses = {"approved", "executing"}
+        if rollback_parent:
+            allowed_plan_statuses.add("executed")
+        if plan_status not in allowed_plan_statuses:
             raise RuntimeManagerError(
-                f"DeploymentPlan {plan_id!r} status {plan_status!r} is not 'approved' or 'executing'. "
-                "A RuntimeBinding cannot be created without an approved or executing plan."
+                f"DeploymentPlan {plan_id!r} status {plan_status!r} is not one of "
+                f"{sorted(allowed_plan_statuses)!r}. A RuntimeBinding cannot be "
+                "created without an admissible canonical plan state."
             )
 
         # Pre-condition 2: PersonaCapitalBinding must be active
@@ -873,6 +899,18 @@ class RuntimeManagerService:
                 "Canary runtime bindings must not be collapsed into live."
             )
 
+        if target_stage != DeploymentMode.PAPER.value and not _allow_non_paper_deploy:
+            raise RuntimeManagerError(
+                "Ordinary new RuntimeBinding deployment is paper-only. "
+                f"target_stage={target_stage!r} requires an authoritative governed "
+                "canary/live activation path with MFA and distinct-actor approval proof."
+            )
+        if _start_paused and not _allow_safe_mode_bypass:
+            raise RuntimeManagerError(
+                "Starting a RuntimeBinding paused is reserved for runtime-manager "
+                "containment and rollback paths."
+            )
+
         # Pre-condition 6: rollback fields consistency
         if rollback_parent and not rollback_action_type:
             raise RuntimeManagerError(
@@ -917,7 +955,11 @@ class RuntimeManagerService:
             deployment_mode=target_stage,
             execution_mode=execution_mode,
             effective_at=utc_now(),
-            status=RuntimeBindingStatus.ACTIVE.value,
+            status=(
+                RuntimeBindingStatus.PAUSED.value
+                if _start_paused
+                else RuntimeBindingStatus.ACTIVE.value
+            ),
             plan_id=plan_id,
             persona_capital_binding_id=persona_capital_binding_id,
             rollback_parent=rollback_parent,
@@ -940,7 +982,8 @@ class RuntimeManagerService:
 
     def retire(self, binding_id: str, retired_at: Optional[str] = None) -> RuntimeBinding:
         """Retire a binding (terminal transition)."""
-        return self._store.retire(binding_id, retired_at=retired_at)
+        with self._control_lock:
+            return self._store.retire(binding_id, retired_at=retired_at)
 
     def replace(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Serialize and idempotently execute a forward binding cutover."""
@@ -1079,7 +1122,11 @@ class RuntimeManagerService:
         deploy_request.pop("rollback_parent", None)
         deploy_request.pop("rollback_action_type", None)
 
-        new_binding = self.deploy(deploy_request, _allow_cutover_bypass=True)
+        new_binding = self.deploy(
+            deploy_request,
+            _allow_cutover_bypass=True,
+            _allow_non_paper_deploy=False,
+        )
         cutover_at = utc_now()
         retired_old = self._store.retire(current_binding_id, retired_at=cutover_at)
 
@@ -1124,6 +1171,157 @@ class RuntimeManagerService:
             "cutover_at": cutover_at,
             "position_lineage": position_lineage,
         }
+
+    def _prove_paper_rollback_target(
+        self,
+        request: Dict[str, Any],
+        old_binding: RuntimeBinding,
+    ) -> tuple[RuntimeBinding, Dict[str, Any], str]:
+        """Resolve rollback only to a prior canonically admitted paper binding."""
+
+        replacement_stage = str(
+            request.get("replacement_deployment_mode")
+            or old_binding.deployment_mode
+        )
+        if old_binding.deployment_mode != DeploymentMode.PAPER.value or replacement_stage != DeploymentMode.PAPER.value:
+            raise RuntimeManagerError(
+                "Rollback replacement is paper-only until a target-bound "
+                "non-paper rollback authority verifier is available."
+            )
+
+        replacement_plan_id = str(request.get("replacement_plan_id") or "")
+        replacement_artifact_id = str(
+            request.get("replacement_artifact_id") or ""
+        )
+        replacement_artifact_version = str(
+            request.get("replacement_artifact_version") or ""
+        )
+        replacement_pcb_id = str(
+            request.get("replacement_persona_capital_binding_id") or ""
+        )
+        if replacement_pcb_id != old_binding.persona_capital_binding_id:
+            raise RuntimeManagerError(
+                "Rollback must preserve the current authoritative "
+                "PersonaCapitalBinding identity."
+            )
+
+        candidates = [
+            candidate
+            for candidate in self._store.find_by_plan(replacement_plan_id)
+            if candidate.binding_id != old_binding.binding_id
+            and candidate.capital_pool_id == old_binding.capital_pool_id
+            and candidate.artifact_id == replacement_artifact_id
+            and candidate.artifact_version == replacement_artifact_version
+            and candidate.deployment_mode == replacement_stage
+            and candidate.execution_mode == replacement_stage
+            and candidate.persona_capital_binding_id == replacement_pcb_id
+            and candidate.status == RuntimeBindingStatus.RETIRED.value
+        ]
+        if len(candidates) != 1:
+            raise RuntimeManagerError(
+                "Rollback target must resolve to exactly one retired prior "
+                "RuntimeBinding with matching plan/artifact/pool/stage/persona "
+                f"identity; found {len(candidates)}."
+            )
+        prior = candidates[0]
+        prior_attestation = prior.metadata.get("authoritative_loader_attestation")
+        if not isinstance(prior_attestation, Mapping):
+            raise RuntimeManagerError(
+                "Rollback prior RuntimeBinding lacks canonical deployment authority proof."
+            )
+        expected = {
+            "status": "passed",
+            "authority": "canonical_deployment_registry_governance_capital",
+            "plan_id": replacement_plan_id,
+            "target_stage": replacement_stage,
+            "artifact_id": replacement_artifact_id,
+            "artifact_version": replacement_artifact_version,
+            "capital_pool_id": old_binding.capital_pool_id,
+            "persona_capital_binding_id": replacement_pcb_id,
+        }
+        mismatches = [
+            f"{field} expected {value!r}, got {prior_attestation.get(field)!r}"
+            for field, value in expected.items()
+            if prior_attestation.get(field) != value
+        ]
+        digest_fields = (
+            "deployment_plan_sha256",
+            "registry_entry_sha256",
+            "approval_decision_sha256",
+            "capital_pool_sha256",
+            "capital_admissibility_sha256",
+            "persona_capital_binding_sha256",
+        )
+        mismatches.extend(
+            f"{field} is missing or invalid"
+            for field in digest_fields
+            if not str(prior_attestation.get(field) or "").startswith("sha256:")
+            or len(str(prior_attestation.get(field) or "")) != 71
+        )
+        strategy_id = str(prior_attestation.get("strategy_id") or "")
+        if not strategy_id or prior.metadata.get("strategy_id") != strategy_id:
+            mismatches.append("verified rollback strategy_id is missing or inconsistent")
+        requested_strategy_id = str(
+            request.get("replacement_strategy_id")
+            or request.get("strategy_id")
+            or strategy_id
+        )
+        if requested_strategy_id != strategy_id:
+            mismatches.append(
+                "replacement_strategy_id conflicts with prior authority proof"
+            )
+        requested_scope = str(
+            request.get("replacement_allowed_deployment_scope") or ""
+        )
+        if requested_scope != prior_attestation.get("allowed_deployment_scope"):
+            mismatches.append(
+                "replacement_allowed_deployment_scope conflicts with prior authority proof"
+            )
+
+        current_attestation = request.get("replacement_authority_attestation")
+        if not isinstance(current_attestation, Mapping):
+            mismatches.append(
+                "replacement_authority_attestation current four-owner proof is required"
+            )
+        else:
+            current_expected = {
+                **expected,
+                "strategy_id": strategy_id,
+                "approval_decision_id": prior_attestation.get(
+                    "approval_decision_id"
+                ),
+                "sponsor_persona_id": prior_attestation.get(
+                    "sponsor_persona_id"
+                ),
+                "persona_capital_binding_status": "active",
+                "allowed_deployment_scope": requested_scope,
+            }
+            mismatches.extend(
+                f"current {field} expected {value!r}, got {current_attestation.get(field)!r}"
+                for field, value in current_expected.items()
+                if current_attestation.get(field) != value
+            )
+            if current_attestation.get("plan_status") not in {
+                "approved",
+                "executing",
+                "executed",
+            }:
+                mismatches.append(
+                    "current plan_status must be approved/executing/executed"
+                )
+            mismatches.extend(
+                f"current {field} is missing or invalid"
+                for field in digest_fields
+                if not str(current_attestation.get(field) or "").startswith(
+                    "sha256:"
+                )
+                or len(str(current_attestation.get(field) or "")) != 71
+            )
+        if mismatches:
+            raise RuntimeManagerError(
+                "Rollback target authority mismatch: " + "; ".join(mismatches)
+            )
+        return prior, dict(current_attestation), strategy_id
 
     def rollback(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Serialize a runtime-manager-owned containment rollback."""
@@ -1191,33 +1389,55 @@ class RuntimeManagerService:
                 f"already in terminal state {old_binding.status!r}."
             )
 
+        prior_binding, rollback_attestation, rollback_strategy_id = (
+            self._prove_paper_rollback_target(request, old_binding)
+        )
+
+        safe_mode = self._kill_switch.safe_mode_for(
+            old_binding.capital_pool_id
+        ).value
+        containment_requires_paused_replacement = (
+            safe_mode not in _FORWARD_DEPLOY_ALLOWED_SAFE_MODES
+        )
+        replacement_start_paused = bool(
+            replacement_start_paused or containment_requires_paused_replacement
+        )
+
         cutover_at = utc_now()
 
-        # Build the replacement deploy request
+        replacement_metadata = (
+            dict(request.get("replacement_metadata") or {})
+            if isinstance(request.get("replacement_metadata"), Mapping)
+            else {}
+        )
+        replacement_metadata["authoritative_loader_attestation"] = (
+            rollback_attestation
+        )
+        replacement_metadata["strategy_id"] = rollback_strategy_id
+        replacement_metadata["rollback_authority_source_binding_id"] = (
+            prior_binding.binding_id
+        )
+
+        # Build the replacement deploy request only from the proven prior
+        # RuntimeBinding. Caller booleans/status strings never become proof.
         deploy_req: Dict[str, Any] = {
-            "plan_id": request.get("replacement_plan_id", ""),
-            "plan_status": request.get("replacement_plan_status", "approved"),
-            "target_stage": request.get(
-                "replacement_deployment_mode", old_binding.deployment_mode
-            ),
-            "artifact_id": request.get("replacement_artifact_id", ""),
-            "artifact_version": request.get("replacement_artifact_version", ""),
+            "plan_id": prior_binding.plan_id,
+            "plan_status": rollback_attestation["plan_status"],
+            "target_stage": prior_binding.deployment_mode,
+            "artifact_id": prior_binding.artifact_id,
+            "artifact_version": prior_binding.artifact_version,
             "capital_pool_id": old_binding.capital_pool_id,
-            "persona_capital_binding_id": request.get(
-                "replacement_persona_capital_binding_id", ""
-            ),
-            "persona_capital_binding_status": request.get(
-                "replacement_persona_capital_binding_status", "active"
-            ),
-            "allowed_deployment_scope": request.get("replacement_allowed_deployment_scope", ""),
-            "loader_checks_passed": request.get("loader_checks_passed", True),
+            "persona_capital_binding_id": prior_binding.persona_capital_binding_id,
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": rollback_attestation[
+                "allowed_deployment_scope"
+            ],
+            "loader_checks_passed": True,
             "runtime_id": request.get("replacement_runtime_id"),
             "rollback_parent": current_binding_id,
             "rollback_action_type": action_type,
-            "metadata": request.get("replacement_metadata", request.get("metadata")),
-            "strategy_id": request.get(
-                "replacement_strategy_id", request.get("strategy_id")
-            ),
+            "metadata": replacement_metadata,
+            "strategy_id": rollback_strategy_id,
         }
 
         if action_type == RollbackActionType.REPLACE.value:
@@ -1232,6 +1452,8 @@ class RuntimeManagerService:
                 _allow_cutover_bypass=True,
                 _allow_activation_gate_bypass=True,
                 _allow_safe_mode_bypass=True,
+                _allow_non_paper_deploy=False,
+                _start_paused=replacement_start_paused,
             )
             self._store.retire(current_binding_id, retired_at=cutover_at)
 
@@ -1258,29 +1480,27 @@ class RuntimeManagerService:
                 deploy_req,
                 _allow_activation_gate_bypass=True,
                 _allow_safe_mode_bypass=True,
+                _allow_non_paper_deploy=False,
+                _start_paused=replacement_start_paused,
             )
             # Step 3: Retire old paused binding post-cutover.
             self._store.retire(current_binding_id, retired_at=cutover_at)
 
         elif action_type == RollbackActionType.LIQUIDATE_THEN_REPLACE.value:
-            # Step 1: Retire old binding (real position flattening is the execution
-            # layer's responsibility; this service records the cutover boundary).
-            # Per §3.3 and §9: liquidation / cancel telemetry remains on the old
-            # binding/artifact until the runtime is confirmed flat.
-            self._store.retire(current_binding_id, retired_at=cutover_at)
-            # Step 2: Create replacement, optionally starting in guarded / paused mode.
+            # Establish a guarded replacement before retiring the source.  The
+            # control lock prevents another owner from observing a cutover
+            # window, and create-before-retire leaves an authoritative paused
+            # child for recovery if persistence fails between the two writes.
+            replacement_start_paused = True
             new_binding = self.deploy(
                 deploy_req,
+                _allow_cutover_bypass=True,
                 _allow_activation_gate_bypass=True,
                 _allow_safe_mode_bypass=True,
+                _allow_non_paper_deploy=False,
+                _start_paused=True,
             )
-            if replacement_start_paused:
-                self._store.transition_status(
-                    new_binding.binding_id, RuntimeBindingStatus.PENDING_PAUSE.value
-                )
-                new_binding = self._store.transition_status(
-                    new_binding.binding_id, RuntimeBindingStatus.PAUSED.value
-                )
+            self._store.retire(current_binding_id, retired_at=cutover_at)
 
         else:
             # Unreachable after enum validation above, but kept for safety.
@@ -1342,7 +1562,19 @@ class RuntimeManagerService:
 
     def transition(self, binding_id: str, new_status: str) -> RuntimeBinding:
         """Transition a binding to a new status via the allowed state machine."""
-        return self._store.transition_status(binding_id, new_status)
+        with self._control_lock:
+            binding = self._store.require(binding_id)
+            if new_status == RuntimeBindingStatus.ACTIVE.value:
+                safe_mode = self._kill_switch.safe_mode_for(
+                    binding.capital_pool_id
+                ).value
+                if safe_mode not in _FORWARD_DEPLOY_ALLOWED_SAFE_MODES:
+                    raise RuntimeManagerError(
+                        "RuntimeBinding activation is blocked while kill-switch "
+                        f"safe_mode={safe_mode!r}; complete governed safe-mode "
+                        "recovery before resuming runtime."
+                    )
+            return self._store.transition_status(binding_id, new_status)
 
     # ------------------------------------------------------------------ #
     # Kill-switch fast path (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY)  #
@@ -1510,6 +1742,28 @@ class RuntimeManagerService:
                 binding_action = self._execute_kill_switch_binding_action(
                     self._durable_kill_switch_command(existing_result["command"])
                 )
+                if binding_action is None:
+                    foundation_context["idempotency_record"] = existing_record
+                    recovered = existing_result
+                    recovered["foundation"] = _serialize_foundation_context(
+                        foundation_context
+                    )
+                    recovered["binding_action"] = None
+                    recovered["telemetry_ack"] = self._build_kill_switch_telemetry_ack(
+                        command=recovered["command"],
+                        audit_entry=recovered["audit_entry"],
+                        safe_mode_after=recovered["safe_mode_after"],
+                        binding_action=None,
+                        foundation_context=foundation_context,
+                    )
+                    recovered["idempotent_replay"] = True
+                    # Keep the admitted command EXECUTING.  A fail-closed
+                    # telemetry result is not successful runtime follow-through
+                    # and a later replay must be allowed to recover it.
+                    self._store_ks_idempotency_record(
+                        existing_record, result=recovered
+                    )
+                    return recovered
                 succeeded = existing_record.with_status(
                     IdempotencyStatus.SUCCEEDED,
                     result_ref=f"kill_switch:{existing_result['command'].get('command_id')}",
@@ -1544,6 +1798,19 @@ class RuntimeManagerService:
         capital_pool_id = request.get("capital_pool_id", "")
         actor_id = request.get("actor_id", "")
         context = dict(request.get("context") or {})
+        if request.get("action_override") == KillSwitchActionType.REPLACE.value or (
+            not request.get("action_override")
+            and reason == SoftTriggerReason.LOADER_ANOMALY_NO_BREACH.value
+        ):
+            context.update(
+                {
+                    "requested_action": KillSwitchActionType.REPLACE.value,
+                    "replacement_disposition": "paused_fail_closed",
+                    "replacement_blocked_reason": (
+                        "target-bound canonical deployment authority is absent"
+                    ),
+                }
+            )
         trace_context: TraceContext = foundation_context["trace_context"]
         context.update(
             {
@@ -1574,6 +1841,16 @@ class RuntimeManagerService:
                     f"Unknown action_override={request['action_override']!r}: {exc}"
                 ) from exc
 
+        # Emergency containment cannot manufacture a new RuntimeBinding from
+        # caller-supplied fallback strings. Until kill-switch dispatch carries
+        # a target-bound four-owner admission record, REPLACE is an audited
+        # request for PAUSE and creates no replacement binding.
+        if action_override == KSAT.REPLACE or (
+            action_override is None
+            and reason == SoftTriggerReason.LOADER_ANOMALY_NO_BREACH.value
+        ):
+            action_override = KSAT.PAUSE
+
         try:
             outcome = self._kill_switch.dispatch(
                 trigger,
@@ -1594,6 +1871,20 @@ class RuntimeManagerService:
         # authoritative executor for pause / liquidate / replace / terminate.
         # (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §5.2)
         binding_action = self._execute_kill_switch_binding_action(outcome.command)
+        if binding_action is None:
+            foundation_context["idempotency_record"] = executing_record
+            result = outcome.to_dict()
+            result["foundation"] = _serialize_foundation_context(foundation_context)
+            result["binding_action"] = None
+            result["telemetry_ack"] = self._build_kill_switch_telemetry_ack(
+                command=result["command"],
+                audit_entry=result["audit_entry"],
+                safe_mode_after=result["safe_mode_after"],
+                binding_action=None,
+                foundation_context=foundation_context,
+            )
+            self._store_ks_idempotency_record(executing_record, result=result)
+            return result
         idempotency_record = executing_record.with_status(
             IdempotencyStatus.SUCCEEDED,
             result_ref=f"kill_switch:{outcome.command.command_id}",
@@ -1694,43 +1985,89 @@ class RuntimeManagerService:
         active binding for command.capital_pool_id.  Executes:
             PAUSE / RISK_OFF  → pending_pause → paused
             LIQUIDATE / TERMINATE → retire immediately
-            REPLACE → hot-swap: create fallback replacement binding first, then
-                      retire the current binding.  Uses old binding metadata
-                      (persona_capital_binding_id, deployment_mode) combined with
-                      command.fallback_artifact_id / fallback_artifact_version.
-                      persona_capital_binding_status=active and
-                      allowed_deployment_scope=live are assumed on the emergency
-                      fast path (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §5.2).
+            REPLACE → fail-closed pause. New bindings require a target-bound
+                      four-owner admission record and cannot be fabricated by
+                      the emergency command surface.
 
         Returns a dict with 'action', 'binding' (old, retired/paused), and for
         REPLACE also 'replacement_binding' (new active binding).  Returns None
         when no live binding is found for the target pool.
         """
         action_type = getattr(command, "action_type", None)
-        binding_id = getattr(command, "binding_id", None)
-        if not binding_id and action_type == KillSwitchActionType.REPLACE.value:
-            replacement = self._find_kill_switch_replacement_binding(
-                command_id=getattr(command, "command_id", ""),
-                old_binding_id=None,
-                fallback_artifact_id=getattr(command, "fallback_artifact_id", ""),
-                fallback_artifact_version=getattr(command, "fallback_artifact_version", ""),
-            )
-            if replacement is not None:
-                binding_id = replacement.rollback_parent
-        if not binding_id:
-            active = self._store.get_active_for_pool(command.capital_pool_id)
-            if active:
-                binding_id = active.binding_id
-
-        if not binding_id:
-            return None
+        requested_binding_id = getattr(command, "binding_id", None)
 
         try:
-            b = self._store.get(binding_id)
-            if b is None:
+            # A response-loss replay of REPLACE must recover the exact child
+            # before resolving the pool's current active owner.  Otherwise the
+            # existing child could be replaced a second time.
+            if action_type == KillSwitchActionType.REPLACE.value:
+                replacement = self._find_kill_switch_replacement_binding(
+                    command_id=getattr(command, "command_id", ""),
+                    old_binding_id=requested_binding_id,
+                    fallback_artifact_id=getattr(
+                        command, "fallback_artifact_id", ""
+                    ),
+                    fallback_artifact_version=getattr(
+                        command, "fallback_artifact_version", ""
+                    ),
+                )
+                if replacement is not None:
+                    old = self._store.get(replacement.rollback_parent or "")
+                    if old is None:
+                        return None
+                    if not old.is_terminal():
+                        old = self._store.retire(old.binding_id, retired_at=utc_now())
+                    return {
+                        "action": action_type,
+                        "binding": old.to_dict(),
+                        "replacement_binding": replacement.to_dict(),
+                    }
+
+            b = (
+                self._store.get(requested_binding_id)
+                if requested_binding_id
+                else None
+            )
+            if b is not None and b.capital_pool_id != command.capital_pool_id:
                 return None
 
-            if b.is_terminal() and action_type != KillSwitchActionType.REPLACE.value:
+            active = self._store.get_active_for_pool(command.capital_pool_id)
+            if active is not None and (
+                b is None
+                or b.binding_id != active.binding_id
+                and b.status != RuntimeBindingStatus.ACTIVE.value
+            ):
+                # The requested binding may have been retired by a rollback
+                # immediately before the kill acquired the control lock.  Kill
+                # the pool's authoritative active owner, not the stale lineage
+                # record named by the queued command.
+                b = active
+            elif active is None and (b is None or b.is_terminal()):
+                # A rollback performed under non-normal safe mode creates its
+                # replacement paused.  A durable/replayed kill may still name
+                # the retired source, so resolve the sole non-terminal pool
+                # owner instead of falsely reporting that no runtime followed
+                # through.  Ambiguity remains fail-closed.
+                nonterminal = [
+                    candidate
+                    for candidate in self._store.find_by_pool(
+                        command.capital_pool_id
+                    )
+                    if candidate.status
+                    in {
+                        RuntimeBindingStatus.ACTIVE.value,
+                        RuntimeBindingStatus.PENDING_PAUSE.value,
+                        RuntimeBindingStatus.PAUSED.value,
+                    }
+                ]
+                if len(nonterminal) != 1:
+                    return None
+                b = nonterminal[0]
+            if b is None:
+                return None
+            binding_id = b.binding_id
+
+            if b.is_terminal():
                 return None
             if action_type in (
                 KillSwitchActionType.PAUSE.value,
@@ -1757,49 +2094,28 @@ class RuntimeManagerService:
                 return {"action": action_type, "binding": updated.to_dict()}
 
             elif action_type == KillSwitchActionType.REPLACE.value:
-                # Hot-swap fast path per KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §4.4 and §5.2.
-                # Create the fallback replacement binding BEFORE retiring the current one so
-                # the pool is never left without a live runtime (same ordering as rollback REPLACE).
-                # The single-runtime guard is bypassed only for this specific call via
-                # _allow_cutover_bypass so concurrent deploy() calls on other threads are unaffected.
-                cutover_at = utc_now()
-                replacement = self._find_kill_switch_replacement_binding(
-                    command_id=command.command_id,
-                    old_binding_id=binding_id,
-                    fallback_artifact_id=command.fallback_artifact_id,
-                    fallback_artifact_version=command.fallback_artifact_version,
-                )
-                if replacement is None:
-                    deploy_req: Dict[str, Any] = {
-                        "plan_id": f"ks-replace-{command.command_id}",
-                        "plan_status": "approved",
-                        "target_stage": b.deployment_mode,
-                        "artifact_id": command.fallback_artifact_id,
-                        "artifact_version": command.fallback_artifact_version,
-                        "capital_pool_id": command.capital_pool_id,
-                        "persona_capital_binding_id": b.persona_capital_binding_id,
-                        # Emergency assumption: the existing PCB is still active and the
-                        # scope is sufficient (live is the maximum and covers all stages).
-                        "persona_capital_binding_status": "active",
-                        "allowed_deployment_scope": "live",
-                        "loader_checks_passed": True,
-                        "rollback_parent": binding_id,
-                        "rollback_action_type": "replace",
-                    }
-                    replacement = self.deploy(
-                        deploy_req,
-                        _allow_cutover_bypass=True,
-                        _allow_safe_mode_bypass=True,
+                # Durable commands admitted by an older version may still say
+                # REPLACE. Contain them without creating an unverified child.
+                if b.status == RuntimeBindingStatus.ACTIVE.value:
+                    self._store.transition_status(
+                        binding_id, RuntimeBindingStatus.PENDING_PAUSE.value
                     )
-
-                if b.is_terminal():
-                    retired = b
+                    b = self._store.require(binding_id)
+                if b.status == RuntimeBindingStatus.PENDING_PAUSE.value:
+                    contained = self._store.transition_status(
+                        binding_id, RuntimeBindingStatus.PAUSED.value
+                    )
+                elif b.status == RuntimeBindingStatus.PAUSED.value:
+                    contained = b
                 else:
-                    retired = self._store.retire(binding_id, retired_at=cutover_at)
+                    return None
                 return {
                     "action": action_type,
-                    "binding": retired.to_dict(),
-                    "replacement_binding": replacement.to_dict(),
+                    "binding": contained.to_dict(),
+                    "replacement_blocked_reason": (
+                        "kill-switch replacement lacks target-bound canonical "
+                        "deployment authority; runtime paused fail-closed"
+                    ),
                 }
 
             else:
@@ -1851,6 +2167,22 @@ class RuntimeManagerService:
         return self._kill_switch.safe_mode_for(capital_pool_id).value
 
     def advance_safe_mode(
+        self,
+        capital_pool_id: str,
+        target_state: str,
+        actor_id: str,
+        note: Optional[str] = None,
+    ) -> str:
+        """Serialize governance recovery state against deploy/rollback writes."""
+        with self._control_lock:
+            return self._advance_safe_mode_once(
+                capital_pool_id,
+                target_state,
+                actor_id=actor_id,
+                note=note,
+            )
+
+    def _advance_safe_mode_once(
         self,
         capital_pool_id: str,
         target_state: str,
@@ -1959,29 +2291,32 @@ class RuntimeManagerService:
                 f"Must be one of {sorted(_VALID_PLAN_ACTIONS)}."
             )
 
-        current_binding = self._store.require(binding_id)
-        if current_binding.is_terminal():
-            raise RuntimeManagerError(
-                f"Cannot freeze binding {binding_id!r}: already in terminal state "
-                f"{current_binding.status!r}."
-            )
+        with self._control_lock:
+            current_binding = self._store.require(binding_id)
+            if current_binding.is_terminal():
+                raise RuntimeManagerError(
+                    f"Cannot freeze binding {binding_id!r}: already in terminal state "
+                    f"{current_binding.status!r}."
+                )
 
-        executed_at = utc_now()
+            executed_at = utc_now()
 
-        # Drain: active → pending_pause → paused (per DeploymentPlan runtime_action).
-        # Tolerate bindings already paused or pending_pause by a prior kill-switch or rollback
-        # path — the freeze intent is satisfied if the binding ends up paused regardless of
-        # which path got it there.  This prevents a spurious RuntimeBindingError when the
-        # kill-switch fast path reached PAUSED before the governance freeze arrived.
-        if current_binding.status == RuntimeBindingStatus.ACTIVE.value:
-            self._store.transition_status(binding_id, RuntimeBindingStatus.PENDING_PAUSE.value)
-            updated = self._store.transition_status(binding_id, RuntimeBindingStatus.PAUSED.value)
-        elif current_binding.status == RuntimeBindingStatus.PENDING_PAUSE.value:
-            # Kill-switch already drained to pending_pause; complete the drain step.
-            updated = self._store.transition_status(binding_id, RuntimeBindingStatus.PAUSED.value)
-        else:
-            # Already paused (e.g. paused by kill-switch or rollback) — idempotent re-fetch.
-            updated = self._store.require(binding_id)
+            # Drain: active → pending_pause → paused.  Serialising this with
+            # deploy, rollback, and kill prevents a stale freeze read from
+            # overwriting a concurrent containment decision.
+            if current_binding.status == RuntimeBindingStatus.ACTIVE.value:
+                self._store.transition_status(
+                    binding_id, RuntimeBindingStatus.PENDING_PAUSE.value
+                )
+                updated = self._store.transition_status(
+                    binding_id, RuntimeBindingStatus.PAUSED.value
+                )
+            elif current_binding.status == RuntimeBindingStatus.PENDING_PAUSE.value:
+                updated = self._store.transition_status(
+                    binding_id, RuntimeBindingStatus.PAUSED.value
+                )
+            else:
+                updated = self._store.require(binding_id)
 
         return {
             "evolution_decision_id": evo_id,

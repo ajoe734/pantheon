@@ -102,20 +102,32 @@ PANTHEON_SINGLE_RUNTIME_ENFORCED
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from flask import Flask, jsonify, request
 
+# The Docker entrypoint executes this file by absolute path, so add the repo
+# root before importing the authority verifier, which validates canonical
+# Registry StrategyArtifact payloads through the services package.
+_REPO_ROOT_FOR_AUTH = str(Path(__file__).resolve().parent.parent.parent)
+if _REPO_ROOT_FOR_AUTH not in sys.path:
+    sys.path.insert(0, _REPO_ROOT_FOR_AUTH)
+
 from service import (
     RuntimeManagerService,
     RuntimeManagerError,
+)
+from deploy_authority import (
+    DeployAuthorityError,
+    DeployAuthorityUnavailableError,
+    verify_deploy_authorities,
 )
 
 # Import kill-switch error type for HTTP error mapping
 from kill_switch_controller import KillSwitchError  # noqa: E402
 
 # Import the store error type so we can map it to HTTP 404/409
-import sys
 _EXEC_RM_DIR = os.getenv(
     "PANTHEON_EXEC_RUNTIME_MANAGER_DIR",
     str(Path(__file__).resolve().parent.parent.parent
@@ -125,10 +137,7 @@ if _EXEC_RM_DIR not in sys.path:
     sys.path.insert(0, _EXEC_RM_DIR)
 from runtime_binding import RuntimeBindingError  # noqa: E402
 
-# Make sibling repo modules importable when this file runs as ``main``.
-_REPO_ROOT_FOR_AUTH = str(Path(__file__).resolve().parent.parent.parent)
-if _REPO_ROOT_FOR_AUTH not in sys.path:
-    sys.path.insert(0, _REPO_ROOT_FOR_AUTH)
+# Make sibling repo modules importable when this file runs as main.
 from services.runtime_auth_inbound import require_authn  # noqa: E402
 from services.foundation.health import register_flask_health_routes  # noqa: E402
 
@@ -184,6 +193,47 @@ def _get_service() -> RuntimeManagerService:
     return _svc
 
 
+def _canonicalize_deploy_body(
+    body: dict,
+    *,
+    allowed_plan_statuses=("approved", "executing"),
+) -> dict:
+    """Replace caller assertions with exact four-owner admission readback."""
+
+    canonical = dict(body)
+    authority_report = verify_deploy_authorities(
+        canonical,
+        deployment_base_url=os.getenv("PANTHEON_DEPLOYMENT_API_URL", ""),
+        registry_base_url=(
+            os.getenv("PANTHEON_REGISTRY_API_URL")
+            or os.getenv("PANTHEON_REGISTRY_SERVICE_URL", "")
+        ),
+        governance_base_url=os.getenv(
+            "PANTHEON_GOVERNANCE_APPROVAL_API_URL", ""
+        ),
+        capital_base_url=os.getenv("PANTHEON_CAPITAL_API_URL", ""),
+        timeout_seconds=float(
+            os.getenv("PANTHEON_DEPLOY_AUTHORITY_TIMEOUT_SECONDS", "5")
+        ),
+        allowed_plan_statuses=allowed_plan_statuses,
+    )
+    canonical["loader_checks_passed"] = True
+    canonical["persona_capital_binding_status"] = authority_report[
+        "persona_capital_binding_status"
+    ]
+    canonical["allowed_deployment_scope"] = authority_report[
+        "allowed_deployment_scope"
+    ]
+    metadata = (
+        dict(canonical.get("metadata") or {})
+        if isinstance(canonical.get("metadata"), dict)
+        else {}
+    )
+    metadata["authoritative_loader_attestation"] = authority_report
+    canonical["metadata"] = metadata
+    return canonical
+
+
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
@@ -205,7 +255,7 @@ def health():
 
 
 @app.route("/api/runtimes/deploy", methods=["POST"])
-@require_authn(roles=_OPERATOR_ROLES)
+@require_authn(roles=_OPERATOR_ROLES, mfa_required=True)
 def deploy():
     """Create a RuntimeBinding from a DeploymentPlan descriptor.
 
@@ -222,18 +272,39 @@ def deploy():
     required_fields = [
         "plan_id", "plan_status", "target_stage",
         "artifact_id", "artifact_version",
+        "strategy_id", "approval_decision_id", "sponsor_persona_id",
         "capital_pool_id", "persona_capital_binding_id",
         "persona_capital_binding_status",
         "allowed_deployment_scope",
     ]
     missing = [f for f in required_fields if not body.get(f)]
-    # loader_checks_passed must be explicitly present (False is a valid but rejected value)
-    if "loader_checks_passed" not in body:
-        missing.append("loader_checks_passed")
     if missing:
         return (
             jsonify({"error": {"code": "MISSING_FIELDS", "message": f"Missing required fields: {missing}"}}),
             400,
+        )
+
+    try:
+        body = _canonicalize_deploy_body(body)
+    except DeployAuthorityUnavailableError as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "DEPLOY_AUTHORITY_UNAVAILABLE",
+                    "message": str(exc),
+                }
+            }),
+            503,
+        )
+    except DeployAuthorityError as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "DEPLOY_AUTHORITY_REJECTED",
+                    "message": str(exc),
+                }
+            }),
+            422,
         )
 
     svc = _get_service()
@@ -283,14 +354,15 @@ def replace_runtime(runtime_id):
         "target_stage",
         "artifact_id",
         "artifact_version",
+        "strategy_id",
+        "approval_decision_id",
+        "sponsor_persona_id",
         "capital_pool_id",
         "persona_capital_binding_id",
         "persona_capital_binding_status",
         "allowed_deployment_scope",
     ]
     missing = [field for field in required_fields if not body.get(field)]
-    if "loader_checks_passed" not in body:
-        missing.append("loader_checks_passed")
     if missing:
         return (
             jsonify({
@@ -300,6 +372,29 @@ def replace_runtime(runtime_id):
                 }
             }),
             400,
+        )
+
+    try:
+        body = _canonicalize_deploy_body(body)
+    except DeployAuthorityUnavailableError as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "DEPLOY_AUTHORITY_UNAVAILABLE",
+                    "message": str(exc),
+                }
+            }),
+            503,
+        )
+    except DeployAuthorityError as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "DEPLOY_AUTHORITY_REJECTED",
+                    "message": str(exc),
+                }
+            }),
+            422,
         )
 
     svc = _get_service()
@@ -369,7 +464,7 @@ def retire_binding(binding_id):
 
 
 @app.route("/api/runtime-bindings/<binding_id>/transition", methods=["POST"])
-@require_authn(roles=_OPERATOR_ROLES)
+@require_authn(roles=_OPERATOR_ROLES, mfa_required=True)
 def transition_binding(binding_id):
     """Advance a binding through the allowed status state machine.
 
@@ -384,6 +479,8 @@ def transition_binding(binding_id):
     try:
         binding = svc.transition(binding_id, new_status)
         return jsonify(binding.to_dict()), 200
+    except RuntimeManagerError as exc:
+        return jsonify({"error": {"code": "PRECONDITION_FAILED", "message": str(exc)}}), 409
     except RuntimeBindingError as exc:
         code = 404 if "not found" in str(exc).lower() else 409
         return jsonify({"error": {"code": "BINDING_ERROR", "message": str(exc)}}), code
@@ -481,6 +578,7 @@ def execute_rollback():
         "current_binding_id",
         "action_type",
         "replacement_plan_id",
+        "replacement_plan_status",
         "replacement_artifact_id",
         "replacement_artifact_version",
         "replacement_persona_capital_binding_id",
@@ -494,6 +592,104 @@ def execute_rollback():
         )
 
     svc = _get_service()
+    try:
+        old_binding = svc.require(str(body["current_binding_id"]))
+        replacement_stage = str(
+            body.get("replacement_deployment_mode")
+            or old_binding.deployment_mode
+        )
+        candidates = [
+            candidate
+            for candidate in svc.list_by_plan(str(body["replacement_plan_id"]))
+            if candidate.binding_id != old_binding.binding_id
+            and candidate.status == "retired"
+            and candidate.capital_pool_id == old_binding.capital_pool_id
+            and candidate.artifact_id == body["replacement_artifact_id"]
+            and candidate.artifact_version
+            == body["replacement_artifact_version"]
+            and candidate.deployment_mode == replacement_stage
+            and candidate.execution_mode == replacement_stage
+            and candidate.persona_capital_binding_id
+            == body["replacement_persona_capital_binding_id"]
+        ]
+        if len(candidates) != 1:
+            raise RuntimeManagerError(
+                "Rollback authority readback requires exactly one retired prior "
+                f"RuntimeBinding target; found {len(candidates)}."
+            )
+        prior = candidates[0]
+        prior_metadata = prior.metadata
+        prior_attestation = prior_metadata.get(
+            "authoritative_loader_attestation"
+        )
+        if not isinstance(prior_attestation, dict):
+            raise RuntimeManagerError(
+                "Rollback prior RuntimeBinding lacks canonical authority proof."
+            )
+        authority_descriptor = {
+            "plan_id": body["replacement_plan_id"],
+            "plan_status": body["replacement_plan_status"],
+            "target_stage": replacement_stage,
+            "artifact_id": body["replacement_artifact_id"],
+            "artifact_version": body["replacement_artifact_version"],
+            "strategy_id": prior_attestation.get("strategy_id"),
+            "approval_decision_id": prior_attestation.get(
+                "approval_decision_id"
+            ),
+            "sponsor_persona_id": prior_attestation.get(
+                "sponsor_persona_id"
+            ),
+            "capital_pool_id": old_binding.capital_pool_id,
+            "persona_capital_binding_id": body[
+                "replacement_persona_capital_binding_id"
+            ],
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": body[
+                "replacement_allowed_deployment_scope"
+            ],
+        }
+        canonical = _canonicalize_deploy_body(
+            authority_descriptor,
+            allowed_plan_statuses=("approved", "executing", "executed"),
+        )
+        body["replacement_authority_attestation"] = canonical["metadata"][
+            "authoritative_loader_attestation"
+        ]
+        body["replacement_strategy_id"] = canonical["strategy_id"]
+        body["replacement_allowed_deployment_scope"] = canonical[
+            "allowed_deployment_scope"
+        ]
+    except DeployAuthorityUnavailableError as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "DEPLOY_AUTHORITY_UNAVAILABLE",
+                    "message": str(exc),
+                }
+            }),
+            503,
+        )
+    except DeployAuthorityError as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "DEPLOY_AUTHORITY_REJECTED",
+                    "message": str(exc),
+                }
+            }),
+            422,
+        )
+    except (RuntimeManagerError, RuntimeBindingError) as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "PRECONDITION_FAILED",
+                    "message": str(exc),
+                }
+            }),
+            422,
+        )
+
     try:
         result = svc.rollback(body)
         return jsonify(result), 201
@@ -731,6 +927,42 @@ def evolution_redeploy():
         return (
             jsonify({"error": {"code": "MISSING_FIELDS", "message": f"Missing required fields: {missing}"}}),
             400,
+        )
+
+    if not isinstance(body.get("deployment_plan"), dict):
+        return (
+            jsonify({
+                "error": {
+                    "code": "MISSING_FIELDS",
+                    "message": "deployment_plan must be a non-empty object",
+                }
+            }),
+            400,
+        )
+    try:
+        body = dict(body)
+        body["deployment_plan"] = _canonicalize_deploy_body(
+            body["deployment_plan"]
+        )
+    except DeployAuthorityUnavailableError as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "DEPLOY_AUTHORITY_UNAVAILABLE",
+                    "message": str(exc),
+                }
+            }),
+            503,
+        )
+    except DeployAuthorityError as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "DEPLOY_AUTHORITY_REJECTED",
+                    "message": str(exc),
+                }
+            }),
+            422,
         )
 
     svc = _get_service()

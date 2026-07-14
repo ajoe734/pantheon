@@ -587,6 +587,8 @@ services:
       # to the governance service from this path.
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_CAPITAL_API_URL: http://capital:8092
     volumes:
       - runtime-data:/data/runtime
     depends_on:
@@ -1268,9 +1270,12 @@ services:
       PORT: "8095"
       DEPLOYMENT_DATA_DIR: /data/governance
       PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
+      PANTHEON_CAPITAL_POOL_STORE_PATH: /data/capital/capital_pools.json
+      PANTHEON_PERSONA_BINDING_STORE_PATH: /data/capital/persona_capital_bindings.json
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
     volumes:
       - governance-data:/data/governance
+      - capital-data:/data/capital:ro
       - runtime-data:/data/runtime:ro
     depends_on:
       governance:
@@ -1298,16 +1303,15 @@ services:
       DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      PANTHEON_CAPITAL_API_URL: http://capital:8092
       PANTHEON_PAPER_FLEET_RECONCILER_URL: http://paper-fleet-reconciler:8011
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
     depends_on:
       deployment:
         condition: service_healthy
       runtime-manager:
-        condition: service_healthy
-      paper-fleet-reconciler:
-        condition: service_healthy
-      incidents:
         condition: service_healthy
 
   evolution:

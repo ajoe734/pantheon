@@ -35,6 +35,28 @@ except ImportError:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+def _authority_report() -> Dict[str, Any]:
+    return {
+        "status": "passed",
+        "authority": "canonical_deployment_registry_governance_capital",
+        "plan_id": "plan-001",
+        "target_stage": "paper",
+        "artifact_id": "artifact-001",
+        "artifact_version": "v1.0.0",
+        "strategy_id": "strat-001",
+        "approval_decision_id": "adec-001",
+        "capital_pool_id": "pool-paper-001",
+        "sponsor_persona_id": "persona-001",
+        "persona_capital_binding_id": "pcb-001",
+        "deployment_plan_sha256": "sha256:" + "0" * 64,
+        "registry_entry_sha256": "sha256:" + "1" * 64,
+        "approval_decision_sha256": "sha256:" + "2" * 64,
+        "capital_pool_sha256": "sha256:" + "3" * 64,
+        "capital_admissibility_sha256": "sha256:" + "4" * 64,
+        "persona_capital_binding_sha256": "sha256:" + "5" * 64,
+    }
+
+
 def _make_saga(*, binding_id: Optional[str] = None) -> Dict[str, Any]:
     return {
         "saga_id": "deployment-saga-plan-001",
@@ -58,11 +80,13 @@ def _make_saga(*, binding_id: Optional[str] = None) -> Dict[str, Any]:
 
 def _make_deploy_context(**overrides: Any) -> Dict[str, Any]:
     ctx = {
+        "sponsor_persona_id": "persona-001",
         "persona_capital_binding_id": "pcb-001",
         "persona_capital_binding_status": "active",
         "allowed_deployment_scope": "paper",
         "loader_checks_passed": True,
         "plan_status": "approved",
+        "metadata": {"authoritative_loader_attestation": _authority_report()},
     }
     ctx.update(overrides)
     return ctx
@@ -80,6 +104,10 @@ def _make_binding(binding_id: str = "rb-abc123") -> Dict[str, Any]:
         "execution_mode": "paper",
         "persona_capital_binding_id": "pcb-001",
         "status": "active",
+        "metadata": {
+            "strategy_id": "strat-001",
+            "authoritative_loader_attestation": _authority_report(),
+        },
     }
 
 
@@ -139,11 +167,13 @@ class TestNewDispatch:
 
         call_args = client.deploy.call_args[0][0]
         assert call_args["plan_id"] == saga["plan_id"]
+        assert call_args["approval_decision_id"] == saga["approval_decision_id"]
         assert call_args["artifact_id"] == saga["artifact_id"]
         assert call_args["artifact_version"] == saga["artifact_version"]
         assert call_args["capital_pool_id"] == saga["capital_pool_id"]
         assert call_args["target_stage"] == saga["target_stage"]
         assert call_args["strategy_id"] == saga["strategy_id"]
+        assert call_args["sponsor_persona_id"] == "persona-001"
         assert call_args["persona_capital_binding_id"] == "pcb-001"
         assert call_args["persona_capital_binding_status"] == "active"
         assert call_args["allowed_deployment_scope"] == "paper"
@@ -472,6 +502,7 @@ class TestBuildDeployRequest:
         req = _build_deploy_request(saga=saga, deploy_context=ctx)
 
         assert req["plan_id"] == saga["plan_id"]
+        assert req["approval_decision_id"] == saga["approval_decision_id"]
         assert req["artifact_id"] == saga["artifact_id"]
         assert req["artifact_version"] == saga["artifact_version"]
         assert req["capital_pool_id"] == saga["capital_pool_id"]
@@ -484,6 +515,7 @@ class TestBuildDeployRequest:
         req = _build_deploy_request(saga=saga, deploy_context=ctx)
 
         assert req["persona_capital_binding_id"] == ctx["persona_capital_binding_id"]
+        assert req["sponsor_persona_id"] == ctx["sponsor_persona_id"]
         assert req["persona_capital_binding_status"] == ctx["persona_capital_binding_status"]
         assert req["allowed_deployment_scope"] == ctx["allowed_deployment_scope"]
         assert req["loader_checks_passed"] is True
@@ -496,7 +528,10 @@ class TestBuildDeployRequest:
             idempotency_key="ik-001",
             rollback_parent="rb-old",
             rollback_action_type="replace",
-            metadata={"source": "test"},
+            metadata={
+                "source": "test",
+                "authoritative_loader_attestation": _authority_report(),
+            },
         )
         req = _build_deploy_request(saga=saga, deploy_context=ctx)
 
@@ -504,7 +539,10 @@ class TestBuildDeployRequest:
         assert req["idempotency_key"] == "ik-001"
         assert req["rollback_parent"] == "rb-old"
         assert req["rollback_action_type"] == "replace"
-        assert req["metadata"] == {"source": "test"}
+        assert req["metadata"] == {
+            "source": "test",
+            "authoritative_loader_attestation": _authority_report(),
+        }
 
     def test_plan_status_defaults_to_approved_when_missing(self):
         saga = _make_saga()

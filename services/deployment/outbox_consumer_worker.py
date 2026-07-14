@@ -25,10 +25,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-# Ensure services/deployment is in python path
+# Ensure the deployment, runtime-manager, and repository modules are importable
+# both from ``python -m`` and from the service Docker entrypoint.
 _DEPLOYMENT_DIR = str(Path(__file__).resolve().parent)
-if _DEPLOYMENT_DIR not in sys.path:
-    sys.path.insert(0, _DEPLOYMENT_DIR)
+_RUNTIME_MANAGER_DIR = str(Path(__file__).resolve().parent.parent / "runtime-manager")
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+for _module_path in (_DEPLOYMENT_DIR, _RUNTIME_MANAGER_DIR, _REPO_ROOT):
+    if _module_path not in sys.path:
+        sys.path.insert(0, _module_path)
 
 from runtime_manager_dispatch_adapter import (
     dispatch_to_runtime_manager,
@@ -37,9 +41,11 @@ from runtime_manager_dispatch_adapter import (
     validate_authoritative_readback,
 )
 from runtime_manager_client import RuntimeManagerClient
-
-
-
+from deploy_authority import (
+    DeployAuthorityError,
+    DeployAuthorityUnavailableError,
+    verify_deploy_authorities,
+)
 
 _CONSUMER_NAME = "deployment-outbox-consumer"
 _TERMINAL_SAGA_STATUSES = {"failed", "aborted"}
@@ -474,25 +480,85 @@ def record_saga_failure(
     return json.loads(body) if body else {}
 
 
-def loader_checks_attested(plan: Mapping[str, Any]) -> bool:
-    """Accept only an explicit literal-True loader assertion from plan truth.
+def verify_binding_deploy_authorities(
+    *,
+    saga: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    persona_capital_binding_id: str,
+    persona_capital_binding_status: str,
+    allowed_deployment_scope: str,
+    deployment_base_url: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Bind canonical plan/saga identity to Registry and Governance truth.
 
-    Promotion persists the assertion in ``DeploymentPlan.metadata``.  A
-    top-level field is accepted only for wire compatibility; conflicting
-    top-level/metadata values fail closed.
+    Neither a plan metadata boolean nor an outbox payload is loader or approval
+    proof.  The worker first proves the canonical DeploymentPlan and
+    DeploymentSaga describe the same immutable target, then performs exact GET
+    readbacks from the Registry and Governance owners.  Runtime-manager repeats
+    the same proof at its write boundary to close the caller-forgery path.
     """
-    metadata = plan.get("metadata")
-    metadata_is_mapping = isinstance(metadata, Mapping)
-    metadata_has_value = metadata_is_mapping and "loader_checks_passed" in metadata
-    top_level_has_value = "loader_checks_passed" in plan
-    if metadata_has_value and top_level_has_value:
-        return (
-            metadata.get("loader_checks_passed") is True
-            and plan.get("loader_checks_passed") is True
+
+    identity_fields = (
+        "plan_id",
+        "approval_decision_id",
+        "strategy_id",
+        "artifact_id",
+        "artifact_version",
+        "capital_pool_id",
+        "target_stage",
+    )
+    mismatches: list[str] = []
+    for field in identity_fields:
+        saga_value = str(saga.get(field) or "").strip()
+        plan_value = str(plan.get(field) or "").strip()
+        if not saga_value:
+            mismatches.append(f"DeploymentSaga.{field} is required")
+        if not plan_value:
+            mismatches.append(f"DeploymentPlan.{field} is required")
+        if saga_value and plan_value and saga_value != plan_value:
+            mismatches.append(
+                f"{field} mismatch: saga={saga_value!r}, plan={plan_value!r}"
+            )
+    sponsor_persona_id = str(plan.get("sponsor_persona_id") or "").strip()
+    if not sponsor_persona_id:
+        mismatches.append("DeploymentPlan.sponsor_persona_id is required")
+    if mismatches:
+        raise DeployAuthorityError(
+            "deployment canonical identity mismatch: " + "; ".join(mismatches)
         )
-    if metadata_has_value:
-        return metadata.get("loader_checks_passed") is True
-    return top_level_has_value and plan.get("loader_checks_passed") is True
+
+    request = {
+        field: str(saga.get(field) or "").strip() for field in identity_fields
+    }
+    request.update(
+        {
+            "plan_status": str(plan.get("status") or "").strip(),
+            "sponsor_persona_id": sponsor_persona_id,
+            "persona_capital_binding_id": str(
+                persona_capital_binding_id or ""
+            ).strip(),
+            "persona_capital_binding_status": str(
+                persona_capital_binding_status or ""
+            ).strip(),
+            "allowed_deployment_scope": str(
+                allowed_deployment_scope or ""
+            ).strip(),
+        }
+    )
+    return verify_deploy_authorities(
+        request,
+        deployment_base_url=deployment_base_url,
+        registry_base_url=(
+            os.getenv("PANTHEON_REGISTRY_API_URL")
+            or os.getenv("PANTHEON_REGISTRY_SERVICE_URL", "")
+        ),
+        governance_base_url=os.getenv(
+            "PANTHEON_GOVERNANCE_APPROVAL_API_URL", ""
+        ),
+        capital_base_url=os.getenv("PANTHEON_CAPITAL_API_URL", ""),
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def _assert_side_effect_sequence(
@@ -672,6 +738,39 @@ def _incident_mismatch(
     return "; ".join(mismatches) or None
 
 
+def _compensation_kill_payload(
+    *,
+    saga: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    event_id: str,
+    event_idempotency_key: str,
+) -> dict[str, Any]:
+    """Build the immutable kill command used by every containment replay.
+
+    The diagnostic reason that led to containment can change after a
+    response-loss replay (for example, from a loader failure to an already
+    paused safe-mode observation).  Runtime-manager idempotency hashes the
+    complete request, so that diagnostic must stay in the IncidentCase rather
+    than the kill command payload.
+    """
+    return {
+        "reason": "severity_1_incident",
+        "capital_pool_id": saga.get("capital_pool_id"),
+        "binding_id": binding.get("binding_id"),
+        "actor_id": _CONSUMER_NAME,
+        "severity": 1,
+        "action_override": "pause",
+        "idempotency_key": event_idempotency_key or event_id,
+        "trace_context": {"trace_id": saga.get("trace_id")},
+        "context": {
+            "saga_id": saga.get("saga_id"),
+            "plan_id": saga.get("plan_id"),
+            "compensation_event_id": event_id,
+            "reason": "deployment_compensation_fail_closed",
+        },
+    }
+
+
 def _contain_and_raise_incident(
     *,
     client: RuntimeManagerClient,
@@ -693,37 +792,53 @@ def _contain_and_raise_incident(
             "safe-mode incident requires a real RuntimeBinding and runtime identity"
         )
     kill_result = client.execute_kill_switch(
-        {
-            "reason": "severity_1_incident",
-            "capital_pool_id": saga.get("capital_pool_id"),
-            "binding_id": binding.get("binding_id"),
-            "actor_id": _CONSUMER_NAME,
-            "severity": 1,
-            "action_override": "pause",
-            "idempotency_key": event_idempotency_key or event_id,
-            "trace_context": {"trace_id": saga.get("trace_id")},
-            "context": {
-                "saga_id": saga.get("saga_id"),
-                "plan_id": saga.get("plan_id"),
-                "compensation_event_id": event_id,
-                "reason": reason,
-            },
-        }
+        _compensation_kill_payload(
+            saga=saga,
+            binding=binding,
+            event_id=event_id,
+            event_idempotency_key=event_idempotency_key,
+        )
     )
     ack = kill_result.get("telemetry_ack")
     if not isinstance(ack, Mapping) or ack.get("ack_status") != "acknowledged":
         raise RuntimeError(
             f"kill-switch compensation did not produce acknowledged runtime follow-through: {ack!r}"
         )
+    expected_pool_id = str(saga.get("capital_pool_id") or "")
+    contained_binding_id = str(ack.get("runtime_binding_id") or "")
+    ack_mismatches = []
+    if ack.get("capital_pool_id") != expected_pool_id:
+        ack_mismatches.append(
+            f"capital_pool_id expected {expected_pool_id!r}, got {ack.get('capital_pool_id')!r}"
+        )
+    if ack.get("safe_mode_after") != "paused":
+        ack_mismatches.append(
+            f"safe_mode_after expected 'paused', got {ack.get('safe_mode_after')!r}"
+        )
+    if ack.get("runtime_status_after") != "paused":
+        ack_mismatches.append(
+            f"runtime_status_after expected 'paused', got {ack.get('runtime_status_after')!r}"
+        )
+    if not contained_binding_id:
+        ack_mismatches.append("runtime_binding_id is required")
+    if ack_mismatches:
+        raise RuntimeError(
+            "kill-switch compensation acknowledgement mismatch: "
+            + "; ".join(ack_mismatches)
+        )
     safe_mode = client.get_safe_mode(str(saga.get("capital_pool_id") or ""))
     if safe_mode.get("safe_mode_state") != "paused":
         raise RuntimeError(
             f"safe-mode readback expected 'paused', got {safe_mode.get('safe_mode_state')!r}"
         )
-    contained = client.get(str(binding.get("binding_id")))
+    contained = client.get(contained_binding_id)
     if contained is None or contained.get("status") != "paused":
         raise RuntimeError(
             "kill-switch readback did not prove the targeted RuntimeBinding is paused"
+        )
+    if contained.get("capital_pool_id") != expected_pool_id:
+        raise RuntimeError(
+            "kill-switch readback RuntimeBinding belongs to a different capital pool"
         )
     incident_payload = _incident_payload(
         saga=saga,
@@ -745,30 +860,77 @@ def _contain_and_raise_incident(
     )
 
 
-def _rollback_loader_attestation_error(
-    *, plan: Mapping[str, Any], rollback: Mapping[str, Any]
+def _rollback_prior_authority_error(
+    *,
+    prior: Mapping[str, Any],
+    source_binding: Mapping[str, Any],
+    rollback: Mapping[str, Any],
+    target_plan: Mapping[str, Any],
 ) -> str | None:
-    metadata = plan.get("metadata")
+    """Validate the persisted four-owner proof on an exact retired target."""
+
+    metadata = prior.get("metadata")
     attestation = (
-        metadata.get("rollback_loader_attestation")
+        metadata.get("authoritative_loader_attestation")
         if isinstance(metadata, Mapping)
         else None
     )
     if not isinstance(attestation, Mapping):
-        return "missing metadata.rollback_loader_attestation"
+        return "prior RuntimeBinding is missing canonical authority proof"
     expected = {
+        "status": "passed",
+        "authority": "canonical_deployment_registry_governance_capital",
+        "plan_id": prior.get("plan_id"),
+        "target_stage": source_binding.get("deployment_mode"),
         "artifact_id": rollback.get("target_artifact_id"),
         "artifact_version": rollback.get("target_version"),
+        "capital_pool_id": source_binding.get("capital_pool_id"),
+        "persona_capital_binding_id": source_binding.get(
+            "persona_capital_binding_id"
+        ),
     }
     mismatches = [
-        f"rollback loader {field} expected {value!r}, got {attestation.get(field)!r}"
+        f"rollback authority {field} expected {value!r}, got {attestation.get(field)!r}"
         for field, value in expected.items()
         if attestation.get(field) != value
     ]
-    if attestation.get("passed") is not True:
-        mismatches.append("rollback loader passed must be literal true")
-    if not str(attestation.get("proof_ref") or "").strip():
-        mismatches.append("rollback loader proof_ref is required")
+    digest_fields = (
+        "deployment_plan_sha256",
+        "registry_entry_sha256",
+        "approval_decision_sha256",
+        "capital_pool_sha256",
+        "capital_admissibility_sha256",
+        "persona_capital_binding_sha256",
+    )
+    mismatches.extend(
+        f"rollback authority {field} is missing or invalid"
+        for field in digest_fields
+        if not str(attestation.get(field) or "").startswith("sha256:")
+        or len(str(attestation.get(field) or "")) != 71
+    )
+    strategy_id = str(attestation.get("strategy_id") or "")
+    if not strategy_id or not isinstance(metadata, Mapping) or metadata.get(
+        "strategy_id"
+    ) != strategy_id:
+        mismatches.append("rollback authority strategy_id is missing or inconsistent")
+    allowed_scope = str(attestation.get("allowed_deployment_scope") or "")
+    if allowed_scope != "paper":
+        mismatches.append(
+            "rollback authority allowed_deployment_scope must be exactly 'paper'"
+        )
+    target_expected = {
+        "plan_id": prior.get("plan_id"),
+        "artifact_id": rollback.get("target_artifact_id"),
+        "artifact_version": rollback.get("target_version"),
+        "target_stage": source_binding.get("deployment_mode"),
+        "capital_pool_id": source_binding.get("capital_pool_id"),
+        "strategy_id": strategy_id,
+    }
+    mismatches.extend(
+        f"fallback DeploymentPlan {field} expected {value!r}, got {target_plan.get(field)!r}"
+        for field, value in target_expected.items()
+        if target_plan.get(field) != value
+    )
     return "; ".join(mismatches) or None
 
 
@@ -791,7 +953,6 @@ def _rollback_binding_error(
         ),
         "rollback_parent": old_binding.get("binding_id"),
         "rollback_action_type": action_type,
-        "status": "active",
     }
     mismatches = [
         f"rollback child {field} expected {value!r}, got {new_binding.get(field)!r}"
@@ -826,9 +987,6 @@ def _execute_rollback_compensation(
             timeout_seconds=timeout_seconds,
         )
     action_type = str(rollback.get("action_type") or "replace")
-    attestation_error = _rollback_loader_attestation_error(
-        plan=plan, rollback=rollback
-    )
     safe_mode_readback = client.get_safe_mode(
         str(saga.get("capital_pool_id") or "")
     )
@@ -837,20 +995,6 @@ def _execute_rollback_compensation(
         if isinstance(safe_mode_readback, Mapping)
         else None
     )
-    if safe_mode_state and safe_mode_state not in {"normal", "normal_restored"}:
-        return _contain_and_raise_incident(
-            client=client,
-            saga=saga,
-            binding=binding,
-            event_id=event_id,
-            event_idempotency_key=event_idempotency_key,
-            incident_url=incident_url,
-            reason=(
-                "kill-switch safe mode won before rollback compensation: "
-                f"{safe_mode_state}"
-            ),
-            timeout_seconds=timeout_seconds,
-        )
     pool_bindings = client.list_by_pool(str(saga.get("capital_pool_id") or ""))
     children = [
         candidate
@@ -872,6 +1016,23 @@ def _execute_rollback_compensation(
             timeout_seconds=timeout_seconds,
         )
     new_binding: Mapping[str, Any] | None = children[0] if children else None
+    if safe_mode_state and safe_mode_state not in {"normal", "normal_restored"}:
+        # Keep the immutable compensation kill request pointed at the saga
+        # source.  Runtime-manager resolves a stale retired source to the sole
+        # current non-terminal child and returns that identity in telemetry.
+        return _contain_and_raise_incident(
+            client=client,
+            saga=saga,
+            binding=binding,
+            event_id=event_id,
+            event_idempotency_key=event_idempotency_key,
+            incident_url=incident_url,
+            reason=(
+                "kill-switch safe mode won before rollback compensation: "
+                f"{safe_mode_state}"
+            ),
+            timeout_seconds=timeout_seconds,
+        )
     if new_binding is None:
         if binding.get("status") in {"retired", "failed"}:
             return _contain_and_raise_incident(
@@ -884,17 +1045,6 @@ def _execute_rollback_compensation(
                 reason="rollback old binding is terminal but no replacement exists",
                 timeout_seconds=timeout_seconds,
             )
-        if attestation_error:
-            return _contain_and_raise_incident(
-                client=client,
-                saga=saga,
-                binding=binding,
-                event_id=event_id,
-                event_idempotency_key=event_idempotency_key,
-                incident_url=incident_url,
-                reason=f"rollback loader proof failed closed: {attestation_error}",
-                timeout_seconds=timeout_seconds,
-            )
         prior_candidates = [
             candidate
             for candidate in pool_bindings
@@ -902,9 +1052,15 @@ def _execute_rollback_compensation(
             and candidate.get("artifact_id") == rollback.get("target_artifact_id")
             and candidate.get("artifact_version") == rollback.get("target_version")
             and candidate.get("deployment_mode") == binding.get("deployment_mode")
+            and candidate.get("execution_mode")
+            == (binding.get("execution_mode") or binding.get("deployment_mode"))
+            and candidate.get("capital_pool_id") == binding.get("capital_pool_id")
+            and candidate.get("persona_capital_binding_id")
+            == binding.get("persona_capital_binding_id")
+            and candidate.get("status") == "retired"
             and candidate.get("plan_id")
         ]
-        if not prior_candidates:
+        if len(prior_candidates) != 1:
             return _contain_and_raise_incident(
                 client=client,
                 saga=saga,
@@ -912,22 +1068,25 @@ def _execute_rollback_compensation(
                 event_id=event_id,
                 event_idempotency_key=event_idempotency_key,
                 incident_url=incident_url,
-                reason="rollback target has no prior authoritative RuntimeBinding lineage",
+                reason=(
+                    "rollback target must resolve to exactly one retired prior "
+                    f"RuntimeBinding; found {len(prior_candidates)}"
+                ),
                 timeout_seconds=timeout_seconds,
             )
-        prior = max(
-            prior_candidates,
-            key=lambda candidate: str(candidate.get("effective_at") or ""),
-        )
+        prior = prior_candidates[0]
         target_plan = fetch_plan(
             api_url=api_url,
             plan_id=str(prior.get("plan_id")),
             timeout_seconds=timeout_seconds,
         )
-        if (
-            target_plan.get("artifact_id") != rollback.get("target_artifact_id")
-            or target_plan.get("artifact_version") != rollback.get("target_version")
-        ):
+        authority_error = _rollback_prior_authority_error(
+            prior=prior,
+            source_binding=binding,
+            rollback=rollback,
+            target_plan=target_plan,
+        )
+        if authority_error:
             return _contain_and_raise_incident(
                 client=client,
                 saga=saga,
@@ -935,42 +1094,87 @@ def _execute_rollback_compensation(
                 event_id=event_id,
                 event_idempotency_key=event_idempotency_key,
                 incident_url=incident_url,
-                reason="rollback prior binding does not resolve to an exact fallback DeploymentPlan",
+                reason=f"rollback prior authority failed closed: {authority_error}",
                 timeout_seconds=timeout_seconds,
             )
-        metadata = binding.get("metadata")
-        allowed_scope = (
-            metadata.get("allowed_deployment_scope")
-            if isinstance(metadata, Mapping)
+        prior_metadata = prior.get("metadata")
+        prior_attestation = (
+            prior_metadata.get("authoritative_loader_attestation")
+            if isinstance(prior_metadata, Mapping)
             else None
-        ) or binding.get("deployment_mode")
+        )
+        if not isinstance(prior_attestation, Mapping):  # defensive; validated above
+            raise RuntimeError("rollback prior canonical authority proof disappeared")
+        rollback_authority_request = {
+            "plan_id": target_plan.get("plan_id"),
+            "plan_status": target_plan.get("status"),
+            "target_stage": target_plan.get("target_stage"),
+            "artifact_id": target_plan.get("artifact_id"),
+            "artifact_version": target_plan.get("artifact_version"),
+            "strategy_id": target_plan.get("strategy_id"),
+            "approval_decision_id": target_plan.get("approval_decision_id"),
+            "sponsor_persona_id": target_plan.get("sponsor_persona_id"),
+            "capital_pool_id": target_plan.get("capital_pool_id"),
+            "persona_capital_binding_id": prior.get(
+                "persona_capital_binding_id"
+            ),
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": prior_attestation.get(
+                "allowed_deployment_scope"
+            ),
+        }
+        try:
+            current_rollback_authority = verify_deploy_authorities(
+                rollback_authority_request,
+                deployment_base_url=api_url,
+                registry_base_url=(
+                    os.getenv("PANTHEON_REGISTRY_API_URL")
+                    or os.getenv("PANTHEON_REGISTRY_SERVICE_URL", "")
+                ),
+                governance_base_url=os.getenv(
+                    "PANTHEON_GOVERNANCE_APPROVAL_API_URL", ""
+                ),
+                capital_base_url=os.getenv("PANTHEON_CAPITAL_API_URL", ""),
+                timeout_seconds=timeout_seconds,
+                allowed_plan_statuses=("approved", "executing", "executed"),
+            )
+        except DeployAuthorityUnavailableError:
+            raise
+        except DeployAuthorityError as exc:
+            return _contain_and_raise_incident(
+                client=client,
+                saga=saga,
+                binding=binding,
+                event_id=event_id,
+                event_idempotency_key=event_idempotency_key,
+                incident_url=incident_url,
+                reason=f"rollback current authority rejected: {exc}",
+                timeout_seconds=timeout_seconds,
+            )
         result = client.rollback(
             {
                 "current_binding_id": binding.get("binding_id"),
                 "action_type": action_type,
                 "replacement_plan_id": target_plan.get("plan_id"),
-                "replacement_plan_status": "approved",
+                "replacement_plan_status": target_plan.get("status"),
                 "replacement_artifact_id": rollback.get("target_artifact_id"),
                 "replacement_artifact_version": rollback.get("target_version"),
                 "replacement_persona_capital_binding_id": binding.get(
                     "persona_capital_binding_id"
                 ),
                 "replacement_persona_capital_binding_status": "active",
-                "replacement_allowed_deployment_scope": allowed_scope,
+                "replacement_allowed_deployment_scope": prior_attestation[
+                    "allowed_deployment_scope"
+                ],
                 "replacement_deployment_mode": binding.get("deployment_mode"),
-                "loader_checks_passed": True,
                 "opened_by_artifact_id": binding.get("artifact_id"),
-                "replacement_strategy_id": saga.get("strategy_id"),
+                "replacement_strategy_id": prior_attestation["strategy_id"],
+                "replacement_authority_attestation": current_rollback_authority,
                 "replacement_metadata": {
                     "compensation_event_id": event_id,
                     "compensation_idempotency_key": event_idempotency_key,
                     "deployment_saga_id": saga.get("saga_id"),
                     "rollback_source_plan_id": saga.get("plan_id"),
-                    "rollback_loader_attestation": dict(
-                        plan.get("metadata", {}).get(
-                            "rollback_loader_attestation", {}
-                        )
-                    ),
                 },
             }
         )
@@ -1005,6 +1209,26 @@ def _execute_rollback_compensation(
     )
     if child_error:
         raise RuntimeError(f"rollback replacement readback mismatch: {child_error}")
+    replacement_status = str(refreshed_new.get("status") or "")
+    if replacement_status in {"pending_pause", "paused"}:
+        return _contain_and_raise_incident(
+            client=client,
+            saga=saga,
+            binding=binding,
+            event_id=event_id,
+            event_idempotency_key=event_idempotency_key,
+            incident_url=incident_url,
+            reason=(
+                "kill-switch containment won during rollback; replacement "
+                f"{refreshed_new.get('binding_id')} status={replacement_status}"
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+    if replacement_status != "active":
+        raise RuntimeError(
+            "rollback replacement status expected active/contained, got "
+            f"{replacement_status!r}"
+        )
     active = client.get_active_for_pool(str(saga.get("capital_pool_id") or ""))
     if active is None or active.get("binding_id") != refreshed_new.get("binding_id"):
         raise RuntimeError("rollback replacement is not authoritative active pool owner")
@@ -1153,6 +1377,322 @@ def execute_compensation(
     return terminal_status, expected_plan_status
 
 
+def _verify_containment_readback(
+    *,
+    client: RuntimeManagerClient,
+    saga: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    event: Mapping[str, Any],
+    incident_url: str,
+    timeout_seconds: float,
+    require_saga_identity: bool = True,
+) -> None:
+    """Re-prove paused safe mode and the exact IncidentCase without writes."""
+    if not incident_url:
+        raise RuntimeError(
+            "PANTHEON_INCIDENTS_API_URL is required to verify compensation containment"
+        )
+    binding_id = str(binding.get("binding_id") or "")
+    if not binding_id:
+        raise RuntimeError("containment verification requires a RuntimeBinding identity")
+    safe_mode = client.get_safe_mode(str(saga.get("capital_pool_id") or ""))
+    if safe_mode.get("safe_mode_state") != "paused":
+        raise RuntimeError(
+            "terminal compensation replay did not prove paused safe mode: "
+            f"{safe_mode.get('safe_mode_state')!r}"
+        )
+    contained = client.get(binding_id)
+    if contained is None:
+        raise RuntimeError(
+            f"terminal compensation RuntimeBinding {binding_id!r} is not readable"
+        )
+    if require_saga_identity:
+        identity_error = _binding_identity_error(
+            saga=saga,
+            binding=contained,
+            expected_binding_id=binding_id,
+        )
+        if identity_error:
+            raise RuntimeError(
+                f"terminal containment binding identity mismatch: {identity_error}"
+            )
+    elif contained.get("capital_pool_id") != saga.get("capital_pool_id"):
+        raise RuntimeError(
+            "terminal containment binding belongs to a different capital pool"
+        )
+    if contained.get("status") != "paused":
+        raise RuntimeError(
+            "terminal compensation replay did not prove the RuntimeBinding is paused"
+        )
+    event_id = str(event.get("event_id") or "")
+    expected_incident = _incident_payload(
+        saga=saga,
+        binding=contained,
+        event_id=event_id,
+        reason="terminal compensation replay verification",
+    )
+    incident = fetch_incident(
+        base_url=incident_url,
+        incident_id=str(expected_incident["incident_id"]),
+        timeout_seconds=timeout_seconds,
+    )
+    incident_error = _incident_mismatch(expected_incident, incident)
+    if incident_error:
+        raise RuntimeError(
+            f"terminal compensation incident readback mismatch: {incident_error}"
+        )
+
+
+def verify_terminal_compensation_side_effects(
+    *,
+    saga: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    event: Mapping[str, Any],
+    client: RuntimeManagerClient,
+    incident_url: str,
+    timeout_seconds: float,
+) -> str:
+    """Re-prove the command owner's terminal state before replay is consumed.
+
+    A terminal saga/projection says orchestration finalized; it cannot stand in
+    for the runtime-manager or incident owner readback that justified that
+    finalization.
+    """
+    decision = saga.get("compensation")
+    if not isinstance(decision, Mapping):
+        payload = event.get("payload")
+        decision = payload.get("compensation") if isinstance(payload, Mapping) else None
+    if not isinstance(decision, Mapping):
+        raise RuntimeError("terminal compensation replay has no compensation decision")
+    command = str(decision.get("command_type") or "")
+    plan_id = str(saga.get("plan_id") or "")
+    binding_id = str(saga.get("binding_id") or "")
+    expected_plan_status = str(plan.get("status") or "")
+
+    if command == "abort_plan":
+        bindings = client.list_by_plan(plan_id)
+        if not binding_id and not bindings:
+            if plan.get("status") != "aborted":
+                raise RuntimeError(
+                    "terminal abort replay did not prove DeploymentPlan.status='aborted'"
+                )
+            return "aborted"
+        target = client.get(binding_id) if binding_id else bindings[0]
+        if not isinstance(target, Mapping):
+            raise RuntimeError(
+                "terminal abort replay found a binding identity but no authoritative record"
+            )
+        _verify_containment_readback(
+            client=client,
+            saga=saga,
+            binding=target,
+            event=event,
+            incident_url=incident_url,
+            timeout_seconds=timeout_seconds,
+        )
+        return expected_plan_status
+
+    if command == "mark_binding_failed_inactive":
+        binding = client.get(binding_id) if binding_id else None
+        if binding is None:
+            if client.list_by_plan(plan_id):
+                raise RuntimeError(
+                    "terminal failed-binding replay found unexpected plan bindings"
+                )
+            return expected_plan_status
+        identity_error = _binding_identity_error(
+            saga=saga,
+            binding=binding,
+            expected_binding_id=binding_id,
+        )
+        if identity_error:
+            raise RuntimeError(
+                f"terminal failed-binding identity mismatch: {identity_error}"
+            )
+        if binding.get("status") != "failed":
+            raise RuntimeError(
+                "terminal failed-binding replay expected status='failed', got "
+                f"{binding.get('status')!r}"
+            )
+        return expected_plan_status
+
+    if command == "request_rollback":
+        binding = client.get(binding_id) if binding_id else None
+        if not isinstance(binding, Mapping):
+            raise RuntimeError(
+                "terminal rollback replay requires the source RuntimeBinding"
+            )
+        identity_error = _binding_identity_error(
+            saga=saga,
+            binding=binding,
+            expected_binding_id=binding_id,
+        )
+        if identity_error:
+            raise RuntimeError(
+                f"terminal rollback source identity mismatch: {identity_error}"
+            )
+        rollback = plan.get("rollback")
+        children: list[Mapping[str, Any]] = []
+        if isinstance(rollback, Mapping):
+            action_type = str(rollback.get("action_type") or "replace")
+            children = [
+                candidate
+                for candidate in client.list_by_pool(
+                    str(saga.get("capital_pool_id") or "")
+                )
+                if candidate.get("rollback_parent") == binding_id
+                and candidate.get("rollback_action_type") == action_type
+                and candidate.get("artifact_id") == rollback.get("target_artifact_id")
+                and candidate.get("artifact_version") == rollback.get("target_version")
+            ]
+            if len(children) > 1:
+                raise RuntimeError(
+                    f"terminal rollback replay found {len(children)} matching children"
+                )
+            if children:
+                if binding.get("status") != "retired":
+                    raise RuntimeError(
+                        "terminal rollback replay did not prove the source binding retired"
+                    )
+                child = client.get(str(children[0].get("binding_id") or ""))
+                if not isinstance(child, Mapping):
+                    raise RuntimeError(
+                        "terminal rollback replacement RuntimeBinding is not readable"
+                    )
+                child_error = _rollback_binding_error(
+                    old_binding=binding,
+                    new_binding=child,
+                    rollback=rollback,
+                    action_type=action_type,
+                )
+                if child_error:
+                    raise RuntimeError(
+                        f"terminal rollback replacement mismatch: {child_error}"
+                    )
+                child_status = str(child.get("status") or "")
+                if child_status == "paused":
+                    _verify_containment_readback(
+                        client=client,
+                        saga=saga,
+                        binding=child,
+                        event=event,
+                        incident_url=incident_url,
+                        timeout_seconds=timeout_seconds,
+                        require_saga_identity=False,
+                    )
+                    return expected_plan_status
+                if child_status != "active":
+                    raise RuntimeError(
+                        "terminal rollback replacement expected active/paused, got "
+                        f"{child_status!r}"
+                    )
+                active = client.get_active_for_pool(
+                    str(saga.get("capital_pool_id") or "")
+                )
+                if active is None or active.get("binding_id") != child.get("binding_id"):
+                    raise RuntimeError(
+                        "terminal rollback replacement is not authoritative active pool owner"
+                    )
+                return expected_plan_status
+        _verify_containment_readback(
+            client=client,
+            saga=saga,
+            binding=binding,
+            event=event,
+            incident_url=incident_url,
+            timeout_seconds=timeout_seconds,
+        )
+        return expected_plan_status
+
+    if command == "enter_safe_mode_and_raise_incident":
+        binding = client.get(binding_id) if binding_id else None
+        if not isinstance(binding, Mapping):
+            raise RuntimeError(
+                "terminal safe-mode replay requires the source RuntimeBinding"
+            )
+        _verify_containment_readback(
+            client=client,
+            saga=saga,
+            binding=binding,
+            event=event,
+            incident_url=incident_url,
+            timeout_seconds=timeout_seconds,
+        )
+        return expected_plan_status
+
+    raise RuntimeError(
+        f"unsupported terminal compensation command_type={command!r}"
+    )
+
+
+def _delivery_will_dead_letter(
+    *, record: Mapping[str, Any], retryable: bool, max_attempts: int
+) -> bool:
+    attempts = int(record.get("delivery_attempts") or 0)
+    return not retryable or attempts + 1 >= max_attempts
+
+
+def _trigger_runtime_load_compensation(
+    *,
+    api_url: str,
+    saga_id: str,
+    reason: str,
+    timeout_seconds: float,
+) -> None:
+    """Durably request compensation before a runtime-load event enters DLQ."""
+    latest = fetch_saga(
+        api_url=api_url,
+        saga_id=saga_id,
+        timeout_seconds=timeout_seconds,
+    )
+    latest_status = str(latest.get("status") or "")
+    if latest_status in {"compensating", "failed", "aborted"}:
+        if not isinstance(latest.get("compensation"), Mapping):
+            raise RuntimeError(
+                "runtime-load saga is terminal/compensating without a durable compensation decision"
+            )
+        return
+    failed_step = (
+        "runtime_active"
+        if latest_status == "completed" or latest.get("current_step") == "runtime_active"
+        else "runtime_load_requested"
+    )
+    try:
+        record_saga_failure(
+            api_url=api_url,
+            saga_id=saga_id,
+            reason=reason,
+            failed_step=failed_step,
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception:
+        # A POST response can be lost after the service commits.  Authoritative
+        # readback decides whether it is safe to proceed to DLQ.
+        committed = fetch_saga(
+            api_url=api_url,
+            saga_id=saga_id,
+            timeout_seconds=timeout_seconds,
+        )
+        if (
+            str(committed.get("status") or "") == "compensating"
+            and isinstance(committed.get("compensation"), Mapping)
+        ):
+            return
+        raise
+    committed = fetch_saga(
+        api_url=api_url,
+        saga_id=saga_id,
+        timeout_seconds=timeout_seconds,
+    )
+    if (
+        str(committed.get("status") or "") != "compensating"
+        or not isinstance(committed.get("compensation"), Mapping)
+    ):
+        raise RuntimeError(
+            "runtime-load compensation request did not converge before DLQ"
+        )
+
+
 def _apply_receipt_counts(
     *, receipt: dict[str, Any], event_id: str
 ) -> tuple[int, int, str | None]:
@@ -1195,10 +1735,10 @@ def run_poll(
         if not event_id:
             errors.append(f"missing event_id in record: {record}")
             continue
+        event_type = str(event.get("event_type") or "")
+        aggregate_id = str(event.get("aggregate_id") or "")
+        sequence_no = int(event.get("sequence_no") or 0)
         try:
-            event_type = event.get("event_type", "")
-            aggregate_id = str(event.get("aggregate_id") or "")
-            sequence_no = int(event.get("sequence_no") or 0)
             if (
                 event_type
                 in {
@@ -1290,11 +1830,62 @@ def run_poll(
                     errors.append(reason)
                     continue
 
-                if not loader_checks_attested(plan):
-                    reason = (
-                        "Artifact loader checks are not authoritatively attested by "
-                        "DeploymentPlan.metadata.loader_checks_passed=true"
+                try:
+                    authority_report = verify_binding_deploy_authorities(
+                        saga=saga,
+                        plan=plan,
+                        persona_capital_binding_id=str(
+                            compat.get("persona_binding_id") or ""
+                        ),
+                        persona_capital_binding_status=(
+                            "active" if compat.get("persona_scope_ok") else "inactive"
+                        ),
+                        allowed_deployment_scope=str(
+                            compat.get("allowed_deployment_scope") or ""
+                        ),
+                        deployment_base_url=api_url,
+                        timeout_seconds=timeout_seconds,
                     )
+                except DeployAuthorityUnavailableError as exc:
+                    reason = f"deploy authority unavailable: {exc}"
+                    # Exhausting the retry budget is a durable orchestration
+                    # failure, not a bare DLQ transition.  Persist the saga
+                    # failure first so compensation/abort truth exists before
+                    # sequence 1 is replayed by an operator.
+                    if _delivery_will_dead_letter(
+                        record=record,
+                        retryable=True,
+                        max_attempts=max_attempts,
+                    ):
+                        record_saga_failure(
+                            api_url=api_url,
+                            saga_id=saga_id,
+                            reason=reason,
+                            failed_step="binding_requested",
+                            timeout_seconds=timeout_seconds,
+                        )
+                    failure_record, failure_error = _record_failure_best_effort(
+                        api_url=api_url,
+                        event_id=event_id,
+                        consumer_name=consumer_name,
+                        reason=reason,
+                        retryable=True,
+                        max_attempts=max_attempts,
+                        retry_delay_seconds=retry_delay_seconds,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    errors.append(reason)
+                    if failure_error:
+                        errors.append(
+                            f"event_id={event_id} failure_record_error={failure_error}"
+                        )
+                    elif failure_record and failure_record.get("status") == "dead_lettered":
+                        dead_lettered += 1
+                    else:
+                        retry_scheduled += 1
+                    continue
+                except DeployAuthorityError as exc:
+                    reason = f"deploy authority rejected: {exc}"
                     record_saga_failure(
                         api_url=api_url,
                         saga_id=saga_id,
@@ -1322,7 +1913,13 @@ def run_poll(
                     if isinstance(plan.get("metadata"), Mapping)
                     else {}
                 )
+                # Legacy caller assertions are deliberately not propagated as
+                # proof.  Only the exact canonical report can occupy the
+                # attestation slot persisted in RuntimeBinding metadata.
+                plan_metadata.pop("loader_checks_passed", None)
+                plan_metadata.pop("authoritative_loader_attestation", None)
                 deploy_context = {
+                    "sponsor_persona_id": sponsor_persona_id,
                     "persona_capital_binding_id": compat.get("persona_binding_id"),
                     "persona_capital_binding_status": "active" if compat.get("persona_scope_ok") else "inactive",
                     "allowed_deployment_scope": compat.get("allowed_deployment_scope"),
@@ -1335,6 +1932,7 @@ def run_poll(
                         "deployment_saga_id": saga_id,
                         "deployment_outbox_event_id": event_id,
                         "deployment_trace_id": saga.get("trace_id"),
+                        "authoritative_loader_attestation": authority_report,
                     },
                 }
 
@@ -1344,7 +1942,7 @@ def run_poll(
                 existing_binding_id = saga.get("binding_id")
 
                 # Construct client
-                client = RuntimeManagerClient()
+                client = RuntimeManagerClient(require_remote=True)
 
                 preflight_error: str | None = None
                 preflight_terminal_error: str | None = None
@@ -1506,7 +2104,7 @@ def run_poll(
                 if not binding_id:
                     raise ValueError(f"Saga {saga_id!r} is missing binding_id for runtime readback")
 
-                client = RuntimeManagerClient()
+                client = RuntimeManagerClient(require_remote=True)
                 binding = client.get(binding_id)
                 if binding is None:
                     raise RuntimeError(
@@ -1627,9 +2225,19 @@ def run_poll(
                 )
                 saga_status = str(saga.get("status") or "")
                 if saga_status in _TERMINAL_SAGA_STATUSES:
-                    expected_plan_status = str(plan.get("status") or "")
+                    client = RuntimeManagerClient(require_remote=True)
+                    expected_plan_status = verify_terminal_compensation_side_effects(
+                        saga=saga,
+                        plan=plan,
+                        event=event,
+                        client=client,
+                        incident_url=os.getenv(
+                            "PANTHEON_INCIDENTS_API_URL", ""
+                        ).strip(),
+                        timeout_seconds=timeout_seconds,
+                    )
                 elif saga_status == "compensating":
-                    client = RuntimeManagerClient()
+                    client = RuntimeManagerClient(require_remote=True)
                     _, expected_plan_status = execute_compensation(
                         api_url=api_url,
                         saga=saga,
@@ -1697,12 +2305,35 @@ def run_poll(
             reason = f"event_id={event_id} http_error={exc.code} {exc.reason}"
             errors.append(reason)
             if record_failures:
+                retryable = _http_error_retryable(exc)
+                if (
+                    event_type == "runtime.load.requested"
+                    and aggregate_id
+                    and _delivery_will_dead_letter(
+                        record=record,
+                        retryable=retryable,
+                        max_attempts=max_attempts,
+                    )
+                ):
+                    try:
+                        _trigger_runtime_load_compensation(
+                            api_url=api_url,
+                            saga_id=aggregate_id,
+                            reason=reason,
+                            timeout_seconds=timeout_seconds,
+                        )
+                    except Exception as compensation_exc:  # noqa: BLE001
+                        errors.append(
+                            f"event_id={event_id} compensation_record_error="
+                            f"{compensation_exc}"
+                        )
+                        continue
                 failure_record, failure_error = _record_failure_best_effort(
                     api_url=api_url,
                     event_id=event_id,
                     consumer_name=consumer_name,
                     reason=reason,
-                    retryable=_http_error_retryable(exc),
+                    retryable=retryable,
                     max_attempts=max_attempts,
                     retry_delay_seconds=retry_delay_seconds,
                     timeout_seconds=timeout_seconds,
@@ -1717,6 +2348,28 @@ def run_poll(
             reason = f"event_id={event_id} error={exc}"
             errors.append(reason)
             if record_failures:
+                if (
+                    event_type == "runtime.load.requested"
+                    and aggregate_id
+                    and _delivery_will_dead_letter(
+                        record=record,
+                        retryable=True,
+                        max_attempts=max_attempts,
+                    )
+                ):
+                    try:
+                        _trigger_runtime_load_compensation(
+                            api_url=api_url,
+                            saga_id=aggregate_id,
+                            reason=reason,
+                            timeout_seconds=timeout_seconds,
+                        )
+                    except Exception as compensation_exc:  # noqa: BLE001
+                        errors.append(
+                            f"event_id={event_id} compensation_record_error="
+                            f"{compensation_exc}"
+                        )
+                        continue
                 failure_record, failure_error = _record_failure_best_effort(
                     api_url=api_url,
                     event_id=event_id,
