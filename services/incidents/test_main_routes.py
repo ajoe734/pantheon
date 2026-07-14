@@ -304,6 +304,78 @@ def test_consume_threshold_route_rejects_explicit_incident_id_collision_across_i
     assert store.get_incident(shared_id).binding_id == "rb-threshold-fixture-paper-001"
 
 
+def test_consume_threshold_route_rejects_explicit_incident_id_collision_across_metric_only():
+    """Same explicit incident_id, same binding/runtime/event_id, but a
+    *different metric* must not be treated as a dedupe of the first breach
+    (round-9 review point 4): reusing all identity fields except metric_name
+    previously returned created=false against the unrelated first incident."""
+    shared_id = "inc-collision-metric-001"
+    first = _threshold_fixture()
+    first["incident_id"] = shared_id
+
+    r1 = client.post("/api/incidents/consume-threshold", json=first)
+    assert r1.status_code == 201, r1.text
+
+    second = _threshold_fixture()
+    second["incident_id"] = shared_id
+    second["threshold_snapshot"]["metric_name"] = "rolling_pnl_floor"
+
+    r2 = client.post("/api/incidents/consume-threshold", json=second)
+
+    assert r2.status_code == 422
+    assert "conflicts with an existing incident" in r2.text
+
+
+def test_consume_threshold_route_rejects_explicit_incident_id_collision_via_supplemental_id_injection():
+    """Changing the real primary event while injecting the *old* event_id as
+    a supplemental ``telemetry_event_ids`` entry must not satisfy the
+    collision guard's shared-evidence check (round-9 review point 4): only
+    the canonical primary event id counts, not an arbitrary set
+    intersection."""
+    shared_id = "inc-collision-supplemental-001"
+    first = _threshold_fixture()
+    first["incident_id"] = shared_id
+    old_event_id = first["telemetry_event"]["event_id"]
+
+    r1 = client.post("/api/incidents/consume-threshold", json=first)
+    assert r1.status_code == 201, r1.text
+
+    second = _threshold_fixture()
+    second["incident_id"] = shared_id
+    second["telemetry_event"]["event_id"] = "tel-threshold-fixture-001-genuinely-new"
+    # Inject the old primary event id as a supplemental top-level id.
+    second["telemetry_event_ids"] = [old_event_id]
+
+    r2 = client.post("/api/incidents/consume-threshold", json=second)
+
+    assert r2.status_code == 422
+    assert "conflicts with an existing incident" in r2.text
+
+
+def test_consume_threshold_route_rejects_non_string_window():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-bad-window-type"
+    payload["threshold_snapshot"]["window"] = ["daily"]
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "window must be a string" in r.text
+    assert store.get_incident("inc-bad-window-type") is None
+
+
+def test_consume_threshold_route_rejects_non_string_note():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-bad-note-type"
+    payload["threshold_snapshot"]["note"] = {"bad": True}
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "note must be a string" in r.text
+    assert store.get_incident("inc-bad-note-type") is None
+
+
 def test_consume_threshold_route_rejects_non_boolean_breached():
     """The governance schema (evolution_decision.schema.json threshold_snapshots[]
     .breached) declares this field boolean-typed. A truthy non-bool value (e.g.

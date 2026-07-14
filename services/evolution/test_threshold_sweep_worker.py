@@ -1378,7 +1378,45 @@ def test_run_tick_filters_duplicate_thresholds_with_diagnostic():
     # Check that duplicates were filtered: candidates should not be duplicated
     assert result["candidates"] == 1
     # Check that warning was logged
-    assert any("warning: duplicate threshold entry" in d for d in result["diagnostics"])
+    assert any("duplicate identical threshold entry" in d and "coalesced" in d for d in result["diagnostics"])
+
+
+def test_run_tick_disables_conflicting_threshold_entries_fail_closed():
+    """Two non-identical threshold definitions for the same (metric_name,
+    window) identity must never let JSON ordering decide whether a breach
+    exists (round-9 review point 3): both must be disabled fail-closed,
+    regardless of which definition happened to load first."""
+    conflicting = dict(THRESHOLDS[0])
+    conflicting["threshold_value"] = THRESHOLDS[0]["threshold_value"] + 1000.0
+    breach_first = THRESHOLDS + [conflicting]
+    safe_first = [conflicting] + THRESHOLDS
+
+    def fetch(*_args, **_kwargs):
+        return [_summary()]
+
+    def admit(*_args, **_kwargs):
+        return {"status": 202, "body": {}}
+
+    def post(*_args, **_kwargs):
+        return {"status": 201, "body": {}}
+
+    for ordering in (breach_first, safe_first):
+        result = run_tick(
+            telemetry_api_url="http://telemetry.test",
+            incidents_api_url="http://incidents.test",
+            thresholds=ordering,
+            baselines=BASELINES,
+            fetch_summaries=fetch,
+            admit_telemetry_event=admit,
+            post_incident=post,
+            state_path=None,
+            now=_NOW,
+        )
+        # Neither ordering may create a candidate for the conflicting identity.
+        assert result["candidates"] == 0
+        assert any(
+            "fail-closed: conflicting threshold entries" in d for d in result["diagnostics"]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1682,7 +1720,11 @@ def test_wal_loading_ignores_structurally_invalid_records(tmp_path):
     invalid_data = {
         "valid_id": {
             "window_bucket": "2026-07-13",
-            "telemetry_event": {"event_id": "valid_id"},
+            "telemetry_event": {
+                "event_id": "valid_id",
+                "event_type": "drawdown_snapshot",
+                "metrics": {"drawdown_pct": 0.5},
+            },
             "threshold_snapshot": {},
             "delivered": True
         },
@@ -1994,6 +2036,70 @@ def test_run_tick_quarantines_corrupt_wal_record_instead_of_recomputing_under_sa
     assert on_disk == corrupt_state
 
 
+def test_run_tick_quarantines_malformed_delivered_record_instead_of_fabricating_dedupe(tmp_path):
+    """A ``delivered: true`` WAL record with missing/malformed telemetry
+    integrity (no real event_type/metrics) must be quarantined, not trusted
+    as valid delivered evidence: a genuine candidate hashing to the same
+    deterministic event_id must fail closed instead of being silently
+    counted as an already-delivered dedupe (round-9 review point 2)."""
+    state_path = tmp_path / "state.json"
+
+    candidates, _ = evaluate_breaches(
+        [_summary(drawdown=0.30)], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    drawdown_candidate = next(
+        c for c in candidates if c["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
+    )
+    event_id = drawdown_candidate["telemetry_event"]["event_id"]
+
+    # A structurally-shaped but integrity-malformed "delivered" record: the
+    # inner/outer event_id matches, window_bucket/delivered types are correct,
+    # but the telemetry event carries no real event_type/metrics.
+    malformed_delivered_state = {
+        event_id: {
+            "window_bucket": "2026-07-13",
+            "telemetry_event": {"event_id": event_id},
+            "threshold_snapshot": {},
+            "delivered": True,
+        }
+    }
+    state_path.write_text(json.dumps(malformed_delivered_state), encoding="utf-8")
+
+    admit_calls = []
+    post_calls = []
+
+    def fetch(*_args, **_kwargs):
+        return [_summary(drawdown=0.30)]
+
+    def admit(_url, event, **_kwargs):
+        admit_calls.append(event)
+        return {"status": 202, "body": {}}
+
+    def post(_url, payload, **_kwargs):
+        post_calls.append(payload)
+        return {"status": 201, "body": {}}
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=str(state_path),
+        now=_NOW,
+    )
+
+    # Must fail closed, not silently dedupe the genuine candidate away.
+    assert result["incidents_deduped"] == 0
+    assert result["incidents_created"] == 0
+    assert not admit_calls
+    assert not post_calls
+    assert result["errors"] >= 1
+    assert any("corrupt/unreadable prior WAL record" in d for d in result["diagnostics"])
+
+
 def test_run_tick_persists_quarantine_tombstone_across_prune_and_delivery_saves(tmp_path):
     """A quarantine tombstone must survive every subsequent save triggered by
     an unrelated candidate or delivery, in the same tick or a later one, not
@@ -2233,3 +2339,73 @@ def test_load_baselines_handles_non_utf8_baselines_file(tmp_path):
     cfg = tmp_path / "baselines.json"
     cfg.write_bytes(b"\xff\xfe\xfd\xfc")
     assert load_baselines(str(cfg)) == {}
+
+
+# ---------------------------------------------------------------------------
+# Round-9 review: crash-durable, serialized WAL (review point 1)
+# ---------------------------------------------------------------------------
+
+def test_save_pending_evidence_fsyncs_temp_file_and_parent_directory(tmp_path, monkeypatch):
+    """A bare ``os.replace()`` only makes the new name visible; without an
+    fsync of the temp file's data and of the directory entry, a host/volume
+    crash right after the write can resurrect the previous WAL contents even
+    though ``run_tick`` already treated the save as durable authorization to
+    admit telemetry and post an incident (round-9 review point 1)."""
+    import os as os_module
+
+    from services.evolution.threshold_sweep_worker import _save_pending_evidence
+
+    state_path = tmp_path / "state.json"
+    fsynced_fds = []
+    real_fsync = os_module.fsync
+
+    def spy_fsync(fd):
+        fsynced_fds.append(fd)
+        return real_fsync(fd)
+
+    monkeypatch.setattr("services.evolution.threshold_sweep_worker.os.fsync", spy_fsync)
+
+    _save_pending_evidence(str(state_path), {"evt-1": {"delivered": True}})
+
+    # One fsync for the temp file's data, one for the parent directory entry
+    # (proves the rename itself is durable, not just the bytes).
+    assert len(fsynced_fds) == 2
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"evt-1": {"delivered": True}}
+    # No leftover temp file after a successful write.
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_wal_lock_serializes_concurrent_holders(tmp_path):
+    """Two overlapping worker instances racing on the same on-disk WAL state
+    must not interleave their read-modify-write cycles: the second holder
+    must block until the first's full transaction (load through save)
+    releases the lock, instead of last-writer-winning away the other's
+    pending record or frozen delivered payload (round-9 review point 1)."""
+    import threading
+    import time as time_module
+
+    from services.evolution.threshold_sweep_worker import _wal_lock
+
+    state_path = str(tmp_path / "state.json")
+    order = []
+    order_lock = threading.Lock()
+
+    def hold_and_release(tag, hold_seconds):
+        with _wal_lock(state_path):
+            with order_lock:
+                order.append(f"{tag}-enter")
+            time_module.sleep(hold_seconds)
+            with order_lock:
+                order.append(f"{tag}-exit")
+
+    first = threading.Thread(target=hold_and_release, args=("a", 0.2))
+    first.start()
+    time_module.sleep(0.05)  # ensure "a" acquires the lock first
+    second = threading.Thread(target=hold_and_release, args=("b", 0.0))
+    second.start()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive() and not second.is_alive()
+    # "b" must never enter while "a" still holds the lock.
+    assert order == ["a-enter", "a-exit", "b-enter", "b-exit"]

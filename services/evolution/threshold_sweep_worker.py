@@ -41,8 +41,14 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
+
+try:  # pragma: no cover - fcntl is present on the Linux runtime.
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config", "threshold_sweep_thresholds.json")
 DEFAULT_BASELINES_PATH = os.path.join(os.path.dirname(__file__), "config", "threshold_sweep_baselines.json")
@@ -618,13 +624,17 @@ def _load_pending_evidence(path: str) -> tuple[dict[str, dict[str, Any]], dict[s
                 quarantined[str(event_id)] = record
                 continue
 
-            # Only enforce type and payload validation if the record is undelivered (requires retry)
-            if not record["delivered"]:
-                event_type = tel_event.get("event_type")
-                metrics = tel_event.get("metrics")
-                if not isinstance(event_type, str) or not isinstance(metrics, Mapping):
-                    quarantined[str(event_id)] = record
-                    continue
+            # Enforce type/payload validation regardless of delivered state. A
+            # malformed delivered=true record (e.g. missing event_type/metrics)
+            # must never be trusted as "valid" evidence: a genuine current
+            # candidate that recomputes this same deterministic event_id would
+            # otherwise be silently deduped against a record that was never
+            # actually delivered evidence (round-9 review point 2).
+            event_type = tel_event.get("event_type")
+            metrics = tel_event.get("metrics")
+            if not isinstance(event_type, str) or not isinstance(metrics, Mapping):
+                quarantined[str(event_id)] = record
+                continue
             valid[str(event_id)] = dict(record)
         except Exception:
             # Structurally invalid records must never raise; reserve the raw value.
@@ -649,12 +659,58 @@ def _full_state(
 
 
 def _save_pending_evidence(path: str, state: Mapping[str, dict[str, Any]]) -> None:
-    """Durable write. Raises OSError on write failure (fail-closed)."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    """Crash-durable write: fsync the temp file and its parent directory before
+    and after the atomic rename, mirroring
+    ``services/foundation/reliable_delivery.py``'s ``AtomicJsonRecordStore``.
+    A bare ``os.replace()`` only guarantees the new name is visible; without an
+    fsync of the temp file's data and of the directory entry, a host/volume
+    crash right after this call can resurrect the previous WAL contents even
+    though ``run_tick`` already treated the write as durable authorization to
+    admit telemetry and post an incident. Raises OSError on failure
+    (fail-closed).
+    """
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
     tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-        json.dump(dict(state), handle, sort_keys=True)
-    os.replace(tmp_path, path)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(dict(state), handle, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        directory_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+@contextmanager
+def _wal_lock(path: str) -> Iterator[None]:
+    """Serialize the full WAL read-modify-write transaction across processes.
+
+    Without this, two overlapping worker instances can each load the same
+    on-disk state, evaluate independently, and last-writer-win away the
+    other's pending record or frozen delivered payload (round-9 review point
+    1). An ``flock`` held for the entire tick — not just around individual
+    saves — makes each tick's WAL load/prune/evaluate/deliver/save sequence a
+    single-writer transaction, equivalent in strength to
+    ``AtomicJsonRecordStore``'s exclusive lock.
+    """
+    lock_path = f"{path}.lock"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        if fcntl is not None:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        if fcntl is not None:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 def run_tick(
@@ -690,209 +746,233 @@ def run_tick(
 
     # 1. Load pending evidence (WAL state) first, as required by fail-closed rules.
     active_state_path = state_path if state_path is not None else DEFAULT_STATE_PATH
-    try:
-        pending, quarantined = _load_pending_evidence(active_state_path)
-    except ValueError as exc:
-        result["errors"] += 1
-        result["diagnostics"].append(f"fail-closed: {exc}")
-        return result
-
-    if quarantined:
-        result["diagnostics"].append(
-            f"warning: {len(quarantined)} WAL record(s) are structurally invalid and "
-            f"quarantined (reserved, never recomputed): {sorted(quarantined)}"
-        )
-
-    # 2. Prune old records that were successfully delivered.
-    # Keep undelivered ones across days. Quarantined tombstones are never
-    # pruned by window/delivery state; they persist until the WAL is hand-repaired.
-    state_pruned = False
-    filtered_pending = {}
-    for event_id, record in pending.items():
-        if record.get("window_bucket") == window_bucket or not record.get("delivered", False):
-            filtered_pending[event_id] = record
-        else:
-            state_pruned = True
-    pending = filtered_pending
-    if state_pruned:
+    with _wal_lock(active_state_path):
         try:
-            _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
-        except OSError as exc:
-            result["diagnostics"].append(f"warning: failed to prune pending state: {exc}")
-
-    # 3. Determine if we should evaluate new breaches.
-    # Even if thresholds cannot be loaded or summaries cannot be fetched, we proceed to retry undelivered records!
-    should_evaluate = True
-
-    active_thresholds = list(thresholds) if thresholds is not None else load_thresholds(config_path)
-    if not active_thresholds:
-        result["diagnostics"].append("no valid thresholds loaded from live config; skipping new breach evaluation (fail-closed)")
-        should_evaluate = False
-
-    if should_evaluate:
-        # Filter out duplicate (metric_name, window) entries to avoid silent collision on event_id.
-        seen_threshold_keys = set()
-        unique_thresholds = []
-        for t in active_thresholds:
-            key = (t.get("metric_name"), t.get("window"))
-            if key in seen_threshold_keys:
-                result["diagnostics"].append(
-                    f"warning: duplicate threshold entry for metric_name={key[0]!r} window={key[1]!r} ignored"
-                )
-                continue
-            seen_threshold_keys.add(key)
-            unique_thresholds.append(t)
-        active_thresholds = unique_thresholds
-
-    active_baselines = baselines if baselines is not None else load_baselines(baselines_path)
-
-    summaries = []
-    if should_evaluate:
-        try:
-            summaries = fetch_summaries(telemetry_api_url, timeout=timeout)
-        except (urllib.error.URLError, TimeoutError, ValueError, OSError, http.client.HTTPException) as exc:
-            result["diagnostics"].append(f"telemetry fetch failed, skipping new breach evaluation (fail-closed): {exc}")
-            should_evaluate = False
-
-    candidates = []
-    if should_evaluate:
-        if not summaries:
-            result["diagnostics"].append("telemetry fetch returned zero active runtime summaries; nothing to evaluate")
-
-        result["summaries_evaluated"] = len(summaries)
-        candidates, diagnostics = evaluate_breaches(
-            summaries,
-            active_thresholds,
-            window_bucket=window_bucket,
-            baselines=active_baselines,
-            now=moment,
-            metric_max_age_seconds=metric_max_age_seconds,
-        )
-        result["candidates"] = len(candidates)
-        result["diagnostics"].extend(diagnostics)
-
-    # 4. Collect all items to process.
-    to_process = []
-
-    # Add existing undelivered ones
-    for event_id, record in pending.items():
-        if not record.get("delivered", False):
-            to_process.append({
-                "telemetry_event": record["telemetry_event"],
-                "threshold_snapshot": record["threshold_snapshot"],
-                "is_retry": True
-            })
-
-    # Add new candidates
-    for payload in candidates:
-        event = payload["telemetry_event"]
-        event_id = event["event_id"]
-        if event_id in quarantined:
+            pending, quarantined = _load_pending_evidence(active_state_path)
+        except ValueError as exc:
             result["errors"] += 1
+            result["diagnostics"].append(f"fail-closed: {exc}")
+            return result
+
+        if quarantined:
             result["diagnostics"].append(
-                f"fail-closed: event_id {event_id} has a corrupt/unreadable prior WAL record; "
-                "refusing to recompute a new payload under the same deterministic id"
+                f"warning: {len(quarantined)} WAL record(s) are structurally invalid and "
+                f"quarantined (reserved, never recomputed): {sorted(quarantined)}"
             )
-            continue
-        if event_id in pending:
-            record = pending[event_id]
-            if record.get("delivered", False):
-                # Already successfully posted before
-                result["incidents_deduped"] += 1
-                continue
-            # If it's in pending and delivered is False, it's already in to_process via the loop above!
-        else:
-            # New candidate! Add to pending as undelivered and write-ahead log it.
-            record = {
-                "window_bucket": window_bucket,
-                "telemetry_event": event,
-                "threshold_snapshot": payload["threshold_snapshot"],
-                "delivered": False
-            }
-            pending[event_id] = record
+
+        # 2. Prune old records that were successfully delivered.
+        # Keep undelivered ones across days. Quarantined tombstones are never
+        # pruned by window/delivery state; they persist until the WAL is hand-repaired.
+        state_pruned = False
+        filtered_pending = {}
+        for event_id, record in pending.items():
+            if record.get("window_bucket") == window_bucket or not record.get("delivered", False):
+                filtered_pending[event_id] = record
+            else:
+                state_pruned = True
+        pending = filtered_pending
+        if state_pruned:
             try:
                 _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
             except OSError as exc:
-                result["errors"] += 1
-                result["diagnostics"].append(
-                    f"fail-closed: write-ahead log failed for event {event_id}: {exc}"
-                )
-                # Remove from pending so we don't think it's saved
-                pending.pop(event_id)
-                continue
+                result["diagnostics"].append(f"warning: failed to prune pending state: {exc}")
 
-            to_process.append({
-                "telemetry_event": event,
-                "threshold_snapshot": payload["threshold_snapshot"],
-                "is_retry": False
-            })
+        # 3. Determine if we should evaluate new breaches.
+        # Even if thresholds cannot be loaded or summaries cannot be fetched, we proceed to retry undelivered records!
+        should_evaluate = True
 
-    for item in to_process:
-        try:
-            event = item["telemetry_event"]
+        active_thresholds = list(thresholds) if thresholds is not None else load_thresholds(config_path)
+        if not active_thresholds:
+            result["diagnostics"].append("no valid thresholds loaded from live config; skipping new breach evaluation (fail-closed)")
+            should_evaluate = False
+
+        if should_evaluate:
+            # Group by (metric_name, window) identity. JSON ordering must
+            # never decide whether a breach exists: keeping "whichever
+            # definition loaded first" (round-9 review point 3) let the same
+            # observed value breach or not breach depending on config key
+            # order. Byte-identical duplicates are safe to coalesce (a
+            # harmless repeated entry); anything else is a genuinely
+            # conflicting definition for the same identity and the whole
+            # identity is disabled fail-closed until the live config is fixed.
+            grouped_thresholds: dict[tuple[Any, Any], list[Mapping[str, Any]]] = {}
+            key_order: list[tuple[Any, Any]] = []
+            for t in active_thresholds:
+                key = (t.get("metric_name"), t.get("window"))
+                if key not in grouped_thresholds:
+                    grouped_thresholds[key] = []
+                    key_order.append(key)
+                grouped_thresholds[key].append(t)
+
+            unique_thresholds = []
+            for key in key_order:
+                entries = grouped_thresholds[key]
+                if len(entries) == 1:
+                    unique_thresholds.append(entries[0])
+                    continue
+                first = entries[0]
+                if all(entry == first for entry in entries[1:]):
+                    result["diagnostics"].append(
+                        f"warning: duplicate identical threshold entry for metric_name={key[0]!r} "
+                        f"window={key[1]!r} coalesced"
+                    )
+                    unique_thresholds.append(first)
+                else:
+                    result["diagnostics"].append(
+                        f"fail-closed: conflicting threshold entries for metric_name={key[0]!r} "
+                        f"window={key[1]!r}; disabling this identity until live config is fixed"
+                    )
+            active_thresholds = unique_thresholds
+
+        active_baselines = baselines if baselines is not None else load_baselines(baselines_path)
+
+        summaries = []
+        if should_evaluate:
+            try:
+                summaries = fetch_summaries(telemetry_api_url, timeout=timeout)
+            except (urllib.error.URLError, TimeoutError, ValueError, OSError, http.client.HTTPException) as exc:
+                result["diagnostics"].append(f"telemetry fetch failed, skipping new breach evaluation (fail-closed): {exc}")
+                should_evaluate = False
+
+        candidates = []
+        if should_evaluate:
+            if not summaries:
+                result["diagnostics"].append("telemetry fetch returned zero active runtime summaries; nothing to evaluate")
+
+            result["summaries_evaluated"] = len(summaries)
+            candidates, diagnostics = evaluate_breaches(
+                summaries,
+                active_thresholds,
+                window_bucket=window_bucket,
+                baselines=active_baselines,
+                now=moment,
+                metric_max_age_seconds=metric_max_age_seconds,
+            )
+            result["candidates"] = len(candidates)
+            result["diagnostics"].extend(diagnostics)
+
+        # 4. Collect all items to process.
+        to_process = []
+
+        # Add existing undelivered ones
+        for event_id, record in pending.items():
+            if not record.get("delivered", False):
+                to_process.append({
+                    "telemetry_event": record["telemetry_event"],
+                    "threshold_snapshot": record["threshold_snapshot"],
+                    "is_retry": True
+                })
+
+        # Add new candidates
+        for payload in candidates:
+            event = payload["telemetry_event"]
             event_id = event["event_id"]
-            payload = {
-                "telemetry_event": event,
-                "threshold_snapshot": item["threshold_snapshot"],
-            }
-
-            try:
-                admit_response = admit_telemetry_event(telemetry_api_url, event, timeout=timeout)
-            except urllib.error.HTTPError as exc:
-                result["errors"] += 1
-                result["diagnostics"].append(f"telemetry ingest rejected derived event status={exc.code}")
-                continue
-            except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException) as exc:
-                result["errors"] += 1
-                result["diagnostics"].append(f"telemetry ingest network error: {exc}")
-                continue
-
-            if admit_response.get("status") != 202:
+            if event_id in quarantined:
                 result["errors"] += 1
                 result["diagnostics"].append(
-                    f"telemetry ingest unexpected status={admit_response.get('status')}; "
-                    "not citing unadmitted evidence in an incident (fail-closed)"
+                    f"fail-closed: event_id {event_id} has a corrupt/unreadable prior WAL record; "
+                    "refusing to recompute a new payload under the same deterministic id"
                 )
                 continue
-
-            try:
-                response = post_incident(incidents_api_url, payload, timeout=timeout)
-            except urllib.error.HTTPError as exc:
-                result["errors"] += 1
-                result["diagnostics"].append(f"post_incident rejected status={exc.code}")
-                continue
-            except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException) as exc:
-                result["errors"] += 1
-                result["diagnostics"].append(f"post_incident network error: {exc}")
-                continue
-
-            status = response.get("status")
-            if status == 201:
-                result["incidents_created"] += 1
-                pending[event_id]["delivered"] = True
-                try:
-                    _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
-                except OSError as exc:
-                    result["diagnostics"].append(
-                        f"warning: failed to save post-delivery state for event {event_id}: {exc}"
-                    )
-            elif status == 200:
-                result["incidents_deduped"] += 1
-                pending[event_id]["delivered"] = True
-                try:
-                    _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
-                except OSError as exc:
-                    result["diagnostics"].append(
-                        f"warning: failed to save post-delivery state for event {event_id}: {exc}"
-                    )
+            if event_id in pending:
+                record = pending[event_id]
+                if record.get("delivered", False):
+                    # Already successfully posted before
+                    result["incidents_deduped"] += 1
+                    continue
+                # If it's in pending and delivered is False, it's already in to_process via the loop above!
             else:
-                result["errors"] += 1
-                result["diagnostics"].append(f"post_incident unexpected status={status}")
-        except Exception as exc:
-            result["errors"] += 1
-            result["diagnostics"].append(f"unexpected error processing event: {exc}")
+                # New candidate! Add to pending as undelivered and write-ahead log it.
+                record = {
+                    "window_bucket": window_bucket,
+                    "telemetry_event": event,
+                    "threshold_snapshot": payload["threshold_snapshot"],
+                    "delivered": False
+                }
+                pending[event_id] = record
+                try:
+                    _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
+                except OSError as exc:
+                    result["errors"] += 1
+                    result["diagnostics"].append(
+                        f"fail-closed: write-ahead log failed for event {event_id}: {exc}"
+                    )
+                    # Remove from pending so we don't think it's saved
+                    pending.pop(event_id)
+                    continue
 
-    return result
+                to_process.append({
+                    "telemetry_event": event,
+                    "threshold_snapshot": payload["threshold_snapshot"],
+                    "is_retry": False
+                })
+
+        for item in to_process:
+            try:
+                event = item["telemetry_event"]
+                event_id = event["event_id"]
+                payload = {
+                    "telemetry_event": event,
+                    "threshold_snapshot": item["threshold_snapshot"],
+                }
+
+                try:
+                    admit_response = admit_telemetry_event(telemetry_api_url, event, timeout=timeout)
+                except urllib.error.HTTPError as exc:
+                    result["errors"] += 1
+                    result["diagnostics"].append(f"telemetry ingest rejected derived event status={exc.code}")
+                    continue
+                except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException) as exc:
+                    result["errors"] += 1
+                    result["diagnostics"].append(f"telemetry ingest network error: {exc}")
+                    continue
+
+                if admit_response.get("status") != 202:
+                    result["errors"] += 1
+                    result["diagnostics"].append(
+                        f"telemetry ingest unexpected status={admit_response.get('status')}; "
+                        "not citing unadmitted evidence in an incident (fail-closed)"
+                    )
+                    continue
+
+                try:
+                    response = post_incident(incidents_api_url, payload, timeout=timeout)
+                except urllib.error.HTTPError as exc:
+                    result["errors"] += 1
+                    result["diagnostics"].append(f"post_incident rejected status={exc.code}")
+                    continue
+                except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException) as exc:
+                    result["errors"] += 1
+                    result["diagnostics"].append(f"post_incident network error: {exc}")
+                    continue
+
+                status = response.get("status")
+                if status == 201:
+                    result["incidents_created"] += 1
+                    pending[event_id]["delivered"] = True
+                    try:
+                        _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
+                    except OSError as exc:
+                        result["diagnostics"].append(
+                            f"warning: failed to save post-delivery state for event {event_id}: {exc}"
+                        )
+                elif status == 200:
+                    result["incidents_deduped"] += 1
+                    pending[event_id]["delivered"] = True
+                    try:
+                        _save_pending_evidence(active_state_path, _full_state(pending, quarantined))
+                    except OSError as exc:
+                        result["diagnostics"].append(
+                            f"warning: failed to save post-delivery state for event {event_id}: {exc}"
+                        )
+                else:
+                    result["errors"] += 1
+                    result["diagnostics"].append(f"post_incident unexpected status={status}")
+            except Exception as exc:
+                result["errors"] += 1
+                result["diagnostics"].append(f"unexpected error processing event: {exc}")
+
+        return result
 
 
 def main() -> int:

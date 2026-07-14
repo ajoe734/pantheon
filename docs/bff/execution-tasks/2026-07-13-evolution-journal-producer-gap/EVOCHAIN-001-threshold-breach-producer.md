@@ -1,13 +1,16 @@
 # EVOCHAIN-001 — Threshold-breach producer (telemetry -> incidents)
 
-Status: implemented; round-8 review fixes applied and awaiting re-review on
-PR #3620 (`task/EVOCHAIN-001` -> `dev`). Review points from rounds 1-7 have
-been resolved (see below); round-8 fixed 4 further points found during a
-merge-time re-review of that same PR. LIN-003 has successfully landed, adding
-the live telemetry lineage write path and resolving the default-validator
-platform blocker (the default CanonicalReferenceValidator now returns 201 for
-a live-ingested breach event). All tests pass locally and compose volume
-mounting persists the sweep state.
+Status: implemented; round-9 review fixes applied and awaiting re-review on
+PR #3620 (`task/EVOCHAIN-001` -> `dev`). Review points from rounds 1-8 have
+been resolved (see below, kept as historical record of each round's finding
+and fix — a point marked "fixed" in an earlier round's section was true at
+that round's review time; round-9 found further gaps in some of the same
+areas, addressed in its own section below). Round-9 fixed 6 further points
+found during re-review of that same PR. LIN-003 has successfully landed,
+adding the live telemetry lineage write path and resolving the
+default-validator platform blocker (the default CanonicalReferenceValidator
+now returns 201 for a live-ingested breach event). All tests pass locally and
+compose volume mounting persists the sweep state.
 
 Owner: Claude
 Reviewer: Codex
@@ -17,8 +20,13 @@ Depends on: none
 Source gap spec: `docs/04/pantheon_evolution_journal_producer_gap_2026-07-13/EVOLUTION_JOURNAL_PRODUCER_GAP.md`
 Execution packet: `docs/bff/execution-tasks/2026-07-13-evolution-journal-producer-gap/INDEX.md`
 PR: `ajoe734/pantheon#3620`, branch `task/EVOCHAIN-001` -> `dev`. Scope: this
-task only touches `services/evolution`, `services/incidents`, and
-`docker-compose.yml` (plus this doc); it does not touch any other service.
+task touches `services/evolution`, `services/incidents`, and
+`docker-compose.yml` (plus this doc); as of round-9 it also adds one
+optional, additive field (`threshold_identity`, default `None`) to the
+shared `IncidentCase` domain object and `PostmortemEvidenceCollector` in
+`services/incident/incident.py` and `services/incident/evidence_collector.py`
+— needed to harden the `incident_id` collision guard (round-9 §4) without
+regex-parsing free-text evidence. It does not touch any other service.
 
 ## Problem
 
@@ -60,7 +68,8 @@ postmortem -> evolution -> journal chain never fires from real data.
   service — no image rebuild. Own interval env
   (`EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS`, default `86400`); does not
   touch `EVOLUTION_SCHEDULER_INTERVAL_SECONDS` or any other existing cadence.
-- `services/evolution/test_threshold_sweep_worker.py` — 43 tests.
+- `services/evolution/test_threshold_sweep_worker.py` — 74 tests (round-9;
+  see "Local validation" below for the current count history).
 
 ## Round-1 review fixes (Codex, PR #3509, 2026-07-13)
 
@@ -195,6 +204,13 @@ Codex requested changes on 5 points at `ef1e5b3bd`; each is addressed below.
 
 ### 1. Deployed telemetry -> incidents route still 422s (confirmed platform gap, out of scope)
 
+**Historical: this section documents the round-2 (2026-07-13) investigation
+and the gap's status as of that review round.** The "remains open" framing
+below was accurate at round-2 time; it was superseded once LIN-003 landed
+(see round-3 §1 and the Status header above) — the default deployed
+`CanonicalReferenceValidator` now returns 201 for a live-ingested breach
+event.
+
 Investigated further per the review's instruction to either close this or
 formally keep the task blocked on it. Traced the exact mechanism:
 `services/incidents/main.py`'s module-level `reference_validator =
@@ -241,11 +257,13 @@ behavior" above) already covers the runtime consequence of this gap
 correctly: the worker will not create real incidents against the default
 validator today, and it will not crash or misreport success either.
 
-**This point remains open pending a separate platform task** (recommend a
-LIN-003-style follow-up: wire live-ingested telemetry into a queryable
-lineage index, or otherwise replace the static-corpus default) before any
-threshold/drift producer's incidents can be expected to pass the *default*
-`CanonicalReferenceValidator()` in production.
+**(Historical, as of round-2) This point remains open pending a separate
+platform task** (recommend a LIN-003-style follow-up: wire live-ingested
+telemetry into a queryable lineage index, or otherwise replace the
+static-corpus default) before any threshold/drift producer's incidents can
+be expected to pass the *default* `CanonicalReferenceValidator()` in
+production. **Resolved as of round-3/LIN-003 landing** — see round-3 §1
+above and the Status header.
 
 ### 2. Freshness was fail-open for ambiguous and old metric data
 
@@ -683,6 +701,116 @@ unmodified.
   #3516) already removed that gate — see the corrected "Residual risk"
   section.
 
+## Round-9 review fixes (Codex, PR #3620 review, GitHub review comment, 2026-07-14)
+
+Codex requested changes on 6 points; each is addressed below.
+
+### 1. Blocker — the evidence WAL was neither crash-durable nor serialized
+
+`_save_pending_evidence()` wrote a temp file and called `os.replace()`, but
+never flushed/fsynced the temp file's data, fsynced the parent directory, or
+locked the read-modify-write cycle — materially weaker than
+`services/incident/incident.py`'s `IncidentStore` and
+`services/foundation/reliable_delivery.py`'s `AtomicJsonRecordStore`. A
+host/volume crash right after a save could resurrect the previous WAL
+contents even though `run_tick()` already treated the write as durable
+authorization to admit telemetry and post an incident; overlapping worker
+instances could also last-writer-win away each other's pending/delivered
+record.
+
+Fixed: `_save_pending_evidence()` now flushes and `os.fsync()`s the temp
+file's file descriptor, then `os.fsync()`s the parent directory's file
+descriptor after `os.replace()` — the same durability pattern as
+`AtomicJsonRecordStore._write_unlocked`. A new `_wal_lock()` context manager
+(`fcntl.flock`, exclusive) now wraps the *entire* WAL transaction in
+`run_tick()` — from the initial load through every prune/write-ahead-log/
+post-delivery save — so two overlapping worker instances serialize into
+sequential single-writer transactions instead of racing on the same file.
+Covered by `test_save_pending_evidence_fsyncs_temp_file_and_parent_directory`
+(spies on `os.fsync`, asserts exactly 2 calls — file + directory — and no
+leftover temp file) and `test_wal_lock_serializes_concurrent_holders` (two
+threads racing on the same lock path; asserts the second never enters while
+the first still holds it).
+
+### 2. High — a malformed `delivered=true` WAL record fabricated a dedupe
+
+`_load_pending_evidence()` only validated `event_type`/`metrics` integrity
+for *undelivered* records. A record with `delivered: true`, a matching
+inner/outer `event_id`, and no real `event_type`/`metrics` was accepted as
+valid; a genuine candidate recomputing that same deterministic `event_id`
+was then silently counted as an already-delivered dedupe instead of being
+admitted/posted.
+
+Fixed: the `event_type`/`metrics` integrity check now runs unconditionally,
+regardless of `delivered` state — a malformed record is quarantined either
+way, which correctly routes a colliding fresh candidate into the existing
+"fail-closed: corrupt/unreadable prior WAL record" path instead of a silent
+dedupe. Covered by
+`test_run_tick_quarantines_malformed_delivered_record_instead_of_fabricating_dedupe`.
+
+### 3. High — conflicting live thresholds were order-dependent instead of fail-closed
+
+`run_tick()` kept whichever duplicate `(metric_name, window)` definition
+loaded first and dropped the rest with a warning; with two conflicting
+threshold entries for the same observed value, whether an incident opened
+depended on live-config JSON key order.
+
+Fixed: entries are now grouped by `(metric_name, window)` identity.
+Byte-identical duplicates are coalesced (safe, harmless repetition);
+anything else is a genuine conflict, and the *entire* identity is disabled
+fail-closed with a diagnostic, regardless of ordering. Covered by
+`test_run_tick_disables_conflicting_threshold_entries_fail_closed`, which
+asserts zero candidates under both orderings of the same conflicting pair.
+
+### 4. High — the round-8 `incident_id` collision guard remained bypassable and omitted metric identity
+
+`_require_same_incident_identity()` compared `binding_id`, `runtime_id`, and
+*any* shared telemetry id (a full-set intersection of
+`telemetry_event_ids`). This missed the threshold's own metric/window/policy
+identity (so an explicit-id collision with only `metric_name` changed still
+passed), and a caller could inject an old event id as a supplemental
+top-level `telemetry_event_ids` entry while changing the real primary event,
+satisfying "shared evidence" without actually being the same breach.
+
+Fixed: added an optional `IncidentCase.threshold_identity` field
+(`services/incident/incident.py`), a JSON-array-encoded
+`(metric_name, window, policy_source)` string set by
+`build_incident_from_threshold_payload` via a new `_threshold_identity()`
+helper and threaded through `PostmortemEvidenceCollector.create_incident()`.
+`_require_same_incident_identity()` now requires: same `binding_id`, same
+`runtime_id`, the same *canonical primary* telemetry event id
+(`telemetry_event_ids[0]` — reliable because `_event_ids()` always adds the
+primary id first into an order-preserving dict — not an arbitrary
+intersection), and matching `threshold_identity` (an incident with no
+recorded `threshold_identity` can never be proven to be the same breach, so
+it fails closed rather than matching by default). Covered by
+`test_consume_threshold_route_rejects_explicit_incident_id_collision_across_metric_only`
+and
+`test_consume_threshold_route_rejects_explicit_incident_id_collision_via_supplemental_id_injection`.
+
+### 5. Medium — canonical ThresholdSnapshot validation was still partial
+
+`evolution_decision.schema.json` declares optional `window`/`note` as
+`type: string`, but `consumer.py` accepted lists/objects and stringified
+them into evidence via `_threshold_notes()`.
+
+Fixed: `build_incident_from_threshold_payload` now raises
+`IncidentConsumerError` if `window` or `note` is present and not a string.
+Covered by `test_consume_threshold_route_rejects_non_string_window` and
+`test_consume_threshold_route_rejects_non_string_note`.
+
+### Delivery hygiene
+
+- Replaced the destructive local-validation recipe below (which ran
+  `rm -f /tmp/pantheon/incidents/incidents.json` against the real
+  developer/runtime-shared store) with an isolated `INCIDENTS_DATA_DIR`
+  sentinel-directory proof that never touches the shared path.
+- Merged current `dev` (`origin/dev` was 22 commits ahead of this branch's
+  prior head at round-9 review time) and reran the full local validation
+  below against the merged tree.
+- Refreshed the stale "43 tests"/"70 tests" claims above and in "Local
+  validation" below to the current round-9 counts.
+
 ## Idempotency
 
 Dedupe key: `(binding_id, metric_name, threshold window, UTC day bucket)`.
@@ -736,41 +864,33 @@ Verified in `test_load_thresholds_missing_file_fails_closed`,
 
 ## Local validation
 
-Counts below are post-merge (`origin/dev` merged into this branch to resolve
-the BEHIND state; `dev` had advanced with unrelated work in the meantime,
-including EVOCHAIN-003's crash-safe delivery admission, which itself touches
-`services/incidents/test_main_routes.py`'s `clean_store` fixture — resolved
-by keeping this task's in-memory `IncidentStore(path=None)` isolation and
-layering EVOCHAIN-003's outbox-file reset on top, since `ReliableOutboxStore`
-has no in-memory mode).
+Counts below are post-merge (`origin/dev` merged into this branch again at
+round-9 review time to resolve a second BEHIND state — `dev` had advanced 37
+commits with unrelated work, merged cleanly with no conflicts).
 
 ```sh
 python3 -m pytest services/evolution/test_threshold_sweep_worker.py -q
-# 70 passed (round-8: +1 new test — quarantine tombstone persists across
-# prune/new-candidate/delivery saves, two-tick regression; +1 more from the
-# dev merge, unrelated to this task)
+# 74 passed (round-9: +4 new tests — malformed-delivered-record quarantine,
+# conflicting-threshold fail-closed disable, WAL fsync spy, WAL lock mutual
+# exclusion; remainder unchanged from round-8 plus unrelated dev-merge tests)
 
 python3 -m pytest services/evolution -q
-# 213 passed (round-8: +1 in the worker file above, +1 new compose-shape
-# acceptance test in test_compose_activation.py; remainder is unrelated work
-# merged in from dev — no regression)
+# 217 passed (round-9: +4 in the worker file above; remainder is unrelated
+# work merged in from dev — no regression)
 
 python3 -m pytest services/incidents -q
-# 64 passed (round-8: +2 new tests — non-boolean `breached` rejection,
-# explicit incident_id collision-across-identities rejection; remainder is
-# unrelated work merged in from dev — no regression)
+# 68 passed (round-9: +5 new tests — metric-only incident_id collision,
+# supplemental-ID-injection collision, non-string window rejection,
+# non-string note rejection, and the isolated replay-suite run below counted
+# once via the combined `services/incidents` package; remainder is unrelated
+# work merged in from dev — no regression)
 
 python3 -m pytest services/incidents/tests/test_incident_replay_suite.py -q
-# 17 passed (round-8: replay-suite `clean_store` fixture converted to an
-# injected in-memory IncidentStore(path=None), same pattern as
-# test_main_routes.py; no longer deletes the configured persistent store)
+# 17 passed (unchanged from round-8; no regression)
 
 python3 -m pytest services/incident -q
-# 119 passed (no regression in the INC-001 domain layer; +1 from the dev
-# merge, unrelated to this task)
-
-python3 -m pytest services/telemetry -q
-# 244 passed (no regression; +13 from the dev merge, unrelated to this task)
+# 119 passed (no regression in the INC-001 domain layer; threshold_identity
+# is an optional additive field, default None, no existing test depends on it)
 
 docker compose config --quiet
 # passed
@@ -778,18 +898,22 @@ docker compose config --quiet
 docker compose config --services | grep evolution-threshold-sweep-producer
 # evolution-threshold-sweep-producer
 
-git diff --check origin/dev...HEAD -- services/evolution/threshold_sweep_worker.py services/evolution/test_threshold_sweep_worker.py services/evolution/test_compose_activation.py services/incidents/consumer.py services/incidents/test_main_routes.py services/incidents/tests/test_incident_replay_suite.py
-# no output — trailing-whitespace/EOF issues cleaned up
+git diff --check origin/dev...HEAD -- services/evolution/threshold_sweep_worker.py services/evolution/test_threshold_sweep_worker.py services/incidents/consumer.py services/incidents/test_main_routes.py services/incident/incident.py services/incident/evidence_collector.py
+# no output
 
-rm -f /tmp/pantheon/incidents/incidents.json && python3 -m pytest services/incidents/test_main_routes.py services/incidents/tests/test_incident_replay_suite.py -q && ls /tmp/pantheon/incidents/incidents.json
-# 56 passed; `ls` reports "No such file or directory" — confirms round-7 §5
-# (test_main_routes.py) and round-8 §2 (the replay suite) both leave the
-# shared persistent incident store untouched. NOTE: this is scoped to these
-# two files, not the full `services/incidents` directory —
-# `test_evochain_003_delivery.py` (unrelated to this task, not touched by
-# it) drives real `/api/incidents/{id}/status` route calls against the
-# actual module-level `store` and does write `incidents.json`; round-8 only
-# scoped the fix to the file the review flagged (test_incident_replay_suite.py).
+# Isolated-store proof (round-9: replaces the round-8 recipe's
+# `rm -f /tmp/pantheon/incidents/incidents.json`, which deleted the same
+# developer/runtime-shared store the isolation fix is meant to protect).
+# Points INCIDENTS_DATA_DIR at a throwaway sentinel directory instead, so the
+# real shared store is never touched, and confirms it stays untouched:
+SENTINEL_DIR=$(mktemp -d)
+INCIDENTS_DATA_DIR="$SENTINEL_DIR" python3 -m pytest services/incidents/test_main_routes.py services/incidents/tests/test_incident_replay_suite.py -q
+# 60 passed
+ls /tmp/pantheon/incidents/incidents.json
+# No such file or directory — the shared path was never created or touched;
+# both test_main_routes.py's and the replay suite's `clean_store` fixtures
+# inject an in-memory IncidentStore(path=None), so neither ever writes
+# through INCIDENTS_DATA_DIR for the incident store itself.
 ```
 
 ## Acceptance mapping

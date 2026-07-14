@@ -171,6 +171,13 @@ class IncidentCase:
     incident_cluster_id: Optional[str] = None
     evidence_summary: Optional[str] = None
     lineage_ref: Optional[str] = None          # composite ref, e.g. "{artifact_id}@{artifact_version}"
+    # Canonical breach identity (e.g. metric_name/window/policy_source) for
+    # producers that need to distinguish two breaches sharing an explicit
+    # caller-supplied incident_id. None for incidents created by paths that
+    # don't set it (e.g. drift reports); a collision guard must treat that as
+    # "identity unknown", not "identity matches" (see services/incidents/
+    # consumer.py `_require_same_incident_identity`).
+    threshold_identity: Optional[str] = None
 
     def __post_init__(self) -> None:
         try:

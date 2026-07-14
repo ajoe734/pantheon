@@ -6,6 +6,7 @@ writes through the IncidentStore owned by the incident service.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -211,6 +212,19 @@ def build_incident_from_threshold_payload(
     if threshold.get("threshold_value") is None:
         raise IncidentConsumerError("threshold_value is required")
 
+    # evolution_decision.schema.json declares optional `window`/`note` as
+    # `type: string`. Without this check a list/object value passes through
+    # `_threshold_notes()`'s `if value not in (None, "")` guard unchanged and
+    # gets silently stringified into the incident's evidence (round-9 review
+    # point 5); reject anything but a string when the field is present.
+    window_val = threshold.get("window")
+    if window_val is not None and not isinstance(window_val, str):
+        raise IncidentConsumerError("threshold_snapshot.window must be a string when present")
+
+    note_val = threshold.get("note")
+    if note_val is not None and not isinstance(note_val, str):
+        raise IncidentConsumerError("threshold_snapshot.note must be a string when present")
+
     event = _telemetry_event(payload)
     runtime_summary = _mapping(payload.get("runtime_summary_projection")) or _mapping(
         payload.get("runtime_summary")
@@ -296,6 +310,7 @@ def build_incident_from_threshold_payload(
         severity=_severity(payload, event, threshold),
         incident_id=_incident_id(payload, event_id, metric_name),
         created_at=_created_at(payload, event),
+        threshold_identity=_threshold_identity(threshold),
     )
 
 
@@ -603,6 +618,20 @@ def _incident_id(payload: Mapping[str, Any], event_id: str, metric_name: str) ->
     return f"inc-threshold-{uuid.uuid5(uuid.NAMESPACE_URL, seed).hex[:12]}"
 
 
+def _threshold_identity(threshold: Mapping[str, Any]) -> str:
+    """Canonical (metric_name, window, policy_source) identity for a breach.
+
+    A JSON array of a fixed arity is an unambiguous encoding (unlike a
+    delimiter-joined string, where distinct tuples can collide across the
+    delimiter). Used to tell two breaches under the same explicit
+    caller-supplied ``incident_id`` apart (round-9 review point 4).
+    """
+    return json.dumps(
+        [threshold.get("metric_name"), threshold.get("window"), threshold.get("policy_source")],
+        separators=(",", ":"),
+    )
+
+
 def _require_same_incident_identity(existing: IncidentCase, incident: IncidentCase) -> None:
     """Reject a caller-supplied ``incident_id`` that collides across identities.
 
@@ -612,16 +641,29 @@ def _require_same_incident_identity(existing: IncidentCase, incident: IncidentCa
     whatever is stored under it as "the" duplicate — without checking it is
     actually the same breach — silently discards the new breach and reports
     a fabricated dedupe (round-8 review point 4). Same breach means: same
-    binding, same runtime, and at least one shared telemetry_event_id.
+    binding, same runtime, the same *canonical primary* telemetry event id
+    (``telemetry_event_ids[0]``, not an arbitrary intersection — a caller can
+    inject an old id as a supplemental ``telemetry_event_ids`` entry while
+    changing the real primary event, round-9 review point 4), and the same
+    threshold identity (metric_name/window/policy_source). An incident with
+    no recorded ``threshold_identity`` (e.g. created via a non-threshold
+    path) can never be proven to be the same breach, so it fails closed as a
+    conflict rather than matching by default.
     """
     same_binding = existing.binding_id == incident.binding_id
     same_runtime = existing.runtime_id == incident.runtime_id
-    shared_evidence = bool(set(existing.telemetry_event_ids) & set(incident.telemetry_event_ids))
-    if not (same_binding and same_runtime and shared_evidence):
+    existing_primary = existing.telemetry_event_ids[0] if existing.telemetry_event_ids else None
+    incident_primary = incident.telemetry_event_ids[0] if incident.telemetry_event_ids else None
+    same_primary_event = existing_primary is not None and existing_primary == incident_primary
+    same_threshold_identity = (
+        existing.threshold_identity is not None
+        and existing.threshold_identity == incident.threshold_identity
+    )
+    if not (same_binding and same_runtime and same_primary_event and same_threshold_identity):
         raise IncidentConsumerError(
             f"incident_id {incident.incident_id!r} conflicts with an existing incident "
-            "for a different binding_id/runtime_id/telemetry_event_id; refusing to treat "
-            "this as a duplicate of an unrelated incident"
+            "for a different binding_id/runtime_id/primary telemetry_event_id/threshold "
+            "identity; refusing to treat this as a duplicate of an unrelated incident"
         )
 
 
