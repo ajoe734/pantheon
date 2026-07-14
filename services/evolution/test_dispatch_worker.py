@@ -52,6 +52,11 @@ def uid() -> str:
     return f"evo-d-{uuid.uuid4().hex[:8]}"
 
 
+def _enum_value(value: object) -> object:
+    """Normalize enum-backed and string-backed model fields across dev revisions."""
+    return getattr(value, "value", value)
+
+
 @pytest.fixture(autouse=True)
 def reset_store():
     evo_main.store._decisions.clear()
@@ -374,7 +379,7 @@ class TestRunPoll:
         # Confirm the decision state is now 'executed' in the store.
         decision = evo_main.store.get(decision_id)
         assert decision is not None
-        assert str(decision.decision_state.value if hasattr(decision.decision_state, "value") else decision.decision_state) == "executed"
+        assert _enum_value(decision.decision_state) == "executed"
 
     def test_run_poll_skips_non_approved_decisions(self):
         """Decisions in proposed/reviewed state are not dispatched by the worker."""
@@ -523,7 +528,7 @@ class TestRunPoll:
         assert result["errors"] == [
             f"decision_id={decision_id} boundary_fetch_error=<urlopen error boundary unavailable>"
         ]
-        assert evo_main.store.get(decision_id).decision_state.value == "approved"
+        assert _enum_value(evo_main.store.get(decision_id).decision_state) == "approved"
 
     def test_active_live_freeze_with_binding_is_not_silently_consumed(
         self, monkeypatch
@@ -597,10 +602,10 @@ class TestRunPoll:
                 ),
             }
         ]
-        assert decision.decision_state.value == "approved"
+        assert _enum_value(decision.decision_state) == "approved"
         assert decision.execution_result is None
         assert not any(
-            step.step_type.value == "executed" for step in decision.review_chain
+            _enum_value(step.step_type) == "executed" for step in decision.review_chain
         )
 
     @pytest.mark.parametrize(
@@ -642,7 +647,7 @@ class TestRunPoll:
         assert post_calls == []
         assert len(result["errors"]) == 1
         assert "boundary_fetch_error" in result["errors"][0]
-        assert evo_main.store.get(decision_id).decision_state.value == "approved"
+        assert _enum_value(evo_main.store.get(decision_id).decision_state) == "approved"
 
     @pytest.mark.parametrize(
         "boundary_override",
@@ -686,7 +691,7 @@ class TestRunPoll:
         assert post_calls == []
         assert len(result["errors"]) == 1
         assert "research auto-dispatch boundary mismatch" in result["errors"][0]
-        assert evo_main.store.get(decision_id).decision_state.value == "approved"
+        assert _enum_value(evo_main.store.get(decision_id).decision_state) == "approved"
 
     @pytest.mark.parametrize(
         "payload_kind",
@@ -756,7 +761,7 @@ class TestRunPoll:
         assert result["dispatched"] == 0
         assert len(result["errors"]) == 1
         assert "decision_id=" + decision_id in result["errors"][0]
-        assert evo_main.store.get(decision_id).decision_state.value == "approved"
+        assert _enum_value(evo_main.store.get(decision_id).decision_state) == "approved"
 
     def test_followthrough_visible_in_observation_report(self):
         """After dispatch, observation report confirms execution_result and windows."""
