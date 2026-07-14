@@ -411,7 +411,8 @@ class TestProtectedInternalAPIRuntimeManagerBoundary(unittest.TestCase):
     @staticmethod
     def _headers():
         return {
-            "Authorization": "Bearer internal-test-token",
+            "Authorization": "Bearer internal-test-token:admin:mfa",
+            "X-MFA-Token": "123456",
             "Content-Type": "application/json",
         }
 
@@ -476,6 +477,49 @@ class TestProtectedInternalAPIRuntimeManagerBoundary(unittest.TestCase):
             ],
         )
         self.assertEqual(self.fake_client.calls[3][0:2], ("retire", binding_id))
+
+    def test_rollback_route_is_idempotent(self):
+        binding_id = "binding-rollback-idempotent"
+        self.fake_client.seed(binding_id, status=RuntimeBindingStatus.ACTIVE.value)
+
+        # First request to execute rollback
+        response1 = self.client.post(
+            "/api/internal/v1/rollbacks/execute",
+            headers=self._headers(),
+            json={
+                "rollback_id": "rb-idempotent-123",
+                "rollback_target_type": "runtime",
+                "target_id": binding_id,
+                "rollback_to_version": "fallback-v2",
+                "rollback_action_type": RollbackActionType.PAUSE_THEN_REPLACE.value,
+            },
+        )
+        self.assertEqual(response1.status_code, 202)
+        payload1 = response1.get_json()
+        command_id1 = payload1["command_id"]
+
+        # Clear fake client calls to verify we don't repeat side effects
+        self.fake_client.calls.clear()
+
+        # Second request with the same rollback_id
+        response2 = self.client.post(
+            "/api/internal/v1/rollbacks/execute",
+            headers=self._headers(),
+            json={
+                "rollback_id": "rb-idempotent-123",
+                "rollback_target_type": "runtime",
+                "target_id": binding_id,
+                "rollback_to_version": "fallback-v2",
+                "rollback_action_type": RollbackActionType.PAUSE_THEN_REPLACE.value,
+            },
+        )
+        self.assertEqual(response2.status_code, 202)
+        payload2 = response2.get_json()
+
+        # It must return the exact same command_id and cached result
+        self.assertEqual(payload2["command_id"], command_id1)
+        # And the fake client must NOT have been called again (idempotent side effects)
+        self.assertEqual(len(self.fake_client.calls), 0)
 
 
 class TestProtectedInternalAPIConsultationServiceBoundary(unittest.TestCase):

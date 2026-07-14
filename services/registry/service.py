@@ -76,6 +76,7 @@ def get_registry_service() -> RegistryService:
 class AdvanceRequest(BaseModel):
     target_state: ArtifactState
     approver: Optional[str] = None
+    approval_decision_id: Optional[str] = None
 
 
 class DeploymentSummaryUpdate(BaseModel):
@@ -332,7 +333,10 @@ async def advance_state(registry_id: str, body: AdvanceRequest):
     registry_service = get_registry_service()
     try:
         return registry_service.advance_artifact_state(
-            registry_id, body.target_state, approver=body.approver
+            registry_id,
+            body.target_state,
+            approver=body.approver,
+            approval_decision_id=body.approval_decision_id,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -453,6 +457,7 @@ async def advance_strategy_spec_state(registry_id: str, body: AdvanceRequest):
             registry_id,
             body.target_state,
             approver=body.approver,
+            approval_decision_id=body.approval_decision_id,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -562,6 +567,7 @@ async def advance_strategy_artifact_state(registry_id: str, body: AdvanceRequest
             registry_id,
             body.target_state,
             approver=body.approver,
+            approval_decision_id=body.approval_decision_id,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -795,6 +801,7 @@ async def advance_allocation_policy_artifact_state(
             registry_id,
             body.target_state,
             approver=body.approver,
+            approval_decision_id=body.approval_decision_id,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

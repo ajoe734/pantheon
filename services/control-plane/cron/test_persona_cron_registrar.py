@@ -65,11 +65,18 @@ class GatewayRuntimeSpy:
                 "hasMore": next_offset < len(self._existing_jobs),
                 "nextOffset": next_offset,
             }
+        if method == "cron.remove":
+            job_id = (params or {}).get("id")
+            self._existing_jobs = [j for j in self._existing_jobs if j.get("id") != job_id]
+            return {"status": "ok"}
         # OpenClaw's cron.add schema has no "metadata" property; workflow_id
         # is only recoverable from the systemEvent payload text, same as in
         # production (see persona_cron_registrar._build_system_event_text).
         payload_text = (params or {}).get("payload", {}).get("text", "{}")
-        workflow_id = json.loads(payload_text).get("workflow_id", "unknown")
+        try:
+            workflow_id = json.loads(payload_text).get("workflow_id", "unknown")
+        except Exception:
+            workflow_id = "unknown"
         if workflow_id in self._fail_on:
             raise RuntimeError(f"Simulated failure for {workflow_id}")
         return {"id": f"job-{workflow_id}-001"}
@@ -273,12 +280,41 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
 
     def test_reconcile_personas_registers_each(self):
         spy = GatewayRuntimeSpy()
-        results = PersonaCronRegistrar(gateway_runtime=spy).reconcile_personas(
+        results, removed, remove_failed = PersonaCronRegistrar(gateway_runtime=spy).reconcile_personas(
             ["persona-a", "persona-b"]
         )
         self.assertEqual(len(results), 2)
         self.assertTrue(all(r.mode == "gateway_rpc" for r in results))
         self.assertEqual(len(spy.add_calls), 2 * len(WORKFLOW_CATALOG))
+        self.assertEqual(removed, [])
+        self.assertEqual(remove_failed, [])
+
+    def test_reconcile_personas_removes_orphans(self):
+        # Seed some existing jobs, including one valid job for persona-a and one orphan job for persona-orphan
+        existing = [
+            _existing_job_fixture("pantheon.ingest", "persona-a", "job-valid-1"),
+            _existing_job_fixture("pantheon.ingest", "persona-orphan", "job-orphan-1"),
+            # Also seed a job with no/invalid payload matching "pantheon-"
+            {
+                "id": "job-orphan-2",
+                "name": "pantheon-invalid-job",
+                "payload": {}
+            }
+        ]
+        spy = GatewayRuntimeSpy(existing_jobs=existing)
+        results, removed, remove_failed = PersonaCronRegistrar(gateway_runtime=spy).reconcile_personas(
+            ["persona-a"]
+        )
+        # Should register 3 missing jobs for persona-a (valid ingest is skipped)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(results[0].registered), len(WORKFLOW_CATALOG) - 1)
+        self.assertEqual(results[0].skipped, ["pantheon-pantheon-ingest-persona-a"])
+
+        # Should remove 2 orphan jobs
+        self.assertEqual(len(removed), 2)
+        removed_ids = {r["job_id"] for r in removed}
+        self.assertEqual(removed_ids, {"job-orphan-1", "job-orphan-2"})
+        self.assertEqual(remove_failed, [])
 
     def test_adapter_runtime_selected_when_adapter_url_set(self):
         from persona_cron_registrar import AdapterCronRuntime

@@ -92,6 +92,7 @@ class RegistryService:
         registry_id: str,
         target_state: ArtifactState,
         approver: Optional[str] = None,
+        approval_decision_id: Optional[str] = None,
     ) -> RegistryEntryView:
         """
         Transition an entry through governed artifact-state checks.
@@ -122,6 +123,8 @@ class RegistryService:
             entry.approved_at = utc_now_iso()
             if approver:
                 entry.approver = approver
+            if approval_decision_id:
+                entry.approval_decision_id = approval_decision_id
 
         self.store.update(entry)
         logger.info(

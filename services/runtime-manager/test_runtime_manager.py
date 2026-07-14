@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SERVICE_DIR = Path(__file__).resolve().parent
@@ -55,6 +56,18 @@ def _valid_deploy_request(**overrides):
         "loader_checks_passed": True,
         "runtime_id": "rt-001",
     }
+    request.update(overrides)
+    return request
+
+
+def _valid_replace_request(current_binding_id, **overrides):
+    request = _valid_deploy_request(
+        current_binding_id=current_binding_id,
+        plan_id="plan-002",
+        artifact_id="artifact-beta",
+        # A different artifact may legitimately have the same semantic version.
+        artifact_version="1.0.0",
+    )
     request.update(overrides)
     return request
 
@@ -213,6 +226,115 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                 )
             )
 
+    def test_forward_replace_preserves_runtime_and_records_non_rollback_lineage(self):
+        original = self.service.deploy(
+            _valid_deploy_request(strategy_id="strategy-alpha")
+        )
+
+        result = self.service.replace(
+            _valid_replace_request(
+                original.binding_id,
+                strategy_id="strategy-beta",
+                metadata={"promotion_receipt_id": "receipt-001"},
+            )
+        )
+
+        self.assertEqual(result["operation"], "forward_replace")
+        self.assertEqual(result["old_binding"]["status"], "retired")
+        self.assertEqual(result["new_binding"]["status"], "active")
+        self.assertEqual(result["new_binding"]["runtime_id"], original.runtime_id)
+        self.assertEqual(result["new_binding"]["artifact_id"], "artifact-beta")
+        self.assertNotIn("rollback_parent", result["new_binding"])
+        self.assertNotIn("rollback_action_type", result["new_binding"])
+        self.assertEqual(
+            result["new_binding"]["metadata"]["replacement_parent_binding_id"],
+            original.binding_id,
+        )
+        self.assertEqual(
+            result["new_binding"]["metadata"]["replacement_kind"], "forward"
+        )
+        self.assertEqual(
+            result["new_binding"]["metadata"]["strategy_id"], "strategy-beta"
+        )
+        self.assertEqual(
+            result["position_lineage"]["current_managed_by_binding_id"],
+            result["new_binding"]["binding_id"],
+        )
+        self.assertEqual(
+            self.service.get_active_for_pool("pool-001").binding_id,
+            result["new_binding"]["binding_id"],
+        )
+
+    def test_forward_replace_accepts_paused_current_binding(self):
+        original = self.service.deploy(_valid_deploy_request())
+        self.service.transition(original.binding_id, "pending_pause")
+        self.service.transition(original.binding_id, "paused")
+
+        result = self.service.replace(_valid_replace_request(original.binding_id))
+
+        self.assertEqual(result["old_binding"]["status"], "retired")
+        self.assertEqual(result["new_binding"]["status"], "active")
+
+    def test_forward_replace_rejects_mismatched_runtime_without_writes(self):
+        original = self.service.deploy(_valid_deploy_request())
+
+        with self.assertRaisesRegex(RuntimeManagerError, "does not match current"):
+            self.service.replace(
+                _valid_replace_request(original.binding_id, runtime_id="rt-other")
+            )
+
+        self.assertEqual(self.service.require(original.binding_id).status, "active")
+        self.assertEqual(len(self.service.list_by_pool("pool-001")), 1)
+
+    def test_forward_replace_rejects_identical_artifact_pair(self):
+        original = self.service.deploy(_valid_deploy_request())
+
+        with self.assertRaisesRegex(RuntimeManagerError, "pair must differ"):
+            self.service.replace(
+                _valid_replace_request(
+                    original.binding_id,
+                    artifact_id=original.artifact_id,
+                    artifact_version=original.artifact_version,
+                )
+            )
+
+        self.assertEqual(self.service.require(original.binding_id).status, "active")
+
+    def test_forward_replace_recovers_child_created_before_parent_retirement(self):
+        original = self.service.deploy(_valid_deploy_request())
+        request = _valid_replace_request(original.binding_id)
+        real_retire = self.service._store.retire
+
+        with mock.patch.object(
+            self.service._store,
+            "retire",
+            side_effect=RuntimeError("injected cutover interruption"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected cutover"):
+                self.service.replace(request)
+
+        after_interruption = self.service.list_by_pool("pool-001")
+        self.assertEqual(len(after_interruption), 2)
+        child = next(
+            binding
+            for binding in after_interruption
+            if binding.binding_id != original.binding_id
+        )
+        self.assertEqual(child.status, "active")
+        self.assertEqual(original.status, "active")
+
+        with mock.patch.object(self.service._store, "retire", wraps=real_retire):
+            recovered = self.service.replace(request)
+
+        self.assertTrue(recovered["replayed"])
+        self.assertEqual(recovered["new_binding"]["binding_id"], child.binding_id)
+        self.assertEqual(recovered["old_binding"]["status"], "retired")
+        self.assertEqual(len(self.service.list_by_pool("pool-001")), 2)
+        self.assertEqual(
+            self.service.get_active_for_pool("pool-001").binding_id,
+            child.binding_id,
+        )
+
     def test_rollback_replace_creates_replacement_and_retires_old_binding(self):
         original = self.service.deploy(_valid_deploy_request())
 
@@ -226,6 +348,8 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                 "replacement_persona_capital_binding_id": "pcb-002",
                 "replacement_allowed_deployment_scope": "live",
                 "replacement_runtime_id": "rt-002",
+                "replacement_metadata": {"rollback_receipt_id": "rollback-001"},
+                "replacement_strategy_id": "strategy-alpha",
             }
         )
 
@@ -233,6 +357,12 @@ class RuntimeManagerServiceTests(unittest.TestCase):
         self.assertEqual(result["old_binding"]["status"], "retired")
         self.assertEqual(result["new_binding"]["status"], "active")
         self.assertEqual(result["new_binding"]["rollback_parent"], original.binding_id)
+        self.assertEqual(
+            result["new_binding"]["metadata"]["rollback_receipt_id"], "rollback-001"
+        )
+        self.assertEqual(
+            result["new_binding"]["metadata"]["strategy_id"], "strategy-alpha"
+        )
         self.assertEqual(
             result["position_lineage"]["current_managed_by_binding_id"],
             result["new_binding"]["binding_id"],
@@ -332,6 +462,19 @@ class RuntimeManagerClientTests(unittest.TestCase):
         self.assertIsNone(client.get_active_for_pool("pool-001"))
         self.assertEqual(client.list_by_pool("pool-001")[0]["binding_id"], binding["binding_id"])
 
+    def test_local_client_dispatches_forward_replace_by_runtime_id(self):
+        client = RuntimeManagerClient(base_url=None)
+        original = client.deploy(_valid_deploy_request())
+
+        replaced = client.replace(
+            original["runtime_id"],
+            _valid_replace_request(original["binding_id"], runtime_id=None),
+        )
+
+        self.assertEqual(replaced["operation"], "forward_replace")
+        self.assertEqual(replaced["new_binding"]["runtime_id"], original["runtime_id"])
+        self.assertEqual(replaced["old_binding"]["status"], "retired")
+
 
 class RuntimeManagerHttpRouteTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -396,6 +539,55 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.assertEqual(payload["action_type"], "replace")
         self.assertEqual(payload["old_binding"]["status"], "retired")
         self.assertEqual(payload["new_binding"]["artifact_id"], "artifact-delta")
+
+    def test_forward_replace_route_preserves_path_runtime_and_lineage_boundary(self):
+        created = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(),
+            headers=self.auth,
+        ).get_json()
+
+        response = self.client.post(
+            f"/api/runtimes/{created['runtime_id']}/replace",
+            json=_valid_replace_request(created["binding_id"], runtime_id=None),
+            headers=self.auth,
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 201, payload)
+        self.assertEqual(payload["operation"], "forward_replace")
+        self.assertEqual(payload["new_binding"]["runtime_id"], created["runtime_id"])
+        self.assertEqual(payload["old_binding"]["status"], "retired")
+        self.assertNotIn("rollback_parent", payload["new_binding"])
+        self.assertEqual(
+            payload["new_binding"]["metadata"]["replacement_parent_binding_id"],
+            created["binding_id"],
+        )
+
+        history = self.client.get("/api/rollback/history", headers=self.auth).get_json()
+        self.assertEqual(history["count"], 0)
+
+    def test_forward_replace_route_rejects_body_path_runtime_mismatch(self):
+        created = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(),
+            headers=self.auth,
+        ).get_json()
+
+        response = self.client.post(
+            f"/api/runtimes/{created['runtime_id']}/replace",
+            json=_valid_replace_request(
+                created["binding_id"], runtime_id="rt-conflicting-body"
+            ),
+            headers=self.auth,
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.get_json()["error"]["code"], "PRECONDITION_FAILED")
+        current = self.client.get(
+            f"/api/runtime-bindings/{created['binding_id']}", headers=self.auth
+        ).get_json()
+        self.assertEqual(current["status"], "active")
 
     def test_rt004_action_lane_deploy_pause_replace_and_history(self):
         created_response = self.client.post(
