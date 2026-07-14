@@ -80,6 +80,21 @@ class TestStagePlannerTransitions(unittest.TestCase):
         transition = self.planner.derive_transition_type(DeploymentStage.PAPER, DeploymentStage.CANARY)
         self.assertEqual(transition, TransitionType.PROMOTE)
 
+    def test_paper_to_paper_with_binding_is_replace(self):
+        transition = self.planner.derive_transition_type(
+            DeploymentStage.PAPER,
+            DeploymentStage.PAPER,
+            replacement=True,
+        )
+        self.assertEqual(transition, TransitionType.REPLACE)
+
+    def test_paper_to_paper_without_binding_is_forbidden(self):
+        with self.assertRaisesRegex(DeploymentPlanError, "same-stage replacement"):
+            self.planner.derive_transition_type(
+                DeploymentStage.PAPER,
+                DeploymentStage.PAPER,
+            )
+
     def test_live_to_paper_is_rollback(self):
         transition = self.planner.derive_transition_type(DeploymentStage.LIVE, DeploymentStage.PAPER)
         self.assertEqual(transition, TransitionType.ROLLBACK)
@@ -139,6 +154,52 @@ class TestDeploymentPlanCreation(unittest.TestCase):
         self.assertEqual(plan.runtime_action, RuntimeAction.REPLACE_BINDING)
         self.assertEqual(plan.scale.capital_scale_pct, 5.0)
         self.assertEqual(plan.scale.gross_scale_pct, 25.0)
+
+    def test_create_same_stage_replace_allows_prior_artifact_at_same_version(self):
+        plan = self.planner.create_plan(
+            plan_id="plan-paper-replace-001",
+            approval_decision_id="approval-001",
+            approval_decision=approved_decision(),
+            registry_entry=approved_registry_entry(stage="paper"),
+            capital_pool_id="pool-001",
+            sponsor_persona_id="persona-ops",
+            target_stage=DeploymentStage.PAPER,
+            binding_id="rb-paper-current",
+            rollback=RollbackRef(
+                target_artifact_id="artifact-paper-baseline",
+                target_version="1.2.0",
+                action_type=RollbackActionType.REPLACE,
+                reason="Restore the prior paper artifact",
+            ),
+        )
+
+        self.assertEqual(plan.current_stage, DeploymentStage.PAPER)
+        self.assertEqual(plan.target_stage, DeploymentStage.PAPER)
+        self.assertEqual(plan.transition_type, TransitionType.REPLACE)
+        self.assertEqual(plan.runtime_action, RuntimeAction.REPLACE_BINDING)
+        self.assertEqual(plan.binding_id, "rb-paper-current")
+        self.assertEqual(validate_plan(plan), [])
+
+    def test_create_same_stage_replace_rejects_exact_forward_artifact_pair_as_rollback(self):
+        with self.assertRaisesRegex(
+            DeploymentPlanError,
+            "cannot equal the forward artifact_id/version",
+        ):
+            self.planner.create_plan(
+                plan_id="plan-paper-replace-invalid-rollback",
+                approval_decision_id="approval-001",
+                approval_decision=approved_decision(),
+                registry_entry=approved_registry_entry(stage="paper"),
+                capital_pool_id="pool-001",
+                sponsor_persona_id="persona-ops",
+                target_stage=DeploymentStage.PAPER,
+                binding_id="rb-paper-current",
+                rollback=RollbackRef(
+                    target_artifact_id="reg-strat-001-1.2.0",
+                    target_version="1.2.0",
+                    action_type=RollbackActionType.REPLACE,
+                ),
+            )
 
     def test_risk_policy_rejection_blocks_plan_creation(self):
         with self.assertRaisesRegex(DeploymentPlanError, "RiskPolicy"):
