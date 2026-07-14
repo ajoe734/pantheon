@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Literal, Optional
 
@@ -69,7 +70,117 @@ _TRANSITIONS = {
 }
 
 
-def create_governance_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[..., None], bff_error: Callable[..., HTTPException], utc_now: Callable[[], str], store: Optional[ProposalStore] = None) -> APIRouter:
+_APPROVAL_ACTION_ROLES = frozenset({"approver", "reviewer", "admin"})
+_APPROVED_OUTCOMES = frozenset({"approved", "approved_with_conditions"})
+_DECIDED_APPROVAL_STATES = frozenset({"approved", "decided"})
+_CANONICAL_TARGET_TYPES = {
+    "strategy": frozenset({"strategy", "strategy_spec"}),
+}
+_CANONICAL_REVIEWER_ROLES = {
+    "human": frozenset({"governance_reviewer", "risk_owner", "governance_committee"}),
+    "risk": frozenset({"risk", "risk_owner"}),
+}
+
+
+def _clean(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _approval_actor(record: Mapping[str, Any]) -> str:
+    return _clean(
+        record.get("reviewer")
+        or record.get("actor_id")
+        or record.get("decided_by")
+        or record.get("approved_by")
+    )
+
+
+def _validate_authoritative_approval_refs(
+    *,
+    current: Mapping[str, Any],
+    approval_refs: list[str],
+    get_approval_decision: Callable[[str], Optional[Mapping[str, Any]]],
+) -> list[str]:
+    clean_refs = list(dict.fromkeys(_clean(ref) for ref in approval_refs))
+    if not clean_refs or any(not ref for ref in clean_refs):
+        raise HTTPException(422, detail="approval requires authoritative approval refs")
+
+    proposer = _clean(current.get("proposer"))
+    required_reviewers = {
+        _clean(reviewer).lower()
+        for reviewer in current.get("required_reviewers", [])
+        if _clean(reviewer)
+    }
+    covered_reviewers: set[str] = set()
+
+    for approval_ref in clean_refs:
+        try:
+            record = get_approval_decision(approval_ref)
+        except Exception as exc:
+            raise HTTPException(
+                503,
+                detail="authoritative approval store is unavailable",
+            ) from exc
+        if not isinstance(record, Mapping):
+            raise HTTPException(
+                422,
+                detail=f"approval ref {approval_ref!r} is not authoritative",
+            )
+
+        record_id = _clean(record.get("decision_id") or record.get("id"))
+        if record_id != approval_ref:
+            raise HTTPException(422, detail="authoritative approval id mismatch")
+        if _clean(record.get("outcome") or record.get("decision")).lower() not in _APPROVED_OUTCOMES:
+            raise HTTPException(422, detail="authoritative approval is not approved")
+        if _clean(record.get("state") or record.get("decision_state")).lower() not in _DECIDED_APPROVAL_STATES:
+            raise HTTPException(422, detail="authoritative approval is not decided")
+        target_kind = _clean(current.get("target_kind")).lower()
+        accepted_target_types = _CANONICAL_TARGET_TYPES.get(
+            target_kind,
+            frozenset({target_kind}),
+        )
+        if _clean(record.get("target_type")).lower() not in accepted_target_types:
+            raise HTTPException(422, detail="authoritative approval target type mismatch")
+        if _clean(record.get("target_id")) != _clean(current.get("target_id")):
+            raise HTTPException(422, detail="authoritative approval target id mismatch")
+        if _clean(record.get("target_version")) != _clean(current.get("target_version")):
+            raise HTTPException(422, detail="authoritative approval target version mismatch")
+
+        reviewer = _approval_actor(record)
+        if not reviewer:
+            raise HTTPException(422, detail="authoritative approval reviewer is missing")
+        if proposer and reviewer == proposer:
+            raise HTTPException(403, detail="proposal self-approval is forbidden")
+        covered_reviewers.add(reviewer.lower())
+        actor_role = _clean(record.get("actor_role"))
+        if actor_role:
+            covered_reviewers.add(actor_role.lower())
+
+    missing_reviewers = {
+        reviewer
+        for reviewer in required_reviewers
+        if not _CANONICAL_REVIEWER_ROLES.get(
+            reviewer,
+            frozenset({reviewer}),
+        ).intersection(covered_reviewers)
+    }
+    if missing_reviewers:
+        raise HTTPException(
+            422,
+            detail=f"required authoritative reviewers missing: {sorted(missing_reviewers)}",
+        )
+    return clean_refs
+
+
+def create_governance_router(
+    *,
+    extract_identity: Callable[..., Any],
+    require_read_role: Callable[..., None],
+    bff_error: Callable[..., HTTPException],
+    utc_now: Callable[[], str],
+    get_approval_decision: Callable[[str], Optional[Mapping[str, Any]]],
+    store: Optional[ProposalStore] = None,
+) -> APIRouter:
     router = APIRouter(tags=["agora-governance"])
     proposals = store or ProposalStore()
 
@@ -108,18 +219,33 @@ def create_governance_router(*, extract_identity: Callable[..., Any], require_re
 
     @router.post("/bff/agora/proposals/{proposal_id}/actions")
     def act(proposal_id: str, body: ProposalAction, response: Response, authorization: Optional[str] = Header(default=None), if_match: str = Header(alias="If-Match")):
-        _, resolved = scope(authorization)
+        identity, resolved = scope(authorization)
         current = proposals.get(proposal_id, resolved.tenant_id, resolved.user_id)
         if not current: raise HTTPException(404, detail="proposal not found")
         if current["state"] in {"approved", "rejected", "cancelled"}: raise HTTPException(409, detail="proposal is terminal")
-        if body.action == "approve" and (current["state"] != "validated" or not body.approval_refs): raise HTTPException(422, detail="approval requires validated state and authoritative approval refs")
+        authoritative_approval_refs: list[str] = []
+        if body.action == "approve":
+            if current["state"] != "validated":
+                raise HTTPException(422, detail="approval requires validated state")
+            roles = {_clean(role).lower() for role in getattr(identity, "roles", [])}
+            if not roles.intersection(_APPROVAL_ACTION_ROLES):
+                raise HTTPException(403, detail="approval requires approver, reviewer, or admin role")
+            # ProposalStore is user-private. Delegated review tokens must retain
+            # the proposal's user_id scope while using a distinct operator_id.
+            if resolved.operator_id == _clean(current.get("proposer")):
+                raise HTTPException(403, detail="proposal self-approval is forbidden")
+            authoritative_approval_refs = _validate_authoritative_approval_refs(
+                current=current,
+                approval_refs=body.approval_refs,
+                get_approval_decision=get_approval_decision,
+            )
         if body.action == "validate" and not body.validation_result: raise HTTPException(422, detail="validation_result is required")
         if body.action == "modify" and body.proposed_value is None: raise HTTPException(422, detail="modify requires proposed_value")
         now = utc_now(); next_row = {**current, "revision": current["revision"] + 1, "updated_at": now}
         if body.action == "modify": next_row["proposed_value"] = body.proposed_value; next_row["state"] = "draft"
         else: next_row["state"] = _TRANSITIONS[body.action]
         next_row["evidence_refs"] = list(dict.fromkeys(current["evidence_refs"] + body.evidence_refs))
-        next_row["audit"] = current["audit"] + [{"action": body.action, "actor": resolved.operator_id, "reason": body.reason, "at": now, "approval_refs": body.approval_refs}]
+        next_row["audit"] = current["audit"] + [{"action": body.action, "actor": resolved.operator_id, "reason": body.reason, "at": now, "approval_refs": authoritative_approval_refs or body.approval_refs}]
         if body.action == "validate":
             next_row["validation"] = body.validation_result
             next_row["governed_action_link"] = {"route": "/bff/actions/{type}/{id}/{action}", "target_type": current["target_kind"], "target_id": current["target_id"], "action": "submit_review", "execution_authority": "none"}
