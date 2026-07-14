@@ -160,15 +160,20 @@ def test_post_endpoints_persist_correctly(tmp_path, monkeypatch) -> None:
         "target_id": "persona-gamma",
         "status": "active",
         "actor": "admin",
-        "identity": "op-test",
         "source_command_id": "cmd-123",
         "reason": "Test freeze order post",
     }
-    response = client.post("/api/governance/freeze-orders", json=freeze_payload)
+    response = client.post(
+        "/api/governance/freeze-orders",
+        json=freeze_payload,
+        headers={"Authorization": "Bearer op-test:admin"},
+    )
     assert response.status_code == 201
     res_body = response.json()
     assert res_body["freeze_order_id"] == "freeze-post-test"
     assert res_body["status"] == "active"
+    # identity is derived from the authenticated token, not the request body.
+    assert res_body["identity"] == "op-test"
     assert freeze_store.get("freeze-post-test")["reason"] == "Test freeze order post"
 
     rollback_payload = {
@@ -176,13 +181,198 @@ def test_post_endpoints_persist_correctly(tmp_path, monkeypatch) -> None:
         "runtime_id": "runtime-gamma",
         "action_type": "replace",
         "status": "completed",
-        "actor": "reviewer",
-        "identity": "op-test",
+        "actor": "operator",
         "source_command_id": "cmd-456",
     }
-    response2 = client.post("/api/governance/rollbacks", json=rollback_payload)
+    response2 = client.post(
+        "/api/governance/rollbacks",
+        json=rollback_payload,
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
     assert response2.status_code == 201
     res_body2 = response2.json()
     assert res_body2["rollback_id"] == "rollback-post-test"
     assert res_body2["status"] == "completed"
+    assert res_body2["identity"] == "op-test"
     assert rollback_store.get("rollback-post-test")["runtime_id"] == "runtime-gamma"
+
+
+def test_post_endpoints_require_authentication(tmp_path, monkeypatch) -> None:
+    """Unauthenticated writes must be rejected, not silently persisted (EVOCHAIN-005 round 2)."""
+    client, freeze_store, rollback_store = _isolated_client(tmp_path, monkeypatch)
+
+    freeze_response = client.post(
+        "/api/governance/freeze-orders",
+        json={
+            "freeze_order_id": "freeze-unauth",
+            "scope": "persona",
+            "target_id": "persona-gamma",
+            "status": "active",
+            "actor": "admin",
+            "identity": "attacker",
+            "source_command_id": "cmd-unauth",
+        },
+    )
+    assert freeze_response.status_code == 401
+    assert freeze_store.get("freeze-unauth") is None
+
+    rollback_response = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rollback-unauth",
+            "runtime_id": "runtime-gamma",
+            "action_type": "replace",
+            "status": "approved",
+            "actor": "admin",
+            "identity": "attacker",
+            "source_command_id": "cmd-unauth",
+        },
+    )
+    assert rollback_response.status_code == 401
+    assert rollback_store.get("rollback-unauth") is None
+
+
+def test_post_endpoints_reject_role_spoofing_and_self_declared_approval(tmp_path, monkeypatch) -> None:
+    """A caller cannot self-declare an authority role/status it does not hold (EVOCHAIN-005 round 2)."""
+    client, freeze_store, rollback_store = _isolated_client(tmp_path, monkeypatch)
+
+    # Authenticated as a plain operator, but declaring "admin" for the actor
+    # field — the token only carries "operator", so this must be rejected.
+    spoof_response = client.post(
+        "/api/governance/freeze-orders",
+        json={
+            "freeze_order_id": "freeze-spoof",
+            "scope": "persona",
+            "target_id": "persona-gamma",
+            "status": "active",
+            "actor": "admin",
+            "identity": "attacker",
+            "source_command_id": "cmd-spoof",
+        },
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
+    assert spoof_response.status_code == 403
+    assert freeze_store.get("freeze-spoof") is None
+
+    # An authenticated but unprivileged (operator-only) caller cannot create a
+    # rollback record that is already "approved" — only a
+    # _GOVERNANCE_AUTHORITY_ROLES-level role may set that status, whether on
+    # create or on a later transition.
+    unauth_status_response = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rollback-self-approved",
+            "runtime_id": "runtime-gamma",
+            "action_type": "replace",
+            "status": "approved",
+            "source_command_id": "cmd-self-approve",
+        },
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
+    assert unauth_status_response.status_code == 403
+    assert rollback_store.get("rollback-self-approved") is None
+
+
+def test_freeze_order_status_transitions(tmp_path, monkeypatch) -> None:
+    """EVOCHAIN-005: Enforce legal state transitions for FreezeOrders."""
+    client, freeze_store, rollback_store = _isolated_client(tmp_path, monkeypatch)
+
+    # 1. Create a freeze order as operator (allowed by _FREEZE_CREATE_AUTHORITY_ROLES)
+    resp = client.post(
+        "/api/governance/freeze-orders",
+        json={
+            "freeze_order_id": "freeze-transition-test",
+            "scope": "persona",
+            "target_id": "persona-gamma",
+            "status": "active",
+            "actor": "operator",
+            "source_command_id": "cmd-init-ks",
+        },
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
+    assert resp.status_code == 201
+
+    # 2. Transition from active to released (allowed)
+    resp2 = client.post(
+        "/api/governance/freeze-orders",
+        json={
+            "freeze_order_id": "freeze-transition-test",
+            "status": "released",
+            "actor": "governance_reviewer",
+            "source_command_id": "cmd-release-ks",
+        },
+        headers={"Authorization": "Bearer reviewer-test:governance_reviewer"},
+    )
+    assert resp2.status_code == 200
+
+    # 3. Transition from terminal state released to active (forbidden)
+    resp3 = client.post(
+        "/api/governance/freeze-orders",
+        json={
+            "freeze_order_id": "freeze-transition-test",
+            "status": "active",
+            "actor": "governance_reviewer",
+            "source_command_id": "cmd-reactivate-ks",
+        },
+        headers={"Authorization": "Bearer reviewer-test:governance_reviewer"},
+    )
+    assert resp3.status_code == 400
+
+
+def test_rollback_status_transitions(tmp_path, monkeypatch) -> None:
+    """EVOCHAIN-005: Enforce legal state transitions for Rollback records."""
+    client, freeze_store, rollback_store = _isolated_client(tmp_path, monkeypatch)
+
+    # 1. Create as initiated (allowed)
+    resp = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rollback-transition-test",
+            "runtime_id": "runtime-gamma",
+            "action_type": "replace",
+            "status": "initiated",
+            "actor": "operator",
+            "source_command_id": "cmd-init-rb",
+        },
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
+    assert resp.status_code == 201
+
+    # 2. Transition from initiated to approved (allowed)
+    resp2 = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rollback-transition-test",
+            "status": "approved",
+            "actor": "approver",
+            "source_command_id": "cmd-approve-rb",
+        },
+        headers={"Authorization": "Bearer approver-test:approver"},
+    )
+    assert resp2.status_code == 200
+
+    # 3. Transition from approved to completed (allowed)
+    resp3 = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rollback-transition-test",
+            "status": "completed",
+            "actor": "operator",
+            "source_command_id": "cmd-complete-rb",
+        },
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
+    assert resp3.status_code == 200
+
+    # 4. Transition from terminal state completed to initiated (forbidden)
+    resp4 = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rollback-transition-test",
+            "status": "initiated",
+            "actor": "operator",
+            "source_command_id": "cmd-reinit-rb",
+        },
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
+    assert resp4.status_code == 400
