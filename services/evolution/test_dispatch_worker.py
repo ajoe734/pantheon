@@ -574,7 +574,47 @@ class TestHealthcheck:
         assert healthcheck() == 1
 
 
-class TestMainLoopFailure:
+class TestMainLoop:
+    def test_approved_decision_auto_executes_on_single_tick(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        import services.evolution.dispatch_worker as dw
+
+        decision_id = _propose_and_approve(action_type="retrain", risk_level="low")
+        health_file = tmp_path / "dispatch-health.json"
+
+        def fake_get(url, timeout_seconds=10.0):
+            path = url.split("127.0.0.1:8093")[-1]
+            response = client.get(path)
+            response.raise_for_status()
+            return response.json()
+
+        def fake_post(url, payload, timeout_seconds=30.0):
+            path = url.split("127.0.0.1:8093")[-1]
+            response = client.post(path, json=payload)
+            response.raise_for_status()
+            return response.json()
+
+        monkeypatch.setattr(dw, "_http_get", fake_get)
+        monkeypatch.setattr(dw, "_http_post", fake_post)
+        monkeypatch.setenv("EVOLUTION_API_URL", "http://127.0.0.1:8093")
+        monkeypatch.setenv("EVOLUTION_DISPATCH_MAX_TICKS", "1")
+        monkeypatch.setenv("EVOLUTION_DISPATCH_HEALTH_FILE", str(health_file))
+
+        assert dw.main() == 0
+
+        tick = json.loads(capsys.readouterr().out)
+        decision = evo_main.store.get(decision_id)
+        assert decision is not None
+        persisted = decision.to_dict()
+        assert tick["health"]["status"] == "ok"
+        assert tick["result"]["dispatched"] == 1
+        assert tick["result"]["dispatch_items"][0]["decision_id"] == decision_id
+        assert persisted["decision_state"] == "executed"
+        assert persisted["execution_result"]["execution_ref_id"] == (
+            f"dispatch-{decision_id}"
+        )
+
     def test_unreachable_api_logs_degraded_tick_without_dispatch(
         self, monkeypatch, tmp_path, capsys
     ):
