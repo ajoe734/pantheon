@@ -62,9 +62,17 @@ def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
     return value
 
 
-def fetch_pending_outbox(*, api_url: str, timeout_seconds: float = 10.0) -> list[dict[str, Any]]:
-    """Return all pending outbox records from the deployment service."""
-    url = api_url.rstrip("/") + "/api/deployment/outbox?status=pending"
+def fetch_pending_outbox(
+    *,
+    api_url: str,
+    timeout_seconds: float = 10.0,
+    aggregate_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return pending records, optionally isolated to one deployment saga."""
+    query = {"status": "pending"}
+    if aggregate_id:
+        query["aggregate_id"] = aggregate_id
+    url = api_url.rstrip("/") + "/api/deployment/outbox?" + urllib.parse.urlencode(query)
     request = urllib.request.Request(
         url, headers={"Accept": "application/json"}, method="GET"
     )
@@ -1762,13 +1770,18 @@ def run_poll(
     record_failures: bool = False,
     max_attempts: int = 3,
     retry_delay_seconds: int = 30,
+    aggregate_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Fetch pending outbox events and consume each one.
 
     Returns a summary: events_found, consumed, duplicates, errors, retry_scheduled, dead_lettered.
     """
-    events = fetch_pending_outbox(api_url=api_url, timeout_seconds=timeout_seconds)
+    events = fetch_pending_outbox(
+        api_url=api_url,
+        timeout_seconds=timeout_seconds,
+        aggregate_id=aggregate_id,
+    )
     consumed = 0
     duplicates = 0
     skipped_not_due = 0
@@ -2523,9 +2536,11 @@ def main() -> int:
     max_attempts = _env_int("DEPLOYMENT_OUTBOX_CONSUMER_MAX_ATTEMPTS", 3, minimum=1)
     retry_delay_seconds = _env_int("DEPLOYMENT_OUTBOX_CONSUMER_RETRY_DELAY_SECONDS", 30, minimum=0)
     health_file = os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", "")
+    aggregate_id = os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID", "").strip() or None
 
     health: dict[str, Any] = {
         "consumer_name": consumer_name,
+        "aggregate_id": aggregate_id,
         "status": "starting",
         "total_consumed": 0,
         "total_duplicates": 0,
@@ -2553,6 +2568,7 @@ def main() -> int:
                 record_failures=True,
                 max_attempts=max_attempts,
                 retry_delay_seconds=retry_delay_seconds,
+                aggregate_id=aggregate_id,
             )
             health["ticks"] = tick
             health["total_consumed"] += result["consumed"]
