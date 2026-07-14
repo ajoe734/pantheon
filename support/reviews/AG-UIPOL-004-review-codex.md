@@ -14,9 +14,10 @@ Review date: 2026-07-14 UTC
 - Pantheon delivery/evidence PRs #3567 and #3590.
 - The hosted evidence and machine-readable readback under
   `docs/bff/execution-tasks/2026-07-13-agora-ui-polish/evidence/`.
-- The current Pantheon-owned FE manifest and the current hosted FE tree at
-  `ca5f0942b2ee7d96978975890e67704e3830b66e`, which contains task merge
-  `12b78ef210e535cd4a3d80358f78b44c9396e588`.
+- The Pantheon-owned FE manifest and hosted FE trees
+  `ca5f0942b2ee7d96978975890e67704e3830b66e` and successor
+  `b5d64856c9be1caa32078253a9f3758ed5abe07c`. Both contain corrective PR #325;
+  the successor changes only two unrelated Evolution Journal files.
 
 ## Code-level and historical functional acceptance
 
@@ -106,7 +107,7 @@ Pantheon's dev-hosting gate requires exact FE and BFF identities and treats a
 candidate whose deployment failed as unaccepted. Therefore the task cannot be
 approved while its status message claims `bffCommit deployed`.
 
-## Blocking finding — the evidence checksum is stale
+## Blocking finding — the evidence provenance and checksum are invalid
 
 Pantheon commit `a8ba4196e` added the performance-attribution network event to
 `AG-UIPOL-004-readback.json` but did not update the checksum recorded in the
@@ -114,7 +115,13 @@ hosted-evidence document. The document claims
 `113886e1fb29430576944b9045fef28596d6fa308d400b3d09ce8839126f51a4`;
 the checked-in JSON now hashes to
 `1ca4a070d2ef08c38fd7e9f4a85587be09c08b52871ee843e44a388d8442a761`.
-The evidence bundle is therefore not self-verifying in its current state.
+
+The same edit claims the browser observed HTTP 200 from
+`/bff/agora/trading-room/performance-attribution`. The exact recorded FE source
+at `12b78ef...` calls
+`/bff/management/performance-attribution/by-strategy` instead, and the claimed
+Agora route currently returns HTTP 404. The evidence bundle is therefore
+neither self-verifying nor valid request provenance in its current state.
 
 ## Required changes
 
@@ -137,11 +144,12 @@ The evidence bundle is therefore not self-verifying in its current state.
 **Changes requested — reopen to Antigravity.** Focused tests pass, but the
 current hosted Workshop crashes, Performance never leaves loading, the FE
 manifest's BFF identity is false, the real BFF candidate's deploy failed, and
-the readback checksum is stale.
+the readback provenance/checksum are invalid.
 
 LLM-Agent: Codex  
 Task-ID: AG-UIPOL-004  
 Reviewer: Antigravity  
 Verified: 4 Vitest files / 51 tests; historical screenshots; current headless
 Chromium probe; FE manifest; live BFF `/bff/version`; git and GitHub SHA lookup;
-artifact SHA-256; FE deploy run 29299500683; BFF deploy run 29299038637
+artifact SHA-256; FE deploy runs 29299500683 and 29299854068; BFF deploy run
+29299038637
