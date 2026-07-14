@@ -233,6 +233,35 @@ services:
       retries: 3
       start_period: 90s
 
+  strategy-distillation-worker:
+    build:
+      context: .
+      dockerfile: services/source_ingestion/Dockerfile
+    command: ["python", "-m", "services.source_ingestion.distillation_controller"]
+    restart: unless-stopped
+    environment:
+      SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}
+      DISTILLATION_CONTROLLER_STATE_PATH: /data/source-ingest/distill_controller_state.json
+      DISTILLATION_CONTROLLER_ALIVE_PATH: /data/source-ingest/distill_controller_alive
+      DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
+      STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
+      SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
+      PANTHEON_REGISTRY_URL: http://registry:8087
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_LOOP_ID: strategy_distillation
+      PANTHEON_CONTROLLER_NAME: strategy-distillation-controller
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-local-dev}
+    volumes:
+      - source-ingest-data:/data/source-ingest
+    depends_on:
+      source-ingest:
+        condition: service_healthy
+      registry:
+        condition: service_healthy
+
   search-svc:
     build:
       context: .
