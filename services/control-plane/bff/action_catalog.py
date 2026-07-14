@@ -1131,7 +1131,7 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     ),
     BffActionCatalogEntry(
         action_id="EmergencyContainment",
-        entity_type="Runtime",
+        entity_type="Persona",
         endpoint="/bff/v1/commands",
         risk_level=RiskLevel.CRITICAL,
         requires_approval=False,

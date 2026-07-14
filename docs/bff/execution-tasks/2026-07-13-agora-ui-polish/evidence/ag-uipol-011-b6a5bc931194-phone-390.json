@@ -1,0 +1,72 @@
+{
+  "budgets": {
+    "tradingRoom": {
+      "bodyHeight": 844,
+      "bodyWidth": 390,
+      "documentWidth": 390,
+      "mainOverflowX": "hidden",
+      "mainOverflowY": "auto",
+      "shellBottom": 844,
+      "shellHeight": 844,
+      "shellOverflow": "hidden",
+      "shellTop": 0,
+      "viewportHeight": 844,
+      "viewportWidth": 390
+    },
+    "workshop": {
+      "bodyHeight": 844,
+      "bodyWidth": 390,
+      "documentWidth": 390,
+      "mainOverflowX": "hidden",
+      "mainOverflowY": "auto",
+      "shellBottom": 844,
+      "shellHeight": 844,
+      "shellOverflow": "hidden",
+      "shellTop": 0,
+      "viewportHeight": 844,
+      "viewportWidth": 390
+    },
+    "performance": {
+      "bodyHeight": 844,
+      "bodyWidth": 390,
+      "documentWidth": 390,
+      "mainOverflowX": "hidden",
+      "mainOverflowY": "auto",
+      "shellBottom": 844,
+      "shellHeight": 844,
+      "shellOverflow": "hidden",
+      "shellTop": 0,
+      "viewportHeight": 844,
+      "viewportWidth": 390
+    }
+  },
+  "captures": [
+    "/tmp/ag-uipol-011/ag-uipol-011-b6a5bc931194-phone-390-trading-room.png",
+    "/tmp/ag-uipol-011/ag-uipol-011-b6a5bc931194-phone-390-strategy-workshop.png",
+    "/tmp/ag-uipol-011/ag-uipol-011-b6a5bc931194-phone-390-strategy-performance.png"
+  ],
+  "deployment": {
+    "app": "execute-plans",
+    "environment": "pantheon-dev-fe",
+    "deployedAt": "20260714T075837Z",
+    "commit": "b6a5bc9311941cf7333c5f738526868715533101",
+    "sourceRef": "b6a5bc9311941cf7333c5f738526868715533101",
+    "sourceBranch": "dev",
+    "feHost": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+    "bffHost": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "bffCommit": "9d393816acfe322a12ba1b295218f829db36ac28",
+    "buildMode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    }
+  },
+  "expectedFeSha": "b6a5bc9311941cf7333c5f738526868715533101",
+  "viewport": {
+    "height": 844,
+    "name": "phone-390",
+    "width": 390
+  }
+}

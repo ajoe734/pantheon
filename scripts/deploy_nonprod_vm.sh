@@ -18,6 +18,7 @@ DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
 DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
+DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-permissive}"
 DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
 DEV_BFF_ALLOWED_TENANTS="${DEV_BFF_ALLOWED_TENANTS:-${DEV_BFF_TENANT_ID},pantheon-dev}"
 DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"
@@ -321,6 +322,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
+  command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
   command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
   command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
@@ -415,14 +417,30 @@ preserve_known_deploy_runtime_state() {
     ".orchestrator/metrics"
     ".orchestrator/task-briefs"
     ".orchestrator/watchdog-state.json"
+    "trade_journey_events.json"
   )
   local present_paths=()
   local path
   local runtime_status
   local stash_label
+  local exclude_file
 
   for path in "${known_paths[@]}"; do
     if [[ ! -e "$path" ]]; then
+      continue
+    fi
+    # Runtime-owned untracked files may not be readable by the deploy user.
+    # Register them in this checkout's private exclude file before asking git
+    # for worktree status; otherwise `git stash --include-untracked` attempts
+    # to open the file and aborts the deployment with EACCES. The file remains
+    # in place across the detached checkout and the repository-level ignore in
+    # the target commit makes this local exclusion unnecessary thereafter.
+    if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      exclude_file="$(git rev-parse --git-path info/exclude)"
+      mkdir -p "$(dirname "$exclude_file")"
+      if ! grep -Fqx "/${path}" "$exclude_file" 2>/dev/null; then
+        printf '/%s\n' "$path" >>"$exclude_file"
+      fi
       continue
     fi
     # Skip gitignored runtime paths (e.g. .orchestrator/metrics,
@@ -980,6 +998,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     AGORA_WORKSHOP_STORE_BACKEND=postgres \
     AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_WORKSHOP_STORE_SCHEMA=agora \
+    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
+    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
     AGORA_RESEARCH_STORE_BACKEND=postgres \
     AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_RESEARCH_STORE_SCHEMA=agora_research \
@@ -988,6 +1009,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
     PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
@@ -1034,6 +1056,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     AGORA_WORKSHOP_STORE_BACKEND=postgres \
     AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_WORKSHOP_STORE_SCHEMA=agora \
+    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
+    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
     AGORA_RESEARCH_STORE_BACKEND=postgres \
     AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_RESEARCH_STORE_SCHEMA=agora_research \
@@ -1042,6 +1067,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
     PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \

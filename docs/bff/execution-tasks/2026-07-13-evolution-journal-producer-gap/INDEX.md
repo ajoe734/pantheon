@@ -51,7 +51,9 @@ only true build-on-top edges are declared.
 ## Dependencies
 
 ```text
-EVOCHAIN-001: none
+EVOCHAIN-001: none (blocked on LIN-003 for the default-validator acceptance
+  criterion only — see docs/decisions/LIN-003-live-lineage-write-path.md;
+  every other acceptance criterion is met)
 EVOCHAIN-002: none
 EVOCHAIN-003: none
 EVOCHAIN-004: none

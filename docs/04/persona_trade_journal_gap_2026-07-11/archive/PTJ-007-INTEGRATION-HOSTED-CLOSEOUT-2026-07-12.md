@@ -1,9 +1,9 @@
 # PTJ-007 Integration and Hosted Closeout Evidence
 
-Date: 2026-07-12  
-Task: `PTJ-007`  
-Owner: Codex  
-Reviewer: Claude  
+Date: 2026-07-12
+Task: `PTJ-007`
+Owner: Codex
+Reviewer: Claude
 Environment: Pantheon dev, paper-only validation
 
 ## Delivery inventory

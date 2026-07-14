@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 3
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-3`
+Parent: `PPL-ALLOC-006`
+Owner: Codex
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -109,9 +109,9 @@ a synthetic `last updated` timestamp that suggests an atomic snapshot.
 ## Composition And Review
 
 Owned here: support-only frontend orchestration, join, refresh, and failure
-guidance.  
+guidance.
 Not changing: canonical policy, BFF contracts or implementation,
-runtime/registry/governance behavior, frontend source, or parent lifecycle.  
+runtime/registry/governance behavior, frontend source, or parent lifecycle.
 Composes with: `PPL-ALLOC-003` capital/binding reads, `PPL-ALLOC-004`
 allocation policy, the parent `PPL-ALLOC-006` workbench, and the two earlier
 PPL-ALLOC-006 BFF handoff packets.

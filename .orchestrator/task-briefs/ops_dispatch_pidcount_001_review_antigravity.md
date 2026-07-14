@@ -9,10 +9,10 @@
 1. **Deduplication of Worker PID Scan**:
    - The method `scan_live_worker_pids_by_agent` in `.orchestrator/supervisor.py` has been correctly updated to check for `"worker_runner.py" in cmdline` before counting a PID as a live worker.
    - This properly resolves the 3x overcounting issue caused by child processes (CLI shims/binaries) inheriting/repeating the same wakeword in their cmdlines.
-   
+
 2. **Cap early-exit logging**:
    - The early-exit checks in both `dispatch_ready_tasks` and `dispatch_chair_review` now output explicit diagnostic logs (`console_log(...)`) instead of silently returning. This makes future capacity freeze incidents instantly diagnosable in the logs.
-   
+
 3. **Watchdog Verification**:
    - The watchdog `active_worker_count` pressure logic remains safe. Tests show that watchdog active worker count reads logical runs from supervisor memory, rather than raw PID scans, preventing false-positive memory pressure suppression.
 

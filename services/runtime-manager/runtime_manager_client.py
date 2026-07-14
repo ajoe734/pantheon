@@ -82,6 +82,22 @@ class RuntimeManagerClient:
         binding = self._local().deploy(request)
         return binding.to_dict()
 
+    def replace(self, runtime_id: str, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Forward-replace a binding through the canonical runtime route.
+
+        ``runtime_id`` is copied into the request when absent.  If the caller
+        supplies a conflicting body value, both HTTP and local service modes
+        reject it instead of silently rewriting runtime identity.
+        """
+        payload = dict(request)
+        if not payload.get("runtime_id"):
+            payload["runtime_id"] = runtime_id
+        if self._use_http():
+            return self._request_json(
+                "POST", f"/api/runtimes/{runtime_id}/replace", payload
+            )
+        return self._local().replace(payload)
+
     def get(self, binding_id: str) -> Optional[Dict[str, Any]]:
         if self._use_http():
             try:

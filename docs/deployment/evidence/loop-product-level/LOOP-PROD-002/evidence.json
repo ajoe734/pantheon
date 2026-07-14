@@ -1,0 +1,227 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Self-formalization: This task (LOOP-PROD-002) delivers the product evidence schema.",
+    "note": "This is the formal product evidence schema deployment record.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-002/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Immutable once PR #3584 merges.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-14T01:15:00Z",
+    "evidence_cut_semantics": "Capture-time code validation and schema tests. This task does not deploy active loops to production.",
+    "id": "LOOP-PROD-002",
+    "overall_admission": "pass",
+    "owner": "Antigravity",
+    "phase": "Loop Product-Level Remediation / Wave 0",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-002/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev",
+    "target_maturity": "contract",
+    "task_branch": "task/LOOP-PROD-002",
+    "title": "Product evidence schema and anti-false-close gate"
+  },
+  "authorities": {
+    "actual_state": [
+      "python3 scripts/test_loop_done_guardrail.py"
+    ],
+    "desired_state": [
+      "AI_COLLABORATION_GUIDE.md section 2",
+      "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-002.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity for validation guardrail script and schema",
+    "composes_with": [
+      "LOOP-PROD-000",
+      "LOOP-PROD-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-002/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-002/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "schemas/product-evidence.schema.json",
+      "scripts/loop_done_guardrail.py",
+      "scripts/test_loop_done_guardrail.py",
+      "requirements.txt"
+    ],
+    "not_changing": "Loop controllers, schedulers, database stores, or frontend UI layout",
+    "owned_layer": "Product level evidence schema verification and done guardrail"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "0023f5fa804303ec0ac5a4afbe26207c0d9a44b7",
+        "subject": "LOOP-PROD-002: anchor product evidence schema and done guardrail"
+      },
+      {
+        "sha": "0ec25b58e6c41681e0228650d3a2bd5eb828bbc8",
+        "subject": "LOOP-PROD-002: lazy import jsonschema and add dependency in requirements"
+      }
+    ],
+    "pull_request": {
+      "number": 3584,
+      "url": "https://github.com/ajoe734/pantheon/pull/3584",
+      "head_sha": "0ec25b58e6c41681e0228650d3a2bd5eb828bbc8",
+      "base": "dev",
+      "merged_at": "2026-07-14T01:13:51Z",
+      "merge_sha": "add901ad82d2e6dfeee1b813f5f66e1db5141e67"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "run_id": 29259973772,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29259973772",
+        "head_sha": "0ec25b58e6c41681e0228650d3a2bd5eb828bbc8",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 scripts/test_loop_done_guardrail.py",
+        "result": "pass",
+        "conclusion": "pass"
+      }
+    ],
+    "validated_at": "2026-07-14T01:15:00Z",
+    "validated_base_sha": "39cf7546d2bd7e9a190ef6193d29b6b8c9763bfa",
+    "validated_head_sha": "add901ad82d2e6dfeee1b813f5f66e1db5141e67"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "dev",
+    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "publish_cut": {
+      "workflow": "Hourly Publish Cut",
+      "conclusion": "success"
+    },
+    "canonical_root_deploy": {
+      "workflow": "Pantheon Nonprod Deploy",
+      "conclusion": "success"
+    },
+    "identity_admission": {
+      "authoritative_chain": [
+        "PR #3584 merge SHA add901ad82d2e6dfeee1b813f5f66e1db5141e67"
+      ]
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "observed_at": "2026-07-14T01:15:00Z",
+      "status": "pass"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "The scripts are static tools with duplicate-safe validation behavior."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "Lazy import guards against ModuleNotFoundError gracefully when jsonschema is absent, appending ImportError gap to validation result."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "not_applicable",
+      "reason": "This is a static tooling task."
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "Tool runs statelessly on each invocation, requiring no runtime recovery state."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "not_applicable",
+      "reason": "Stateless dev-tooling change."
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "status": "pass"
+    },
+    "rbac": {
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "status": "not_applicable"
+    },
+    "two_person_approval": {
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "scripts/loop_done_guardrail.py",
+        "scripts/test_loop_done_guardrail.py"
+      ],
+      "id": "AC1",
+      "statement": "guard rejects missing or stale requirement evidence and emits exact blocking requirement IDs",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "scripts/ai_status.py"
+      ],
+      "id": "AC2",
+      "statement": "cross-repo routing and merge-target ancestry are verified",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {},
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-002/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-002/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-002/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "Stateless tooling task",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-14T01:15:00Z",
+      "kind": "implementation_review",
+      "status": "pass",
+      "actor": "Claude"
+    }
+  ]
+}

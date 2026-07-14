@@ -207,6 +207,10 @@ class WriteAuthorityResponse(BaseModel):
 
 
 class RebalanceAllocationLine(BaseModel):
+    ranking_snapshot_id: str = Field(min_length=1)
+    allocation_evaluation_id: str = Field(min_length=1)
+    allocation_line_digest: str = Field(min_length=1)
+    allocation_policy_version: str = Field(min_length=1)
     persona_id: str
     stage: str
     capital_scope: str = "pool"
@@ -226,7 +230,9 @@ class CreateRebalanceRequest(BaseModel):
     request_hash: str
     rebalance_id: Optional[str] = None
     capital_pool_id: str
-    ranking_snapshot_id: Optional[str] = None
+    ranking_snapshot_id: str = Field(min_length=1)
+    allocation_evaluation_id: str = Field(min_length=1)
+    allocation_policy_version: str = Field(min_length=1)
     reason: str = ""
     lines: List[RebalanceAllocationLine]
     simulation: Dict[str, Any] = Field(default_factory=dict)
@@ -282,6 +288,8 @@ class RebalanceBody(BaseModel):
     lines: List[Dict[str, Any]]
     reason: str = ""
     ranking_snapshot_id: Optional[str] = None
+    allocation_evaluation_id: Optional[str] = None
+    allocation_policy_version: Optional[str] = None
     simulation: Dict[str, Any] = Field(default_factory=dict)
     constraints: Dict[str, Any] = Field(default_factory=dict)
     rollback_target: Dict[str, Any] = Field(default_factory=dict)

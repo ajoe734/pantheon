@@ -248,6 +248,22 @@ class MemoryWorkshopStore:
         with self._lock:
             wid = event["workshop_id"]
             bucket = self._events.setdefault(wid, [])
+            requested_id = event.get("event_id")
+            if requested_id:
+                existing = next((row for row in bucket if row["event_id"] == requested_id), None)
+                if existing is not None:
+                    comparable = {
+                        "workshop_id": wid,
+                        "actor_type": event["actor_type"],
+                        "event_type": event["event_type"],
+                        "private_content_ref": event.get("private_content_ref"),
+                        "redacted_summary": event.get("redacted_summary"),
+                        "payload_refs_json": event.get("payload_refs_json"),
+                        "trace_id": event.get("trace_id"),
+                    }
+                    if any(existing.get(key) != value for key, value in comparable.items()):
+                        raise ValueError("event_id reused with a different payload")
+                    return dict(existing)
             ev: Dict[str, Any] = {
                 "event_id": event.get("event_id") or _new_id(),
                 "workshop_id": wid,
@@ -815,6 +831,7 @@ class PostgresWorkshopStore:
                        COALESCE((SELECT MAX(sequence_no) FROM {self._et}
                                   WHERE workshop_id = %s), 0) + 1,
                        %s, %s, %s, %s, %s::jsonb, %s, %s
+                ON CONFLICT (event_id) DO NOTHING
                 RETURNING sequence_no
                 """,
                 (
@@ -828,6 +845,26 @@ class PostgresWorkshopStore:
                 ),
             )
             seq_row = cur.fetchone()
+            if seq_row is None:
+                existing = conn.execute(
+                    f"SELECT workshop_id,sequence_no,actor_type,event_type,private_content_ref,"
+                    f"redacted_summary,payload_refs_json::text,trace_id FROM {self._et} WHERE event_id=%s",
+                    (event_id,),
+                ).fetchone()
+                if existing is None:
+                    raise RuntimeError("idempotent workshop event disappeared")
+                expected = (
+                    workshop_id, event["actor_type"], event["event_type"],
+                    event.get("private_content_ref"), event.get("redacted_summary"),
+                    payload_refs, event.get("trace_id"),
+                )
+                actual = (
+                    existing[0], existing[2], existing[3], existing[4], existing[5],
+                    _decode_json(existing[6]), existing[7],
+                )
+                if actual != expected:
+                    raise ValueError("event_id reused with a different payload")
+                seq_row = (existing[1],)
         return {
             "event_id": event_id,
             "workshop_id": workshop_id,

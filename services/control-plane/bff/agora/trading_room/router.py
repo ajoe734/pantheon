@@ -981,11 +981,12 @@ def _workspace_data_freshness(
 ) -> Dict[str, Any]:
     """Combine caller source-health evidence with locally queryable surfaces.
 
-    The three keys the BFF can verify itself (decision events, evidence refs,
-    and workshop-store strategy summary) are always assigned from that local
-    truth, never from ``reported`` -- a caller cannot forge ``full`` for a
-    surface the BFF already knows how to check. Sources the BFF has no local
-    signal for still take the caller-reported value via ``setdefault``.
+    Every key in the result is assigned from local BFF truth, never from
+    ``reported`` -- a caller cannot forge ``full``/``partial`` for any
+    source. Sources this deployment has no local verification path for
+    (workshop store unwired, or one of the nine source families the BFF
+    does not query at all) are conservatively reported as ``missing``
+    rather than trusting caller-supplied health.
     """
     resolved = copy.deepcopy(reported)
     events = store.list_decision_events(page_size=10_000).get("items") or []
@@ -1000,16 +1001,18 @@ def _workspace_data_freshness(
         "rowCount": len(strategy_events),
         "reason": "scoped TradingRoomStore decision-event query",
     }
-    has_ready_strategy = True
+    has_ready_strategy = False
     verified_evidence_ref_ids: Optional[set] = None
     if workshop_store is not None and hasattr(workshop_store, "list_sessions"):
-        has_ready_strategy = False
         verified_evidence_ref_ids = set()
-        matched_session: Optional[Dict[str, Any]] = None
+        matched_sessions: List[Dict[str, Any]] = []
         cursor: Optional[str] = None
-        # Page through every session in scope -- a matching ready session for
-        # this strategy_id may not be on the first page, so a single
-        # limit=100 call without following next_cursor can silently miss it.
+        # Page through every session in scope and collect every session that
+        # matches this strategy_id -- a matching session may not be on the
+        # first page, and the caller's own strategy may have more than one
+        # session (e.g. an older non-ready session alongside a newer ready
+        # one), so stopping at the first match found can hide a later ready
+        # session behind an earlier non-ready one.
         for _ in range(1000):  # hard bound against a runaway/looping cursor
             try:
                 page, cursor = workshop_store.list_sessions(
@@ -1021,41 +1024,38 @@ def _workspace_data_freshness(
                 )
             except Exception:
                 page, cursor = [], None
-            matched_session = next(
-                (
-                    session
-                    for session in page
-                    if str(session.get("strategy_id") or "").strip() == strategy_id
-                ),
-                None,
+            matched_sessions.extend(
+                session
+                for session in page
+                if str(session.get("strategy_id") or "").strip() == strategy_id
             )
-            if matched_session is not None or not cursor:
+            if not cursor:
                 break
-        if matched_session is not None:
+        for matched_session in matched_sessions:
             workshop_id = str(matched_session.get("workshop_id") or "")
-            readiness: Optional[Dict[str, Any]] = None
-            if workshop_id:
-                readiness = (
-                    workshop_store.get_latest_readiness_assessment(workshop_id)
-                    if hasattr(workshop_store, "get_latest_readiness_assessment")
-                    else None
-                )
-                if not isinstance(readiness, dict) and (
-                    hasattr(workshop_store, "list_events")
-                    and hasattr(workshop_store, "get_latest_completeness_snapshot")
-                ):
-                    from ..strategy_workshop.router import _build_readiness_assessment
+            if not workshop_id:
+                continue
+            readiness: Optional[Dict[str, Any]] = (
+                workshop_store.get_latest_readiness_assessment(workshop_id)
+                if hasattr(workshop_store, "get_latest_readiness_assessment")
+                else None
+            )
+            if not isinstance(readiness, dict) and (
+                hasattr(workshop_store, "list_events")
+                and hasattr(workshop_store, "get_latest_completeness_snapshot")
+            ):
+                from ..strategy_workshop.router import _build_readiness_assessment
 
-                    try:
-                        readiness = _build_readiness_assessment(
-                            session=matched_session,
-                            events=workshop_store.list_events(workshop_id),
-                            snapshot=workshop_store.get_latest_completeness_snapshot(workshop_id),
-                            assessed_at=assessed_at,
-                            assessment_version=1,
-                        )
-                    except Exception:
-                        readiness = None
+                try:
+                    readiness = _build_readiness_assessment(
+                        session=matched_session,
+                        events=workshop_store.list_events(workshop_id),
+                        snapshot=workshop_store.get_latest_completeness_snapshot(workshop_id),
+                        assessed_at=assessed_at,
+                        assessment_version=1,
+                    )
+                except Exception:
+                    readiness = None
             if isinstance(readiness, dict) and _gate_state(readiness, "trading_room") == "ready":
                 has_ready_strategy = True
                 for ref in readiness.get("evidence_refs") or []:
@@ -1063,19 +1063,26 @@ def _workspace_data_freshness(
                         ref_id = str(ref.get("ref_id") or "").strip()
                         if ref_id:
                             verified_evidence_ref_ids.add(ref_id)
+                break
     resolved["agora.strategy.summary"] = {
-        "wired": True,
+        "wired": workshop_store is not None,
         "rowCount": 1 if has_ready_strategy else 0,
-        "reason": "ready StrategySpec version (trading_room gate ready) used for workspace generation",
+        "reason": (
+            "ready StrategySpec version (trading_room gate ready) used for workspace generation"
+            if workshop_store is not None
+            else "workshop store not wired in current BFF deployment; readiness cannot be verified"
+        ),
     }
     if verified_evidence_ref_ids is None:
         # workshop_store isn't wired in this deployment at all -- there is no
-        # local signal to cross-check evidence refs against, so fall back to
-        # the caller-supplied count (same posture as the unwired sources below).
+        # local signal to cross-check evidence refs against, so this source
+        # is conservatively unverified rather than trusting the
+        # caller-supplied evidence_refs count (same posture as the nine
+        # unwired sources below).
         resolved["agora.research.evidence_refs"] = {
-            "wired": True,
-            "rowCount": len(evidence_refs),
-            "reason": "workspace generation evidence refs (workshop store not wired for verification)",
+            "wired": False,
+            "rowCount": 0,
+            "reason": "workshop store not wired in current BFF deployment; evidence refs cannot be verified",
         }
     else:
         verified_count = sum(
@@ -1098,14 +1105,15 @@ def _workspace_data_freshness(
         "agora.shadow.outcomes",
     }
     for source in all_known_sources:
-        resolved.setdefault(
-            source,
-            {
-                "wired": False,
-                "rowCount": 0,
-                "reason": f"source {source} is not wired in current BFF deployment",
-            }
-        )
+        # The BFF has no local query path for any of these sources today --
+        # always report them as unverified/missing regardless of what the
+        # caller claims, rather than trusting a caller-forged `wired`/
+        # `rowCount` via setdefault.
+        resolved[source] = {
+            "wired": False,
+            "rowCount": 0,
+            "reason": f"source {source} is not wired in current BFF deployment",
+        }
     return resolved
 
 

@@ -1,0 +1,446 @@
+{
+  "base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "capture_gate": {
+    "active_nonprod_deploys_after": [],
+    "active_nonprod_deploys_before": [],
+    "credential_recorded": false,
+    "independent_contract_reads": 2,
+    "independent_contract_reads_passed": 2,
+    "loop_health_authenticated_http": 200,
+    "loop_health_unauthenticated_http": 401,
+    "loop_inventory_authenticated_http": 200,
+    "loop_inventory_unauthenticated_http": 401,
+    "read_receipts": [
+      {
+        "contract_assertions": "pass",
+        "health_semantic_sha256": "9f2569cd5e4e0347eca98e2bfe9e2b5ca78e6a2e32341fb9298f0bedb3a37ed6",
+        "inventory_semantic_sha256": "c599ae48263a0303a3be77e1d9e93f0d455acca0af2b6796ba35c6feb787013e",
+        "observed_at": "2026-07-13T22:40:16Z",
+        "read": 1
+      },
+      {
+        "contract_assertions": "pass",
+        "health_semantic_sha256": "9f2569cd5e4e0347eca98e2bfe9e2b5ca78e6a2e32341fb9298f0bedb3a37ed6",
+        "inventory_semantic_sha256": "c599ae48263a0303a3be77e1d9e93f0d455acca0af2b6796ba35c6feb787013e",
+        "observed_at": "2026-07-13T22:40:16Z",
+        "read": 2
+      }
+    ],
+    "requests": {
+      "health": {
+        "auth_mode": "Bearer credential supplied only through the process environment; the value was not logged or persisted.",
+        "method": "GET",
+        "redacted_command": "curl --fail-with-body --silent --show-error --header 'Authorization: Bearer ${PANTHEON_DEV_READ_TOKEN}' '${PANTHEON_DEV_BFF_BASE_URL}/bff/v5/loop-health'",
+        "route": "/bff/v5/loop-health"
+      },
+      "inventory": {
+        "auth_mode": "Bearer credential supplied only through the process environment; the value was not logged or persisted.",
+        "method": "GET",
+        "redacted_command": "curl --fail-with-body --silent --show-error --header 'Authorization: Bearer ${PANTHEON_DEV_READ_TOKEN}' '${PANTHEON_DEV_BFF_BASE_URL}/bff/v5/loop-inventory'",
+        "route": "/bff/v5/loop-inventory"
+      }
+    }
+  },
+  "captured_at": "2026-07-13T22:40:16Z",
+  "environment": "dev",
+  "health": {
+    "coverage": {
+      "canonical_loop_count": 12,
+      "composite_overlay_count": 1,
+      "controller_health_record_count": 0,
+      "inventory_entry_count": 13,
+      "loop_count": 13,
+      "raw_health_record_count": 1
+    },
+    "items": [
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "source_ingestion",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "strategy_distillation",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "alpha_replication",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "persona_teaching",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "agora_interaction_evidence",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "human_imitation_shadow_evaluation",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "consultation",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "promotion_deployment",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "manual",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "capital_pool_execution",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "telemetry_reconciliation",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "evolution",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "canonical",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "bff_health_monitoring",
+        "target_maturity": "reconciled"
+      },
+      {
+        "classification": "composite_overlay",
+        "controller_status": "not_implemented",
+        "current_maturity": "api-only",
+        "current_record_accepted": false,
+        "is_live": false,
+        "is_reconciled": false,
+        "loop_id": "per_persona_ooda",
+        "target_maturity": "reconciled"
+      }
+    ],
+    "surface": "degraded"
+  },
+  "inventory": {
+    "catalog": {
+      "catalog_id": "global-loop-catalog-2026-07-13",
+      "inventory_counts": {
+        "canonical_loop_count": 12,
+        "composite_overlay_count": 1,
+        "inventory_entry_count": 13
+      },
+      "schema_version": "loop_catalog.v2"
+    },
+    "items": [
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "source_ingestion",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "strategy_distillation",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "alpha_replication",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "persona_teaching",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "agora_interaction_evidence",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "human_imitation_shadow_evaluation",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "consultation",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "promotion_deployment",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": true,
+        "current_maturity": "manual",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "capital_pool_execution",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "telemetry_reconciliation",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "evolution",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "canonical",
+        "composed_of": [],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "bff_health_monitoring",
+        "target_maturity": "reconciled"
+      },
+      {
+        "archived_task_completion_accepted": false,
+        "classification": "composite_overlay",
+        "composed_of": [
+          "source_ingestion",
+          "strategy_distillation",
+          "alpha_replication",
+          "persona_teaching",
+          "agora_interaction_evidence",
+          "human_imitation_shadow_evaluation",
+          "consultation",
+          "promotion_deployment",
+          "telemetry_reconciliation",
+          "evolution"
+        ],
+        "continuous": false,
+        "current_maturity": "api-only",
+        "live_status": {
+          "catalog_claim_eligible": false,
+          "has_live_evidence": false,
+          "is_live": false,
+          "is_reconciled": false,
+          "reason": "catalog metadata is not live liveness proof"
+        },
+        "loop_id": "per_persona_ooda",
+        "target_maturity": "reconciled"
+      }
+    ]
+  },
+  "normalization": {
+    "health_hash_recompute": "jq -Sc '.health' hosted-readback.normalized.json | sha256sum",
+    "health_jq": "jq -Sc '{coverage:(.meta.coverage|{loop_count,canonical_loop_count,composite_overlay_count,inventory_entry_count,controller_health_record_count,raw_health_record_count}),surface:.meta.surfaces.loop_health.status,items:[.items[]|{loop_id,classification,current_maturity,target_maturity,controller_status:.controller_health.status,current_record_accepted:.controller_health.current_record_accepted,is_reconciled:.live_status.is_reconciled,is_live:.live_status.is_live}]|sort_by(.loop_id)}'",
+    "inventory_hash_recompute": "jq -Sc '.inventory' hosted-readback.normalized.json | sha256sum",
+    "inventory_jq": "jq -Sc '{catalog:(.meta.catalog|{schema_version,catalog_id,inventory_counts}),items:[.items[]|{loop_id,classification,current_maturity,target_maturity,continuous:.trigger_model.continuous,composed_of,archived_task_completion_accepted:.maturity_projection.archived_task_completion_accepted,live_status}]|sort_by(.loop_id)}'",
+    "raw_response_committed": false,
+    "raw_response_reason": "Raw responses include dynamic snapshot timestamps and a large repeated truth-label dictionary. This redacted artifact retains every field used for task admission and omits credentials and dynamic timestamps."
+  },
+  "runtime_identity": {
+    "deployed_descendant_sha": "ebceb59b47bf6d3e7f76110f4d5ffa67979043fc",
+    "deployment_job_id": 86950959675,
+    "deployment_run_id": 29280100001,
+    "implementation_is_ancestor": true,
+    "implementation_merge_sha": "39af6b96086424e1a56b1be1bb02f9372c727438",
+    "operator_bff_image_config": "sha256:bf047f97a09415ceec81f32d7a8a517617344e56e1645cea49b1f6f2e0b7d855",
+    "operator_bff_image_manifest": "sha256:8f9ae67883c65cb87985467cd3e3c5fc706cb4ca6a905be2e03a5ab111eda701",
+    "operator_bff_image_manifest_list": "sha256:bfcb8c7c860dbb50ede1a7ab650bc8cad7c63cb0001dbc9aee735517fc07cd2e",
+    "readyz_commit": "ebceb59b47bf6d3e7f76110f4d5ffa67979043fc",
+    "readyz_source_commit_sha": "ebceb59b47bf6d3e7f76110f4d5ffa67979043fc"
+  },
+  "schema_version": "loop_product_hosted_readback.normalized.v1",
+  "semantic_sha256": {
+    "health": "9f2569cd5e4e0347eca98e2bfe9e2b5ca78e6a2e32341fb9298f0bedb3a37ed6",
+    "inventory": "c599ae48263a0303a3be77e1d9e93f0d455acca0af2b6796ba35c6feb787013e"
+  }
+}

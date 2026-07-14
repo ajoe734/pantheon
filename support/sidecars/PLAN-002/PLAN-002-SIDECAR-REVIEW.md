@@ -181,8 +181,8 @@ Codex has refactored the planning runtime to support multiple, reusable sessions
 
 ## Codex Reviewer Endorsement (Shared-Truth Scope)
 
-**Reviewer:** Codex  
-**Reviewed:** 2026-04-13T02:07:58Z  
+**Reviewer:** Codex
+**Reviewed:** 2026-04-13T02:07:58Z
 **Verdict:** ✅ **APPROVE SIDECAR PACKET** — sufficient as support evidence; ready to return to Claude for final `done` closure.
 
 ### Scope Boundary

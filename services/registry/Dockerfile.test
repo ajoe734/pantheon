@@ -10,8 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        pydantic==2.9.0 \
        pytest==8.3.3 \
        httpx==0.27.2 \
+       jsonschema==4.23.0 \
        uvicorn==0.30.6
 
 COPY . .
 
-CMD ["pytest", "services/registry/test_service.py", "-v"]
+CMD ["pytest", "services/registry/test_service.py", "services/registry/test_strategy_artifact.py", "-v"]
