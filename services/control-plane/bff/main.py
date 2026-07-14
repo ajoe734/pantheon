@@ -207,6 +207,7 @@ def _bool_from_env(name: str, *, default: bool = False) -> bool:
 
 _BFF_AUTH_STUB_ENV = "PANTHEON_BFF_AUTH_STUB"
 _BFF_STUB_LEGACY_BARE_TOKENS_ENV = "PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS"
+_BFF_STUB_CAPABILITY_ROLES = frozenset({"admin", "operator"})
 _PRODUCTION_STRICT_ENVIRONMENTS = {
     "canary",
     "live",
@@ -1311,7 +1312,7 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             inferred_roles = ["analyst"]
         elif lowered.startswith("viewer_"):
             inferred_roles = ["viewer"]
-        capabilities = _stub_identity_capabilities([])
+        capabilities = _stub_identity_capabilities([], inferred_roles)
         return OperatorIdentity(
             operator_id=token,
             roles=inferred_roles,
@@ -1339,7 +1340,7 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             if len(parts) > 3 and parts[3]:
                 token_capabilities = parts[3].split(",")
                 
-    capabilities = _stub_identity_capabilities(token_capabilities)
+    capabilities = _stub_identity_capabilities(token_capabilities, roles)
     claims = {"sub": operator_id, "roles": roles, "capabilities": capabilities}
     if tenant_ids:
         claims["tenant_ids"] = tenant_ids
@@ -1354,7 +1355,13 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
     )
 
 
-def _stub_identity_capabilities(token_capabilities: List[str]) -> List[str]:
+def _stub_identity_capabilities(
+    token_capabilities: List[str],
+    roles: List[str],
+) -> List[str]:
+    normalized_roles = {str(role or "").strip().lower() for role in roles}
+    if not normalized_roles.intersection(_BFF_STUB_CAPABILITY_ROLES):
+        return []
     return _dedupe_nonblank_strings(
         [
             *token_capabilities,
@@ -1374,10 +1381,12 @@ def _with_structured_identity_capabilities(identity: OperatorIdentity) -> Operat
         token_capabilities = [str(cap) for cap in raw_capabilities]
     else:
         token_capabilities = []
-    capabilities = _stub_identity_capabilities(token_capabilities)
-    if not capabilities:
-        return identity
-    claims["capabilities"] = capabilities
+    capabilities = _stub_identity_capabilities(token_capabilities, identity.roles)
+    if capabilities:
+        claims["capabilities"] = capabilities
+    else:
+        claims.pop("capabilities", None)
+        claims.pop("capability", None)
     try:
         return identity.model_copy(update={"claims": claims})
     except AttributeError:
