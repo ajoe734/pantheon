@@ -17,8 +17,15 @@ DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/code/pantheon}"
 DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
-DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
-DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-permissive}"
+# Strict by default: the dev deploy must not silently re-force stub/permissive
+# auth on every run. docker-compose.yml's own PANTHEON_BFF_AUTH_STUB/MODE
+# defaults are strict/false, but this script always passes an explicit value
+# into the compose environment (see PANTHEON_BFF_AUTH_STUB= below), which
+# overrides the compose file default regardless of what it says. Operators who
+# need a permissive dev session must opt in explicitly via
+# DEV_BFF_AUTH_STUB=true DEV_BFF_AUTH_MODE=permissive.
+DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
+DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
 DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
 DEV_BFF_ALLOWED_TENANTS="${DEV_BFF_ALLOWED_TENANTS:-${DEV_BFF_TENANT_ID},pantheon-dev}"
 DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"
@@ -992,6 +999,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
@@ -1050,6 +1058,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
