@@ -1,7 +1,7 @@
 # Persona Interaction And Governed Action Plan
 
-Date: 2026-07-12  
-Status: execution-ready planning baseline  
+Date: 2026-07-12
+Status: execution-ready planning baseline
 Repos: `ajoe734/pantheon`, `ajoe734/execute-plans`
 
 ## 1. Outcome
@@ -248,6 +248,34 @@ change capital binding, promote lifecycle, write RuntimeBinding, bypass policy,
 or approve its own proposal. Existing kill switch and emergency containment
 paths remain separate operator controls.
 
+### 8.1 Human role boundary
+
+- `operator` and `admin` are the only interactive roles allowed to create a
+  contextual Workshop, submit an interaction, create or revise a governed
+  proposal, request validation, or record a proposal decision.
+- `viewer` is read-only. A viewer may read only the resources allowed by the
+  normal tenant and capability checks, and must receive `401` or `403` for
+  every mutation even when its capability manifest includes an Agora
+  capability. The frontend must hide or disable the same controls and direct
+  API negative tests must prove that this is not merely a UI restriction.
+- Capability names describe available product functions; they do not elevate a
+  human role or grant execution authority.
+
+### 8.2 Exact proposal and approval binding
+
+An approval is valid only for the exact proposal state that was reviewed. The
+authorization record must bind proposal id, proposal revision, target immutable
+version, canonical proposal-content digest, validation-result digest, approving
+actor, decision time, and expiry. A revised proposal, changed content,
+superseded validation, expired authorization, revoked decision, mismatched
+tenant, or proposer/approver identity collision invalidates the approval and
+requires a new validation and human decision.
+
+Proposal revisions, idempotency records, audit events, and pending side effects
+must survive process restart in the production persistence backend. Recovery
+must replay deterministic pending work without duplicating audit or downstream
+effects. None of these records is itself an order or RuntimeBinding.
+
 ## 9. Surface Behaviour
 
 ### 9.1 Strategy Workshop
@@ -338,8 +366,8 @@ private prompt, secret, broker credential, or raw restricted evidence.
 ## 13. Release Gates
 
 1. Contract schemas and compatibility tests pass.
-2. BFF persistence, idempotency, ETag, tenancy, permission, and fail-closed tests
-   pass.
+2. BFF persistence, restart recovery, idempotency, ETag, tenancy, operator/viewer
+   permission, and fail-closed tests pass.
 3. Frontend unit/integration tests cover all interaction modes and degraded
    states.
 4. Cross-repo E2E proves one-Persona ask, red-team consultation, disagreement,
@@ -348,9 +376,15 @@ private prompt, secret, broker credential, or raw restricted evidence.
 5. No flow grants direct order, broker, capital-binding, RuntimeBinding, or
    self-approval authority.
 6. Pantheon BFF and `execute-plans` commits are merged and deployed to the
-   Pantheon-owned dev environment.
-7. Authenticated hosted browser smoke verifies strict-live behaviour, mobile,
-   audit/readback, and rollback/degraded paths.
+   Pantheon-owned dev environment. The frontend deployment manifest records the
+   exact 40-character frontend commit and exact 40-character BFF commit used by
+   the build; `/bff/version` must match the latter.
+7. The deployed frontend uses live BFF mode, strict fallback, safe write
+   defaults, and contains no embedded bearer token.
+8. Authenticated hosted browser smoke verifies strict-live behaviour on desktop
+   and mobile, audit/readback, proposal revision/validation, rollback/degraded
+   paths, an operator positive flow, and both UI and direct-API viewer mutation
+   denial.
 
 ## 14. Explicit Non-Goals
 

@@ -1,0 +1,66 @@
+{
+  "commit": "886e357f6861e835e95877f975f419872b4543b6",
+  "request_paths": [
+    {
+      "has_idempotency_key": false,
+      "has_if_match": false,
+      "method": "GET",
+      "path": "/bff/agora/trading-room",
+      "status": 200
+    },
+    {
+      "has_idempotency_key": false,
+      "has_if_match": false,
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events",
+      "status": 200
+    },
+    {
+      "has_idempotency_key": false,
+      "has_if_match": false,
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "status": 200
+    },
+    {
+      "has_idempotency_key": true,
+      "has_if_match": false,
+      "method": "POST",
+      "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals",
+      "status": 201
+    },
+    {
+      "has_idempotency_key": true,
+      "has_if_match": false,
+      "method": "POST",
+      "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals/trp_69379b782387/accept",
+      "status": 200
+    },
+    {
+      "has_idempotency_key": false,
+      "has_if_match": false,
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_3e3b38bfa5f9/versions",
+      "status": 200
+    },
+    {
+      "has_idempotency_key": true,
+      "has_if_match": true,
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/trw_3e3b38bfa5f9/layout",
+      "status": 200
+    },
+    {
+      "has_idempotency_key": false,
+      "has_if_match": false,
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/trw_3e3b38bfa5f9/versions"
+    }
+  ],
+  "initial_dashboard_version": null,
+  "proposal_first": true,
+  "repreviewed_accepted_workspace": true,
+  "strategy_id": "full003-live-1783268175-13279b",
+  "task_id": "AG-UIPOL-006",
+  "workshop_id": "0bb956f7-0f2a-4318-9cb3-c6feae58306d"
+}

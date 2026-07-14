@@ -27,8 +27,8 @@ frontend slice.
 
 ### Pantheon BFF contract slice
 
-**Repository:** `ajoe734/pantheon`  
-**Merge target:** `dev`  
+**Repository:** `ajoe734/pantheon`
+**Merge target:** `dev`
 **Composition owner:** `OCLAW-PMEM-002` parent owner plus assigned BFF owner
 
 Deliver an operator-safe persona-scoped reconciliation projection backed by an
@@ -75,8 +75,8 @@ consume. Without those items, the frontend dependency is not satisfied.
 
 ## Conditional `execute-plans` Assignment
 
-**Repository:** `ajoe734/execute-plans` (never materialized inside Pantheon)  
-**Merge target:** `main`  
+**Repository:** `ajoe734/execute-plans` (never materialized inside Pantheon)
+**Merge target:** `main`
 **Dependency:** the Pantheon projection above is merged and available to the
 frontend owner as a versioned contract or captured response
 

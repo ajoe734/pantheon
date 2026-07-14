@@ -1,7 +1,7 @@
 # Review Approval: AG-DES-SW-REF-001-SIDECAR-REVIEW
 
-**Reviewer**: Claude2  
-**Date**: 2026-06-21  
+**Reviewer**: Claude2
+**Date**: 2026-06-21
 **Outcome**: APPROVED
 
 ## Checklist Verification

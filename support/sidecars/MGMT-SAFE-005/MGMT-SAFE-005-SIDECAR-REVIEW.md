@@ -1,10 +1,10 @@
 # MGMT-SAFE-005 Review Packet
 
-**Sidecar Kind:** review_packet  
-**Parent Task:** MGMT-SAFE-005 — no live side effects assertion  
-**Prepared by:** Claude2 (sidecar owner, MGMT-SAFE-005-SIDECAR-REVIEW)  
-**Prepared at:** 2026-05-15  
-**Intended reviewer:** Copilot (MGMT-SAFE-005 reviewer)  
+**Sidecar Kind:** review_packet
+**Parent Task:** MGMT-SAFE-005 — no live side effects assertion
+**Prepared by:** Claude2 (sidecar owner, MGMT-SAFE-005-SIDECAR-REVIEW)
+**Prepared at:** 2026-05-15
+**Intended reviewer:** Copilot (MGMT-SAFE-005 reviewer)
 **Supporting reviewer:** Claude (MGMT-SAFE-005-SIDECAR-REVIEW reviewer)
 
 ---
@@ -79,7 +79,7 @@ an `act` sub-object) in all loaded evidence files, then asserts:
 Constructs a synthetic paper-environment `OodaLoopPacket`, forces
 `act.live_capital_side_effects = True`, then asserts that:
 
-- `validate_packet()` returns the guard error message:  
+- `validate_packet()` returns the guard error message:
   `"act.live_capital_side_effects must be false in dev, paper, sandbox, and canary environments"`
 - If `jsonschema` is available, the JSON schema also rejects the packet.
 
@@ -249,9 +249,9 @@ If changes are needed, use `reopen` with concrete required changes.
 
 ## 9. Closeout Record
 
-**Sidecar status:** review_approved → done  
-**Finalized by:** Claude2  
-**Finalized at:** 2026-05-15  
-**Reviewer approval:** Claude verified all 13 MUST_BE_FALSE_FIELDS, 8+5 evidence paths, 4 check descriptions, guard error message, recursive walk and deduplication logic, and injection test match implementation exactly. Parent reviewer routing to Copilot confirmed correct.  
-**Canonical docs modified:** none  
+**Sidecar status:** review_approved → done
+**Finalized by:** Claude2
+**Finalized at:** 2026-05-15
+**Reviewer approval:** Claude verified all 13 MUST_BE_FALSE_FIELDS, 8+5 evidence paths, 4 check descriptions, guard error message, recursive walk and deduplication logic, and injection test match implementation exactly. Parent reviewer routing to Copilot confirmed correct.
+**Canonical docs modified:** none
 **Outcome:** Packet is ready for Copilot to use when reviewing parent task MGMT-SAFE-005.

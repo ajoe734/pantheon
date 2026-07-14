@@ -1,10 +1,10 @@
 # Pathreon Agora — Claude Design UI Requirement V5 Final
 
-> 文件目的：交付 Claude Design 產出 Agora 前端 UI 設計稿。  
-> 版本：V5 Final / Trading Servant Desk + Strategy Lens + Execution Performance 版  
-> 日期：2026-05-20  
-> 範圍：只設計 Agora，不設計 Pathreon Management。  
-> 重要修正：Agora 不是散戶聊天工具，不是後台，不是一般 watchlist。Agora 是給高階交易員、股票大戶、分析師使用的 **個人 AI 交易工作桌**。  
+> 文件目的：交付 Claude Design 產出 Agora 前端 UI 設計稿。
+> 版本：V5 Final / Trading Servant Desk + Strategy Lens + Execution Performance 版
+> 日期：2026-05-20
+> 範圍：只設計 Agora，不設計 Pathreon Management。
+> 重要修正：Agora 不是散戶聊天工具，不是後台，不是一般 watchlist。Agora 是給高階交易員、股票大戶、分析師使用的 **個人 AI 交易工作桌**。
 > 核心語氣：交易員是主人，AI 是交易研究助理 / 交易僕人。UI 不使用「問 AI」作為主概念，而是「交代助理做事」。
 
 ---
@@ -143,7 +143,7 @@ Journal / Replay Drawer
 
 ### 2.2 重要修正
 
-第三頁不是「部位 Cockpit」。  
+第三頁不是「部位 Cockpit」。
 部位是策略執行結果的一部分，應放在「策略執行與績效」中呈現。
 
 「交易操盤室」中會呈現：
@@ -204,7 +204,7 @@ Placeholder：
 
 ### 4.1 頁面目標
 
-交易操盤室不是單一 watchlist。  
+交易操盤室不是單一 watchlist。
 它是交易員依據多種策略 lens 監控一批股票與部位的地方。
 
 交易操盤室要回答：
@@ -605,7 +605,7 @@ Universe -> Signal -> Candidate Pool -> Portfolio Weight -> Entry -> Monitor -> 
 
 ### 6.1 頁面目標
 
-這頁不是單純看持倉。  
+這頁不是單純看持倉。
 它要看：
 
 ```text
@@ -912,40 +912,40 @@ AI 事後評估
 
 Claude Design 請至少畫以下 12 張：
 
-1. **My AI Trading Desk — 交易操盤室 tab**  
+1. **My AI Trading Desk — 交易操盤室 tab**
    包含 strategy lens switcher、候選池、監控池、交易/出場提醒、助理裁示區。
 
-2. **交易操盤室 — 籌碼大戶部位建立 lens**  
+2. **交易操盤室 — 籌碼大戶部位建立 lens**
    顯示分點 heatmap、買盤 ranking、關聯分點反向流、出貨風險。
 
-3. **交易操盤室 — 產業落後補漲 lens**  
+3. **交易操盤室 — 產業落後補漲 lens**
    顯示供應鏈圖、同族群漲幅、相似度 × 落後幅度 scatter、候選排名。
 
-4. **Candidate Review Drawer**  
+4. **Candidate Review Drawer**
    顯示助理為什麼選、疑慮、證據、納入監控/剔除/送影子。
 
-5. **策略工坊 — 策略描述與即時研究材料**  
+5. **策略工坊 — 策略描述與即時研究材料**
    左側交易員描述，右側助理生成 Universe / Alpha / Portfolio / Risk / Execution。
 
-6. **策略工坊 — 回測與調整建議**  
+6. **策略工坊 — 回測與調整建議**
    顯示 backtest metrics、候選池、助理調整建議。
 
-7. **策略工坊 — 策略流程圖**  
+7. **策略工坊 — 策略流程圖**
    Universe -> Signal -> Candidate -> Portfolio -> Entry -> Monitor -> Exit。
 
-8. **策略執行與績效 — 多策略總覽**  
+8. **策略執行與績效 — 多策略總覽**
    顯示多組策略狀態、績效、持有部位、是否需調整。
 
-9. **策略執行與績效 — 干預追蹤**  
+9. **策略執行與績效 — 干預追蹤**
    顯示按策略執行 vs 交易員干預，結果比較。
 
-10. **Dashboard Layout Proposal Drawer**  
+10. **Dashboard Layout Proposal Drawer**
     顯示助理建議改版面、before/after、套用/拒絕。
 
-11. **Widget Menu + New Widget Proposal**  
+11. **Widget Menu + New Widget Proposal**
     顯示每個 widget 可以 pin/hide/move/change chart，與新增圖表提案。
 
-12. **Dashboard Change Log / Personalization Status**  
+12. **Dashboard Change Log / Personalization Status**
     顯示助理如何記住交易員偏好與版面調整效果。
 
 ---
@@ -993,4 +993,3 @@ Claude Design 交付稿必須讓人一眼看出：
 Shadow / Journal / Train AI 是橫切工具。
 整體不是散戶 AI 問答工具。
 ```
-

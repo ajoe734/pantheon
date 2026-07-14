@@ -80,9 +80,37 @@ class RuntimeSummaryProjectionStore:
         bridge_commit = metadata.get("engine_bridge_commit")
         bridge_path = metadata.get("engine_bridge_path")
         runtime_adapter_version = metadata.get("runtime_adapter_version")
+        # A threshold-breach producer admits a derived event that just echoes
+        # an existing metric value/back through ingest to prove it is
+        # schema/evidence-valid before citing it as incident evidence. That
+        # echo must not refresh the metric's own as-of time: doing so would
+        # let a stale metric value keep looking fresh forever, because the
+        # very breach it produced would re-stamp the freshness check that
+        # flagged it as stale in the first place.
+        is_derived_metric_echo = metadata.get("derived_from_threshold_evaluation") is True
 
         with self._lock:
             current = dict(self._summaries.get(runtime_id, {}))
+            existing_binding = current.get("binding_id") or current.get("runtime_binding_id")
+            if existing_binding and binding_id and existing_binding != binding_id:
+                # Reset old metrics, positions, and history to prevent carrying them across rollover
+                keys_to_clear = [
+                    "pnl", "pnl_at", "pnl_binding_id",
+                    "drawdown", "drawdown_at", "drawdown_binding_id",
+                    "sharpe_ratio", "sharpe_ratio_at", "sharpe_ratio_binding_id",
+                    "fill_rate", "fill_rate_at", "fill_rate_binding_id",
+                    "avg_slippage_bps", "avg_slippage_bps_at", "avg_slippage_bps_binding_id",
+                    "total_trades", "total_trades_at", "total_trades_binding_id",
+                    "executed_trade_count",
+                    "last_fill",
+                    "_positions_by_symbol", "positions", "position_count",
+                    "last_heartbeat_at", "last_heartbeat_event_id",
+                    "state", "connectivity_status", "broker_status",
+                    "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary"
+                ]
+                for key in keys_to_clear:
+                    current.pop(key, None)
+
             current.update(
                 {
                     "id": runtime_id,
@@ -156,9 +184,18 @@ class RuntimeSummaryProjectionStore:
                 "total_trades": ("total_trades",),
             }
             for target_key, source_keys in metric_map.items():
+                if is_derived_metric_echo:
+                    break
                 for source_key in source_keys:
                     if source_key in metrics:
                         current[target_key] = metrics[source_key]
+                        # Per-metric as-of timestamp: a metric only carried
+                        # forward by `dict.update` above (e.g. an old drawdown
+                        # value untouched by a newer heartbeat-only event)
+                        # must not read as fresh just because the summary's
+                        # overall `last_event_at` advanced.
+                        current[f"{target_key}_at"] = event_time
+                        current[f"{target_key}_binding_id"] = binding_id
                         break
 
             # Surface executed paper fills so trade activity is visible end-to-end.

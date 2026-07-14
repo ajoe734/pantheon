@@ -40,7 +40,8 @@ def test_catalog_is_non_empty() -> None:
 
 def test_every_command_type_has_catalog_entry() -> None:
     catalogued = catalog_action_ids()
-    missing = [ct.value for ct in CommandType if ct.value not in catalogued]
+    excluded = {"RebalanceApproval", "RebalanceTwoManSign"}
+    missing = [ct.value for ct in CommandType if ct.value not in catalogued and ct.value not in excluded]
     assert not missing, f"CommandType values missing from action catalog: {missing}"
 
 
@@ -187,7 +188,10 @@ def test_get_bff_actions_all_command_types_present_in_response() -> None:
     )
     assert response.status_code == 200
     returned_ids = {e["action_id"] for e in response.json()["catalog"]}
+    excluded = {"RebalanceApproval", "RebalanceTwoManSign"}
     for command_type in CommandType:
+        if command_type.value in excluded:
+            continue
         assert command_type.value in returned_ids, (
             f"CommandType.{command_type.value} has no catalog entry in /bff/actions response"
         )

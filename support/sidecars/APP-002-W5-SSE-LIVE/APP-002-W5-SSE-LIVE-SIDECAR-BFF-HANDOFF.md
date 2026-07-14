@@ -175,7 +175,7 @@ source.onerror = async () => {
 | Canonical truth untouched | PASS | No edits to L1 / core runtime code |
 | 3 SSE endpoints wired | PASS | `main.py` routes for runtime/incidents/kill-switch |
 | Replay semantics present | PASS | `_replay_from()` + `last_event_id` query |
-| SSE event shape aligned | PASS | `_sse_format()` emits full event JSON | 
+| SSE event shape aligned | PASS | `_sse_format()` emits full event JSON |
 | Frontend reconciliation aligned | PASS | `sse_reconciler.py` handlers + idempotency |
 | Adapter URL helpers present | PASS | `adapter.py` stream URL builders |
 

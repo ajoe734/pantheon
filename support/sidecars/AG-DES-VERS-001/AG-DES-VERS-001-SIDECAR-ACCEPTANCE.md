@@ -1,14 +1,14 @@
 # AG-DES-VERS-001 Sidecar Acceptance Packet
 
-**Sidecar task:** `AG-DES-VERS-001-SIDECAR-ACCEPTANCE`  
-**Helper parent:** `AG-DES-VERS-001`  
-**Helper kind:** `acceptance_packet`  
-**Parent deliverable:** Patch/version compare/readiness prose + schemas (Agora v1.3 design closure, section A)  
-**Parent owner lane:** system design  
-**Parent reviewer:** `Codex`  
-**Sidecar owner:** `Claude`  
-**Sidecar reviewer:** `Claude2`  
-**Date:** `2026-06-21`  
+**Sidecar task:** `AG-DES-VERS-001-SIDECAR-ACCEPTANCE`
+**Helper parent:** `AG-DES-VERS-001`
+**Helper kind:** `acceptance_packet`
+**Parent deliverable:** Patch/version compare/readiness prose + schemas (Agora v1.3 design closure, section A)
+**Parent owner lane:** system design
+**Parent reviewer:** `Codex`
+**Sidecar owner:** `Claude`
+**Sidecar reviewer:** `Claude2`
+**Date:** `2026-06-21`
 **Status:** `in_progress — ready for sidecar review`
 
 > Scope constraint: support artifact only. This packet summarises the
@@ -234,7 +234,7 @@ services/control-plane/openapi/agora_v1_3.openapi.yaml
 - No L1 canonical policy or architecture document has been edited or superseded.
 - No main runtime, registry, BFF router, governance implementation, or frontend code has been changed.
 - No schema file under `services/control-plane/specs/agora/` has been created or modified by this sidecar.
-- The only artifact produced by this sidecar task is this file:  
+- The only artifact produced by this sidecar task is this file:
   `support/sidecars/AG-DES-VERS-001/AG-DES-VERS-001-SIDECAR-ACCEPTANCE.md`
 
 ---

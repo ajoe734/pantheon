@@ -1,9 +1,9 @@
 # MGMT-SAFE-003 Review Packet
 
-**Sidecar Kind:** review_packet  
-**Parent Task:** MGMT-SAFE-003 — OpenClaw broker tool denial smoke  
+**Sidecar Kind:** review_packet
+**Parent Task:** MGMT-SAFE-003 — OpenClaw broker tool denial smoke
 **Prepared by:** Claude (initial), updated by Claude2 (2026-05-15, MGMT-SAFE-003-SIDECAR-REVIEW)
-**Prepared at:** 2026-05-15  
+**Prepared at:** 2026-05-15
 **Intended reviewer:** Claude (MGMT-SAFE-003 reviewer — reassigned from Copilot after quota exhaustion)
 **Supporting reviewer:** Codex (MGMT-SAFE-003-SIDECAR-REVIEW reviewer)
 

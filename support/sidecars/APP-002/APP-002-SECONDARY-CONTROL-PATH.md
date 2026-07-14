@@ -1,9 +1,9 @@
 # APP-002 Secondary Control Path Spec
 
-**Parent Task**: APP-002 — Define operator-facing deployment, incident, and evolution surfaces  
-**Created by**: Copilot  
-**Date**: 2026-04-10  
-**Status**: Design artifact (APP-002 support)  
+**Parent Task**: APP-002 — Define operator-facing deployment, incident, and evolution surfaces
+**Created by**: Copilot
+**Date**: 2026-04-10
+**Status**: Design artifact (APP-002 support)
 
 > This is a support artifact derived from BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md §6 and DEGRADED_OPERATOR_PATH.md §4. It specifies the fallback control path operators use when the BFF is unavailable or degraded.
 
@@ -152,7 +152,7 @@ pantheon-admin runtime force-halt <binding_id> \
 ✓ Runtime binding {binding_id} paused
   Pause command submitted to runtime-manager
   Pause will expire at: 2026-04-10T16:00:00Z (in 1 hour)
-  
+
 Next: Monitor runtime state or resume when safe:
   pantheon-admin runtime resume {binding_id}
 ```
@@ -190,15 +190,15 @@ pantheon-admin rollback abort <rollback_id>  # Cancel an in-progress rollback
   Rollback ID: rb-2026-04-10-67890
   Rolling back from: v1.2.0 (artifact-2026-04-10-a123)
            to: v1.1.9 (artifact-2026-04-09-b456)
-  
+
   Verification checks passed:
     ✓ Previous version is available and not corrupted
     ✓ No incompatible schema changes since v1.1.9
     ✓ Rollback path is safe (no circular dependencies)
-    
+
   Rollback started at: 2026-04-10T15:01:00Z
   Estimated time: 45 seconds
-  
+
 Next: Monitor via:
   pantheon-admin rollback status {rollback_id}
   Or BFF console: /operator/rollback/{rollback_id}
@@ -237,20 +237,20 @@ pantheon-admin kill-switch deactivate \
   Scope: all
   Severity: critical
   Activated at: 2026-04-10T15:00:00Z
-  
+
   Impact:
     - All active runtimes will halt within 30 seconds
     - New deployment attempts will be blocked
     - Fallback mode activated (read-only operations only)
-    
+
   Current status:
     Total runtimes targeted: 47
     Halted: 45
     Still halting: 2
-    
+
 Next: Monitor runtime halts and verify system safety:
   pantheon-admin kill-switch status
-  
+
   Once safe, deactivate:
   pantheon-admin kill-switch deactivate --scope all --rationale "..."
 ```
@@ -285,11 +285,11 @@ pantheon-admin evolution execute <decision_id> \
   Decision type: retrain
   Target: persona-{id}
   Approval by: {operator_id} (reviewer role)
-  
+
   Status progression:
     proposed → reviewed → approved ✓
-    
-Next: 
+
+Next:
   - Decision awaits execution approval (if EVO-004 requires separate step)
   - Or execute immediately: pantheon-admin evolution execute {decision_id}
 ```
@@ -551,7 +551,7 @@ When an operator hits an error, the UI should include actionable escalation text
 
 ```
 ✗ Your role (operator) cannot approve this deployment.
-  
+
 This requires 'approver' role. Escalation options:
 
 1. Ask your team's designated approver to approve this deployment
@@ -559,7 +559,7 @@ This requires 'approver' role. Escalation options:
 3. Contact platform team: #pantheon-support
 
 If urgent and you can't reach an approver:
-  • CLI with admin override (requires MFA + audit): 
+  • CLI with admin override (requires MFA + audit):
     pantheon-admin deployment approve <plan_id> --as-role admin --mfa-token <token>
   • This will be logged and may trigger a compliance review
 ```
@@ -597,7 +597,7 @@ Operator sees true state via SSE feeds:
 ### 7.1 MFA Enforcement
 
 - **All kill-switch operations**: MFA required
-- **All rollbacks**: MFA required  
+- **All rollbacks**: MFA required
 - **High-risk evolution decisions**: MFA required per EVOLUTION_REVIEW_AND_THRESHOLDS.md
 - **Admin actions**: MFA required
 - **Approval/rejection of critical deployments**: MFA required if operator role is "approver" and deployment affects more than N runtimes (configurable threshold)
@@ -624,13 +624,13 @@ Logs are retained for compliance and investigation.
 
 ## 8. Acceptance Criteria for APP-002
 
-✅ Admin CLI command set covers all operator journeys  
-✅ Protected Internal API mirrors CLI with HTTP interface  
-✅ MFA enforcement rules are clear and tied to action risk levels  
-✅ Fallback UX guidance is actionable for operators  
-✅ Idempotency and reconciliation are specified  
-✅ Audit logging requirement is defined  
-✅ This spec does NOT modify canonical objects — only provides alternate access path  
+✅ Admin CLI command set covers all operator journeys
+✅ Protected Internal API mirrors CLI with HTTP interface
+✅ MFA enforcement rules are clear and tied to action risk levels
+✅ Fallback UX guidance is actionable for operators
+✅ Idempotency and reconciliation are specified
+✅ Audit logging requirement is defined
+✅ This spec does NOT modify canonical objects — only provides alternate access path
 
 ---
 

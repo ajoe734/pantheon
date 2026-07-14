@@ -25,6 +25,46 @@ APPROVER_HEADERS = {"Authorization": "Bearer op-approval:approver"}
 SECOND_OPERATOR_HEADERS = {"Authorization": "Bearer op-3:operator"}
 
 
+def _assign_rebalance_lineage(payload: Dict[str, Any]) -> Dict[str, Any]:
+    snapshot_id = str(payload.get("ranking_snapshot_id") or "rank-q3")
+    policy_version = "persona-real-allocation-v1"
+    basis_lines = [
+        {
+            key: value
+            for key, value in line.items()
+            if key not in {
+                "ranking_snapshot_id",
+                "allocation_evaluation_id",
+                "allocation_line_digest",
+                "allocation_policy_version",
+            }
+        }
+        for line in payload.get("lines") or []
+    ]
+    evaluation_id = (
+        "allocation-evaluation-"
+        + bff_main._stable_json_hash(
+            {
+                "ranking_snapshot_id": snapshot_id,
+                "allocation_policy_version": policy_version,
+                "lines": basis_lines,
+            }
+        )[:24]
+    )
+    payload["ranking_snapshot_id"] = snapshot_id
+    payload["allocation_evaluation_id"] = evaluation_id
+    payload["allocation_policy_version"] = policy_version
+    for line in payload.get("lines") or []:
+        line["ranking_snapshot_id"] = snapshot_id
+        line["allocation_evaluation_id"] = evaluation_id
+        line["allocation_policy_version"] = policy_version
+        line.pop("allocation_line_digest", None)
+        line["allocation_line_digest"] = bff_main._pm12_allocation_line_digest(
+            line
+        )
+    return payload
+
+
 def rebalance_payload(**overrides: Any) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "capital_pool_id": "pool-real",
@@ -53,7 +93,7 @@ def rebalance_payload(**overrides: Any) -> Dict[str, Any]:
         "audit_refs": ["audit-ranking-q3", "audit-simulation-q3"],
     }
     payload.update(overrides)
-    return payload
+    return _assign_rebalance_lineage(payload)
 
 
 class CapitalBffAuthorityHarness:
@@ -220,9 +260,67 @@ class CapitalBffAuthorityHarness:
             strategy_family="momentum",
         )
 
+    def admit_rebalance_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Test-only admission fixture for the exact server-materialized lines."""
+        _assign_rebalance_lineage(payload)
+        snapshot_id = str(payload["ranking_snapshot_id"])
+        evaluation_id = str(payload["allocation_evaluation_id"])
+        policy_version = str(payload["allocation_policy_version"])
+        bff_main.read_store.put_ranking_snapshot({
+            "ranking_snapshot_id": snapshot_id,
+            "surface": "quarterly",
+            "period": "test",
+            "formula_version": "pm12-default-v1",
+            "content_digest": bff_main._stable_json_hash(
+                {
+                    "surface": "quarterly",
+                    "period": "test",
+                    "formula_version": "pm12-default-v1",
+                    "items": [],
+                }
+            ),
+            "items": [],
+            "evidence_assertion_digests": {},
+        })
+        lines = [dict(line) for line in payload.get("lines") or []]
+        bff_main.read_store.put_allocation_evaluation({
+            "allocation_evaluation_id": evaluation_id,
+            "ranking_snapshot_id": snapshot_id,
+            "allocation_policy_version": policy_version,
+            "content_digest": bff_main._stable_json_hash(
+                {
+                    "ranking_snapshot_id": snapshot_id,
+                    "allocation_evaluation_id": evaluation_id,
+                    "allocation_policy_version": policy_version,
+                    "lines": lines,
+                }
+            ),
+            "lines": lines,
+            "applied": False,
+        })
+        return payload
+
     def _seed_authoritative_allocation(self) -> None:
         """Owner-only fixture bootstrap; product apply paths still enter via BFF."""
         assert self.capital_client is not None
+        seed_line = {
+            "ranking_snapshot_id": "rank-seed",
+            "allocation_evaluation_id": "allocation-evaluation-seed",
+            "allocation_policy_version": "persona-real-allocation-v1",
+            "persona_id": "p-live",
+            "stage": "live_running",
+            "capital_scope": "pool",
+            "capital_pool_id": "pool-real",
+            "capital_sleeve_id": "sleeve-live",
+            "current_weight": 0.0,
+            "target_weight": 0.10,
+            "delta": 0.10,
+            "cap_reasons": [],
+            "evidence_refs": [],
+        }
+        seed_line["allocation_line_digest"] = (
+            bff_main._pm12_allocation_line_digest(seed_line)
+        )
         created = self.capital_client.post(
             "/api/rebalances",
             json={
@@ -233,19 +331,10 @@ class CapitalBffAuthorityHarness:
                 "rebalance_id": "rb-seed-allocation",
                 "capital_pool_id": "pool-real",
                 "ranking_snapshot_id": "rank-seed",
+                "allocation_evaluation_id": "allocation-evaluation-seed",
+                "allocation_policy_version": "persona-real-allocation-v1",
                 "reason": "Seed authoritative test baseline",
-                "lines": [
-                    {
-                        "persona_id": "p-live",
-                        "stage": "live_running",
-                        "capital_scope": "pool",
-                        "capital_pool_id": "pool-real",
-                        "capital_sleeve_id": "sleeve-live",
-                        "current_weight": 0.0,
-                        "target_weight": 0.10,
-                        "delta": 0.10,
-                    }
-                ],
+                "lines": [seed_line],
             },
         )
         assert created.status_code == 201, created.text

@@ -35,3 +35,45 @@ Two state-consistency defects visible on hosted dev (2026-07-13):
 - Performance tab distinguishes $0 from not-reported; Unassigned bucket is
   explained and not the first row.
 - Component tests for the rail/card consistency and the table formatting.
+
+## Delivery record (refreshed 2026-07-14)
+
+Implementation landed in `ajoe734/execute-plans@dev` through PRs
+[#290](https://github.com/ajoe734/execute-plans/pull/290),
+[#295](https://github.com/ajoe734/execute-plans/pull/295),
+[#325](https://github.com/ajoe734/execute-plans/pull/325), and
+[#335](https://github.com/ajoe734/execute-plans/pull/335). The corrective
+chain covers the original display defects, workshop-scoped state reset,
+measured-versus-missing metrics, the real missing-`subject` payload, and
+deployment-manifest BFF identity.
+
+The accepted hosted capture serves frontend
+`936f252e09fa3bb887c88e733e24b6941cac644e` and BFF
+`8de9ed3b09ae1002edc74256f33b9bec1fe3b717`. The frontend manifest and live
+`GET /bff/version` agree on the full BFF SHA. Frontend Branch CI
+[29304416763](https://github.com/ajoe734/execute-plans/actions/runs/29304416763),
+frontend deploy
+[29304416758](https://github.com/ajoe734/execute-plans/actions/runs/29304416758),
+Pantheon Branch CI
+[29303213895](https://github.com/ajoe734/pantheon/actions/runs/29303213895),
+and BFF deploy
+[29303223159](https://github.com/ajoe734/pantheon/actions/runs/29303223159)
+all passed. Focused Vitest at the accepted frontend passed 54/54.
+
+Hosted proof against those exact identities records:
+
+- card `complete / Research ready: Yes` aligned with rail
+  `Complete / 100% / Research ready: Yes` for one exact workshop snapshot;
+- three readiness gates rendered as active Ready states;
+- named strategies sorted above `Unassigned`, whose attribution-only meaning
+  is explained;
+- measured `$0` remained distinct from `not reported` values;
+- the Performance page left loading state and made the implemented
+  `/bff/management/performance-attribution/by-strategy` request successfully;
+- live/strict mode used safe write defaults and no embedded bearer token.
+
+See
+[AG-UIPOL-004 hosted evidence](./evidence/AG-UIPOL-004-hosted-evidence.md)
+for screenshots, machine-readable readback, checksums, deployment identity,
+validation commands, and explicit residual workflow failures. This delivery
+record proves the objective defects only and makes no design-parity claim.

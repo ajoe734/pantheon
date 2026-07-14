@@ -47,7 +47,7 @@
 
 | Task | Status | Why It Matters |
 |------|--------|----------------|
-| `APP-002-W1-FRONT-HANDOFF` | **done** | Contract-ready + Lovable prompt + handoff bundle for F-042 exist and are mirrored to front repo | 
+| `APP-002-W1-FRONT-HANDOFF` | **done** | Contract-ready + Lovable prompt + handoff bundle for F-042 exist and are mirrored to front repo |
 | `APP-002-W4-PERSONA-MGMT` | **done** | Composed view is live and backend-shaped (no demo providers) |
 | `APP-002-W4-REMAINING-CATALOG` | **done** | All remaining canonical read surfaces live; contract and examples converged |
 | `APP-002-W2-CLI-FALLBACK` | **done** | Secondary control path is usable; non-blocking but supports operator safety |
