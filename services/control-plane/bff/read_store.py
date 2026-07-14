@@ -10753,6 +10753,8 @@ class ReadSurfaceStore:
             "required_approvals": raw.get("required_approvals"),
             "rollback_followthrough": raw.get("rollback_followthrough"),
             "metadata": raw.get("metadata"),
+            "origin": raw.get("origin"),
+            "provenance": raw.get("provenance"),
             "execution_result": raw.get("execution_result"),
         }
 

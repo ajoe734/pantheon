@@ -36094,6 +36094,26 @@ def _management_intervention_stream_response(
     }
 
 
+_EVOLUTION_JOURNAL_REGISTERED_SEED_EXACT_IDS = {
+    "87c655c3e3c9", "rb-001", "fo-001", "btc-drift",
+    "inc-20260410-001", "inc-20260409-002", "pm-20260409-002",
+    "plan-f-042", "artifact-042", "runtime-042", "binding-042",
+}
+_EVOLUTION_JOURNAL_REGISTERED_SEED_PREFIXES = ("evo-vslice-",)
+
+
+def _evolution_journal_is_registered_seed_id(value: Any) -> bool:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized in _EVOLUTION_JOURNAL_REGISTERED_SEED_EXACT_IDS:
+        return True
+    return any(
+        normalized.startswith(prefix)
+        for prefix in _EVOLUTION_JOURNAL_REGISTERED_SEED_PREFIXES
+    )
+
+
 _EVOLUTION_JOURNAL_TYPE_ALIASES = {
     "decision": "evolution_decision",
     "evolution": "evolution_decision",
@@ -36603,33 +36623,22 @@ def _evolution_journal_items(
         if origin_val in ("seed", "live", "unknown"):
             item["origin"] = origin_val
         else:
-            is_seed = False
-            registered_markers = ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift", "inc-20260410-001", "inc-20260409-002", "pm-20260409-002", "plan-f-042", "artifact-042", "runtime-042", "binding-042")
-            source_id = str(item.get("source_id") or "").lower()
-            journal_id = str(item.get("id") or "").lower()
-            for marker in registered_markers:
-                if marker in source_id or marker in journal_id:
-                    is_seed = True
-                    break
+            is_seed = (
+                _evolution_journal_is_registered_seed_id(item.get("source_id"))
+                or _evolution_journal_is_registered_seed_id(item.get("id"))
+            )
             if not is_seed:
                 for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
                     inner = item.get(key)
                     if isinstance(inner, dict):
                         for field in ("id", "decision_id", "source_id", "incident_id", "incident_ref", "linked_incident_id", "report_id"):
-                            val = str(inner.get(field) or "").lower()
-                            for marker in registered_markers:
-                                if marker in val:
-                                    is_seed = True
-                                    break
-                            if is_seed:
+                            if _evolution_journal_is_registered_seed_id(inner.get(field)):
+                                is_seed = True
                                 break
                     if is_seed:
                         break
 
-            if is_seed:
-                item["origin"] = "seed"
-            else:
-                item["origin"] = "unknown"
+            item["origin"] = "seed" if is_seed else "unknown"
 
     items.sort(
         key=lambda item: (
@@ -37314,6 +37323,11 @@ async def bff_management_evolution_journal(
             for p in personas:
                 pid = str(p.get("persona_id") or p.get("id") or "").strip().lower()
                 if pid == p_clean:
+                    # Only the persona's own directly declared artifact_id is a
+                    # matchable "owned artifact" — artifact_id discovered later
+                    # via binding/incident traversal is intentionally excluded
+                    # (see below) so a shared artifact can't pull in another
+                    # persona's unrelated rows.
                     for field, target_set in [
                         ("runtime_id", runtime_ids),
                         ("binding_id", binding_ids),
@@ -37331,36 +37345,49 @@ async def bff_management_evolution_journal(
                         if val:
                             other_ids.add(val)
 
-            for _ in range(3):
-                bindings = read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
+            # Read bindings/incidents once and expand persona/runtime/binding/
+            # plan/pool ids to a fixed point (no artifact_id edge, so a shared
+            # artifact can never be used to cross into another persona's
+            # lineage). A fixed-point loop (rather than a hardcoded pass count)
+            # is required because a chain can be arbitrarily deep.
+            bindings = read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
+            incidents = read_store.list_incidents() or []
+            changed = True
+            while changed:
+                changed = False
                 for b in bindings:
                     b_pid = str(b.get("persona_id") or b.get("personaId") or "").strip().lower()
                     b_rid = str(b.get("runtime_id") or b.get("id") or "").strip().lower()
                     b_bid = str(b.get("binding_id") or b.get("runtime_binding_id") or "").strip().lower()
-                    b_aid = str(b.get("artifact_id") or "").strip().lower()
+                    b_pcbid = str(b.get("persona_capital_binding_id") or "").strip().lower()
                     b_plid = str(b.get("plan_id") or b.get("deployment_plan_id") or "").strip().lower()
-                    
+                    b_pool = str(b.get("pool_id") or b.get("capital_pool_id") or "").strip().lower()
+
                     is_match = (
                         (b_pid and b_pid in persona_ids) or
                         (b_rid and b_rid in runtime_ids) or
                         (b_bid and b_bid in binding_ids) or
-                        (b_plid and b_plid in plan_ids)
+                        (b_pcbid and b_pcbid in binding_ids) or
+                        (b_plid and b_plid in plan_ids) or
+                        (b_pool and b_pool in pool_ids)
                     )
-                    if is_match:
-                        if b_pid: persona_ids.add(b_pid)
-                        if b_rid: runtime_ids.add(b_rid)
-                        if b_bid: binding_ids.add(b_bid)
-                        if b_plid: plan_ids.add(b_plid)
-                        if b_aid: artifact_ids.add(b_aid)
+                    if not is_match:
+                        continue
+                    for val, target_set in (
+                        (b_pid, persona_ids), (b_rid, runtime_ids),
+                        (b_bid, binding_ids), (b_pcbid, binding_ids),
+                        (b_plid, plan_ids), (b_pool, pool_ids),
+                    ):
+                        if val and val not in target_set:
+                            target_set.add(val)
+                            changed = True
 
-                incidents = read_store.list_incidents() or []
                 for i in incidents:
                     i_id = str(i.get("incident_id") or i.get("id") or "").strip().lower()
                     i_rid = str(i.get("runtime_id") or "").strip().lower()
                     i_bid = str(i.get("binding_id") or i.get("persona_capital_binding_id") or "").strip().lower()
-                    i_aid = str(i.get("artifact_id") or "").strip().lower()
                     i_plid = str(i.get("deployment_plan_id") or "").strip().lower()
-                    i_pool = str(i.get("capital_pool_id") or "").strip().lower()
+                    i_pool = str(i.get("capital_pool_id") or i.get("pool_id") or "").strip().lower()
 
                     is_match = (
                         (i_id and i_id in incident_ids) or
@@ -37369,13 +37396,16 @@ async def bff_management_evolution_journal(
                         (i_plid and i_plid in plan_ids) or
                         (i_pool and i_pool in pool_ids)
                     )
-                    if is_match:
-                        if i_id: incident_ids.add(i_id)
-                        if i_rid: runtime_ids.add(i_rid)
-                        if i_bid: binding_ids.add(i_bid)
-                        if i_plid: plan_ids.add(i_plid)
-                        if i_pool: pool_ids.add(i_pool)
-                        if i_aid: artifact_ids.add(i_aid)
+                    if not is_match:
+                        continue
+                    for val, target_set in (
+                        (i_id, incident_ids), (i_rid, runtime_ids),
+                        (i_bid, binding_ids), (i_plid, plan_ids),
+                        (i_pool, pool_ids),
+                    ):
+                        if val and val not in target_set:
+                            target_set.add(val)
+                            changed = True
 
             lineage_ids = (
                 persona_ids | runtime_ids | binding_ids | plan_ids |
@@ -37385,39 +37415,34 @@ async def bff_management_evolution_journal(
             matched_filtered = []
             for item in filtered:
                 item_ids = set()
-                # Do NOT include "entry_type" or "entryType" here to avoid persona parameter collisions!
-                for f in ("source_id", "id"):
-                    val = str(item.get(f) or "").strip().lower()
-                    if val:
-                        item_ids.add(val)
+                # Only collect fields that are references *to* something the
+                # entry targets/belongs to (artifact/persona/runtime/binding/
+                # incident/plan/pool). Never include the entry's own identity
+                # (source_id/id/decision_id/report_id/...) — matching those
+                # against an arbitrary "persona" query string is a false
+                # collision, not a lineage relationship.
                 target_obj = item.get("target") or {}
                 if isinstance(target_obj, dict):
                     for f in ("id", "runtime_id", "artifact_id", "incident_id"):
                         val = str(target_obj.get(f) or "").strip().lower()
                         if val:
                             item_ids.add(val)
+                reference_fields = (
+                    "artifact_id", "persona_id", "target_id", "runtime_id",
+                    "runtime_binding_id", "persona_capital_binding_id",
+                    "incident_id", "incident_ref", "linked_incident_id",
+                    "capital_pool_id", "pool_id", "plan_id", "deployment_plan_id",
+                )
                 record_obj = item.get("record") or {}
                 if isinstance(record_obj, dict):
-                    for f in (
-                        "artifact_id", "persona_id", "target_id", "runtime_id",
-                        "runtime_binding_id", "persona_capital_binding_id",
-                        "incident_id", "incident_ref", "linked_incident_id",
-                        "report_id", "postmortem_id", "freeze_order_id", "rollback_id",
-                        "decision_id"
-                    ):
+                    for f in reference_fields:
                         val = str(record_obj.get(f) or "").strip().lower()
                         if val:
                             item_ids.add(val)
                 for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
                     inner = item.get(key)
                     if isinstance(inner, dict):
-                        for f in (
-                            "artifact_id", "persona_id", "target_id", "runtime_id",
-                            "runtime_binding_id", "persona_capital_binding_id",
-                            "incident_id", "incident_ref", "linked_incident_id",
-                            "report_id", "postmortem_id", "freeze_order_id", "rollback_id",
-                            "decision_id", "id"
-                        ):
+                        for f in reference_fields:
                             val = str(inner.get(f) or "").strip().lower()
                             if val:
                                 item_ids.add(val)

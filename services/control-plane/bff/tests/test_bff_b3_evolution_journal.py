@@ -403,13 +403,13 @@ def test_evochain_007_filter_dependency_failure() -> None:
                 allow_local_snapshot_fallback=True,
             )
             client = TestClient(bff_main.app, raise_server_exceptions=False)
-            
+
             # Mock read_store.list_personas to raise a RuntimeError exception
             def mock_list_personas(*args, **kwargs):
                 raise RuntimeError("Database connection lost")
-            
+
             bff_main.read_store.list_personas = mock_list_personas
-            
+
             # Querying with persona filter should fail with 500
             resp = client.get("/bff/management/evolution-journal?persona=persona-1", headers=OPERATOR_HEADERS)
             assert resp.status_code == 500
@@ -452,5 +452,431 @@ def test_evochain_007_persona_mutation_review_collision() -> None:
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert len(body["data"]["items"]) == 0
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_origin_exact_match_not_broad_substring() -> None:
+    """A decision id that merely *contains* the substring "seed" (e.g. a
+    "live-seedling" artifact) must not be honestly reported as seed-derived
+    provenance; only exact registered seed identifiers/prefixes qualify."""
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = {
+            "personas": {},
+            "runtime_bindings": {},
+            "incidents": {},
+            "evolution_decisions": {
+                "live-seedling-1": {
+                    "id": "live-seedling-1",
+                    "decision_id": "live-seedling-1",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-live-seedling",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "Not actually a registered seed"},
+                    "created_at": "2026-07-14T00:00:00Z"
+                },
+                "evo-vslice-1": {
+                    "id": "evo-vslice-1",
+                    "decision_id": "evo-vslice-1",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-vslice",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "Registered vslice seed"},
+                    "created_at": "2026-07-14T00:01:00Z"
+                }
+            },
+            "postmortems": {},
+            "freeze_orders": {},
+            "rollbacks": {}
+        }
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            items = resp.json()["data"]["items"]
+            by_id = {
+                item["source_id"]: item
+                for item in items
+                if item["entry_type"] == "evolution_decision"
+            }
+            assert by_id["live-seedling-1"]["origin"] == "unknown"
+            assert by_id["evo-vslice-1"]["origin"] == "seed"
+        finally:
+            bff_main.read_store = original_store
+
+
+def _evochain_007_lineage_mock_data(evolution_decisions: dict, **surfaces) -> dict:
+    mock_data = {
+        "personas": {},
+        "runtime_bindings": {},
+        "incidents": {},
+        "evolution_decisions": evolution_decisions,
+        "postmortems": {},
+        "freeze_orders": {},
+        "rollbacks": {},
+    }
+    mock_data.update(surfaces)
+    return mock_data
+
+
+def test_evochain_007_persona_lineage_shared_artifact_boundary() -> None:
+    """Two unrelated personas independently bind to the same shared artifact.
+    Filtering by persona-a must not pull in persona-b's own decision just
+    because their bindings happen to reference the same artifact_id."""
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = _evochain_007_lineage_mock_data(
+            personas={
+                # Each persona declares its own runtime_id so read_store's
+                # binding-ownership reconciliation (typed exact identity,
+                # not a raw copied persona_id) resolves ownership correctly.
+                "persona-a": {"id": "persona-a", "persona_id": "persona-a", "runtime_id": "runtime-a"},
+                "persona-b": {"id": "persona-b", "persona_id": "persona-b", "runtime_id": "runtime-b"},
+            },
+            runtime_bindings={
+                "runtime-a": {
+                    "id": "runtime-a",
+                    "runtime_id": "runtime-a",
+                    "persona_id": "persona-a",
+                    "artifact_id": "artifact-shared",
+                },
+                "runtime-b": {
+                    "id": "runtime-b",
+                    "runtime_id": "runtime-b",
+                    "persona_id": "persona-b",
+                    "artifact_id": "artifact-shared",
+                },
+            },
+            evolution_decisions={
+                "dec-a": {
+                    "id": "dec-a",
+                    "decision_id": "dec-a",
+                    "target_type": "runtime",
+                    "target_id": "runtime-a",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "persona-a own decision"},
+                    "created_at": "2026-07-14T00:00:00Z",
+                },
+                "dec-b": {
+                    "id": "dec-b",
+                    "decision_id": "dec-b",
+                    "target_type": "artifact",
+                    "target_id": "artifact-shared",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "persona-b's own decision, shares the artifact"},
+                    "created_at": "2026-07-14T00:01:00Z",
+                },
+            },
+        )
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/evolution-journal?persona=persona-a", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            items = resp.json()["data"]["items"]
+            source_ids = {item["source_id"] for item in items}
+            assert "dec-a" in source_ids
+            assert "dec-b" not in source_ids
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_persona_lineage_namespace_collision() -> None:
+    """persona-pool-1 and persona-pool-10 must not collide through their
+    capital_pool_id / persona_capital_binding_id namespaces."""
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = _evochain_007_lineage_mock_data(
+            personas={
+                # Each persona declares its own runtime_binding_id so
+                # read_store's binding-ownership reconciliation (typed exact
+                # identity) resolves ownership correctly.
+                "persona-pool-1": {
+                    "id": "persona-pool-1",
+                    "persona_id": "persona-pool-1",
+                    "runtime_binding_id": "binding-pool-1",
+                },
+                "persona-pool-10": {
+                    "id": "persona-pool-10",
+                    "persona_id": "persona-pool-10",
+                    "runtime_binding_id": "binding-pool-10",
+                },
+            },
+            runtime_bindings={
+                "binding-pool-1": {
+                    "id": "binding-pool-1",
+                    "persona_id": "persona-pool-1",
+                    "capital_pool_id": "pool-1",
+                },
+                "binding-pool-10": {
+                    "id": "binding-pool-10",
+                    "persona_id": "persona-pool-10",
+                    "capital_pool_id": "pool-10",
+                },
+            },
+            incidents={
+                "inc-pool-1": {
+                    "id": "inc-pool-1",
+                    "incident_id": "inc-pool-1",
+                    "capital_pool_id": "pool-1",
+                },
+                "inc-pool-10": {
+                    "id": "inc-pool-10",
+                    "incident_id": "inc-pool-10",
+                    "capital_pool_id": "pool-10",
+                },
+            },
+            evolution_decisions={
+                "dec-pool-1": {
+                    "id": "dec-pool-1",
+                    "decision_id": "dec-pool-1",
+                    "target_type": "incident",
+                    "incident_ref": "inc-pool-1",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "pool-1 decision"},
+                    "created_at": "2026-07-14T00:00:00Z",
+                },
+                "dec-pool-10": {
+                    "id": "dec-pool-10",
+                    "decision_id": "dec-pool-10",
+                    "target_type": "incident",
+                    "incident_ref": "inc-pool-10",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "pool-10 decision"},
+                    "created_at": "2026-07-14T00:01:00Z",
+                },
+            },
+        )
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/evolution-journal?persona=persona-pool-1", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
+            assert "dec-pool-1" in source_ids
+            assert "dec-pool-10" not in source_ids
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_persona_lineage_pool_only_convergence() -> None:
+    """A persona linked to a decision only through a shared capital_pool_id
+    chain (no direct runtime/binding id overlap) must still resolve."""
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = _evochain_007_lineage_mock_data(
+            personas={
+                "persona-pool-only": {
+                    "id": "persona-pool-only",
+                    "persona_id": "persona-pool-only",
+                    "runtime_binding_id": "binding-pool-only",
+                },
+            },
+            runtime_bindings={
+                "binding-pool-only": {
+                    "id": "binding-pool-only",
+                    "persona_id": "persona-pool-only",
+                    "capital_pool_id": "pool-only-42",
+                },
+            },
+            incidents={
+                "inc-pool-only": {
+                    "id": "inc-pool-only",
+                    "incident_id": "inc-pool-only",
+                    "capital_pool_id": "pool-only-42",
+                },
+            },
+            evolution_decisions={
+                "dec-pool-only": {
+                    "id": "dec-pool-only",
+                    "decision_id": "dec-pool-only",
+                    "target_type": "incident",
+                    "incident_ref": "inc-pool-only",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "resolved only via capital_pool_id"},
+                    "created_at": "2026-07-14T00:00:00Z",
+                },
+            },
+        )
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/evolution-journal?persona=persona-pool-only", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
+            assert "dec-pool-only" in source_ids
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_persona_lineage_capital_binding_only_convergence() -> None:
+    """A persona linked to a decision only through persona_capital_binding_id
+    (no runtime/plan/pool overlap) must still resolve."""
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = _evochain_007_lineage_mock_data(
+            personas={
+                "persona-cb-only": {
+                    "id": "persona-cb-only",
+                    "persona_id": "persona-cb-only",
+                    "persona_capital_binding_id": "pcb-only-7",
+                },
+            },
+            incidents={
+                "inc-cb-only": {
+                    "id": "inc-cb-only",
+                    "incident_id": "inc-cb-only",
+                    "persona_capital_binding_id": "pcb-only-7",
+                },
+            },
+            evolution_decisions={
+                "dec-cb-only": {
+                    "id": "dec-cb-only",
+                    "decision_id": "dec-cb-only",
+                    "target_type": "incident",
+                    "incident_ref": "inc-cb-only",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "resolved only via persona_capital_binding_id"},
+                    "created_at": "2026-07-14T00:00:00Z",
+                },
+            },
+        )
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/evolution-journal?persona=persona-cb-only", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
+            assert "dec-cb-only" in source_ids
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_persona_lineage_deep_chain_requires_fixed_point() -> None:
+    """persona -[persona_id]-> binding1(runtime-deep-1) -[plan]->
+    binding2(runtime-deep-2) -[pool]-> binding3(runtime-deep-3)
+    -[persona_capital_binding]-> binding4(runtime-deep-4) -[pool]->
+    incident -[incident_ref]-> decision is a 5-edge chain. Every binding
+    below has its own distinct runtime_id (bindings are keyed/deduped by
+    runtime_id in read_store, so two bindings can never legitimately share
+    one), and the bindings dict is deliberately ordered in *reverse*
+    dependency order (hop4 first, hop1 last) so a single left-to-right pass
+    cannot resolve it. A hardcoded 3-iteration traversal converges at most 3
+    edges per query and would never reach the leaf decision; only a
+    fixed-point loop (iterate until no set grows) resolves it regardless of
+    edge order or chain depth."""
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = _evochain_007_lineage_mock_data(
+            personas={
+                "persona-deep": {
+                    "id": "persona-deep",
+                    "persona_id": "persona-deep",
+                    "runtime_id": "runtime-deep-1",
+                },
+            },
+            runtime_bindings={
+                # Listed in reverse dependency order on purpose.
+                "binding-hop4": {
+                    "id": "binding-hop4",
+                    "runtime_id": "runtime-deep-4",
+                    "persona_capital_binding_id": "pcb-deep-3",
+                    "capital_pool_id": "pool-deep-4",
+                },
+                "binding-hop3": {
+                    "id": "binding-hop3",
+                    "runtime_id": "runtime-deep-3",
+                    "capital_pool_id": "pool-deep-2",
+                    "persona_capital_binding_id": "pcb-deep-3",
+                },
+                "binding-hop2": {
+                    "id": "binding-hop2",
+                    "runtime_id": "runtime-deep-2",
+                    "plan_id": "plan-deep-1",
+                    "capital_pool_id": "pool-deep-2",
+                },
+                "binding-hop1": {
+                    "id": "binding-hop1",
+                    "persona_id": "persona-deep",
+                    "runtime_id": "runtime-deep-1",
+                    "plan_id": "plan-deep-1",
+                },
+            },
+            incidents={
+                "inc-deep-5": {
+                    "id": "inc-deep-5",
+                    "incident_id": "inc-deep-5",
+                    "capital_pool_id": "pool-deep-4",
+                },
+            },
+            evolution_decisions={
+                "dec-deep-6": {
+                    "id": "dec-deep-6",
+                    "decision_id": "dec-deep-6",
+                    "target_type": "incident",
+                    "incident_ref": "inc-deep-5",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "5 edges deep from the queried persona"},
+                    "created_at": "2026-07-14T00:00:00Z",
+                },
+                "dec-unrelated": {
+                    "id": "dec-unrelated",
+                    "decision_id": "dec-unrelated",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-unrelated",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "not connected to persona-deep at all"},
+                    "created_at": "2026-07-14T00:01:00Z",
+                },
+            },
+        )
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/evolution-journal?persona=persona-deep", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
+            assert "dec-deep-6" in source_ids
+            assert "dec-unrelated" not in source_ids
         finally:
             bff_main.read_store = original_store
