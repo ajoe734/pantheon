@@ -1066,20 +1066,55 @@ def _maybe_rotate_activity_log_unlocked(log_path: Path) -> Path | None:
         archive_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
         return None
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
-    archive_path = archive_dir / f"{log_path.name}-{timestamp}.gz"
     try:
         data = log_path.read_bytes()
     except OSError:
         return None
     if LOG_ROTATE_KEEP_LINES > 0:
         lines = data.splitlines(keepends=True)
-        keep = b"".join(lines[-LOG_ROTATE_KEEP_LINES:])
+        if len(lines) > LOG_ROTATE_KEEP_LINES:
+            archive_data = b"".join(lines[:-LOG_ROTATE_KEEP_LINES])
+            keep = b"".join(lines[-LOG_ROTATE_KEEP_LINES:])
+        else:
+            # A small number of unusually large rows must still make forward
+            # progress. Archive all of them instead of duplicating the same
+            # rows in both the archive and active tail.
+            archive_data = data
+            keep = b""
     else:
+        archive_data = data
         keep = b""
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
+    archive_digest = hashlib.sha256(archive_data).hexdigest()
+    archive_path = archive_dir / (
+        f"{log_path.name}-{timestamp}-{archive_digest[:16]}.gz"
+    )
     try:
-        with gzip.open(archive_path, "wb") as dst:
-            dst.write(data)
+        if archive_path.exists():
+            with gzip.open(archive_path, "rb") as existing:
+                if existing.read() != archive_data:
+                    raise RuntimeError("activity archive digest collision")
+        else:
+            descriptor, temp_name = tempfile.mkstemp(
+                prefix=f".{archive_path.name}.",
+                suffix=".tmp",
+                dir=archive_dir,
+            )
+            temp_path = Path(temp_name)
+            try:
+                with os.fdopen(descriptor, "wb") as raw:
+                    with gzip.GzipFile(fileobj=raw, mode="wb") as dst:
+                        dst.write(archive_data)
+                    raw.flush()
+                    os.fsync(raw.fileno())
+                os.replace(temp_path, archive_path)
+            finally:
+                temp_path.unlink(missing_ok=True)
+        archive_directory_fd = os.open(archive_dir, os.O_RDONLY)
+        try:
+            os.fsync(archive_directory_fd)
+        finally:
+            os.close(archive_directory_fd)
     except OSError:
         return None
     try:
@@ -1106,12 +1141,19 @@ def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
 
 
 def _append_log_unlocked(entry: dict[str, Any]) -> None:
+    _append_logs_unlocked([entry])
+
+
+def _append_logs_unlocked(entries: list[dict[str, Any]]) -> None:
+    if not entries:
+        return
     _maybe_rotate_activity_log_unlocked(LOG_FILE)
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOG_FILE.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+        for entry in entries:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
 
 
 def append_log(entry: dict[str, Any]) -> None:
@@ -1206,6 +1248,7 @@ def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
     pending = _validate_status_activity_outbox(pending)
     with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
         existing = _activity_event_index_unlocked()
+        missing: list[dict[str, Any]] = []
         for event in pending["events"]:
             event_id = str(event["event_id"])
             digest = _canonical_json_sha256(event)
@@ -1215,8 +1258,9 @@ def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
                         f"activity outbox payload conflict: {event_id}"
                     )
                 continue
-            _append_log_unlocked(event)
+            missing.append(event)
             existing[event_id] = digest
+        _append_logs_unlocked(missing)
         final = _activity_event_index_unlocked()
         if any(
             final.get(str(event["event_id"])) != _canonical_json_sha256(event)

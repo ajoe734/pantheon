@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
+import gzip
 import io
+import json
+import multiprocessing
 import os
 import tempfile
 import unittest
@@ -13,6 +15,45 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
+
+
+def _locked_status_update(
+    status_file: str,
+    task_id: str,
+    message: str,
+    entered: multiprocessing.synchronize.Event,
+    release: multiprocessing.synchronize.Event | None,
+) -> None:
+    """Process helper that exercises the production stable task-state lock."""
+
+    ai_status.STATUS_FILE = Path(status_file)
+    with ai_status.canonical_task_state_lock(shared=False):
+        state = ai_status.load_state()
+        entered.set()
+        if release is not None and not release.wait(timeout=10):
+            raise RuntimeError("timed out waiting to release task-state transaction")
+        task = ai_status.get_task(state, task_id)
+        if task is None:
+            raise RuntimeError(f"missing fixture task: {task_id}")
+        task["next"] = message
+        ai_status.save_state(state)
+
+
+def _recover_pending_status_outbox(
+    status_file: str,
+    log_file: str,
+    rotate_max_bytes: int,
+    rotate_keep_lines: int,
+) -> None:
+    """Process helper that represents restart recovery after an abrupt exit."""
+
+    ai_status.STATUS_FILE = Path(status_file)
+    ai_status.LOG_FILE = Path(log_file)
+    ai_status.LOG_ROTATE_MAX_BYTES = rotate_max_bytes
+    ai_status.LOG_ROTATE_KEEP_LINES = rotate_keep_lines
+    state = ai_status.load_state()
+    if not ai_status.recover_status_activity_outbox(state):
+        raise RuntimeError("fixture did not contain a pending status activity outbox")
 
 
 class StatusRootRoutingTests(unittest.TestCase):
@@ -2743,6 +2784,258 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertFalse(any(item["type"] == "worker_task_missing" for item in bundle["truth_mismatches"]))
 
 
+class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(prefix="ai-status-transaction-")
+        self.addCleanup(self.temp_dir.cleanup)
+        self.root = Path(self.temp_dir.name)
+        self.status_file = self.root / "ai-status.json"
+        self.log_file = self.root / "ai-activity-log.jsonl"
+
+    def _fixture_state(self) -> dict[str, object]:
+        state = ai_status.default_state()
+        state["tasks"] = [
+            {
+                "id": "LOCK-ONE",
+                "title": "First task-state writer",
+                "phase": "test",
+                "owner": "Codex2",
+                "reviewer": "Codex",
+                "status": "in_progress",
+                "depends_on": [],
+                "artifacts": [],
+                "acceptance": [],
+                "next": "initial-one",
+                "last_update": "2026-07-14T00:00:00Z",
+            },
+            {
+                "id": "LOCK-TWO",
+                "title": "Second task-state writer",
+                "phase": "test",
+                "owner": "Codex2",
+                "reviewer": "Codex",
+                "status": "in_progress",
+                "depends_on": [],
+                "artifacts": [],
+                "acceptance": [],
+                "next": "initial-two",
+                "last_update": "2026-07-14T00:00:00Z",
+            },
+        ]
+        return state
+
+    def _write_state(self, state: dict[str, object]) -> None:
+        self.status_file.write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _outbox(events: list[dict[str, object]]) -> dict[str, object]:
+        return {
+            "schema_version": ai_status.STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION,
+            "transaction_id": "ai-status-tx-" + ai_status._canonical_json_sha256(events),
+            "events": events,
+        }
+
+    def _activity_rows_by_source(self) -> dict[Path, list[dict[str, object]]]:
+        sources = sorted(
+            (self.root / "archive" / "logs").glob(f"{self.log_file.name}-*.gz")
+        )
+        if self.log_file.exists():
+            sources.append(self.log_file)
+        result: dict[Path, list[dict[str, object]]] = {}
+        for source in sources:
+            if source.suffix == ".gz":
+                with gzip.open(source, "rt", encoding="utf-8") as handle:
+                    lines = handle.read().splitlines()
+            else:
+                lines = source.read_text(encoding="utf-8").splitlines()
+            result[source] = [json.loads(line) for line in lines if line.strip()]
+        return result
+
+    def _run_recovery(self, *, rotate_max_bytes: int, rotate_keep_lines: int) -> None:
+        context = multiprocessing.get_context("fork")
+        process = context.Process(
+            target=_recover_pending_status_outbox,
+            args=(
+                str(self.status_file),
+                str(self.log_file),
+                rotate_max_bytes,
+                rotate_keep_lines,
+            ),
+        )
+        process.start()
+        process.join(timeout=10)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=5)
+            self.fail("status outbox recovery process timed out")
+        self.assertEqual(process.exitcode, 0)
+
+    def test_concurrent_task_mutations_are_serialized_without_lost_update(self) -> None:
+        self._write_state(self._fixture_state())
+        context = multiprocessing.get_context("fork")
+        first_entered = context.Event()
+        first_release = context.Event()
+        second_entered = context.Event()
+        first = context.Process(
+            target=_locked_status_update,
+            args=(
+                str(self.status_file),
+                "LOCK-ONE",
+                "updated-one",
+                first_entered,
+                first_release,
+            ),
+        )
+        second = context.Process(
+            target=_locked_status_update,
+            args=(
+                str(self.status_file),
+                "LOCK-TWO",
+                "updated-two",
+                second_entered,
+                None,
+            ),
+        )
+        first.start()
+        self.assertTrue(first_entered.wait(timeout=5))
+        second.start()
+        try:
+            self.assertFalse(
+                second_entered.wait(timeout=0.25),
+                "second writer crossed the first writer's stable sidecar lock",
+            )
+        finally:
+            first_release.set()
+        first.join(timeout=10)
+        second.join(timeout=10)
+        for process in (first, second):
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+        self.assertEqual(first.exitcode, 0)
+        self.assertEqual(second.exitcode, 0)
+
+        final = json.loads(self.status_file.read_text(encoding="utf-8"))
+        by_id = {task["id"]: task for task in final["tasks"]}
+        self.assertEqual(by_id["LOCK-ONE"]["next"], "updated-one")
+        self.assertEqual(by_id["LOCK-TWO"]["next"], "updated-two")
+
+    def test_partial_outbox_recovery_is_idempotent_and_emits_each_event_once(self) -> None:
+        events = [
+            {
+                "event_id": "status-event-one",
+                "ts": "2026-07-14T00:01:00Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-ONE",
+                "message": "first event",
+            },
+            {
+                "event_id": "status-event-two",
+                "ts": "2026-07-14T00:01:01Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-TWO",
+                "message": "second event",
+            },
+        ]
+        pending = self._outbox(events)
+        state = self._fixture_state()
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = pending
+        self._write_state(state)
+        # Represents a process dying after its first append but before clearing
+        # the canonical pending outbox.
+        self.log_file.write_text(
+            json.dumps(events[0], ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        self._run_recovery(rotate_max_bytes=1_000_000, rotate_keep_lines=100)
+        recovered = json.loads(self.status_file.read_text(encoding="utf-8"))
+        self.assertIsNone(recovered[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
+
+        # Represents another restart from the same pre-clear status image. The
+        # replay must recognize both durable events and append neither again.
+        recovered[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = pending
+        self._write_state(recovered)
+        self._run_recovery(rotate_max_bytes=1_000_000, rotate_keep_lines=100)
+
+        rows = [
+            row
+            for source_rows in self._activity_rows_by_source().values()
+            for row in source_rows
+            if row.get("event_id") in {"status-event-one", "status-event-two"}
+        ]
+        event_ids = ("status-event-one", "status-event-two")
+        self.assertEqual(
+            {
+                event_id: sum(row.get("event_id") == event_id for row in rows)
+                for event_id in event_ids
+            },
+            {"status-event-one": 1, "status-event-two": 1},
+        )
+        final = json.loads(self.status_file.read_text(encoding="utf-8"))
+        self.assertIsNone(final[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
+
+    def test_rotation_cannot_split_or_duplicate_one_outbox_transaction(self) -> None:
+        events = [
+            {
+                "event_id": "rotation-event-one",
+                "ts": "2026-07-14T00:02:00Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-ONE",
+                "message": "rotation first",
+            },
+            {
+                "event_id": "rotation-event-two",
+                "ts": "2026-07-14T00:02:01Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-TWO",
+                "message": "rotation second",
+            },
+        ]
+        state = self._fixture_state()
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox(events)
+        self._write_state(state)
+        filler = json.dumps(
+            {"ts": "2026-07-14T00:00:00Z", "type": "fixture", "message": "x" * 256}
+        ) + "\n"
+        self.log_file.write_text(filler, encoding="utf-8")
+
+        # The log starts just below the limit. A per-event rotation check would
+        # append event one, rotate before event two, and split the transaction.
+        self._run_recovery(
+            rotate_max_bytes=len(filler.encode("utf-8")) + 1,
+            rotate_keep_lines=1,
+        )
+
+        rows_by_source = self._activity_rows_by_source()
+        transaction_ids = {"rotation-event-one", "rotation-event-two"}
+        event_sources: dict[str, list[Path]] = {
+            event_id: [] for event_id in transaction_ids
+        }
+        for source, rows in rows_by_source.items():
+            for row in rows:
+                event_id = row.get("event_id")
+                if event_id in event_sources:
+                    event_sources[event_id].append(source)
+        self.assertEqual(
+            {event_id: len(sources) for event_id, sources in event_sources.items()},
+            {"rotation-event-one": 1, "rotation-event-two": 1},
+            "rotation duplicated an outbox event across active and archived logs",
+        )
+        self.assertEqual(
+            len({sources[0] for sources in event_sources.values()}),
+            1,
+            "rotation split one status transaction across audit files",
+        )
+
+
 class ActivityLogRotationTests(unittest.TestCase):
     def _make_log(self, *, size_per_line: int = 200, line_count: int = 100) -> Path:
         tmp = tempfile.TemporaryDirectory(prefix="ai-status-rotate-")
@@ -2780,11 +3073,12 @@ class ActivityLogRotationTests(unittest.TestCase):
         # The active log now holds just the tail
         active_lines = log_path.read_bytes().splitlines()
         self.assertEqual(len(active_lines), 8)
-        # The gzip archive holds the full original
+        # The gzip archive and active tail form one disjoint audit corpus.
         import gzip as _gz
         with _gz.open(archive, "rb") as fh:
             archived = fh.read().splitlines()
-        self.assertEqual(len(archived), 100)
+        self.assertEqual(len(archived), 92)
+        self.assertEqual(len(archived) + len(active_lines), 100)
 
     def test_rotation_preserves_inode_for_concurrent_appenders(self) -> None:
         log_path = self._make_log(line_count=80)

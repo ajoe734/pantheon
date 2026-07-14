@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import multiprocessing
 import os
@@ -9,6 +10,10 @@ import signal
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import runtime_state
 
@@ -26,6 +31,43 @@ def _hold_runtime_lock(config: dict[str, object], connection: object) -> None:
             if connection.recv() != "release":
                 raise RuntimeError("unexpected lock-holder command")
         connection.send(("released", os.getpid()))
+    finally:
+        connection.close()
+
+
+def _hold_protocol_lock(
+    plane: str,
+    config: dict[str, object],
+    status_file: str,
+    activity_file: str,
+    connection: object,
+) -> None:
+    if plane == "runtime_admission":
+        guard = runtime_state.runtime_state_lock(
+            config,
+            shared=False,
+            nonblocking=False,
+        )
+    elif plane == "task_state":
+        guard = runtime_state.canonical_task_state_lock_file(
+            status_file,
+            shared=False,
+            nonblocking=False,
+        )
+    elif plane == "activity_audit":
+        guard = runtime_state.activity_audit_lock_file(
+            activity_file,
+            shared=False,
+            nonblocking=False,
+        )
+    else:
+        raise ValueError(f"unknown test lock plane: {plane}")
+    try:
+        with guard:
+            connection.send(("locked", plane, os.getpid()))
+            if connection.recv() != "release":
+                raise RuntimeError("unexpected lock-holder command")
+        connection.send(("released", plane, os.getpid()))
     finally:
         connection.close()
 
@@ -143,6 +185,27 @@ class LoadRuntimeStateTests(unittest.TestCase):
         state = runtime_state.load_runtime_state(self.config)
 
         self.assertEqual(state["worker_worktree_cleanup"]["last_run"], last_run)
+
+    def test_projection_reader_does_not_reverse_acquire_runtime_from_task_lock(self) -> None:
+        self.config["paths"]["approval_queue"] = str(
+            self.root / "approval-queue.json"
+        )
+        self._write_json(
+            self.root / "state.json",
+            {"version": 2, "workers": {}, "queue": {"events": {}}},
+        )
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        self._write_json(
+            self.root / "approval-queue.json",
+            {"version": 2, "pending": [], "history": []},
+        )
+        with runtime_state.canonical_task_state_lock_file(
+            self.root / "ai-status.json",
+            shared=False,
+            nonblocking=True,
+        ):
+            snapshot = runtime_state.load_runtime_state_snapshot(self.config)
+        self.assertEqual(snapshot["workers"], {})
 
 
 class RuntimeAdmissionProtocolTests(unittest.TestCase):
@@ -368,6 +431,14 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             with self.subTest(source=label):
                 self._write_valid_sources()
                 mutate()
+                before = {
+                    path: path.read_bytes() if path.exists() else None
+                    for path in (
+                        self.state_path,
+                        self.event_queue_path,
+                        self.approval_queue_path,
+                    )
+                }
                 with runtime_state.tasks_runtime_admission_guard(
                     self.config,
                     ["TASK-A"],
@@ -382,6 +453,34 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                         list(decision["source_sha256"]),
                         ["runtime_state", "event_queue", "approval_queue"],
                     )
+                self.assertEqual(
+                    {
+                        path: path.read_bytes() if path.exists() else None
+                        for path in before
+                    },
+                    before,
+                    "failed admission mutated a canonical runtime source",
+                )
+
+    def test_input_and_strict_reason_ids_are_stable(self) -> None:
+        self._write_valid_sources()
+        cases = (
+            ([], True, "task_ids_empty"),
+            (["TASK-A", "TASK-A"], True, "task_ids_duplicate"),
+            ([""], True, "task_ids_invalid"),
+            (["TASK-A"], False, "strict_required"),
+        )
+        for task_ids, strict, expected_reason in cases:
+            with self.subTest(reason=expected_reason):
+                with runtime_state.tasks_runtime_admission_guard(
+                    self.config,
+                    task_ids,
+                    strict=strict,
+                    shared=False,
+                    nonblocking=True,
+                ) as decision:
+                    self.assertFalse(decision["allowed"])
+                    self.assertEqual(decision["reason_id"], expected_reason)
 
     def test_runtime_sidecar_inode_survives_canonical_replace(self) -> None:
         self._write_valid_sources()
@@ -449,6 +548,85 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
         ):
             pass
 
+    def test_task_and_audit_sidecars_contend_across_processes(self) -> None:
+        context = multiprocessing.get_context("fork")
+        status_file = str(self.root / "ai-status.json")
+        activity_file = str(self.root / "ai-activity-log.jsonl")
+        for plane in ("task_state", "activity_audit"):
+            with self.subTest(plane=plane):
+                parent, child = context.Pipe()
+                process = context.Process(
+                    target=_hold_protocol_lock,
+                    args=(plane, self.config, status_file, activity_file, child),
+                )
+                process.start()
+                child.close()
+                try:
+                    self.assertTrue(parent.poll(5))
+                    self.assertEqual(parent.recv()[:2], ("locked", plane))
+                    guard = (
+                        runtime_state.canonical_task_state_lock_file(
+                            status_file,
+                            shared=False,
+                            nonblocking=True,
+                        )
+                        if plane == "task_state"
+                        else runtime_state.activity_audit_lock_file(
+                            activity_file,
+                            shared=False,
+                            nonblocking=True,
+                        )
+                    )
+                    with self.assertRaises(BlockingIOError):
+                        with guard:
+                            self.fail("contender crossed a held stable sidecar")
+                    parent.send("release")
+                    self.assertTrue(parent.poll(5))
+                    self.assertEqual(parent.recv()[:2], ("released", plane))
+                    process.join(timeout=5)
+                    self.assertEqual(process.exitcode, 0)
+                finally:
+                    if process.is_alive():
+                        process.kill()
+                        process.join(timeout=5)
+                    parent.close()
+
+    def test_trace_records_global_three_plane_acquisition_order(self) -> None:
+        self._write_valid_sources()
+        trace_path = self.root / "lock-trace.txt"
+        with mock.patch.dict(
+            os.environ,
+            {"PANTHEON_RUNTIME_LOCK_TRACE": str(trace_path)},
+        ):
+            with runtime_state.tasks_runtime_admission_guard(
+                self.config,
+                ["TASK-A"],
+                strict=True,
+                shared=False,
+                nonblocking=True,
+            ) as decision:
+                self.assertTrue(decision["allowed"])
+                with runtime_state.canonical_task_state_lock_file(
+                    self.root / "ai-status.json",
+                    shared=False,
+                    nonblocking=True,
+                ):
+                    with runtime_state.activity_audit_lock_file(
+                        self.root / "ai-activity-log.jsonl",
+                        shared=False,
+                        nonblocking=True,
+                    ):
+                        pass
+        acquired = [
+            line.split(":", 3)[1]
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+            if line.startswith("acquire:")
+        ]
+        self.assertEqual(
+            acquired,
+            ["runtime_admission", "task_state", "activity_audit"],
+        )
+
     def test_reverse_lock_order_is_rejected_before_kernel_acquisition(self) -> None:
         status_path = self.root / "ai-status.json"
         with runtime_state.canonical_task_state_lock_file(
@@ -467,3 +645,158 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     nonblocking=True,
                 ):
                     self.fail("reverse-order runtime lock was acquired")
+
+
+class RuntimeCapabilityVerifierTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name) / "repo"
+        self.root.mkdir()
+
+    @staticmethod
+    def _write_json(path: Path, payload: object) -> bytes:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
+        path.write_bytes(body)
+        return body
+
+    def _signed_fixture(self) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object], str]:
+        writers: dict[str, str] = {}
+        for relative in runtime_state.RUNTIME_LOCK_REQUIRED_WRITER_PATHS:
+            body = f"fixture writer: {relative}\n".encode("utf-8")
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(body)
+            writers[relative] = hashlib.sha256(body).hexdigest()
+        registry = {
+            "schema_version": 1,
+            "protocol_id": runtime_state.RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID,
+            "transaction_scope": "complete_read_validate_mutate_replace",
+            "direct_canonical_writes_forbidden": True,
+            "writers": writers,
+        }
+        registry_path = self.root / ".orchestrator/runtime-task-audit-writer-registry.json"
+        registry_body = self._write_json(registry_path, registry)
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        evidence: dict[str, object] = {
+            "schema_version": 1,
+            "task_id": "LOOP-PROD-RUNTIME-BOOT-001",
+            "task_contract_sha256": "04f382e320292e11df3b4668ec4383819b9c9abadcc48f3b9150a7abcb65141e",
+            "conclusion": "passed",
+            "worker_runtime_identity": "Codex2",
+            "reviewer_runtime_identity": "Codex",
+            "checks_sha256": "1" * 64,
+            "verdict_id": "runtime-lock-bootstrap-review-1",
+            "verifier_capability_sha256": writers[".orchestrator/runtime_state.py"],
+            "signature_algorithm": "ed25519",
+            "key_id": "ops-runtime-lock-review-1",
+            "policy_version": "runtime-lock-policy-1",
+            "signature": "",
+            "revocation_checked_at": "2026-07-14T00:00:00Z",
+            "ledger_entry_id": "runtime-lock-ledger-1",
+        }
+        evidence_path = self.root / "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/bootstrap-completion.json"
+        manifest: dict[str, object] = {
+            "schema_version": 1,
+            "protocol_id": runtime_state.RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID,
+            "module_path": ".orchestrator/runtime_state.py",
+            "lock_order": ["runtime_admission", "task_state", "activity_audit"],
+            "stable_lock_paths": [
+                ".orchestrator/runtime-admission.lock",
+                ".orchestrator/task-state.lock",
+                ".orchestrator/activity-audit.lock",
+            ],
+            "shared_read_supported": True,
+            "api": list(runtime_state.RUNTIME_LOCK_REQUIRED_API),
+            "writers": writers,
+            "writer_registry_path": str(registry_path.relative_to(self.root)),
+            "writer_registry_sha256": hashlib.sha256(registry_body).hexdigest(),
+            "dispatcher_sha256": writers["scripts/dispatch_loop_product_level_remediation_2026-07-13.py"],
+            "bootstrap_task_id": "LOOP-PROD-RUNTIME-BOOT-001",
+            "bootstrap_task_contract_sha256": evidence["task_contract_sha256"],
+            "bootstrap_completion_evidence_path": str(evidence_path.relative_to(self.root)),
+            "bootstrap_completion_evidence_sha256": "0" * 64,
+            "merged_commit_sha": "2" * 40,
+        }
+        evidence["signature"] = base64.b64encode(
+            private_key.sign(
+                runtime_state.runtime_capability_signature_payload(
+                    manifest,
+                    evidence,
+                )
+            )
+        ).decode("ascii")
+        evidence_body = self._write_json(evidence_path, evidence)
+        manifest["bootstrap_completion_evidence_sha256"] = hashlib.sha256(
+            evidence_body
+        ).hexdigest()
+        manifest_sha256 = "3" * 64
+        policy = {
+            "schema_version": 1,
+            "protocol_id": runtime_state.RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID,
+            "policy_version": evidence["policy_version"],
+            "key_id": evidence["key_id"],
+            "public_key_base64": base64.b64encode(public_key).decode("ascii"),
+            "revoked_key_ids": [],
+            "ledger_entries": [
+                {
+                    "ledger_entry_id": evidence["ledger_entry_id"],
+                    "verdict_id": evidence["verdict_id"],
+                    "task_id": evidence["task_id"],
+                    "reviewer_runtime_identity": evidence["reviewer_runtime_identity"],
+                    "merged_commit_sha": manifest["merged_commit_sha"],
+                    "manifest_sha256": manifest_sha256,
+                    "writer_registry_sha256": manifest["writer_registry_sha256"],
+                    "completion_evidence_sha256": manifest["bootstrap_completion_evidence_sha256"],
+                    "revocation_checked_at": evidence["revocation_checked_at"],
+                    "status": "accepted",
+                }
+            ],
+        }
+        return manifest, registry, evidence, policy, manifest_sha256
+
+    def test_valid_signature_and_protected_ledger_are_required(self) -> None:
+        manifest, registry, evidence, policy, manifest_sha256 = self._signed_fixture()
+        with mock.patch.object(
+            runtime_state,
+            "_protected_verifier_policy",
+            return_value=policy,
+        ):
+            decision = runtime_state.verify_runtime_lock_capability(
+                manifest=manifest,
+                manifest_sha256=manifest_sha256,
+                writer_registry=registry,
+                completion_evidence=evidence,
+                repository_root=self.root,
+            )
+            self.assertTrue(decision["allowed"])
+            self.assertEqual(decision["reason_id"], "verified")
+
+            evidence["signature"] = base64.b64encode(b"invalid").decode("ascii")
+            rejected = runtime_state.verify_runtime_lock_capability(
+                manifest=manifest,
+                manifest_sha256=manifest_sha256,
+                writer_registry=registry,
+                completion_evidence=evidence,
+                repository_root=self.root,
+            )
+            self.assertFalse(rejected["allowed"])
+            self.assertEqual(rejected["reason_id"], "protected_evidence_invalid")
+
+    def test_worker_owned_policy_is_not_a_protected_trust_anchor(self) -> None:
+        policy_path = Path(self.tmpdir.name) / "worker-policy.json"
+        self._write_json(policy_path, {})
+        with mock.patch.dict(
+            os.environ,
+            {"PANTHEON_RUNTIME_LOCK_VERIFIER_POLICY": str(policy_path)},
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "protected verifier policy parent is unsafe|permissions are unsafe",
+            ):
+                runtime_state._protected_verifier_policy(self.root)

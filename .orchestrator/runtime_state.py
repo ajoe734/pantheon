@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
@@ -13,6 +14,7 @@ from typing import Any, Iterable
 
 from common import (
     RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID as _LOCK_PROTOCOL_ID,
+    RUNTIME_TASK_AUDIT_LOCK_ORDER as _LOCK_ORDER,
     RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION as _LOCK_PROTOCOL_VERSION,
     activity_audit_lock_file,
     append_jsonl,
@@ -31,6 +33,7 @@ from common import (
 
 RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION = _LOCK_PROTOCOL_VERSION
 RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID = _LOCK_PROTOCOL_ID
+RUNTIME_TASK_AUDIT_LOCK_ORDER = _LOCK_ORDER
 RUNTIME_ADMISSION_SOURCE_IDS = (
     "runtime_state",
     "event_queue",
@@ -56,6 +59,23 @@ RUNTIME_ADMISSION_TERMINAL_WORKER_STATUSES = {
     "retried",
     "done",
 }
+RUNTIME_LOCK_REQUIRED_WRITER_PATHS = (
+    ".orchestrator/runtime_state.py",
+    ".orchestrator/supervisor.py",
+    ".orchestrator/common.py",
+    ".orchestrator/approval_queue.py",
+    ".orchestrator/adapters/file_inbox.py",
+    ".orchestrator/watch_events.py",
+    ".orchestrator/supervisor_watchdog.py",
+    "scripts/ai_status.py",
+    "scripts/dispatch_loop_product_level_remediation_2026-07-13.py",
+)
+RUNTIME_LOCK_REQUIRED_API = (
+    "tasks_runtime_admission_guard",
+    "canonical_task_state_lock_file",
+    "activity_audit_lock_file",
+    "verify_runtime_lock_capability",
+)
 
 
 def default_state() -> dict[str, Any]:
@@ -298,11 +318,14 @@ def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | No
     state["workers"] = keep
 
 def runtime_admission_lock_path(config: dict[str, Any]) -> Path:
-    try:
-        return config_path(config, "state_file").parent / "runtime-admission.lock"
-    except KeyError:
+    paths = config.get("paths") if isinstance(config.get("paths"), dict) else {}
+    for source_key in ("state_file", "event_queue", "approval_queue"):
+        if paths.get(source_key):
+            return config_path(config, source_key).parent / "runtime-admission.lock"
+    if paths.get("status_file"):
         status_path = config_path(config, "status_file")
         return status_path.parent / ".orchestrator" / "runtime-admission.lock"
+    raise KeyError("Missing canonical runtime/status path for runtime admission lock")
 
 
 @contextmanager
@@ -351,7 +374,7 @@ def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     try:
         pending_approval_runs = {
             str(item.get("worker_run_id") or "")
-            for item in load_approval_state(config).get("pending", [])
+            for item in _load_approval_state_unlocked(config).get("pending", [])
             if item.get("worker_run_id")
         }
     except KeyError:
@@ -471,18 +494,33 @@ def _normalize_approval_item(item: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _load_approval_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
+    raw = load_json(
+        config_path(config, "approval_queue"),
+        default=default_approval_state(),
+    )
+    state = deepcopy(default_approval_state())
+    if isinstance(raw, dict):
+        state.update(raw)
+    state.setdefault("pending", [])
+    state.setdefault("history", [])
+    state["pending"] = [
+        _normalize_approval_item(item)
+        for item in state["pending"]
+        if isinstance(item, dict)
+    ]
+    state["history"] = [
+        _normalize_approval_item(item)
+        for item in state["history"]
+        if isinstance(item, dict)
+    ]
+    state["version"] = 2
+    return state
+
+
 def load_approval_state(config: dict[str, Any]) -> dict[str, Any]:
     with runtime_state_lock(config, shared=True):
-        raw = load_json(config_path(config, "approval_queue"), default=default_approval_state())
-        state = deepcopy(default_approval_state())
-        if isinstance(raw, dict):
-            state.update(raw)
-        state.setdefault("pending", [])
-        state.setdefault("history", [])
-        state["pending"] = [_normalize_approval_item(item) for item in state["pending"] if isinstance(item, dict)]
-        state["history"] = [_normalize_approval_item(item) for item in state["history"] if isinstance(item, dict)]
-        state["version"] = 2
-        return state
+        return _load_approval_state_unlocked(config)
 
 
 def save_approval_state(config: dict[str, Any], state: dict[str, Any]) -> None:
@@ -810,21 +848,73 @@ def runtime_capability_signature_payload(
     )
 
 
+def _lower_hex(value: Any, length: int) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == length
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _capability_repo_path(root: Path, value: Any, *, label: str) -> Path:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} is invalid")
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts or str(relative) != value:
+        raise ValueError(f"{label} is not normalized")
+    resolved = (root / relative).resolve()
+    if root not in resolved.parents:
+        raise ValueError(f"{label} escapes repository")
+    return resolved
+
+
 def _protected_verifier_policy(root: Path) -> dict[str, Any]:
     configured = str(
         os.environ.get("PANTHEON_RUNTIME_LOCK_VERIFIER_POLICY") or ""
     ).strip()
-    path = (
-        Path(configured).expanduser().resolve()
-        if configured
-        else root / ".orchestrator" / "runtime-lock-verifier-policy.json"
-    )
-    if path.is_symlink() or not path.is_file():
+    if not configured:
+        raise ValueError("protected verifier policy path is not configured")
+    configured_path = Path(configured).expanduser()
+    if not configured_path.is_absolute():
+        raise ValueError("protected verifier policy path must be absolute")
+    try:
+        path = configured_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("protected verifier policy is missing") from exc
+    if path != configured_path or path == root or root in path.parents:
+        raise ValueError("protected verifier policy must be outside the repository")
+
+    parent = path.parent
+    while True:
+        parent_stat = parent.stat()
+        if (
+            not stat.S_ISDIR(parent_stat.st_mode)
+            or parent_stat.st_uid != 0
+            or parent_stat.st_mode & 0o022
+        ):
+            raise ValueError("protected verifier policy parent is unsafe")
+        if parent == parent.parent:
+            break
+        parent = parent.parent
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
         raise ValueError("protected verifier policy is missing")
-    stat_result = path.stat()
-    if stat_result.st_mode & 0o022 or stat_result.st_uid not in {0, os.getuid()}:
-        raise ValueError("protected verifier policy permissions are unsafe")
-    policy = _strict_json_object(path.read_bytes(), source=str(path))
+    try:
+        stat_result = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(stat_result.st_mode)
+            or stat_result.st_uid != 0
+            or stat_result.st_mode & 0o022
+        ):
+            raise ValueError("protected verifier policy permissions are unsafe")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            body = handle.read()
+    finally:
+        os.close(descriptor)
+    policy = _strict_json_object(body, source=str(path))
     if set(policy) != {
         "schema_version",
         "protocol_id",
@@ -864,8 +954,98 @@ def verify_runtime_lock_capability(
     allowed = False
     reason_id = "protected_evidence_invalid"
     try:
-        registry_path = root / str(manifest["writer_registry_path"])
-        evidence_path = root / str(manifest["bootstrap_completion_evidence_path"])
+        required_manifest_fields = {
+            "schema_version",
+            "protocol_id",
+            "module_path",
+            "lock_order",
+            "stable_lock_paths",
+            "shared_read_supported",
+            "api",
+            "writers",
+            "writer_registry_path",
+            "writer_registry_sha256",
+            "dispatcher_sha256",
+            "bootstrap_task_id",
+            "bootstrap_task_contract_sha256",
+            "bootstrap_completion_evidence_path",
+            "bootstrap_completion_evidence_sha256",
+            "merged_commit_sha",
+        }
+        required_evidence_fields = {
+            "schema_version",
+            "task_id",
+            "task_contract_sha256",
+            "conclusion",
+            "worker_runtime_identity",
+            "reviewer_runtime_identity",
+            "checks_sha256",
+            "verdict_id",
+            "verifier_capability_sha256",
+            "signature_algorithm",
+            "key_id",
+            "policy_version",
+            "signature",
+            "revocation_checked_at",
+            "ledger_entry_id",
+        }
+        writers = manifest.get("writers")
+        if (
+            set(manifest) != required_manifest_fields
+            or manifest.get("schema_version") != 1
+            or manifest.get("protocol_id")
+            != RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID
+            or manifest.get("module_path") != ".orchestrator/runtime_state.py"
+            or manifest.get("lock_order")
+            != list(RUNTIME_TASK_AUDIT_LOCK_ORDER)
+            or manifest.get("stable_lock_paths")
+            != [
+                ".orchestrator/runtime-admission.lock",
+                ".orchestrator/task-state.lock",
+                ".orchestrator/activity-audit.lock",
+            ]
+            or manifest.get("shared_read_supported") is not True
+            or manifest.get("api") != list(RUNTIME_LOCK_REQUIRED_API)
+            or not isinstance(writers, dict)
+            or set(writers) != set(RUNTIME_LOCK_REQUIRED_WRITER_PATHS)
+            or not _lower_hex(manifest_sha256, 64)
+            or not _lower_hex(merge_sha, 40)
+            or not _lower_hex(registry_digest, 64)
+            or not _lower_hex(evidence_digest, 64)
+            or set(completion_evidence) != required_evidence_fields
+        ):
+            raise ValueError("capability manifest schema mismatch")
+
+        for relative_path, expected_digest in writers.items():
+            writer_path = _capability_repo_path(
+                root,
+                relative_path,
+                label="runtime lock writer path",
+            )
+            if (
+                not _lower_hex(expected_digest, 64)
+                or hashlib.sha256(writer_path.read_bytes()).hexdigest()
+                != expected_digest
+            ):
+                raise ValueError("runtime lock writer binding mismatch")
+        if (
+            manifest.get("dispatcher_sha256")
+            != writers[
+                "scripts/dispatch_loop_product_level_remediation_2026-07-13.py"
+            ]
+        ):
+            raise ValueError("dispatcher binding mismatch")
+
+        registry_path = _capability_repo_path(
+            root,
+            manifest["writer_registry_path"],
+            label="writer registry path",
+        )
+        evidence_path = _capability_repo_path(
+            root,
+            manifest["bootstrap_completion_evidence_path"],
+            label="bootstrap completion evidence path",
+        )
         actual_registry_digest = hashlib.sha256(registry_path.read_bytes()).hexdigest()
         actual_evidence_digest = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
         if actual_registry_digest != registry_digest or actual_evidence_digest != evidence_digest:
@@ -883,6 +1063,13 @@ def verify_runtime_lock_capability(
             or completion_evidence.get("signature_algorithm") != "ed25519"
             or completion_evidence.get("verifier_capability_sha256")
             != (manifest.get("writers") or {}).get(manifest.get("module_path"))
+            or completion_evidence.get("task_id")
+            != manifest.get("bootstrap_task_id")
+            or completion_evidence.get("task_contract_sha256")
+            != manifest.get("bootstrap_task_contract_sha256")
+            or completion_evidence.get("worker_runtime_identity")
+            == completion_evidence.get("reviewer_runtime_identity")
+            or not _lower_hex(completion_evidence.get("checks_sha256"), 64)
         ):
             raise ValueError("capability evidence mismatch")
 

@@ -1,0 +1,356 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "schemas/product-evidence.schema.json",
+    "note": "Premerge planning scaffold only. It contains no reviewer signature, protected ledger acceptance, merged identity, or live dry-run result.",
+    "status": "draft_premerge_not_admissible"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/evidence.premerge.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "This scaffold remains mutable until replaced by a post-merge logical-append-only evidence.json. Raw run artifacts, once captured, are immutable.",
+    "recording_mode": "premerge_scaffold_no_completion_authority",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-14T09:18:15Z",
+    "evidence_cut_semantics": "Candidate anchor inventory only; exact-head tests, independent review, merge, protected installation, restart identity, and zero-write dry-run remain pending.",
+    "id": "LOOP-PROD-RUNTIME-BOOT-001",
+    "overall_admission": "blocked_pending_exact_head_review_merge_protected_install_and_dry_run",
+    "owner": "Codex2",
+    "phase": "Loop Product-Level Remediation / Wave -1 bootstrap",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/evidence.premerge.json",
+    "reviewer": "Codex",
+    "target_environment": "canonical Pantheon supervisor status root",
+    "target_maturity": "product-level runtime prerequisite",
+    "task_branch": "task/LOOP-PROD-RUNTIME-BOOT-001",
+    "title": "Shared runtime/task/audit lock protocol bootstrap"
+  },
+  "authorities": {
+    "actual_state": [
+      ".orchestrator/state.json",
+      ".orchestrator/event-queue.jsonl",
+      ".orchestrator/approval-queue.json",
+      "ai-status.json",
+      "ai-activity-log.jsonl and rotated archives",
+      ".orchestrator/runtime-task-audit-writer-registry.json",
+      "protected verify_runtime_lock_capability decision",
+      "post-merge strict dry-run before/after hashes"
+    ],
+    "desired_state": [
+      "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-BOOT-001.md",
+      "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/fixtures/runtime-lock-bootstrap-task.v1.json",
+      "docs/deployment/fleet-runtime-lock-protocol.md"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-BOOT-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 for implementation and premerge owner evidence; Codex for independent verdict; root-controlled ops for protected policy and ledger",
+    "composes_with": [
+      "loop-product-level-remediation-2026-07-13 dispatcher prerequisite",
+      "Pantheon supervisor runtime/event/approval writers",
+      "canonical ai-status and activity-audit writers"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/fleet-runtime-lock-protocol.md",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/README.md",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/evidence.premerge.json"
+    ],
+    "implementation_changed_files": [
+      ".gitignore",
+      ".orchestrator/adapters/file_inbox.py",
+      ".orchestrator/approval_queue.py",
+      ".orchestrator/common.py",
+      ".orchestrator/runtime_state.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/supervisor_watchdog.py",
+      ".orchestrator/test_runtime_state.py",
+      ".orchestrator/watch_events.py",
+      "scripts/ai_status.py"
+    ],
+    "not_changing": "Primary 48-task materialization, production cadence, frontend delivery, broker authority, live capital, or any protected private signing key",
+    "owned_layer": "Stable runtime/task/audit sidecars, strict admission, durable outbox recovery, registered writer integration, and bootstrap evidence contract"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "23d6698f73423554ffe1d15db63cd586ef6fe8ae",
+        "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor stable lock core",
+        "delivery_state": "local_task_branch_premerge",
+        "hosted_cut_inclusion": false,
+        "note": "Anchor identity only; later rebases or exact-head commits must be recorded in final evidence."
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q .orchestrator/test_runtime_state.py .orchestrator/test_approval_queue.py .orchestrator/test_watch_events.py .orchestrator/test_supervisor_watchdog.py",
+        "result": "pending_final_exact_head_rerun",
+        "conclusion": "not_admissible_yet"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q .orchestrator/test_supervisor.py",
+        "result": "pending_final_exact_head_rerun",
+        "conclusion": "not_admissible_yet"
+      },
+      {
+        "command": "python3 scripts/test_ai_status.py",
+        "result": "pending_final_exact_head_rerun_and_baseline_reconciliation",
+        "conclusion": "not_admissible_yet"
+      },
+      {
+        "command": "python3 scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
+        "result": "pending_production_protocol_and_protected_verifier_tests",
+        "conclusion": "not_admissible_yet"
+      },
+      {
+        "command": "tracked static inventory rejecting unregistered direct runtime/task/audit writes",
+        "result": "pending_blocking_historical_dispatcher_boundary",
+        "conclusion": "not_admissible_yet"
+      },
+      {
+        "command": "AI_NAME=Codex2 PANTHEON_STATUS_ROOT=<canonical-root> PANTHEON_RUNTIME_LOCK_VERIFIER_POLICY=<protected-absolute-path> python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py --dry-run",
+        "result": "pending_postmerge_done_and_protected_install",
+        "conclusion": "not_admissible_yet"
+      }
+    ],
+    "validated_at": "pending_final_exact_head_validation",
+    "validated_base_sha": "pending_rebased_dev_sha",
+    "validated_head_sha": "23d6698f73423554ffe1d15db63cd586ef6fe8ae"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "canonical Pantheon supervisor runtime",
+    "public_bff_base_url": "not_applicable_no_bff_change",
+    "publish_cut": {
+      "conclusion": "pending",
+      "reason": "This protocol is accepted by exact merged supervisor checkout identity rather than a frontend/BFF publish cut."
+    },
+    "canonical_root_deploy": {
+      "conclusion": "pending_exact_merge_restart_readback"
+    },
+    "identity_admission": {
+      "authoritative_chain": [
+        "pending primary PR and merge SHA",
+        "pending origin/dev ancestry",
+        "pending exact writer and dispatcher blobs",
+        "pending protected external verifier policy and ledger",
+        "pending restarted supervisor exact-head identity"
+      ]
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "pending",
+      "reason": "No post-merge supervisor restart or canonical status-root readback has been captured."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pending",
+      "required_proof": [
+        "content-addressed status activity outbox replay",
+        "duplicate and conflicting event-ID rejection",
+        "concurrent runtime and task writers preserve newest truth"
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pending",
+      "required_proof": [
+        "missing/empty/malformed/unreadable/wrong-version sources fail closed",
+        "nonblocking contention returns busy with zero writes",
+        "reverse lock order is rejected"
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pending",
+      "required_proof": "Exact admission decision, source digests, protected verifier decision, and dry-run result share one merged identity."
+    },
+    "restart_and_recovery": {
+      "status": "pending",
+      "required_proof": [
+        "process exit and SIGKILL release flock",
+        "post-replace contender remains serialized",
+        "crash at every status/audit outbox seam converges exactly once",
+        "supervisor restart reads the exact merged capability"
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pending",
+      "required_proof": "Capability/ledger rejection blocks apply; pending outbox is reconciled without deleting locks or restoring stale whole-file truth."
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pending",
+      "required_proof": "Maintenance-window canonical root identity and zero-write dry-run."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "reason": "No frontend change."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "reason": "No user-facing privileged route is added."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "The protocol and required dry-run do not call a broker or authorize capital-affecting effects."
+    },
+    "rbac": {
+      "status": "pending",
+      "required_proof": "Protected policy and ledger installation is root-controlled and separate from the task owner."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "reason": "The canonical fleet coordination files are repository/runtime scoped rather than tenant business data."
+    },
+    "two_person_approval": {
+      "status": "pending",
+      "required_proof": "Codex2 owner and Codex reviewer are distinct admitted runtime identities; reviewer signature and protected operator ledger remain absent."
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        ".orchestrator/common.py",
+        ".orchestrator/runtime_state.py",
+        "docs/deployment/fleet-runtime-lock-protocol.md"
+      ],
+      "id": "AC-01",
+      "statement": "exact protocol version 1 exports the required API and stable three-lock order",
+      "status": "pending_exact_head_validation"
+    },
+    {
+      "evidence_refs": [
+        ".orchestrator/runtime_state.py",
+        ".orchestrator/supervisor.py",
+        ".orchestrator/approval_queue.py",
+        ".orchestrator/adapters/file_inbox.py",
+        ".orchestrator/watch_events.py",
+        ".orchestrator/supervisor_watchdog.py",
+        "scripts/ai_status.py"
+      ],
+      "id": "AC-02",
+      "statement": "registered runtime, task-state, and audit helpers hold stable sidecars across complete transactions",
+      "status": "pending_exact_head_validation"
+    },
+    {
+      "evidence_refs": [
+        ".orchestrator/test_runtime_state.py",
+        ".orchestrator/test_supervisor.py",
+        "scripts/test_ai_status.py"
+      ],
+      "id": "AC-03",
+      "statement": "process contention, inode replacement, crash, kill, restart, concurrency, rotation, and outbox recovery preserve newest truth exactly once",
+      "status": "pending_complete_matrix"
+    },
+    {
+      "evidence_refs": [
+        ".orchestrator/runtime_state.py",
+        "scripts/dispatch_loop_product_level_remediation_2026-07-13.py"
+      ],
+      "id": "AC-04",
+      "statement": "strict admission returns the exact ordered decision and fail-closed reason/conflict matrix",
+      "status": "pending_exact_head_validation"
+    },
+    {
+      "evidence_refs": [
+        ".orchestrator/runtime-task-audit-writer-registry.json",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/README.md"
+      ],
+      "id": "AC-05",
+      "statement": "writer registry is exhaustive and tests reject every unregistered direct canonical write",
+      "status": "blocked_historical_dispatcher_inventory",
+      "blocking_until": "all direct writers are migrated or made technically non-authoritative"
+    },
+    {
+      "evidence_refs": [
+        "pending completion.json",
+        "pending live capability manifest",
+        "pending protected external verifier policy and ledger"
+      ],
+      "id": "AC-06",
+      "statement": "exact merged blobs, reviewer signature, key/policy/revocation/ledger, protected verifier decision, and dev ancestry bind one accepted capability",
+      "status": "blocked_pending_distinct_review_merge_and_protected_install"
+    },
+    {
+      "evidence_refs": [
+        "pending post-merge runs/<run-id>/before-hashes.json",
+        "pending post-merge runs/<run-id>/after-hashes.json",
+        "pending post-merge runs/<run-id>/result.json"
+      ],
+      "id": "AC-07",
+      "statement": "exact merged bootstrap SHA passes canonical strict dry-run with zero writes",
+      "status": "blocked_pending_task_done_and_postmerge_dry_run"
+    },
+    {
+      "evidence_refs": [
+        "pending primary PR",
+        "pending required checks",
+        "pending independent review",
+        "pending primary merge SHA",
+        "pending evidence-only follow-up PR"
+      ],
+      "id": "AC-08",
+      "statement": "delivery, independent review, merge, evidence integrity, and residual-risk ownership are durable",
+      "status": "blocked_pending_delivery"
+    }
+  ],
+  "residual_risks": {
+    "RISK-UNREGISTERED-HISTORICAL-WRITERS": {
+      "blocking_for_this_task": true,
+      "containment": "Do not execute historical dispatchers or maintenance utilities against the canonical status root; keep primary materialization blocked; require tracked static inventory and migration or technical retirement before capability install.",
+      "description": "The exact nine-path registry does not implicitly cover historical scripts/dispatch_*.py and other utilities that may directly write canonical runtime, task, or audit files.",
+      "expiry": "before_capability_manifest_install",
+      "owner": "LOOP-PROD-RUNTIME-BOOT-001 owner and reviewer",
+      "recheck_trigger": "final registered-writer static inventory",
+      "severity": "critical"
+    },
+    "RISK-PROTECTED-CEREMONY-PENDING": {
+      "blocking_for_this_task": true,
+      "containment": "No capability manifest installation or dispatcher apply; omit final completion.json until the distinct reviewer creates the real signature.",
+      "description": "Reviewer signature, exact merge identity, root-controlled external policy, revocation decision, accepted ledger entry, and protected verifier decision do not exist at premerge scaffold time.",
+      "expiry": "before_postmerge_dry_run",
+      "owner": "Codex reviewer and protected runtime operator",
+      "recheck_trigger": "primary PR merge and protected installation ceremony",
+      "severity": "critical"
+    },
+    "RISK-POSTMERGE-DRYRUN-PENDING": {
+      "blocking_for_this_task": true,
+      "containment": "Keep all 48 primary tasks unmaterialized and reject --apply.",
+      "description": "The authoritative dispatcher dry-run requires the bootstrap task to be done and therefore can only be captured after the primary merge and closeout.",
+      "expiry": "before_primary_catalog_materialization",
+      "owner": "LOOP-PROD-RUNTIME-BOOT-001 owner and Human/Ops signoff",
+      "recheck_trigger": "exact-merge supervisor restart and strict live dry-run",
+      "severity": "critical"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/evidence.premerge.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/evidence.premerge.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "This mutable premerge scaffold is intentionally not checksummed and cannot be admitted as final evidence.",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-14T09:18:15Z",
+      "kind": "owner_premerge_evidence_scaffold",
+      "status": "draft_not_admissible",
+      "actor": "Codex2"
+    }
+  ]
+}

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
+import multiprocessing
 import tempfile
 import unittest
 import os
@@ -12,6 +14,95 @@ from pathlib import Path
 from unittest import mock
 
 import supervisor
+import runtime_state
+
+
+def _run_supervisor_writer_transaction_until_released(
+    config: dict[str, object],
+    connection: object,
+) -> None:
+    """Exercise real nested runtime writers while run_once owns the outer lock."""
+
+    def transaction(_config: dict[str, object], **_kwargs: object) -> bool:
+        state = supervisor.load_runtime_state(_config)
+        state.setdefault("workers", {})["before-release"] = {
+            "run_id": "before-release",
+            "task_id": "LOCK-TASK",
+            "status": "running",
+        }
+        supervisor.save_runtime_state(_config, state)
+        connection.send(("mid-transaction", os.getpid()))
+        if connection.recv() != "release":
+            raise RuntimeError("unexpected supervisor transaction command")
+        supervisor.enqueue_event(
+            _config,
+            {
+                "event_id": "evt-after-release",
+                "task_id": "QUEUE-TASK",
+                "status": "queued",
+            },
+        )
+        state = supervisor.load_runtime_state(_config)
+        state.setdefault("workers", {})["after-release"] = {
+            "run_id": "after-release",
+            "task_id": "QUEUE-TASK",
+            "status": "running",
+            "queue_event_id": "evt-after-release",
+        }
+        supervisor.save_runtime_state(_config, state)
+        return True
+
+    try:
+        with mock.patch.object(supervisor, "_run_once_locked", side_effect=transaction):
+            changed = supervisor.run_once(config, watch=False)
+        connection.send(("completed", changed))
+    except BaseException as exc:  # pragma: no cover - reported to the parent
+        connection.send(("error", f"{type(exc).__name__}: {exc}"))
+    finally:
+        connection.close()
+
+
+def _interrupt_queue_replace_before_switch(
+    config: dict[str, object],
+    replacement: list[dict[str, object]],
+    connection: object,
+) -> None:
+    """Pause after a replacement is durable but before its atomic switch."""
+
+    real_replace = runtime_state.os.replace
+
+    def pause_before_replace(source: object, destination: object) -> None:
+        connection.send(("replace-ready", str(source), str(destination)))
+        command = connection.recv()
+        if command != "replace":
+            raise RuntimeError("unexpected queue replacement command")
+        real_replace(source, destination)
+
+    try:
+        with mock.patch.object(runtime_state.os, "replace", side_effect=pause_before_replace):
+            runtime_state.replace_event_queue(config, replacement)
+        connection.send(("completed", os.getpid()))
+    except BaseException as exc:  # pragma: no cover - SIGKILL is the expected exit
+        connection.send(("error", f"{type(exc).__name__}: {exc}"))
+    finally:
+        connection.close()
+
+
+def _prune_queue_after_runtime_lock(
+    config: dict[str, object],
+    state: dict[str, object],
+    connection: object,
+) -> None:
+    """Wait on the real runtime lock, then run the supervisor prune writer."""
+
+    try:
+        with supervisor.runtime_state_lock(config, shared=False, nonblocking=False):
+            changed = supervisor.prune_event_queue(config, state)
+        connection.send(("completed", changed, state))
+    except BaseException as exc:  # pragma: no cover - reported to the parent
+        connection.send(("error", f"{type(exc).__name__}: {exc}"))
+    finally:
+        connection.close()
 
 
 class RuntimeConfigTests(unittest.TestCase):
@@ -4173,6 +4264,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             saved_state.update(state)
 
         with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-14T09:00:00Z"),
             mock.patch.object(supervisor, "write_supervisor_pid"),
             mock.patch.object(supervisor, "load_runtime_state", side_effect=[dict(initial_state), dict(initial_state)]),
             mock.patch.object(supervisor, "prune_stale_approvals", return_value=False),
@@ -4523,6 +4615,208 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             dispatch_ready_tasks.assert_called_once()
             run_mock.assert_called_once()
             self.assertEqual(run_mock.call_args.args[0][-1], "materialize")
+
+
+class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.state_path = self.root / "runtime-state.json"
+        self.event_queue_path = self.root / "event-queue.jsonl"
+        self.approval_queue_path = self.root / "approval-queue.json"
+        self.status_path = self.root / "ai-status.json"
+        self.activity_path = self.root / "ai-activity-log.jsonl"
+        self.config = {
+            "paths": {
+                "state_file": str(self.state_path),
+                "event_queue": str(self.event_queue_path),
+                "approval_queue": str(self.approval_queue_path),
+                "status_file": str(self.status_path),
+                "activity_log": str(self.activity_path),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "active_worker_statuses": ["running"],
+            },
+        }
+        self.state_path.write_text(
+            json.dumps(runtime_state.default_state()) + "\n",
+            encoding="utf-8",
+        )
+        self.event_queue_path.write_text("", encoding="utf-8")
+        self.approval_queue_path.write_text(
+            json.dumps({"version": 2, "pending": [], "history": []}) + "\n",
+            encoding="utf-8",
+        )
+        self.status_path.write_text(json.dumps({"tasks": []}) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _stop_process(process: multiprocessing.Process) -> None:
+        if process.is_alive():
+            process.kill()
+        process.join(timeout=5)
+
+    def test_run_once_holds_runtime_lock_across_nested_writer_transaction(self) -> None:
+        context = multiprocessing.get_context("fork")
+        parent_connection, child_connection = context.Pipe()
+        process = context.Process(
+            target=_run_supervisor_writer_transaction_until_released,
+            args=(self.config, child_connection),
+        )
+        process.start()
+        child_connection.close()
+        self.addCleanup(parent_connection.close)
+        self.addCleanup(self._stop_process, process)
+
+        self.assertTrue(parent_connection.poll(5), "supervisor transaction did not reach its midpoint")
+        self.assertEqual(parent_connection.recv()[0], "mid-transaction")
+        lock_path = runtime_state.runtime_admission_lock_path(self.config)
+        lock_inode = lock_path.stat().st_ino
+
+        with self.assertRaises(BlockingIOError):
+            with runtime_state.tasks_runtime_admission_guard(
+                self.config,
+                ["LOCK-TASK"],
+                strict=True,
+                shared=True,
+                nonblocking=True,
+            ):
+                self.fail("nonblocking admission entered while supervisor held the writer lock")
+
+        parent_connection.send("release")
+        self.assertTrue(parent_connection.poll(5), "supervisor transaction did not finish")
+        self.assertEqual(parent_connection.recv(), ("completed", True))
+        process.join(timeout=5)
+        self.assertEqual(process.exitcode, 0)
+
+        self.assertEqual(lock_path.stat().st_ino, lock_inode)
+        state = runtime_state.load_runtime_state(self.config)
+        self.assertIn("before-release", state["workers"])
+        self.assertIn("after-release", state["workers"])
+        self.assertEqual(
+            runtime_state.load_event_queue(self.config),
+            [
+                {
+                    "event_id": "evt-after-release",
+                    "task_id": "QUEUE-TASK",
+                    "status": "queued",
+                }
+            ],
+        )
+
+    def test_waiting_prune_recovers_after_queue_writer_is_killed_before_replace(self) -> None:
+        original_events = [
+            {
+                "event_id": "evt-keep",
+                "task_id": "KEEP",
+                "status": "queued",
+            },
+            {
+                "event_id": "evt-drop",
+                "task_id": "DROP",
+                "status": "completed",
+            },
+        ]
+        self.event_queue_path.write_text(
+            "".join(json.dumps(event) + "\n" for event in original_events),
+            encoding="utf-8",
+        )
+        self.status_path.write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {"id": "KEEP", "status": "in_progress", "owner": "Codex"},
+                        {"id": "DROP", "status": "done", "owner": "Codex"},
+                    ]
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        state = runtime_state.default_state()
+        state["queue"]["events"] = {
+            "evt-keep": {"status": "started"},
+            "evt-drop": {"status": "completed"},
+        }
+        state["workers"] = {
+            "run-keep": {
+                "run_id": "run-keep",
+                "task_id": "KEEP",
+                "status": "running",
+                "queue_event_id": "evt-keep",
+            }
+        }
+        self.state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+
+        context = multiprocessing.get_context("fork")
+        writer_parent, writer_child = context.Pipe()
+        writer = context.Process(
+            target=_interrupt_queue_replace_before_switch,
+            args=(
+                self.config,
+                [{"event_id": "evt-interrupted", "task_id": "TORN"}],
+                writer_child,
+            ),
+        )
+        writer.start()
+        writer_child.close()
+        self.addCleanup(writer_parent.close)
+        self.addCleanup(self._stop_process, writer)
+
+        self.assertTrue(writer_parent.poll(5), "queue writer did not reach atomic replace")
+        self.assertEqual(writer_parent.recv()[0], "replace-ready")
+        lock_path = runtime_state.runtime_admission_lock_path(self.config)
+        lock_inode = lock_path.stat().st_ino
+        self.assertEqual(runtime_state.load_jsonl(self.event_queue_path), original_events)
+
+        prune_parent, prune_child = context.Pipe()
+        prune = context.Process(
+            target=_prune_queue_after_runtime_lock,
+            args=(self.config, state, prune_child),
+        )
+        prune.start()
+        prune_child.close()
+        self.addCleanup(prune_parent.close)
+        self.addCleanup(self._stop_process, prune)
+
+        self.assertFalse(
+            prune_parent.poll(0.25),
+            "prune bypassed the runtime lock while replace was interrupted",
+        )
+        self.assertTrue(prune.is_alive())
+        writer.kill()
+        writer.join(timeout=5)
+        self.assertEqual(writer.exitcode, -9)
+
+        self.assertTrue(prune_parent.poll(5), "prune did not recover after writer SIGKILL")
+        result = prune_parent.recv()
+        self.assertEqual(result[0:2], ("completed", True))
+        pruned_state = result[2]
+        prune.join(timeout=5)
+        self.assertEqual(prune.exitcode, 0)
+
+        self.assertEqual(lock_path.stat().st_ino, lock_inode)
+        self.assertEqual(runtime_state.load_jsonl(self.event_queue_path), [original_events[0]])
+        self.assertEqual(set(pruned_state["queue"]["events"]), {"evt-keep"})
+
+    def test_supervisor_runtime_writer_surface_uses_canonical_helpers(self) -> None:
+        run_once_source = inspect.getsource(supervisor.run_once)
+        queue_writer_source = inspect.getsource(supervisor.save_event_queue)
+
+        self.assertIn("with runtime_state_lock(config, shared=False", run_once_source)
+        self.assertIn("return _run_once_locked(", run_once_source)
+        self.assertEqual(
+            queue_writer_source.count("replace_event_queue(config, events)"),
+            1,
+        )
+        self.assertNotIn("write_text", queue_writer_source)
+        self.assertNotIn("os.replace", queue_writer_source)
 
 
 class SupervisorRuntimeFocusTests(unittest.TestCase):
