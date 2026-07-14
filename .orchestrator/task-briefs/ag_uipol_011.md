@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: Re-checked 2026-07-14 (10th pass): no change since last recheck (09:54:23Z). PRs #3636/#344/#345 confirmed still MERGED (08:34/07:38/07:56 UTC), unchanged. Working tree clean. Verdict remains APPROVED. Still needs human to run approve (self-approval classifier-blocked). Zero substantive action taken, per stale-rewake pattern.
+- Next: Reassignment acknowledged (Codex->Claude, usage-limit reroute). Re-verified: PRs #3636/#344/#345 still MERGED, same mergedAt as all prior rechecks (08:34:38Z/07:38:29Z/07:56:54Z UTC), no regression. Prior extensive review (parity-matrix rows G-06/PF-07/SRV-03 match, hosted evidence SHA-256 hash-verified, deployment.json gate safe) stands unchanged. Verdict remains APPROVED. approve is self-approval classifier-blocked; still needs human to run approve/done.
 
 ## Summary
 窄螢幕任務聚焦行為（現況 16,951px 長頁）；rows G-06/PF-07/SRV-03；繼承 006 的 shell containment。
