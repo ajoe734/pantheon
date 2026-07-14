@@ -33,6 +33,16 @@ The recovered source authority and precedence are defined by
 
 Hosted evidence is archived in
 [`ag-uipol-005-hosted-1a4265c/`](./ag-uipol-005-hosted-1a4265c/README.md).
+
+Closeout note (2026-07-14): AG-UIPOL-007 subsequently delivered the
+multi-lens surface through `execute-plans` PRs #319, #320, #322, and the
+canonical availability compatibility fix in #341. Its
+deployment-pinned browser record is
+[`evidence/AG-UIPOL-007-hosted-evidence.md`](./evidence/AG-UIPOL-007-hosted-evidence.md).
+The row verdicts below remain the AG-UIPOL-005 pre-delivery audit baseline;
+they require an explicit post-delivery design re-audit before being changed to
+`match`.
+
 The primary evidence codes used below are:
 
 | Code | Current hosted state |
