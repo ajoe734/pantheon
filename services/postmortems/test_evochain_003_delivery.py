@@ -32,6 +32,9 @@ def clean_store(monkeypatch):
     monkeypatch.setenv("POSTMORTEMS_OUTBOX_BACKOFF_BASE_SECONDS", "0")
     monkeypatch.setenv("POSTMORTEMS_OUTBOX_MAX_ATTEMPTS", "3")
 
+    if store._path and store._path.exists():
+        store._path.unlink()
+    store._loaded_mtime_ns = None
     store._incidents.clear()
     store._postmortems.clear()
     # Clean outbox store
@@ -43,6 +46,9 @@ def clean_store(monkeypatch):
     if hasattr(inbox_store.impl, "path") and inbox_store.impl.path.exists():
         inbox_store.impl.path.unlink()
     yield
+    if store._path and store._path.exists():
+        store._path.unlink()
+    store._loaded_mtime_ns = None
     store._incidents.clear()
     store._postmortems.clear()
     if hasattr(outbox_store.impl, "path") and outbox_store.impl.path.exists():

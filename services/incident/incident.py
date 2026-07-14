@@ -33,11 +33,21 @@ Canonical JSON schemas live at:
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import threading
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
+
+try:  # pragma: no cover - Linux production and CI provide fcntl.
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 
 def _utc_now() -> str:
@@ -75,6 +85,15 @@ class PostmortemStatus(str, Enum):
 
 class IncidentError(ValueError):
     """Raised when IncidentCase or Postmortem validation fails."""
+
+
+def _serialized_store_write(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._write_guard():
+            return method(self, *args, **kwargs)
+
+    return wrapped
 
 
 @dataclass(frozen=True)
@@ -429,9 +448,35 @@ class IncidentStore:
         self._postmortems: Dict[str, Postmortem] = {}
         self._path = path
         self._loaded_mtime_ns: Optional[int] = None
+        self._thread_lock = threading.RLock()
         if path and path.exists():
             self._load(path)
             self._loaded_mtime_ns = path.stat().st_mtime_ns
+
+    @contextmanager
+    def _write_guard(self) -> Iterator[None]:
+        """Serialize JSON read-modify-write cycles across threads/processes."""
+
+        with self._thread_lock:
+            if self._path is None:
+                yield
+                return
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path = self._path.with_name(f".{self._path.name}.lock")
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                if self._path.exists():
+                    self._incidents.clear()
+                    self._postmortems.clear()
+                    self._load(self._path)
+                    self._loaded_mtime_ns = self._path.stat().st_mtime_ns
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
 
     def _refresh_from_disk(self) -> None:
         if not self._path or not self._path.exists():
@@ -472,6 +517,7 @@ class IncidentStore:
 
     # ---- IncidentCase writes ----
 
+    @_serialized_store_write
     def create_incident(self, inc: IncidentCase) -> IncidentCase:
         self._refresh_from_disk()
         errors = validate_incident_case(inc)
@@ -483,6 +529,7 @@ class IncidentStore:
         self._save()
         return inc
 
+    @_serialized_store_write
     def update_incident_status(
         self,
         incident_id: str,
@@ -510,6 +557,7 @@ class IncidentStore:
         self._save()
         return updated
 
+    @_serialized_store_write
     def merge_incident_evidence(self, incident_id: str, incoming: IncidentCase) -> IncidentCase:
         """Merge additional evidence into an existing open IncidentCase."""
         self._refresh_from_disk()
@@ -564,6 +612,7 @@ class IncidentStore:
 
     # ---- Postmortem writes ----
 
+    @_serialized_store_write
     def create_postmortem(self, pm: Postmortem) -> Postmortem:
         """
         Create a Postmortem.
@@ -587,6 +636,7 @@ class IncidentStore:
         self._save()
         return pm
 
+    @_serialized_store_write
     def update_postmortem_draft(self, pm: Postmortem) -> Postmortem:
         """Replace an existing draft Postmortem with an updated draft."""
         self._refresh_from_disk()
@@ -611,6 +661,7 @@ class IncidentStore:
         self._save()
         return pm
 
+    @_serialized_store_write
     def update_postmortem_status(
         self,
         postmortem_id: str,
@@ -637,6 +688,7 @@ class IncidentStore:
         self._save()
         return updated
 
+    @_serialized_store_write
     def link_evolution_decision(
         self,
         postmortem_id: str,
@@ -664,7 +716,29 @@ class IncidentStore:
                 "incidents": [i.to_dict() for i in self._incidents.values()],
                 "postmortems": [p.to_dict() for p in self._postmortems.values()],
             }
-            self._path.write_text(json.dumps(data, indent=2))
+            handle = tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self._path.parent,
+                prefix=f".{self._path.name}.",
+                suffix=".tmp",
+                delete=False,
+            )
+            temporary_path = Path(handle.name)
+            try:
+                with handle:
+                    json.dump(data, handle, indent=2)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary_path, self._path)
+                directory_fd = os.open(self._path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            finally:
+                if temporary_path.exists():
+                    temporary_path.unlink()
             self._loaded_mtime_ns = self._path.stat().st_mtime_ns
 
     def _load(self, path: Path) -> None:
