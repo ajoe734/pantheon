@@ -417,6 +417,8 @@ def propose_approval(body: ProposeApprovalRequest) -> ApprovalDecisionResponse:
         risk_level=body.risk_level.value,
         capital_pool_id=body.capital_pool_id,
         persona_id=body.persona_id,
+        tenant_id=body.tenant_id,
+        owner_user_id=body.owner_user_id,
     )
 
     errors = decision.validate()

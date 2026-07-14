@@ -75,6 +75,8 @@ class ProposeApprovalRequest(BaseModel):
     risk_level: RiskLevel = RiskLevel.LOW
     capital_pool_id: Optional[str] = None
     persona_id: Optional[str] = None
+    tenant_id: Optional[str] = Field(default=None, min_length=1)
+    owner_user_id: Optional[str] = Field(default=None, min_length=1)
 
 
 class AcceptReviewRequest(BaseModel):
@@ -134,6 +136,8 @@ class ApprovalDecisionResponse(BaseModel):
     capital_pool_id: Optional[str]
     persona_id: Optional[str]
     metadata: Optional[Dict[str, Any]]
+    tenant_id: Optional[str]
+    owner_user_id: Optional[str]
 
 
 class WriteAuthorityEntry(BaseModel):

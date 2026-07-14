@@ -23,6 +23,9 @@ class FakeReadStore:
     def get_capability_snapshot_for_persona(self, persona_id):
         return {"snapshot_id": f"snap-{persona_id}", "capabilities": ["persona_opinion"]}
 
+    def list_approval_decisions(self):
+        return []
+
 
 def client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
@@ -77,6 +80,130 @@ def test_typed_submission_is_idempotent_and_has_no_write_authority(monkeypatch):
     assert first.status_code == second.status_code == 202, first.text
     assert first.json()["data"] == second.json()["data"]
     assert first.json()["data"]["execution_authority"] == "none"
+
+
+def test_propose_action_creates_canonical_governed_proposal_and_card(monkeypatch):
+    c = client(monkeypatch)
+    bff_main.read_store.list_approval_decisions = lambda: [
+        {
+            "decision_id": "approval-risk-valid",
+            "state": "decided",
+            "outcome": "approved",
+            "target_type": "strategy_spec",
+            "target_id": "strategy-1",
+            "target_version": "v1",
+            "tenant_id": "pantheon-dev",
+            "owner_user_id": "interaction-user",
+            "reviewer": "risk-reviewer",
+            "actor_role": "risk_owner",
+        },
+        {
+            "decision_id": "approval-self",
+            "state": "decided",
+            "outcome": "approved",
+            "target_type": "strategy_spec",
+            "target_id": "strategy-1",
+            "target_version": "v1",
+            "tenant_id": "pantheon-dev",
+            "owner_user_id": "interaction-user",
+            "reviewer": "interaction-user",
+            "actor_role": "risk_owner",
+        },
+        {
+            "decision_id": "approval-wrong-target",
+            "state": "decided",
+            "outcome": "approved",
+            "target_type": "strategy_spec",
+            "target_id": "strategy-other",
+            "target_version": "v1",
+            "tenant_id": "tenant-other",
+            "owner_user_id": "interaction-user",
+            "reviewer": "risk-reviewer",
+            "actor_role": "risk_owner",
+        },
+    ]
+    resolved = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": "proposal-context"},
+        json=context_payload(),
+    ).json()["data"]
+    response = c.post(
+        "/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": "proposal-interaction"},
+        json={
+            "workshop_id": resolved["workshop_id"],
+            "mode": "propose_action",
+            "environment": "paper",
+            "topic": "Reduce risk budget to eight percent",
+            "participant_persona_ids": ["ready"],
+            "context_refs": context_payload()["context_refs"],
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    data = response.json()["data"]
+    proposal = data["proposal"]
+    assert data["execution_authority"] == "none"
+    assert data["proposal_ref"] == proposal["proposal_id"]
+    assert proposal["target_id"] == "strategy-1"
+    assert proposal["target_version"] == "v1"
+    assert proposal["state"] == "draft"
+    assert proposal["execution_authority"] == "none"
+    assert proposal["available_approval_decision_refs"] == ["approval-risk-valid"]
+    assert proposal["approval_decision_refs_authority"] == "canonical_read_store"
+
+    readback = c.get(
+        f"/bff/agora/proposals/{proposal['proposal_id']}",
+        headers={"Authorization": AUTH["Authorization"]},
+    )
+    assert readback.status_code == 200, readback.text
+    assert readback.headers["etag"] == data["proposal_etag"]
+    assert readback.json()["data"]["available_approval_decision_refs"] == [
+        "approval-risk-valid"
+    ]
+
+    cards = c.get(
+        f"/bff/agora/workshops/{resolved['workshop_id']}/cards",
+        headers=AUTH,
+    ).json()["data"]
+    governed = next(card for card in cards if card["card_type"] == "governed_proposal")
+    assert governed["payload"]["proposal_id"] == proposal["proposal_id"]
+    assert governed["payload"]["approval_refs"] == ["approval-risk-valid"]
+    assert not any(card["card_type"] == "consult_result" for card in cards)
+
+
+def test_propose_action_requires_strategy_context_and_rejects_injected_refs(monkeypatch):
+    c = client(monkeypatch)
+    resolved = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": "proposal-no-strategy-context"},
+        json={
+            "environment": "paper",
+            "context_refs": [{"type": "decision_event", "id": "decision-1"}],
+        },
+    ).json()["data"]
+    payload = {
+        "workshop_id": resolved["workshop_id"],
+        "mode": "propose_action",
+        "environment": "paper",
+        "topic": "Unbound candidate",
+        "participant_persona_ids": ["ready"],
+        "context_refs": [{"type": "decision_event", "id": "decision-1"}],
+    }
+    missing_strategy = c.post(
+        "/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": "proposal-no-strategy"},
+        json=payload,
+    )
+    assert missing_strategy.status_code == 422
+    assert "strategy context" in missing_strategy.text
+
+    injected = c.post(
+        "/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": "proposal-injected-ref"},
+        json={**payload, "approval_refs": ["payload-controlled"]},
+    )
+    assert injected.status_code == 422
 
 
 def test_ineligible_participant_and_cross_tenant_fail_closed(monkeypatch):

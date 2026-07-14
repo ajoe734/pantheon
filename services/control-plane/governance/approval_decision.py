@@ -249,6 +249,8 @@ class ApprovalDecision:
     capital_pool_id: Optional[str] = None
     persona_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    tenant_id: Optional[str] = None
+    owner_user_id: Optional[str] = None
 
     # -- factory helpers -----------------------------------------------------
 
@@ -262,6 +264,8 @@ class ApprovalDecision:
         risk_level: RiskLevel | str = RiskLevel.LOW,
         capital_pool_id: Optional[str] = None,
         persona_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        owner_user_id: Optional[str] = None,
     ) -> "ApprovalDecision":
         """Create a new decision in the *proposed* state."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -280,6 +284,8 @@ class ApprovalDecision:
             risk_level=risk_level,
             capital_pool_id=capital_pool_id,
             persona_id=persona_id,
+            tenant_id=tenant_id,
+            owner_user_id=owner_user_id,
         )
 
     def accept_review(self, actor_role: ActorRole | str, actor_id: str) -> None:
@@ -477,6 +483,8 @@ class ApprovalDecision:
             capital_pool_id=data.get("capital_pool_id"),
             persona_id=data.get("persona_id"),
             metadata=data.get("metadata"),
+            tenant_id=data.get("tenant_id"),
+            owner_user_id=data.get("owner_user_id") or data.get("user_id"),
         )
 
     @classmethod
