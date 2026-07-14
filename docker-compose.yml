@@ -296,6 +296,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # source-ingest owns and bootstraps source_ingest.source_evidence;
+      # search must not open its read-only view before the owner is ready.
+      source-ingest:
+        condition: service_healthy
     healthcheck:
       test:
         [
