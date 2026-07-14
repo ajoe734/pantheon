@@ -37,6 +37,11 @@ supposed to prove.
 | Cross-surface identity | The frontend manifest reports BFF commit `27cd46529c29801db02818aafe4df723cc0f8666`; it is not the running `7475a068...`, does not equal the failed run's `27cd4652995...`, and is not resolvable in the fetched Pantheon repository. | Blocked until manifest provenance is corrected |
 | Current frontend integration gate | Run `29299854029` for `b5d64856...` had passed lint, tests, build, contract drift, authenticated smoke, dry-run write probe, deep validation, browser probe, and route-load baseline; hosted acceptance was still running at capture time and Playwright remained pending. | Not final at capture time |
 
+Follow-up at `2026-07-14T02:19:56Z`: the same run's Management hosted
+production acceptance step completed successfully and Playwright E2E was in
+progress. This improves the generic frontend gate state but does not prove the
+missing identity-correlated PPL allocation journey.
+
 The direct `dev` deployment failure did not roll back or replace the successful
 release deployment. It is recorded because the manifest claims a different BFF
 identity and because the dirty managed worktree prevents a clean follow-up

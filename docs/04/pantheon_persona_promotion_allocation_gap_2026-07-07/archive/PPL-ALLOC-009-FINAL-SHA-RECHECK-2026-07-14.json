@@ -60,6 +60,13 @@
         "frontend browser BFF probe",
         "management route-load baseline"
       ],
+      "integration_gate_followup": {
+        "observed_at": "2026-07-14T02:19:56Z",
+        "status": "in_progress",
+        "management_hosted_production_acceptance": "success",
+        "playwright_e2e": "in_progress",
+        "proves_identity_correlated_ppl_journey": false
+      },
       "build_mode": {
         "VITE_BFF_MODE": "live",
         "VITE_BFF_FALLBACK": "strict",
