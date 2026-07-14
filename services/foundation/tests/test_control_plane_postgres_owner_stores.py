@@ -127,6 +127,46 @@ def test_postgres_json_owner_store_read_only_boundary():
         assert reader.get("apv-001") == {"decision_id": "apv-001"}
         with pytest.raises(PermissionError, match="writes must go through governance-svc"):
             reader.put("apv-002", {"decision_id": "apv-002"})
+        with pytest.raises(PermissionError, match="writes must go through governance-svc"):
+            reader.insert_if_absent("apv-002", {"decision_id": "apv-002"})
+
+
+def test_postgres_json_owner_store_atomically_reserves_composite_identity():
+    from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        owner = PostgresJsonOwnerStore(
+            dsn="postgresql://owner@example/db",
+            table="incident.delivery_inbox",
+            owner_service="postmortem-svc",
+        )
+
+        inserted, canonical = owner.insert_if_absent(
+            "evt-1",
+            {"idempotency_key": "shared", "value": "first"},
+            unique_fields=("idempotency_key",),
+        )
+        duplicate_inserted, duplicate = owner.insert_if_absent(
+            "evt-1",
+            {"idempotency_key": "shared", "value": "second"},
+            unique_fields=("idempotency_key",),
+        )
+        collision_inserted, collision = owner.insert_if_absent(
+            "evt-2",
+            {"idempotency_key": "shared", "value": "third"},
+            unique_fields=("idempotency_key",),
+        )
+
+    assert inserted is True
+    assert duplicate_inserted is False
+    assert collision_inserted is False
+    assert canonical == duplicate == collision == {
+        "idempotency_key": "shared",
+        "value": "first",
+    }
+    assert len(_FakeConnection.rows['"incident"."delivery_inbox"']) == 1
+    assert any("LOCK TABLE" in statement for statement in _FakeConnection.statements)
 
 
 def test_ensure_postgres_schema_accepts_precreated_schema_for_restricted_role():
