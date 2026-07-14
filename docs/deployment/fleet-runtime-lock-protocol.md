@@ -94,9 +94,17 @@ state, then acquire the activity lock to append/recover the exact audit events.
 
 Audit readers scan the active file and both supported rotated-archive layouts
 under a shared activity lock. Audit writers rotate and append under an
-exclusive activity lock. Rotation archives the prior bytes and truncates the
-active audit file in place, preserving its inode for any open append handle;
-the sidecar, not the audit file inode, is the serialization authority.
+exclusive activity lock. Rotation writes a durable content-addressed archive
+stage, an exact active-tail stage, and an exact intent under
+`.orchestrator/logs/activity-rotation/`. Recovery installs and reads back the
+archive before atomically replacing the active tail, then removes the intent
+only after both partitions are durable. The active data inode may change; the
+never-replaced sidecar is the only serialization authority.
+
+Dashboard live reads and docs-site mirroring first finish any pending rotation
+under an exclusive lock, then snapshot the active tail under a shared lock.
+The mirror itself is atomically replaced. No HTTP socket write remains inside
+the lock.
 
 ### Planning dispatcher
 
@@ -180,9 +188,26 @@ The sidecar remains open across the complete sequence, so a contender cannot
 cross the old data-file inode after `os.replace`.
 
 Append-only writers flush and fsync before releasing the activity or runtime
-lock. A process exit or `SIGKILL` causes the kernel to release its `flock`; it
-does not remove the stable sidecar. The next process must inspect durable
-outbox/state before accepting new work.
+lock, and fsync the parent directory when creating a new file. A process exit
+or `SIGKILL` causes the kernel to release its `flock`; it does not remove the
+stable sidecar. The next process must inspect durable outbox/state and any
+rotation intent before accepting new work. A non-newline trailing JSON
+fragment is either completed with its missing newline when it is already a
+valid object, or truncated to the last durable newline and replayed from the
+outbox. A newline-terminated malformed row remains corruption and fails
+closed.
+
+### Activity rotation intent
+
+The archive payload and active tail are a disjoint partition of the original
+bytes. Their hashes, the original source hash, and the normalized archive path
+are bound into `activity-rotation-<sha256>`. Stages and the intent are fsynced
+before either canonical partition changes. Restart recovery accepts only the
+original active hash or the exact tail hash, validates the archive/tail union,
+and rejects any foreign concurrent mutation. Content-addressed archive names
+make replay idempotent. Duplicate `event_id` values are corruption even when
+their payloads match across two files; rotation must never need duplicate
+suppression to appear correct.
 
 ### Status activity outbox
 
@@ -198,12 +223,25 @@ mutation commits this exact outbox into `ai-status.json` before audit append:
 ```
 
 Recovery scans the active and rotated audit sources, rejects duplicate IDs in
-one source and conflicting payloads across sources, appends only missing exact
-events, reads them back, and only then clears the outbox through another
-durable task-state write. A crash before status commit has no admitted audit
-work; a crash after status commit leaves the outbox; a crash during append is
-idempotently repaired; and a crash after append but before clear observes the
-existing payload and does not duplicate it.
+one source or across sources, appends only missing exact events, reads them
+back, and only then clears the outbox through another durable task-state
+write. A crash before status commit has no admitted audit work; a crash after
+status commit leaves the outbox; a crash during append is idempotently
+repaired; and a crash after append but before clear observes the existing
+payload and does not duplicate it.
+
+### Terminal task archive outbox
+
+A terminal transition retains the exact terminal task, handoffs, and blockers
+in active task state while it commits `status_archive_outbox`. Recovery writes
+and reads back the immutable task snapshot, rebuilds the archive index, then
+removes the active rows and clears the archive outbox in one durable status
+replacement. Thus a crash after pending-status commit cannot make the task
+disappear from both active and archived readers. Existing snapshots are
+accepted only when their exact modern schema and payload match; a conflicting
+or legacy-shaped snapshot stops before active truth is removed. The task
+archive module and `ai_status` must resolve the same status root and sidecar or
+the transaction fails closed.
 
 The planning dispatcher uses its own content-addressed
 `program_activity_outbox` with the same status-before-audit and exact-replay
@@ -240,18 +278,27 @@ Every writer digest is SHA-256 over the exact committed bytes. The registry is
 generated only after all nine blobs are frozen for review.
 
 The repository also contains historical `scripts/dispatch_*.py` programs and
-other maintenance utilities that predate this protocol. They are not silently
-covered by the nine-path registry. Until each direct canonical writer is
-migrated to the shared helpers or made non-authoritative and technically
-unable to target the canonical status root, it must not be executed against a
-live Pantheon status root. A naming convention or operator promise is not
-proof of exhaustive serialization.
+maintenance utilities that predate this protocol. They are not silently
+covered by the nine-path registry. Every historical direct status/audit sink
+now calls `scripts/canonical_writer_guard.py` immediately before the sink. The
+guard unconditionally rejects any canonical file inside a Git worktree. An
+explicit `PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES=1` override is accepted only
+for a non-Git fixture outside every worktree and outside
+`PANTHEON_STATUS_ROOT`; it can never authorize a live Pantheon root.
 
-Final bootstrap evidence must include a tracked static inventory result that
-rejects unregistered direct writes. If a historical dispatcher remains
-runnable against `ai-status.json`, `ai-activity-log.jsonl`, runtime state,
-event queue, or approval queue, the writer-registry acceptance item remains
-blocked and no capability manifest may be installed.
+Bundle generation rejects the active repo/status root and pins its child sync
+process to the isolated target. Queue triage rejects output paths that alias
+the canonical event queue, including symlinks. The rebuild utility is guarded,
+planning materialization holds the complete task transaction, and worker
+commit audit goes through the shared writer.
+
+Final bootstrap checks contain the SHA-256 map for every tracked `.py` and
+`.sh` file beneath `.orchestrator/` and `scripts/`, plus the static writer
+scanner verdict. The protected verifier recomputes this entire inventory,
+requires zero unregistered direct writers, verifies the committed checks blob
+from the claimed merge, and requires the executing checkout HEAD to equal that
+merge. A later source addition or byte change therefore invalidates the
+capability even when the nine registered blobs themselves did not change.
 
 ## Protected capability ceremony
 
@@ -399,8 +446,12 @@ The final evidence bundle must bind exact commands and outputs for:
   and reason IDs;
 - concurrent runtime enqueue and status writes without lost newest truth;
 - audit rotation during append/scan;
+- `SIGKILL` after rotation intent, archive install, and active-tail install,
+  with one exact event corpus after restart;
 - crash before/after status commit, during audit append, and before outbox
   clear, with exactly-once replay;
+- `SIGKILL` after terminal pending-status, snapshot, index, and final rebuild,
+  with the terminal task continuously resolvable and one exact archive row;
 - static rejection of every unregistered direct canonical writer;
 - exact writer/dispatcher/registry/completion/manifest blob bindings;
 - Ed25519 signature, active key, external protected policy, revocation result,

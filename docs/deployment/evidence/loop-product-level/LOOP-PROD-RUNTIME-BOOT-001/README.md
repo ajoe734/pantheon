@@ -98,12 +98,17 @@ or contradicted proof fails closed.
 
 ## Current blocking boundary
 
-The exact version-1 registry contains only the nine paths declared by the task
-contract. Historical `scripts/dispatch_*.py` and maintenance utilities are not
-implicitly protected. Before final acceptance, static inventory must prove
-that no unregistered executable can directly mutate the canonical runtime,
-task-state, or audit sources. Any remaining runnable direct writer is a
-blocking residual, even if operators promise not to invoke it.
+The exact version-1 registry still contains only the nine paths declared by
+the task contract. Historical `scripts/dispatch_*.py` sinks are now
+technically unable to target a canonical Git worktree; isolated fixture use
+requires an explicit override outside every worktree and outside the configured
+status root. Maintenance bundle/rebuild/queue paths have equivalent canonical
+target guards, and the tracked source inventory currently reports zero
+unregistered direct writers.
 
-The premerge scaffold records that boundary as blocked rather than claiming an
-exhaustive writer registry prematurely.
+That technical boundary is necessary but not completion authority. This
+packet remains blocked until the final exact-head checks and nine writer
+digests are frozen, the distinct `Codex` reviewer creates the signed
+`completion.json`, the primary PR merges, and a root-controlled operator
+installs the external verifier policy/ledger. The post-closeout strict live
+dry-run and evidence-only follow-up remain separate post-merge requirements.
