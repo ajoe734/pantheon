@@ -4,7 +4,7 @@ Status: ready for fleet dispatch after the additive packet is merged
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `cf4effcf2861731f6b35db1a39cb110a98621cfcd732b5dd7baa67c771cfae34`
+Canonical contract SHA-256: `35bb10ca29c738081e4c79973af86dc5db29fd5b9395820fc6bc331721c2018f`
 The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
 the prose sections below are explanatory renderings.
 

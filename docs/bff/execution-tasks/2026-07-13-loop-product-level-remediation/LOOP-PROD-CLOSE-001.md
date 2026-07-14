@@ -8,6 +8,8 @@ Status: ready for fleet dispatch after the program packet is merged
 
 Canonical catalog: `tasks.json`
 
+Canonical contract SHA-256: `1e7ee295ddc306f605845270e31857ba68a14c3d0e82dd6ece0f3b394f186ebb`
+
 Source plan:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md`
 
@@ -92,11 +94,14 @@ aggregation is performed by a separate Pantheon verifier or closeout task.
 
 ## Acceptance
 
+- this task is a baseline scenario checkpoint only; `done` cannot mark the
+  program complete, bypass SIGNOFF-001, or substitute for CLOSE-002
 - all primary dependencies and required external dependencies are done, never superseded to a weaker outcome
 - clean target-dev rerun passes Knowledge, Execution, Human Interaction, and Management Repair scenarios
 - twelve canonical loop rows plus OODA overlay have fresh controller records and no accepted registry-only/snapshot/seed truth
 - exact PR, checks, merge SHAs, FE/BFF/image identities, evidence checksums, reviewer verdicts, and residual risks are archived
-- independent Human/Ops accepts zero unresolved blocking product risk; otherwise the program remains active
+- independent Human/Ops checkpoint verdict is recorded for later exact final
+  re-verification; otherwise the program remains active
 - archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry
 - use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success
 - prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0
@@ -106,6 +111,10 @@ aggregation is performed by a separate Pantheon verifier or closeout task.
 
 ## Required proof
 
+- catalog-bound completion overlay declares this task `checkpoint_only`; this
+  task emits bound checkpoint evidence and verdict digests but does not mutate
+  the immutable overlay, append the protected consumption record, or complete
+  the program
 - focused and adjacent local validation
 - merged PR and merge SHA
 - target deployment identity where applicable
@@ -130,7 +139,7 @@ checksummed machine evidence manifest under:
 ## Dispatch and closeout rules
 
 - publish only a baseline checkpoint verdict; never publish program completion
-
+- task-local metadata cannot override the catalog-bound program overlay
 - start only after every dependency is done; superseded does not satisfy a dependency
 - use one clean task worktree in the declared repository and merge to dev through a reviewed PR
 - do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met

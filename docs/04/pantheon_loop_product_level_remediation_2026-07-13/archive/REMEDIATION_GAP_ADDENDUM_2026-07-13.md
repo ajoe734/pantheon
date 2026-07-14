@@ -24,8 +24,8 @@ that were only implicit in those tasks:
    protected lease and without proving all candidate processes had exited;
 3. candidate-controlled files could self-assert product evidence rather than
    consuming a protected controller attestation;
-4. fleet scheduling, credential lifecycle, and frontend build cleanliness had
-   no independent product gate;
+4. fleet scheduling, credential lifecycle, frontend build cleanliness, and
+   shared runtime/task/audit locking had no independent product gate;
 5. `requires_human_ops_signoff` and the final authority were descriptive
    metadata without a protected transition-time consumer.
 6. the planner/controller could implement product artifacts directly, invent a
@@ -81,28 +81,32 @@ atomic status update that materializes the additive tasks.
 ## 4. Dependency And Migration Rules
 
 - The dispatcher preserves every field of existing active task records except
-  two declared dependency arrays. Under the shared task-state and runtime
+  the exact v5 allowlist for three migration targets. Under the shared task-state and runtime
   admission locks it requires exact old
   dependency preimages, `todo` status, the baseline catalog digest, and no
   branch/run/attempt/worker/queue/approval admission before appending
-  `ATTEST-001` to `AGORA-002`, and both `WORKER-001` and
-  `BROWSER-AUTH-001` to `MAI-001`.
+  `ATTEST-001` to `AGORA-002`, both `WORKER-001` and `BROWSER-AUTH-001` to
+  `MAI-001`, and the checkpoint-only acceptance/proof/dispatch contract plus
+  runtime role for `CLOSE-001`.
 - `AUTH-001` is already non-pristine (`in_progress` during audit and `review`
   at the 2026-07-14T02:00:09Z live dry-run); its live dependency array is never
   rewritten. `BROWSER-AUTH-001` depends on both `AUTH-BOOT-001` and
   `AUTH-001`, and is the sole authority that can accept or activate the
   coordinated browser cutover. An `AUTH-001` merge/deploy alone is input only.
-- Both dependency patches and all twelve new IDs are committed in one atomic
+- All three v5 patches and all twelve new IDs are committed in one atomic
   status write. Any missing, changed, started, claimed, or differently-bound
   preimage aborts the whole migration with no write. The migration records old
   and new dependency hashes, catalog digests, and audit events; rerun is an
   exact zero-write no-op.
-- Every canonical writer uses the stable `.orchestrator/task-state.lock`; the
+- `LOOP-PROD-RUNTIME-BOOT-001` is an external pre-dispatch prerequisite. Until
+  its exact capability manifest, full task contract, stable inodes, and
+  process/crash evidence are merged and read back, only `--validate-only` is
+  authoritative; live `--dry-run` and `--apply` fail closed. After bootstrap,
+  every canonical writer uses the stable `.orchestrator/task-state.lock`; the
   dispatcher acquires runtime admission serialization before that lock and
   refuses any target that is queued, running, approval-suspended, execution
   admitted, or backed by missing, empty, malformed, or unreadable live runtime
-  state. Event producers use the same runtime lock, so no enqueue can cross the
-  check-to-commit interval.
+  state.
 - A live or archived additive ID is accepted only when its program, catalog,
   immutable task contract, dispatcher provenance, and completion role match
   exactly. Duplicate live IDs and foreign final-authority collisions abort the
@@ -138,10 +142,12 @@ atomic status update that materializes the additive tasks.
   and final closeout to cover the exact union, and requires each loop to retain
   at least one non-close `product-level` execution task.
 
-The canonical live dry-run at 2026-07-14T02:00:09Z proposed exactly two
-dependency migrations (`AGORA-002`, `MAI-001`), twelve additive creates,
-thirty-three preserved live records, and three archived skips. It preserved
-`AUTH-001:review` and `REC-001:review` without mutation and performed no write.
+The 2026-07-14T02:00:09Z observation proposed the superseded v4 two-patch
+shape. It is retained as historical evidence only. The current v5 catalog has
+three exact migration targets (`AGORA-002`, `MAI-001`, `CLOSE-001`), twelve
+primary additive tasks, one external runtime-lock bootstrap, and remains
+blocked until that bootstrap is done; no historical dry-run is current apply
+proof.
 
 ## 5. Current Implementation Convergence
 
@@ -154,7 +160,7 @@ The following active changes are implementation inputs, not completion proof:
 | Pantheon strict dev auth PR `#3572` | `LOOP-PROD-AUTH-BOOT-001`, `LOOP-PROD-AUTH-001`, and `LOOP-PROD-AUTH-OPS-001` | code and validator contribution only; no secret in argv/log/environment, no cross-environment forwarding, direct deploy fails before cloud access when unprovisioned, and external provisioning remains blocked until authorized Human/Ops proof exists |
 | execute-plans credential-boundary PR `#311` | `LOOP-PROD-FE-001` | exact-head independent review, clean environment tests, live/strict/safe-write build, and hosted qualification |
 | execute-plans dormant evidence PR `#310` | `LOOP-PROD-FE-EVID-001` | do not merge its self-authored assertion model; replace it with protected attestation verification |
-| Pantheon PR `#3557` | `LOOP-PROD-DELIVERY-001` and `LOOP-PROD-BROWSER-AUTH-001` | incident fixture only: the planner implemented it without a canonical task and presented the same Codex identity as owner/reviewer; its valid public-token threat model does not excuse missing viewer-route authorization, FE coordination, hosted browser proof, or independent review |
+| Pantheon PR `#3557` | `LOOP-PROD-DELIVERY-001` and `LOOP-PROD-BROWSER-AUTH-001` | incident fixture only: the planner implemented it without a canonical task and presented the same Codex identity as owner/reviewer; its valid public-token threat model does not excuse the permissive-versus-strict environment mismatch, FE coordination, hosted browser proof, or independent review |
 | Pantheon reverts `#3587` and `#3588` | `LOOP-PROD-DELIVERY-001` | incident fixtures only: both reverted the same change, the second merge was semantically empty, and neither duplicate merge proves unique repair admission or product completion |
 | execute-plans PR `#323` | `LOOP-PROD-BROWSER-AUTH-001` | incident fixture only: a frontend token change cannot activate before exact BFF policy/read routes and the paired cutover lease are ready; fleet must audit the exact deployed head and may rewrite or discard it |
 
@@ -167,7 +173,8 @@ At 2026-07-14 01:38 UTC, the hosted FE deployment manifest reported commit
 `VITE_BFF_REAL_WRITES=true` and `VITE_BFF_ALLOW_DEV_STUB_WRITES=true`, while
 the BFF reported source commit `ebceb59b47bf6d3e7f76110f4d5ffa67979043fc` and
 returned `403 AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN` for the exact viewer
-on `/bff/me`, personas, dashboard summary, Management AI, and incidents. The
+before route RBAC on `/bff/me`, personas, Management AI, and incidents; the
+nonexistent `/bff/dashboard/summary` probe is not canonical. The
 revert deploy was still pending. This timestamped observation is incident
 evidence, not an assertion about later live state; `BROWSER-AUTH-001` must
 re-read both deployed identities and flags immediately before any cutover.
@@ -205,4 +212,6 @@ In addition to the thirteen baseline exit criteria, final closure now requires:
     BFF-first, FE-first, duplicate, stale, partial, and rollback incident
     matrices pass on hosted desktop and mobile.
 
-Until all ten deltas are proved, the 48-task program remains active.
+Until all ten deltas, the external runtime-lock bootstrap, and the complete
+generated browser matrix are proved, the 48-primary-task program remains
+active and its execution inventory is 49 tasks total.

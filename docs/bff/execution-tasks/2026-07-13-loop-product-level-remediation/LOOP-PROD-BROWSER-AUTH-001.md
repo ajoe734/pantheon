@@ -4,9 +4,16 @@ Status: starts only after auth bootstrap, strict BFF auth, credential-free FE, d
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `bb25a7094a19d09bc1e15d199753bc2699d0eeb532547b2ec9e711244e1208b1`
-The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+Canonical contract SHA-256: `55ab5bded7d201652e4ab1d48696b1cc6daacafb4701ced804496343c0f80516`
+The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
+
+The checked-in route fixture is a planner seed with
+`coverage_status=planner_seed_incomplete_blocked`. The admitted fleet must
+generate and merge the complete explicit route/callsite matrix (27 historical
+GETs, 16 privileged negatives, all 13 attack classes, cookie/logout/refresh/SSE
+and CORS rows, plus redacted evidence references) before this task can be done;
+the seed is not hosted browser completion proof.
 
 Source addendum:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
@@ -21,7 +28,7 @@ Source addendum:
 | Fleet lane | `coordinated-browser-auth-cutover` |
 | Repository | `pantheon` |
 | Merge target | `dev` |
-| Current maturity | FE and BFF can activate independently; the 3557/323 sequence left all viewer reads rejected |
+| Current maturity | FE/BFF can activate independently; 3557/323 paired a strict-only public subject with a permissive hosted BFF and failed before route RBAC |
 | Target maturity | product-level |
 | Human/Ops security sign-off | required |
 
@@ -61,7 +68,23 @@ activation authority for this cutover.
 
 - bundle, source maps, storage, DOM, URL, body, screenshots, logs, traces, videos, and third-party requests contain no reusable bearer, signing key, client secret, fixed browser credential, or privileged capability
 - read-only console access uses an authorized short-lived server-mediated Secure HttpOnly SameSite session; unauthenticated public viewer mode is separately reviewed, capability-free, disabled by default, and cannot mint, refresh, upgrade, or write
-- the exact method/route matrix covers `/bff/me`, personas, dashboard summary, Management AI read models, incidents, and authenticated SSE, while logout/refresh/cookie confusion/method override/mutations/websocket/cross-origin/near-match/capability bypasses fail closed
+- the catalog binds `fixtures/browser-auth-incidents.v1.json` at
+  `ce3f40be40a0628acdf5256b52ac8c60a2cdb12d026387c8e13c35261cf8ed96`
+  and `fixtures/browser-auth-route-matrix.v1.json` at
+  `5b585571492594480ecd09c50b3fff71581d8571bef6a9fea27451cab009b428`
+- the generated exact route union covers every browser callsite, all 27
+  historical GET probes, session routes, and enumerated privileged negatives;
+  `/bff/management/shell-summary` is canonical and the nonexistent
+  `/bff/dashboard/summary` is not accepted
+- auth decision, router status, and product success are distinct: `HEAD
+  /bff/me` 405 and anonymous SSE 200 are not boot-green
+- signed viewer-cookie logout clears only that session; signed refresh-cookie
+  rotation requires exact Origin+CSRF and cannot change subject/role/tenant/
+  capabilities; raw literal viewer values, fixed bearer, mixed transport,
+  wrong origin, missing CSRF, or upgrade attempts deny with zero state delta
+- authenticated cookie SSE proves session-kind, replay support, Last-Event-ID
+  reconnect, and no duplicates; anonymous liveness, fixed/query bearer,
+  expired cookie, and wrong origin cannot satisfy it
 - viewer cannot freeze, rollback, approve, execute tools, activate kernel control, prepare a repair worktree, or invoke any write; operator, approver, risk owner, operator A, and operator B are distinct short-lived subjects
 - exact origins, CORS, redirect, callback, cookie scope, issuer, audience, tenant, and environment pass a secret-free prerequisite before protected identities are requested
 - PR, fork, unprotected ref, staging, preview, and candidate asset jobs receive no live token, session, signing, database, cloud, or kernel material
@@ -70,13 +93,21 @@ activation authority for this cutover.
 - hosted desktop/mobile boot, navigation, reload, logout, expiry, SSE reconnect, degraded mode, and recovery produce no unexpected 401/403, console, CORS, chunk, cookie, mixed-content, or BFF error
 - safe-write flags remain false; write qualification uses separate identities and Candidate Pool mutations use the captured exact quoted ETag, including weak ETags, plus unique idempotency/request IDs while wildcard and unquoted validators fail
 - secret-bearing Playwright disables trace, video, and automatic screenshots; archived output is allowlisted, redacted, and leakage-scanned
-- the 3557-like BFF-first, 323-like FE-first, exact-viewer 403, old privileged token, duplicate 3587/3588 repair, stale deploy, partial rollback, refresh/cookie bypass, and simultaneous rollback cases all fail closed
+- incident replay distinguishes exact 401
+  `AUTH_PUBLIC_BROWSER_TOKEN_NEAR_MATCH` from exact 403
+  `AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN`; the latter was caused by a
+  permissive hosted auth mode and does not prove absent viewer RBAC grants
+- 3557 BFF-first and 323 FE-first abort before switch, 3587 is the single
+  effective rollback, and 3588 is a zero-tree duplicate rejected with no
+  second deploy
 - evidence records actual deployed and candidate hashes, flags, route results, policy, lease, prior/candidate pairs, rollback, formal review, and residual risk
 
 ## Required proof
 
 - exact current/candidate FE and BFF commit, asset, image, policy, environment, origin, and safe-write manifests
-- complete route/method/identity/capability/tenant/MFA/approval/cookie/refresh/SSE/CORS matrix
+- both exact fixture digests and a complete generated
+  route/method/callsite/identity/transport/origin/cookie/auth-decision/
+  router-status/product-success/reason/state-delta matrix
 - secret-free prerequisite and PR/fork/ref/staging/preview/bundle/source-map/storage/DOM/URL/body/log/browser no-leak evidence
 - one-lease BFF-first, FE-first, stale, partial, duplicate, failure, and paired rollback incident replay
 - hosted desktop/mobile boot, reload, logout, expiry, reconnect, degraded, recovery, accessibility, performance, and zero-unexpected-error evidence
@@ -100,6 +131,10 @@ Reviewer approval must set `review_file` under:
 - start only after every dependency is done; superseded does not satisfy a dependency
 - planner authors/dispatches the contract only; admitted fleet workers implement and activate it
 - `AUTH-001`, `FE-001`, PR 3557, PR 3572, execute-plans PR 311, or execute-plans PR 323 alone is input, never coordinated activation authority
-- re-read both repositories and deployments at start; audit PRs 3557, 3572, 3587, 3588, 311, and 323 at exact heads and adopt, rewrite, or discard their work
+- re-read repositories, manifests, fixtures, and deployments at start; audit
+  each PR by exact commit graph, tree, blob, timestamp, deployment pair, and
+  observed reason code
 - never send a fixed bearer or privileged credential to browser code and never weaken authorization to create a green screen
 - activate and roll back only under one protected lease after candidate probes; archive scanned redacted evidence only
+- fixture or route-universe drift requires an explicit schema/digest update and
+  fresh exact-head review

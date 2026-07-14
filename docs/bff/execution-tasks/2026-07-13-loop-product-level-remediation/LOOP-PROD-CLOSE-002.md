@@ -1,11 +1,11 @@
-# LOOP-PROD-CLOSE-002 — Additive final 48-task product closeout
+# LOOP-PROD-CLOSE-002 — Final primary-catalog closeout after runtime bootstrap
 
 Status: final program gate; starts only after every dependency is done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `00e60635aee105e82de7bc5fb1eb37acba63fc515d79707bc52e56f8c8a1cfc8`
-The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+Canonical contract SHA-256: `7047dbc047e41b2946d1dede909b9da52f543ddd2dc6c40aacb852edfa23af16`
+The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
 Source addendum:
@@ -73,23 +73,36 @@ finalization 才可完成第 48 個任務並宣告 program 完成。
 - the other 47 primary tasks and every required external dependency are done with no weaker substitute outcome; successful protected guarded finalization transitions the 48th task
 - baseline Knowledge, Execution, Human Interaction, and Management Repair scenarios pass from a clean target-dev baseline
 - every delivery has canonical fleet admission and exact task/run/worktree/scope/branch/PR/formal distinct-runtime review/merge/deployment provenance, with no planner-authored product artifact or duplicate repair
-- coordinated credential-free browser auth passes for exact FE/BFF identities, complete viewer reads, safe writes false, separate privileged identities, one cutover lease, zero credential leakage, and paired rollback
-- incident replay rejects 3557-like BFF-first activation, 323-like FE-first activation, 3588-like duplicate repair, exact-viewer 403, stale deploy, partial activation, and simultaneous rollback
+- protected closeout binds incident fixture
+  `ce3f40be40a0628acdf5256b52ac8c60a2cdb12d026387c8e13c35261cf8ed96`
+  and route-matrix fixture
+  `5b585571492594480ecd09c50b3fff71581d8571bef6a9fea27451cab009b428`
+- coordinated credential-free auth passes with signed viewer cookies, exact
+  browser-callsite coverage, safe writes false, separate privileged identities,
+  one lease, zero leakage, and paired rollback
+- replay distinguishes exact near-match 401 from permissive-environment 403,
+  aborts 3557/323 before switch, accepts only 3587 as effective rollback, and
+  rejects zero-tree 3588 with no second deploy
 - worker exact-CAS, process/payload zero-member, environment lease, scheduler starvation, and corrupt-state matrices pass
 - every accepted assertion verifies the protected trust root and exact FE/BFF/run/job/target/lease identities
 - governed auth provisioning, scoped privileged capability, expiry, rotation, deactivation, and secret-isolation evidence passes with Human/Ops approval
 - final execute-plans build and hosted desktop/mobile qualification are warning-free and within explicit bundle/performance/accessibility budgets
 - twelve canonical loops plus OODA overlay have fresh controller truth, real terminal readback, restart/duplicate/failure evidence, and no registry-only maturity
 - exact PRs, checks, merge/deploy identities, manifests, attestations, reviewer verdicts, residual risks, owners, and expiries are archived
-- the protected completion guard verifies an authenticated, current, non-revoked Human or Ops approval bound to the exact catalog, closeout manifest, target, and deployed identities
+- the protected completion guard consumes the exact catalog-bound overlay,
+  exactly one append-only protected checkpoint-consumption record bound to the
+  checkpoint evidence/verdict and guard activation, immutable signoff-ID set,
+  and Human/Ops verdict bound
+  to catalog, authority, manifest, target, and deployments
 - independent Human/Ops accepts zero unresolved blocking product risk
 
 ## Required proof
 
 - clean target-dev full scenario rerun
 - all additive adversarial and recovery matrices
-- canonical fleet-only delivery provenance and 3557/3587/3588/323 incident replay
-- coordinated browser route, identity, credential-isolation, cutover, and paired rollback matrix
+- canonical fleet-only delivery provenance and content-addressed incident replay
+- content-addressed browser route/identity/transport/auth-router-product-result/
+  credential-isolation/cutover/rollback matrix
 - exact FE/BFF/image/lease/attestation identities
 - checksummed evidence inventory and independent review
 - explicit Human/Ops final verdict
@@ -110,5 +123,9 @@ Reviewer approval must set `review_file` under:
 
 - `LOOP-PROD-CLOSE-001` alone is not program completion
 - start only after every dependency is exactly done
-- any stale, indirect, candidate-authored, or contradicted evidence fails closed
+- any stale, indirect, candidate-authored, fixture-unbound, prose-only, or
+  contradicted evidence fails closed
+- CLOSE-001 is consumed only as a checkpoint; task-local metadata cannot replace
+  the exact immutable completion overlay; only this final authority may append
+  the protected consumption record
 - only independent Human/Ops acceptance can complete the program

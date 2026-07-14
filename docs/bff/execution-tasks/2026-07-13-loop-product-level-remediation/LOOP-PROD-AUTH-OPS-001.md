@@ -4,8 +4,8 @@ Status: requires ordinary fleet work plus authorized Human/Ops provisioning
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `cf098d11410d13f68d512a25373a01f623fa8a6dc50a33dbb03146c35d1cfb05`
-The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+Canonical contract SHA-256: `57a50669530cfab94ee1aaba01a58cb0bfb9496f66aa5ce3ff115277720df084`
+The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
 Source addendum:
@@ -33,6 +33,7 @@ Source addendum:
 
 ## Dependencies
 
+- `LOOP-PROD-AUTH-BOOT-001`
 - `LOOP-PROD-AUTH-001`
 - `LOOP-PROD-LEASE-001`
 - `LOOP-PROD-ATTEST-001`
@@ -51,7 +52,14 @@ Source addendum:
 
 ## Acceptance
 
-- an authorized operator provisions the three environment secrets outside source and records only redacted identifiers and timestamps
+- authorized Human/Ops consumes the exact existing provisional bootstrap record
+  and may authorize rotate/overlap/revoke/expire/rollback while recording only
+  redacted identifiers and timestamps
+- AUTH-OPS cannot perform initial provisioning; missing or invalid bootstrap
+  lineage blocks and reopens AUTH-BOOT rather than creating substitute secrets
+- one credential-lineage digest survives bootstrap, lease, attestation,
+  lifecycle, and browser activation; successful lifecycle cutover rotates or
+  revokes the provisional envelope
 - direct and workflow dev deploy fail before cloud access when any credential is blank, partial, expired, or unavailable
 - local symmetric verifier keys are distinct from external JWKS roots; algorithm/issuer routing is one-way and cannot fall back from external/asymmetric trust to the local verifier
 - protected source repository, branch, commit, workflow, environment, and actor authorization occurs before any secret, cloud identity, or target access is requested
@@ -67,6 +75,8 @@ Source addendum:
 
 ## Required proof
 
+- exact bootstrap→lease→attestation→lifecycle lineage digest and provisional
+  record consumption
 - redacted provisioning and access-control record
 - positive and negative hosted `/bff/auth/dev-login`, `/bff/me`, control-mode, and expiry evidence
 - argv/environment/log/browser/target-isolation scan
@@ -88,7 +98,9 @@ Reviewer approval must set `review_file` under:
 ## Dispatch and closeout rules
 
 - planner does not implement these artifacts; PR `#3572` is input only and requires a fresh admitted fleet owner plus a distinct formal exact-head reviewer
-- fleet work may implement validation and runbooks but cannot invent or rotate external secrets without authorization
+- fleet work may implement validation and runbooks but cannot invent, initially
+  provision, or rotate external secrets without the exact bootstrap lineage and
+  authorization
 - evidence must redact values and retain only non-sensitive fingerprints
 - no temporary stub/all-role bearer is an acceptable unblock
 - Human/Ops verdict is mandatory before done

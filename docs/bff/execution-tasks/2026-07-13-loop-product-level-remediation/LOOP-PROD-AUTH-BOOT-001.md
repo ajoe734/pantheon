@@ -4,8 +4,8 @@ Status: requires ordinary fleet preparation plus authorized Human/Ops provisioni
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `de2a56c768b7ccd680ece495ea1f81ce0ca246c239c220ae89f377a413f1151e`
-The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+Canonical contract SHA-256: `6df5f2994ba9b9eb740ebfdb41dacf3f2b4c0c3320ed43f498a314b5de345fed`
+The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
 Source addendum:
@@ -31,6 +31,10 @@ Source addendum:
 Fleet 可實作 validator、runbook 與 redacted negative tests，但只有獲授權
 Human/Ops 可以建立、撤銷或觀察外部 secret。缺少該授權時，本任務及其下游
 `LOOP-PROD-AUTH-001` 都維持 BLOCKED。
+
+這只產生 external provider/environment-protected 的 provisional bootstrap
+record；它不依賴 lease、program attestation、AUTH-OPS 或 final verdict，也不能
+用下游 attestation 回頭證明自己的 ancestor。
 
 ## Dependencies
 
@@ -73,7 +77,8 @@ Human/Ops 可以建立、撤銷或觀察外部 secret。缺少該授權時，本
 - distinct identity and least-capability matrix
 - boundary and authorization negative evidence
 - source, argv, environment, log, browser, staging, and candidate no-leak scan
-- rollback, revocation, restart, protected attestation, review, and Human/Ops verdict
+- rollback, revocation, restart, external protected provisional record,
+  independent review, and Human/Ops authorization
 
 Reviewer approval must set `review_file` under:
 
@@ -95,3 +100,5 @@ Reviewer approval must set `review_file` under:
 - secret values never enter source, task state, logs, evidence, argv, browser,
   staging, or candidate processes
 - missing protected provisioning remains a blocker
+- downstream program attestation is forbidden as bootstrap proof; AUTH-OPS must
+  later consume and rotate or revoke this provisional lineage

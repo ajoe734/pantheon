@@ -4,8 +4,10 @@ Status: ready for fleet dispatch after dependencies are done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `93ef9f6c437f27b133542251458f2c72790f302fb274313bfc84981025c07ef7`
-The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+Canonical contract SHA-256: `ac738326c6a24d398989c6d49ee4d5880333b16780d079e430d14d273f1d0ea5`
+
+Canonical contract SHA-256: `042d854bb5280f788c4f62b082c370c41f419e3ec39e9c06692855696f36f707`
+The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
 Source addendum:
@@ -56,11 +58,19 @@ target 與部署 identity 的 Human/Ops 判決；fleet 只能組裝請求，不�
 
 ## Acceptance
 
-- catalog validation requires a boolean requires_human_ops_signoff field on every task and names exactly one completion authority plus checkpoint-only tasks
+- catalog validation requires whole-object equality with the versioned completion
+  authority, exact guard/final direct-dependency arrays, and the immutable
+  signoff-ID list; extras, duplicates, substitutions, and omissions fail
+- a catalog-bound live overlay marks CLOSE-001 `checkpoint_only`, SIGNOFF-001
+  `guard_installer`, and CLOSE-002 `final_authority`; foreign overlay or
+  conflicting task-local role fails closed
 - a protected server-side verdict can be created only by an authenticated authorized Human or Ops actor and never by a candidate artifact, fleet worker, repository secret, or self-authored JSON file
 - each verdict binds program, exact catalog digest, task, protected closeout-manifest digest, target, FE and BFF identities, attestation policy, actor, role, decision, issued time, expiry, and nonce
 - review-approved to done and final program completion fail closed when any required verdict is missing, rejected, revoked, replayed, stale, unauthorized, or bound to another task, catalog, manifest, target, or deployment
-- the final authority re-verifies protected attestation and every task marked requires_human_ops_signoff, including already-completed baseline checkpoints
+- pre-guard done remains checkpoint-only for program-completion semantics pending
+  exact final re-verification;
+  post-install transitions are guarded and final authority re-verifies the
+  immutable signoff-ID set, including baseline checkpoints
 - LOOP-PROD-CLOSE-001 is exposed only as a checkpoint and cannot become program completion authority
 - tamper, replay, wrong actor or role, wrong task or SHA, stale, revoked, rejection, duplicate nonce, concurrent decision, and direct state-edit negative tests pass
 - append-only audit records identify actor, authorization decision, exact bindings, revocation state, and stable redacted failure reason
@@ -69,7 +79,8 @@ target 與部署 identity 的 Human/Ops 判決；fleet 只能組裝請求，不�
 
 - schema, authorization, signature, binding, expiry, revocation, and concurrency tests
 - negative direct state-transition and candidate self-signing evidence
-- checkpoint-only and unique final-authority readback
+- exact authority/overlay/checkpoint-consumption/guard-installer/signoff-set and
+  unique final-authority readback
 - merged PR, merge SHA, checks, independent review, and checksummed evidence
 
 Reviewer approval must set `review_file` under:
@@ -91,3 +102,4 @@ Reviewer approval must set `review_file` under:
 - fleet workers may assemble a verdict request but cannot issue, approve, revoke, or forge the protected decision
 - missing Human or Ops authority remains an explicit blocker and never falls back to metadata or a candidate file
 - reviewer must prove every negative against the exact protected transition path
+- never derive authority from mutable live task flags

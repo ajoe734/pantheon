@@ -1,6 +1,7 @@
 # Loop Product-Level Remediation Execution Packet — 2026-07-13
 
-Status: ready for fleet dispatch after merge
+Status: blocked on external `LOOP-PROD-RUNTIME-BOOT-001`; only catalog
+validation is currently authoritative
 
 Primary planning baseline:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md`
@@ -18,7 +19,8 @@ Dispatcher tests:
 
 ## Product contract
 
-This packet contains 48 primary execution tasks. It is a build-and-proof DAG,
+This packet contains 48 primary execution tasks plus one external pre-dispatch
+bootstrap task (49 execution tasks total). It is a build-and-proof DAG,
 not a checklist that can be closed from component tests. The program remains
 active until the twelve canonical L1 loops plus the Per-Persona OODA composite
 overlay have default runtime ownership, real canonical effects or explicit
@@ -65,7 +67,9 @@ The 2026-07-13 audit established these starting facts:
   were not on the exact deployed branch.
 - Pantheon PR `#3557` was implemented by the planner without a canonical task
   or independent review, activated a BFF-only browser-auth restriction, and
-  left the exact viewer unable to read the hosted console. execute-plans PR
+  hit `AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN` before route RBAC on the
+  observed permissive deployment; this does not prove missing viewer grants.
+  execute-plans PR
   `#323` then changed the frontend independently; Pantheon PRs `#3587` and
   `#3588` duplicated the same revert. These are incident inputs, not accepted
   delivery evidence.
@@ -190,7 +194,7 @@ live. It is a checkpoint, not the final program verdict after this addendum.
 
 | Task | Owner / reviewer | Repo | True dependencies | Outcome |
 | --- | --- | --- | --- | --- |
-| [LOOP-PROD-CLOSE-002](LOOP-PROD-CLOSE-002.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-CLOSE-001`<br>`LOOP-PROD-DELIVERY-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-BROWSER-AUTH-001`<br>`LOOP-PROD-FLEET-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AUTH-OPS-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-FE-BUILD-001`<br>`LOOP-PROD-SIGNOFF-001` | Sole final 48-task product verdict |
+| [LOOP-PROD-CLOSE-002](LOOP-PROD-CLOSE-002.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-CLOSE-001`<br>`LOOP-PROD-DELIVERY-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-BROWSER-AUTH-001`<br>`LOOP-PROD-FLEET-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AUTH-OPS-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-FE-BUILD-001`<br>`LOOP-PROD-SIGNOFF-001` | Sole final verdict for the 48-task primary catalog after bootstrap evidence |
 
 Wave 1 deliberately carries additional delivery dependencies between tasks
 that share the root `docker-compose.yml` integration surface. Those edges
@@ -269,16 +273,19 @@ The dispatcher must be merged before live use. It:
 - validates the immutable planner/fleet/reviewer authority contract and binds
   its digest into every newly materialized task;
 - rejects a frozen planning wave;
-- serializes every canonical status writer with the stable task-state lock and
-  holds runtime admission serialization before the task-state transaction;
+- requires the external runtime-lock bootstrap capability before any
+  authoritative dry-run/apply, then serializes every canonical status writer
+  with the stable task-state lock and holds runtime admission serialization
+  before the task-state transaction;
 - fails closed when any migration/additive target is queued, running,
   approval-suspended, execution-admitted, or backed by unavailable/malformed
   live runtime state;
 - checks both active and archived task IDs;
 - never resurrects an archived terminal ID;
-- preserves baseline active records in full and accepts additive collisions
-  only when program, catalog, immutable contract, provenance, and completion
-  role are exact;
+- preserves non-migration baseline records in full; applies only the v5
+  allowlist to `AGORA-002`, `MAI-001`, and checkpoint-only `CLOSE-001`, and
+  accepts additive collisions only when program, catalog, immutable contract,
+  provenance, and completion role are exact;
 - never rewrites `agents[].current_task_ids`, status, or next action; the live
   supervisor alone owns capacity and frontier activation;
 - performs an atomic fsync + replace of `ai-status.json`;
@@ -291,18 +298,20 @@ Validate locally:
 ```sh
 python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py --validate-only
 PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
-  python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py --dry-run
+  python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py --dry-run  # blocked until bootstrap done
 
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider \
   scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py
 ```
 
-After this PR is merged, dispatch once into the canonical live status root and
-refresh the generated supervisor views:
+After the external bootstrap task is merged, deployed, and its exact
+capability read back, run an authoritative dry-run and obtain independent
+review before any apply. Until then, do not mutate the canonical live status
+root. After that gate:
 
 ```sh
 PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
-  python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py
+  python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py --apply
 
 PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
   python3 scripts/ai_status.py sync
@@ -329,4 +338,5 @@ platform-protected keyed identity over the bound manifest and its digests.
 The baseline `LOOP-PROD-CLOSE-001` checkpoint cannot declare program
 completion. The final `LOOP-PROD-CLOSE-002` task requires an independent
 Human/Ops verdict and zero unresolved blocking product risk across all 48
+primary tasks, with the external runtime-lock bootstrap evidence accepted
 tasks.

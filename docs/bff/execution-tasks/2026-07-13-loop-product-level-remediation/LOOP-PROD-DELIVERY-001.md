@@ -1,11 +1,12 @@
 # LOOP-PROD-DELIVERY-001 — Fleet-only delivery provenance and independent review admission
 
-Status: ready for fleet dispatch after the additive packet is merged
+Status: blocked until `LOOP-PROD-RUNTIME-BOOT-001` is done and the guarded
+dispatcher materializes this task
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `b009c62d345fa824cfabb0602e2011aa7b1f7218040690598c59c123844e942b`
-The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+Canonical contract SHA-256: `ea9eb77b2e3749e3808a68f5c953606717b048e34be13bead2b00eea011662f5`
+The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
 Source addendum:
@@ -31,8 +32,13 @@ admit 的 fleet worker 在 clean task worktree 執行，並由另一個 runtime 
 做正式 exact-head review。沒有 canonical task、run/scope/lease binding 或獨立審查
 的 branch、PR、repair、revert、merge 與 deploy 一律 fail closed。
 
-Next action: implement the provenance gate and replay the PR 3557, 3587, 3588,
-and execute-plans 323 incident sequence before later additive work is admitted.
+Next action: implement the provenance gate and replay the content-addressed PR
+3557, 3587, 3588, and execute-plans 323 incident sequence before later
+additive work is admitted.
+
+The immutable incident catalog is
+`fixtures/browser-auth-incidents.v1.json`, SHA-256
+`ce3f40be40a0628acdf5256b52ac8c60a2cdb12d026387c8e13c35261cf8ed96`.
 
 ## Dependencies
 
@@ -64,7 +70,12 @@ Only `done` satisfies a dependency.
 - owner and reviewer are distinct admitted runtime identities and the repository records a formal exact-head review; self-review, a same-session subagent note, or a trailer is insufficient
 - one task/repair lease admits at most one active branch, PR, cutover, revert, or retry for the same intent; a semantically empty duplicate repair is rejected before merge
 - missing brief, live/archive row, source reference, admission, formal review, or archive handoff blocks delivery instead of inventing an ad hoc Task-ID
-- PR 3557, PRs 3587/3588, and execute-plans PR 323 replay as rejection fixtures for untracked planner implementation, self-review, split activation, and duplicate repair
+- the exact fixture binds full PR commit graphs, trees, blobs, timestamps,
+  deployment pair, artifact digests, and observed reason codes; mutable PR prose
+  is not code truth
+- PR 3557 and execute-plans PR 323 abort before split activation; PR 3587 is
+  the one effective rollback; PR 3588 is rejected before merge/deploy as the
+  same semantic repair with merge tree equal to its first-parent tree
 - restart, concurrent enqueue, reassignment, supersede, stale head, forged trailer, duplicate PR, and direct-merge tests preserve one outcome and append-only audit truth
 
 ## Required proof
@@ -72,7 +83,7 @@ Only `done` satisfies a dependency.
 - exact task/run/provider/slot/worktree/scope/branch/remote/merge-target admission manifest
 - changed-path and planner-nonimplementation negative evidence
 - formal distinct-runtime-identity exact-head review evidence
-- PR 3557, 3587, 3588, and execute-plans 323 incident replay matrix
+- exact incident-fixture digest and PR 3557/3587/3588/323 replay matrix
 - restart, reassignment, duplicate, stale-head, forged-trailer, and direct-merge evidence
 - merged PR, merge SHA, protected checks, checksummed audit, and independent residual-risk verdict
 
@@ -95,3 +106,5 @@ Reviewer approval must set `review_file` under:
 - use one supervisor-admitted clean task worktree and a formal review from a distinct admitted fleet runtime identity
 - open draft PRs, local diffs, and unmerged worktrees are non-authoritative inputs that the fleet may audit, adopt, rewrite, or discard
 - no implementation may merge or deploy without exact canonical task, run, scope, lease, and review bindings
+- fixture drift, abbreviated Git IDs, alternative status sets, or prose-only
+  replay claims fail closed

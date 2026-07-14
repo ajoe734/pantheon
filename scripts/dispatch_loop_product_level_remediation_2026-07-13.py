@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-import fcntl
 import gzip
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
+from types import ModuleType
 from typing import Any, Iterator
 
 
@@ -71,6 +73,7 @@ REQUIRED_NON_GOALS = {
     "No approval gate bypass",
 }
 SUPPORTED_REPOS = {"pantheon", "execute-plans"}
+ALLOWED_FLEET_ACTORS = ["Codex", "Codex2"]
 LIVE_ADMISSION_FIELDS = {
     "active_worker",
     "attempt",
@@ -80,6 +83,28 @@ LIVE_ADMISSION_FIELDS = {
     "current_attempt_id",
     "dispatch_token",
     "payload_signature",
+    "provider",
+    "worker_provider",
+    "worker_slot",
+    "dispatch_slot",
+    "dispatch_slot_id",
+    "queue_event_id",
+    "task_worktree",
+    "workspace_path",
+    "declared_scope",
+    "expected_branch",
+    "workspace_branch",
+    "admission_id",
+    "admission_sha256",
+    "lease_acquired_at",
+    "lease_expires_at",
+    "pr_number",
+    "pr_url",
+    "review_file",
+    "admitted_merge_target",
+    "admission",
+    "runtime_admission",
+    "dispatch_admission",
     "review_started_at",
     "run_id",
     "started_at",
@@ -89,18 +114,55 @@ LIVE_ADMISSION_FIELDS = {
     "worker_run_id",
 }
 TASK_CONTRACT_FIELDS = REQUIRED_TASK_FIELDS - {"owner", "reviewer", "status", "next"}
-ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
-ACTIVITY_CORE_FIELDS = {"ts", "agent", "type", "task_id", "message"}
-ACTIVITY_BINDING_FIELDS = {
-    "activity_schema_version",
-    "activity_transaction_id",
-    "activity_ordinal",
-    "activity_event_count",
+ACTIVITY_OUTBOX_SCHEMA_VERSION = 2
+ACTIVITY_EVENT_TYPES = {
+    "assign",
+    "catalog_migration",
+    "completion_authority_install",
+}
+ACTIVITY_TRANSACTION_FIELDS = {
+    "schema_version",
+    "transaction_id",
     "program_id",
     "catalog_sha256",
-    "event_id",
+    "actor",
+    "actor_policy_sha256",
+    "created_at",
+    "affected_state_projection_sha256",
+    "events",
 }
-ACTIVITY_EVENT_TYPES = {"assign", "dependency_migration"}
+ACTIVITY_COMMON_EVENT_FIELDS = {
+    "event_id",
+    "ordinal",
+    "event_count",
+    "ts",
+    "agent",
+    "type",
+    "task_id",
+    "message",
+    "program_id",
+    "catalog_sha256",
+    "transaction_id",
+}
+ACTIVITY_EVENT_EXTRA_FIELDS = {
+    "assign": {
+        "assigned_owner",
+        "assigned_reviewer",
+        "task_contract_sha256",
+        "source_ref_sha256",
+        "created_at",
+    },
+    "catalog_migration": {
+        "migration_id",
+        "migration_record_sha256",
+        "before_task_contract_sha256",
+        "after_task_contract_sha256",
+    },
+    "completion_authority_install": {
+        "completion_authority_sha256",
+        "completion_overlay_sha256",
+    },
+}
 EXPECTED_EXECUTION_AUTHORITY = {
     "planner_role": "plan_archive_dispatch_monitor_review_only",
     "implementation_role": "supervisor_admitted_fleet_worker",
@@ -144,6 +206,268 @@ EXPECTED_LOOP_SCOPE = {
     "final_authority_requires_exact_union": True,
     "each_loop_requires_non_close_product_level_task": True,
 }
+EXPECTED_COMPLETION_AUTHORITY = {
+    "schema_version": 1,
+    "task_id": "LOOP-PROD-CLOSE-002",
+    "checkpoint_only_task_ids": ["LOOP-PROD-CLOSE-001"],
+    "guard_install_task_id": "LOOP-PROD-SIGNOFF-001",
+    "guard_direct_dependency_ids": [
+        "LOOP-PROD-CLOSE-001",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-ATTEST-001",
+    ],
+    "final_direct_dependency_ids": [
+        "LOOP-PROD-CLOSE-001",
+        "LOOP-PROD-DELIVERY-001",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-LEASE-001",
+        "LOOP-PROD-BROWSER-AUTH-001",
+        "LOOP-PROD-FLEET-001",
+        "LOOP-PROD-ATTEST-001",
+        "LOOP-PROD-AUTH-OPS-001",
+        "LOOP-PROD-FE-EVID-001",
+        "LOOP-PROD-FE-BUILD-001",
+        "LOOP-PROD-SIGNOFF-001",
+    ],
+    "required_human_ops_signoff_task_ids": [
+        "LOOP-PROD-PPL-001",
+        "LOOP-PROD-TJ-003",
+        "LOOP-PROD-PINT-001",
+        "LOOP-PROD-MAI-003",
+        "LOOP-PROD-CLOSE-001",
+        "LOOP-PROD-AUTH-BOOT-001",
+        "LOOP-PROD-BROWSER-AUTH-001",
+        "LOOP-PROD-AUTH-OPS-001",
+        "LOOP-PROD-CLOSE-002",
+    ],
+    "role_resolution": "catalog_bound_program_overlay",
+    "pre_guard_done_semantics": (
+        "checkpoint_only_pending_exact_final_reverification"
+    ),
+    "live_overlay_state_key": "program_completion_authorities",
+    "live_overlay_roles": {
+        "LOOP-PROD-CLOSE-001": "checkpoint_only",
+        "LOOP-PROD-SIGNOFF-001": "guard_installer",
+        "LOOP-PROD-CLOSE-002": "final_authority",
+    },
+    "checkpoint_consumption_required": True,
+    "checkpoint_consumption_state_key": "program_completion_checkpoint_consumptions",
+    "checkpoint_consumption_record_contract": {
+        "schema_version": 1,
+        "checkpoint_task_id": "LOOP-PROD-CLOSE-001",
+        "guard_task_id": "LOOP-PROD-SIGNOFF-001",
+        "consumer_task_id": "LOOP-PROD-CLOSE-002",
+        "append_only": True,
+        "single_consumption_per_program_catalog_checkpoint": True,
+        "protected_human_ops_required": True,
+        "required_binding_fields": [
+            "program_id",
+            "catalog_sha256",
+            "completion_authority_sha256",
+            "completion_overlay_sha256",
+            "checkpoint_task_id",
+            "checkpoint_task_contract_sha256",
+            "checkpoint_evidence_manifest_sha256",
+            "checkpoint_verdict_sha256",
+            "guard_task_id",
+            "guard_activation_sha256",
+            "consumer_task_id",
+            "consumer_task_contract_sha256",
+            "final_verdict_sha256",
+            "actor_id",
+            "actor_role",
+            "consumed_at",
+            "nonce",
+        ],
+    },
+    "requires_protected_human_ops_verdict": True,
+    "verdict_binding_fields": [
+        "program_id",
+        "catalog_sha256",
+        "task_id",
+        "closeout_manifest_sha256",
+        "target_environment",
+        "frontend_sha",
+        "bff_sha",
+        "attestation_policy",
+        "actor_id",
+        "actor_role",
+        "decision",
+        "issued_at",
+        "expires_at",
+        "nonce",
+    ],
+}
+EXPECTED_AUTH_LIFECYCLE = {
+    "schema_version": 1,
+    "initial_provisioning_authority_task_id": "LOOP-PROD-AUTH-BOOT-001",
+    "strict_auth_task_id": "LOOP-PROD-AUTH-001",
+    "lease_task_id": "LOOP-PROD-LEASE-001",
+    "attestation_task_id": "LOOP-PROD-ATTEST-001",
+    "credential_lifecycle_task_id": "LOOP-PROD-AUTH-OPS-001",
+    "browser_activation_task_id": "LOOP-PROD-BROWSER-AUTH-001",
+    "bootstrap_proof_type": "protected_external_provisional_record",
+    "bootstrap_requires_program_attestation": False,
+    "credential_lifecycle_may_create_initial_credentials": False,
+    "required_direct_dependencies": {
+        "LOOP-PROD-AUTH-BOOT-001": [
+            "LOOP-PROD-002",
+            "LOOP-PROD-DELIVERY-001",
+        ],
+        "LOOP-PROD-LEASE-001": [
+            "LOOP-PROD-AUTH-BOOT-001",
+            "LOOP-PROD-AUTH-001",
+            "LOOP-PROD-WORKER-001",
+        ],
+        "LOOP-PROD-ATTEST-001": [
+            "LOOP-PROD-002",
+            "LOOP-PROD-WORKER-001",
+            "LOOP-PROD-LEASE-001",
+        ],
+        "LOOP-PROD-AUTH-OPS-001": [
+            "LOOP-PROD-AUTH-BOOT-001",
+            "LOOP-PROD-AUTH-001",
+            "LOOP-PROD-LEASE-001",
+            "LOOP-PROD-ATTEST-001",
+        ],
+        "LOOP-PROD-BROWSER-AUTH-001": [
+            "LOOP-PROD-AUTH-BOOT-001",
+            "LOOP-PROD-AUTH-001",
+            "LOOP-PROD-FE-001",
+            "LOOP-PROD-DELIVERY-001",
+            "LOOP-PROD-LEASE-001",
+            "LOOP-PROD-AUTH-OPS-001",
+        ],
+    },
+    "credential_lineage_binding_fields": [
+        "environment",
+        "bootstrap_record_sha256",
+        "authorization_event_id",
+        "secret_version_ids",
+        "identity_profile_ids",
+        "policy_version",
+        "issued_at",
+        "expires_or_review_at",
+        "revocation_path",
+    ],
+}
+EXPECTED_DISPATCH_PREREQUISITE = {
+    "task_id": "LOOP-PROD-RUNTIME-BOOT-001",
+    "task_doc": (
+        "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
+        "LOOP-PROD-RUNTIME-BOOT-001.md"
+    ),
+    "task_contract_fixture": (
+        "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
+        "fixtures/runtime-lock-bootstrap-task.v1.json"
+    ),
+    "task_contract_fixture_sha256": (
+        "f8e703856cfd907ae0b04efcb483107cf19c879c87cc7717539a679d39dec8db"
+    ),
+    "task_contract_sha256": (
+        "ba34ce0a5ed90ac21c63d8d89e345550cae565a33e4a9d083883daa36e2e48fd"
+    ),
+    "required_status": "done",
+    "must_preexist_primary_materialization": True,
+    "protocol": {
+        "schema_version": 1,
+        "protocol_id": "pantheon-runtime-task-audit-lock-v1",
+        "capability_manifest": (
+            ".orchestrator/runtime-task-audit-lock-capability.json"
+        ),
+        "lock_order": ["runtime_admission", "task_state", "activity_audit"],
+        "stable_lock_paths": [
+            ".orchestrator/runtime-admission.lock",
+            ".orchestrator/task-state.lock",
+            ".orchestrator/activity-audit.lock",
+        ],
+        "required_api": [
+            "tasks_runtime_admission_guard",
+            "canonical_task_state_lock_file",
+            "activity_audit_lock_file",
+        ],
+        "shared_read_supported": True,
+        "required_writer_paths": [
+            ".orchestrator/runtime_state.py",
+            ".orchestrator/supervisor.py",
+            ".orchestrator/common.py",
+            ".orchestrator/approval_queue.py",
+            ".orchestrator/adapters/file_inbox.py",
+            ".orchestrator/watch_events.py",
+            ".orchestrator/supervisor_watchdog.py",
+            "scripts/ai_status.py",
+            "scripts/dispatch_loop_product_level_remediation_2026-07-13.py",
+        ],
+    },
+}
+EXPECTED_CONTRACT_FIXTURES = {
+    "browser_auth_incidents_v1": {
+        "path": (
+            "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
+            "fixtures/browser-auth-incidents.v1.json"
+        ),
+        "sha256": "ce3f40be40a0628acdf5256b52ac8c60a2cdb12d026387c8e13c35261cf8ed96",
+        "schema_version": 1,
+        "fixture_set_id": "loop-product-browser-auth-incidents-v1",
+        "required_fixture_ids": [
+            "pantheon-pr-3557-bff-first-public-viewer-lockdown",
+            "execute-plans-pr-323-fe-first-fixed-public-viewer",
+            "pantheon-pr-3587-effective-3557-revert",
+            "pantheon-pr-3588-zero-tree-duplicate-3557-revert",
+        ],
+        "required_by": [
+            "LOOP-PROD-DELIVERY-001",
+            "LOOP-PROD-BROWSER-AUTH-001",
+            "LOOP-PROD-CLOSE-002",
+        ],
+    },
+    "browser_auth_route_matrix_v1": {
+        "path": (
+            "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
+            "fixtures/browser-auth-route-matrix.v1.json"
+        ),
+        "sha256": "5b585571492594480ecd09c50b3fff71581d8571bef6a9fea27451cab009b428",
+        "schema_version": 1,
+        "fixture_set_id": "loop-product-browser-auth-route-matrix-v1",
+        "required_fixture_ids": [
+            "viewer-cookie-me-get",
+            "viewer-cookie-me-head-router-negative",
+            "viewer-cookie-shell-summary-get",
+            "viewer-cookie-personas-get",
+            "viewer-cookie-incidents-get",
+            "viewer-cookie-logout-post",
+            "fixed-viewer-bearer-logout-deny",
+            "viewer-refresh-cookie-post",
+            "fixed-viewer-bearer-refresh-deny",
+            "anonymous-sse-liveness-get",
+            "viewer-cookie-sse-replay-get",
+            "viewer-query-token-sse-deny",
+            "viewer-control-mode-activate-deny",
+            "viewer-repair-worktree-deny",
+            "viewer-approval-decide-deny",
+            "viewer-management-ask-stream-deny",
+            "cross-origin-viewer-preflight-deny",
+        ],
+        "required_by": [
+            "LOOP-PROD-BROWSER-AUTH-001",
+            "LOOP-PROD-CLOSE-002",
+        ],
+    },
+}
+EXPECTED_PREIMAGE_FIXTURE_PATH = (
+    "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
+    "fixtures/catalog-v1-migration-preimages.json"
+)
+EXPECTED_PREIMAGE_FIXTURE_SHA256 = (
+    "91c622e5f586cf9b94cf810031603fba32d6f25186b58e7ebe3bd2c3f6a04956"
+)
+EXPECTED_PREIMAGE_MUTABLE_LIVE_FIELDS = [
+    "owner",
+    "reviewer",
+    "next",
+    "created_at",
+    "last_update",
+]
 REQUIRED_LOOP_IDS = set(EXPECTED_LOOP_SCOPE["canonical_l1_loop_ids"]) | set(
     EXPECTED_LOOP_SCOPE["composite_overlay_ids"]
 )
@@ -216,6 +540,200 @@ def execution_authority_sha256(catalog: dict[str, Any]) -> str:
     return canonical_json_sha256(catalog.get("execution_authority"))
 
 
+def completion_authority_sha256(catalog: dict[str, Any]) -> str:
+    return canonical_json_sha256(catalog.get("completion_authority"))
+
+
+def auth_lifecycle_sha256(catalog: dict[str, Any]) -> str:
+    return canonical_json_sha256(catalog.get("auth_lifecycle"))
+
+
+def contract_fixtures_sha256(catalog: dict[str, Any]) -> str:
+    return canonical_json_sha256(catalog.get("contract_fixtures"))
+
+
+def _content_addressed_json(path: Path, expected_sha256: str) -> dict[str, Any]:
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise DispatchError(f"content-addressed fixture is unreadable: {path}") from exc
+    if sha256_bytes(raw) != expected_sha256:
+        raise DispatchError(f"content-addressed fixture digest mismatch: {path}")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise DispatchError(f"content-addressed fixture is invalid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise DispatchError(f"content-addressed fixture must be an object: {path}")
+    return payload
+
+
+def validate_contract_fixtures(catalog: dict[str, Any]) -> None:
+    refs = catalog.get("contract_fixtures")
+    if refs != EXPECTED_CONTRACT_FIXTURES:
+        raise DispatchError(
+            "catalog contract_fixtures must exactly preserve the reviewed incident "
+            "and browser-route contracts"
+        )
+    for fixture_id, reference in EXPECTED_CONTRACT_FIXTURES.items():
+        path = REPO_ROOT / reference["path"]
+        payload = _content_addressed_json(path, reference["sha256"])
+        if payload.get("schema_version") != reference["schema_version"]:
+            raise DispatchError(f"{fixture_id} schema version mismatch")
+        actual_set_id = payload.get("fixture_set_id") or payload.get("matrix_id")
+        if actual_set_id != reference["fixture_set_id"]:
+            raise DispatchError(f"{fixture_id} fixture-set identity mismatch")
+        if fixture_id == "browser_auth_incidents_v1":
+            rows = payload.get("fixtures")
+            ids = [
+                str(row.get("fixture_id"))
+                for row in rows or []
+                if isinstance(row, dict)
+            ]
+            if ids != reference["required_fixture_ids"]:
+                raise DispatchError("browser incident fixture IDs are not exact")
+            by_id = {str(row["fixture_id"]): row for row in rows}
+            duplicate = by_id[
+                "pantheon-pr-3588-zero-tree-duplicate-3557-revert"
+            ]
+            effective = by_id["pantheon-pr-3587-effective-3557-revert"]
+            if (
+                duplicate["pr"]["head_tree_sha"]
+                != effective["pr"]["head_tree_sha"]
+                or duplicate["pr"]["merge_tree_sha"]
+                != duplicate["pr"]["head_tree_sha"]
+                or duplicate["pr"]["merge_tree_sha"]
+                != effective["pr"]["merge_tree_sha"]
+                or duplicate["expected_replay"]["effective_tree_delta"] is not False
+                or duplicate["expected_replay"]["second_deploy_forbidden"] is not True
+            ):
+                raise DispatchError("3587/3588 duplicate-repair graph semantics changed")
+            diagnosis = payload.get("diagnosis") or {}
+            if (
+                diagnosis.get("reason_id")
+                != "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN"
+                or "does not prove" not in str(diagnosis.get("not_proven") or "")
+            ):
+                raise DispatchError("hosted browser incident diagnosis is not exact")
+            archival = payload.get("evidence_archival_contract") or {}
+            if (
+                archival.get("status") != "fleet_must_vendor_redacted_extracts_before_closeout"
+                or archival.get("index_path")
+                != "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/fixtures/evidence/browser-auth-incidents/run-29298450774/index.v1.json"
+                or archival.get("required_file_ids")
+                != [
+                    "bff-authenticated-live-smoke",
+                    "management-live-deep-validation",
+                    "playwright-results",
+                    "release-gate-summary",
+                    "historical-get-results",
+                    "sse-replay-results",
+                ]
+                or archival.get("network_independent_replay_required") is not True
+                or archival.get("redaction_and_secret_scan_required") is not True
+            ):
+                raise DispatchError("browser incident evidence archival contract is not exact")
+            request_cases = [
+                case
+                for row in rows
+                for case in row.get("request_cases") or []
+                if isinstance(case, dict)
+            ]
+            for case in request_cases:
+                status = (case.get("expected") or {}).get("http_status")
+                if not isinstance(status, int):
+                    raise DispatchError(
+                        "incident replay must use one exact HTTP status, not alternatives"
+                    )
+        else:
+            rows = payload.get("rows")
+            row_ids = [
+                str(row.get("row_id"))
+                for row in rows or []
+                if isinstance(row, dict)
+            ]
+            missing = [
+                row_id
+                for row_id in reference["required_fixture_ids"]
+                if row_id not in row_ids
+            ]
+            if missing or len(row_ids) != len(set(row_ids)):
+                raise DispatchError(
+                    "browser route matrix required rows are missing or duplicated"
+                )
+            if any("*" in str(row.get("path_template") or "") for row in rows):
+                raise DispatchError("browser route matrix path wildcards are forbidden")
+            paths = {str(row.get("path_template")) for row in rows}
+            if "/bff/dashboard/summary" in paths or "/bff/management/shell-summary" not in paths:
+                raise DispatchError("browser route matrix uses a nonexistent boot route")
+            universe = payload.get("route_universe") or {}
+            if universe.get("coverage_rule") != (
+                "seed_declares_exact_union_for_fleet_generation; complete status enforces exact union"
+            ):
+                raise DispatchError("browser route matrix coverage rule is not exact")
+            if universe.get("coverage_status") != "planner_seed_incomplete_blocked":
+                raise DispatchError("browser route matrix must remain explicitly blocked until fleet generation")
+            if universe.get("closeout_requires_coverage_status") != "complete":
+                raise DispatchError("browser route matrix closeout status contract is missing")
+            if universe.get("required_generated_row_fields") != [
+                "coverage_tags",
+                "router_reached",
+                "evidence_refs",
+            ]:
+                raise DispatchError("browser route matrix generated-row field contract is not exact")
+            required_get_paths = payload.get("required_incident_get_paths")
+            if not isinstance(required_get_paths, list) or len(required_get_paths) != 27 or len(set(required_get_paths)) != 27:
+                raise DispatchError("browser route matrix must declare 27 exact historical GET paths")
+            required_privileged = payload.get("required_privileged_negative_row_ids")
+            if not isinstance(required_privileged, list) or len(required_privileged) != 16 or len(set(required_privileged)) != 16:
+                raise DispatchError("browser route matrix must declare 16 exact privileged-negative rows")
+            required_attacks = payload.get("required_attack_classes")
+            if not isinstance(required_attacks, list) or len(required_attacks) != 13 or len(set(required_attacks)) != 13:
+                raise DispatchError("browser route matrix must declare 13 exact attack classes")
+            transports = payload.get("transport_profiles") or {}
+            if not {"raw_literal_cookie", "credential_shaped_json_body"}.issubset(transports):
+                raise DispatchError("browser route matrix raw-credential transport profiles are incomplete")
+            by_id = {str(row["row_id"]): row for row in rows}
+            if (
+                by_id["viewer-cookie-me-head-router-negative"]["expected"]
+                ["product_success"]
+                is not False
+                or by_id["anonymous-sse-liveness-get"]["expected"]
+                ["product_success"]
+                is not False
+                or by_id["viewer-cookie-sse-replay-get"]["expected"]
+                ["product_success"]
+                is not True
+            ):
+                raise DispatchError(
+                    "browser auth, router, liveness, and product outcomes are conflated"
+                )
+
+
+def validate_preimage_fixture(migration: dict[str, Any]) -> dict[str, Any]:
+    if (
+        migration.get("preimage_fixture") != EXPECTED_PREIMAGE_FIXTURE_PATH
+        or migration.get("preimage_fixture_sha256")
+        != EXPECTED_PREIMAGE_FIXTURE_SHA256
+    ):
+        raise DispatchError("catalog migration preimage fixture reference is not exact")
+    payload = _content_addressed_json(
+        REPO_ROOT / EXPECTED_PREIMAGE_FIXTURE_PATH,
+        EXPECTED_PREIMAGE_FIXTURE_SHA256,
+    )
+    source = payload.get("source_catalog") or {}
+    if (
+        source.get("git_commit") != migration.get("from_catalog_git_commit")
+        or source.get("path") != migration.get("from_catalog_path")
+        or source.get("byte_sha256") != migration.get("from_catalog_sha256")
+        or source.get("program_id") != "loop-product-level-remediation-2026-07-13"
+    ):
+        raise DispatchError("historical migration catalog source binding mismatch")
+    if payload.get("allowed_mutable_live_fields") != EXPECTED_PREIMAGE_MUTABLE_LIVE_FIELDS:
+        raise DispatchError("historical migration mutable-field allowlist is not exact")
+    return payload
+
+
 def artifact_overlaps(left: str, right: str) -> bool:
     left_clean = left.strip().replace("\\", "/").rstrip("/")
     right_clean = right.strip().replace("\\", "/").rstrip("/")
@@ -247,8 +765,8 @@ def internal_ancestors(
 
 def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]]:
     schema_version = payload.get("schema_version")
-    if not isinstance(schema_version, int) or schema_version < 1:
-        raise DispatchError("catalog schema_version must be a positive integer")
+    if schema_version != 3:
+        raise DispatchError("catalog schema_version must be exactly 3")
     tasks = payload.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         raise DispatchError("catalog tasks must be a non-empty list")
@@ -257,15 +775,18 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
             f"catalog task_count={payload.get('task_count')!r} does not match {len(tasks)}"
         )
 
-    allowed_owners = set(payload.get("allowed_owners") or [])
-    if allowed_owners != {"Codex", "Codex2"}:
+    allowed_owner_list = payload.get("allowed_owners")
+    if allowed_owner_list != ALLOWED_FLEET_ACTORS:
         raise DispatchError(
-            "catalog allowed_owners must be exactly Codex and Codex2 for current fleet readiness"
+            "catalog allowed_owners must be the exact ordered Codex/Codex2 fleet policy"
         )
+    allowed_owners = set(allowed_owner_list)
     external = payload.get("external_dependencies")
     if not isinstance(external, list) or len(external) != len(set(external)):
         raise DispatchError("external_dependencies must be a unique list")
     external_ids = {str(item) for item in external}
+    if EXPECTED_DISPATCH_PREREQUISITE["task_id"] not in external_ids:
+        raise DispatchError("runtime lock bootstrap must be an external dependency")
     additive_task_ids = payload.get("additive_task_ids") or []
     if schema_version >= 2:
         if (
@@ -277,6 +798,53 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
         if payload.get("task_doc_contract_source") != "tasks.json":
             raise DispatchError("schema v2 task_doc_contract_source must be tasks.json")
     additive_ids = {str(item) for item in additive_task_ids}
+    migration_target_ids: set[str] = set()
+    raw_migrations = payload.get("catalog_migrations")
+    if isinstance(raw_migrations, list):
+        for migration in raw_migrations:
+            if isinstance(migration, dict):
+                for patch in migration.get("required_live_task_patches") or []:
+                    if isinstance(patch, dict) and str(patch.get("task_id") or "").strip():
+                        migration_target_ids.add(str(patch["task_id"]))
+    contract_marker_ids = additive_ids | migration_target_ids
+
+    if payload.get("execution_task_counts") != {
+        "pre_dispatch_bootstrap": 1,
+        "primary_catalog": 48,
+        "total": 49,
+    }:
+        raise DispatchError("execution task counts must be exactly 1 bootstrap plus 48 primary")
+    if payload.get("dispatch_prerequisite") != EXPECTED_DISPATCH_PREREQUISITE:
+        raise DispatchError("runtime/task/audit bootstrap prerequisite is not exact")
+    prerequisite_doc = REPO_ROOT / EXPECTED_DISPATCH_PREREQUISITE["task_doc"]
+    if not prerequisite_doc.is_file():
+        raise DispatchError("runtime lock bootstrap task document is missing")
+    prerequisite_fixture = _content_addressed_json(
+        REPO_ROOT / EXPECTED_DISPATCH_PREREQUISITE["task_contract_fixture"],
+        EXPECTED_DISPATCH_PREREQUISITE["task_contract_fixture_sha256"],
+    )
+    prerequisite_task = prerequisite_fixture.get("task")
+    if (
+        prerequisite_fixture.get("schema_version") != 1
+        or prerequisite_fixture.get("fixture_set_id")
+        != "loop-product-runtime-lock-bootstrap-task-v1"
+        or not isinstance(prerequisite_task, dict)
+        or prerequisite_task.get("id") != EXPECTED_DISPATCH_PREREQUISITE["task_id"]
+        or prerequisite_fixture.get("task_contract_sha256")
+        != EXPECTED_DISPATCH_PREREQUISITE["task_contract_sha256"]
+        or task_contract_sha256(prerequisite_task)
+        != EXPECTED_DISPATCH_PREREQUISITE["task_contract_sha256"]
+    ):
+        raise DispatchError("runtime lock bootstrap task contract fixture is not exact")
+    prerequisite_marker = (
+        f"Canonical contract SHA-256: `"
+        f"{EXPECTED_DISPATCH_PREREQUISITE['task_contract_sha256']}`"
+    )
+    if prerequisite_doc.read_text(encoding="utf-8").count(prerequisite_marker) != 1:
+        raise DispatchError("runtime lock bootstrap task document contract marker is stale or missing")
+    if payload.get("status") != "blocked_on_runtime_lock_bootstrap":
+        raise DispatchError("catalog must remain blocked until runtime lock bootstrap is done")
+    validate_contract_fixtures(payload)
 
     execution_authority = payload.get("execution_authority")
     if execution_authority != EXPECTED_EXECUTION_AUTHORITY:
@@ -289,6 +857,10 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
             "catalog loop_scope must exactly declare twelve canonical L1 loops "
             "and the Per-Persona OODA composite overlay"
         )
+    if payload.get("completion_authority") != EXPECTED_COMPLETION_AUTHORITY:
+        raise DispatchError("catalog completion_authority must match the exact reviewed contract")
+    if payload.get("auth_lifecycle") != EXPECTED_AUTH_LIFECYCLE:
+        raise DispatchError("catalog auth_lifecycle must match the exact reviewed contract")
     universal_dispatch_rules = payload.get("universal_dispatch_rules")
     if (
         not isinstance(universal_dispatch_rules, list)
@@ -403,19 +975,17 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
             raise DispatchError(f"{task_id} task_doc must be repo-relative")
         if not (REPO_ROOT / task_doc).is_file():
             raise DispatchError(f"{task_id} task_doc does not exist: {task_doc}")
-        if task_id in additive_ids:
+        if task_id in contract_marker_ids:
             document = (REPO_ROOT / task_doc).read_text(encoding="utf-8")
-            contract_digest = canonical_json_sha256(
-                {
-                    "acceptance": task["acceptance"],
-                    "proof_required": task["proof_required"],
-                    "dispatch_rules": task["dispatch_rules"],
-                }
-            )
+            contract_digest = task_contract_sha256(task)
             contract_marker = f"Canonical contract SHA-256: `{contract_digest}`"
             if contract_marker not in document:
                 raise DispatchError(
                     f"{task_id} task_doc canonical contract marker is stale or missing"
+                )
+            if document.count(contract_marker) != 1:
+                raise DispatchError(
+                    f"{task_id} task_doc canonical contract marker must appear exactly once"
                 )
         by_id[task_id] = task
 
@@ -438,8 +1008,8 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
 
     if schema_version >= 2:
         migrations = payload.get("catalog_migrations")
-        if not isinstance(migrations, list) or not migrations:
-            raise DispatchError("schema v2 catalog_migrations must be non-empty")
+        if not isinstance(migrations, list) or len(migrations) != 1:
+            raise DispatchError("schema v3 requires exactly one catalog migration")
         migration_ids: set[str] = set()
         patched_task_ids: set[str] = set()
         for migration in migrations:
@@ -448,15 +1018,23 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
             migration_id = str(migration.get("id") or "").strip()
             if not migration_id or migration_id in migration_ids:
                 raise DispatchError("catalog migration IDs must be unique and non-empty")
+            if migration_id != "loop-product-gap-addendum-v5":
+                raise DispatchError("catalog migration ID must be the reviewed v5 identity")
             migration_ids.add(migration_id)
             from_digest = str(migration.get("from_catalog_sha256") or "")
             if len(from_digest) != 64 or any(
                 character not in "0123456789abcdef" for character in from_digest
             ):
                 raise DispatchError(f"{migration_id} has invalid from_catalog_sha256")
+            fixture = validate_preimage_fixture(migration)
+            fixture_targets = {
+                str(item.get("task_id")): item
+                for item in fixture.get("targets") or []
+                if isinstance(item, dict)
+            }
             patches = migration.get("required_live_task_patches")
-            if not isinstance(patches, list) or not patches:
-                raise DispatchError(f"{migration_id} must declare live task patches")
+            if not isinstance(patches, list) or len(patches) != 3:
+                raise DispatchError(f"{migration_id} must declare exactly three live patches")
             for patch in patches:
                 if not isinstance(patch, dict):
                     raise DispatchError(f"{migration_id} task patch must be an object")
@@ -466,12 +1044,14 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
                         f"{migration_id} task patch target is missing or duplicated: {task_id}"
                     )
                 patched_task_ids.add(task_id)
+                fixture_target = fixture_targets.get(task_id)
+                if fixture_target is None:
+                    raise DispatchError(f"{migration_id} {task_id} has no exact preimage")
                 before = patch.get("before_depends_on")
                 appended = patch.get("append_dependencies")
                 if (
                     not isinstance(before, list)
                     or not isinstance(appended, list)
-                    or not appended
                     or len(before) != len(set(map(str, before)))
                     or len(appended) != len(set(map(str, appended)))
                 ):
@@ -485,6 +1065,52 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
                     raise DispatchError(
                         f"{migration_id} {task_id} may append only additive task IDs"
                     )
+                allowed_changes = patch.get("allowed_contract_field_changes")
+                before_values = fixture_target.get("before_contract_field_values")
+                if (
+                    not isinstance(allowed_changes, list)
+                    or not allowed_changes
+                    or len(allowed_changes) != len(set(map(str, allowed_changes)))
+                    or set(map(str, allowed_changes)) != set(before_values or {})
+                    or allowed_changes
+                    != fixture_target.get("allowed_contract_field_changes")
+                ):
+                    raise DispatchError(
+                        f"{migration_id} {task_id} contract change allowlist is not exact"
+                    )
+                if (
+                    patch.get("before_task_contract_sha256")
+                    != fixture_target.get("before_task_contract_sha256")
+                    or patch.get("after_task_contract_sha256")
+                    != fixture_target.get("after_task_contract_sha256")
+                    or before != fixture_target.get("before_depends_on")
+                    or expected != fixture_target.get("after_depends_on")
+                    or patch.get("before_runtime_fields")
+                    != fixture_target.get("before_runtime_fields")
+                    or patch.get("set_runtime_fields")
+                    != fixture_target.get("after_runtime_fields")
+                ):
+                    raise DispatchError(
+                        f"{migration_id} {task_id} patch differs from immutable preimage"
+                    )
+                current_task = by_id[task_id]
+                if task_contract_sha256(current_task) != patch.get(
+                    "after_task_contract_sha256"
+                ):
+                    raise DispatchError(
+                        f"{migration_id} {task_id} after-contract digest is stale"
+                    )
+                reconstructed_before = deepcopy(current_task)
+                for field, value in before_values.items():
+                    reconstructed_before[str(field)] = deepcopy(value)
+                if task_contract_sha256(reconstructed_before) != patch.get(
+                    "before_task_contract_sha256"
+                ):
+                    raise DispatchError(
+                        f"{migration_id} {task_id} full historical preimage is not exact"
+                    )
+        if set(fixture_targets) != patched_task_ids:
+            raise DispatchError("catalog migration target set differs from preimage fixture")
 
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -520,6 +1146,26 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
         guard_id = str(authority.get("guard_install_task_id") or "")
         if authority_id not in by_id or guard_id not in by_id:
             raise DispatchError("completion authority or guard task is missing")
+        if by_id[guard_id]["depends_on"] != authority["guard_direct_dependency_ids"]:
+            raise DispatchError("completion guard direct dependency topology changed")
+        if by_id[authority_id]["depends_on"] != authority[
+            "final_direct_dependency_ids"
+        ]:
+            raise DispatchError("final authority direct dependency topology changed")
+        actual_signoff_ids = [
+            task_id
+            for task_id, task in by_id.items()
+            if task["requires_human_ops_signoff"] is True
+        ]
+        if actual_signoff_ids != authority["required_human_ops_signoff_task_ids"]:
+            raise DispatchError("Human/Ops signoff task-ID authority is not exact")
+        for task_id, expected_dependencies in EXPECTED_AUTH_LIFECYCLE[
+            "required_direct_dependencies"
+        ].items():
+            if by_id[task_id]["depends_on"] != expected_dependencies:
+                raise DispatchError(
+                    f"auth lifecycle direct dependency topology changed for {task_id}"
+                )
         if authority.get("requires_protected_human_ops_verdict") is not True:
             raise DispatchError("completion authority must require protected Human/Ops verdict")
         if by_id[authority_id]["requires_human_ops_signoff"] is not True:
@@ -650,11 +1296,6 @@ def validate_live_state(
     catalog: dict[str, Any],
     tasks: list[dict[str, Any]],
 ) -> None:
-    wave_state = state.get("wave_state")
-    if isinstance(wave_state, dict) and wave_state.get("status") == "frozen":
-        raise DispatchError(
-            "current planning wave is frozen; direct task assignment is fail-closed"
-        )
     active_tasks = state.get("tasks")
     if not isinstance(active_tasks, list):
         raise DispatchError("ai-status.json tasks must be a list")
@@ -702,6 +1343,20 @@ def validate_live_state(
             raise DispatchError(
                 f"active external dependency {dep_id} is terminal {status!r}; only done can satisfy"
             )
+        if dep_id == EXPECTED_DISPATCH_PREREQUISITE["task_id"] and status != "done":
+            raise DispatchError(
+                "runtime lock bootstrap prerequisite must be exactly done before "
+                "authoritative dry-run or apply"
+            )
+
+
+def validate_new_mutation_allowed(state: dict[str, Any]) -> None:
+    wave_state = state.get("wave_state")
+    if isinstance(wave_state, dict) and wave_state.get("status") == "frozen":
+        raise DispatchError(
+            "current planning wave is frozen; committed audit recovery may run but "
+            "new task mutation is fail-closed"
+        )
 
 
 def file_signature(path: Path) -> tuple[int, int, int, int, str]:
@@ -714,6 +1369,188 @@ def file_signature(path: Path) -> tuple[int, int, int, int, str]:
         stat_result.st_size,
         sha256_bytes(data),
     )
+
+
+def _runtime_protocol_config() -> dict[str, Any]:
+    return {
+        "paths": {
+            "state_file": str(STATUS_ROOT / ".orchestrator" / "state.json"),
+            "event_queue": str(
+                STATUS_ROOT / ".orchestrator" / "event-queue.jsonl"
+            ),
+            "approval_queue": str(
+                STATUS_ROOT / ".orchestrator" / "approval-queue.json"
+            ),
+            "status_file": str(STATUS_PATH),
+            "activity_log": str(LOG_PATH),
+        },
+        "supervisor": {"strict_task_runtime_admission": True},
+    }
+
+
+def _load_runtime_protocol_module(path: Path) -> ModuleType:
+    module_name = "loop_product_runtime_lock_protocol"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise DispatchError("runtime lock protocol module cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    orchestrator_path = str(path.parent)
+    inserted = orchestrator_path not in sys.path
+    if inserted:
+        sys.path.insert(0, orchestrator_path)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise DispatchError(
+            f"runtime lock protocol module failed to import: {type(exc).__name__}"
+        ) from exc
+    finally:
+        if inserted:
+            sys.path.remove(orchestrator_path)
+    return module
+
+
+def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
+    protocol = catalog["dispatch_prerequisite"]["protocol"]
+    manifest_path = STATUS_ROOT / protocol["capability_manifest"]
+    try:
+        manifest = read_json(manifest_path)
+    except DispatchError as exc:
+        if str(exc).startswith("JSON file not found:"):
+            raise DispatchError("runtime lock capability manifest is missing") from exc
+        raise
+    required_keys = {
+        "schema_version",
+        "protocol_id",
+        "module_path",
+        "lock_order",
+        "stable_lock_paths",
+        "shared_read_supported",
+        "api",
+        "writers",
+        "merged_commit_sha",
+    }
+    if set(manifest) != required_keys:
+        raise DispatchError("runtime lock capability manifest schema is not exact")
+    if (
+        manifest.get("schema_version") != protocol["schema_version"]
+        or manifest.get("protocol_id") != protocol["protocol_id"]
+        or manifest.get("module_path") != ".orchestrator/runtime_state.py"
+        or manifest.get("lock_order") != protocol["lock_order"]
+        or manifest.get("stable_lock_paths") != protocol["stable_lock_paths"]
+        or manifest.get("shared_read_supported") is not True
+        or manifest.get("api") != protocol["required_api"]
+    ):
+        raise DispatchError("runtime lock capability manifest contract mismatch")
+    merge_sha = manifest.get("merged_commit_sha")
+    if (
+        not isinstance(merge_sha, str)
+        or len(merge_sha) != 40
+        or any(character not in "0123456789abcdef" for character in merge_sha)
+    ):
+        raise DispatchError("runtime lock capability merge identity is invalid")
+    writers = manifest.get("writers")
+    if not isinstance(writers, dict) or set(writers) != set(
+        protocol["required_writer_paths"]
+    ):
+        raise DispatchError("runtime lock capability writer set is not exact")
+    for writer_path, expected_digest in writers.items():
+        if (
+            not isinstance(writer_path, str)
+            or Path(writer_path).is_absolute()
+            or ".." in Path(writer_path).parts
+            or not isinstance(expected_digest, str)
+            or len(expected_digest) != 64
+            or any(character not in "0123456789abcdef" for character in expected_digest)
+        ):
+            raise DispatchError("runtime lock capability writer binding is invalid")
+        target = STATUS_ROOT / writer_path
+        try:
+            actual_digest = sha256_bytes(target.read_bytes())
+        except OSError as exc:
+            raise DispatchError(
+                f"runtime lock capability writer is unreadable: {writer_path}"
+            ) from exc
+        if actual_digest != expected_digest:
+            raise DispatchError(
+                f"runtime lock capability writer digest mismatch: {writer_path}"
+            )
+    override = str(os.environ.get("LOOP_PRODUCT_RUNTIME_PROTOCOL_MODULE") or "").strip()
+    if override:
+        if STATUS_ROOT == REPO_ROOT:
+            raise DispatchError("runtime protocol module override is forbidden on live state")
+        module_path = Path(override).expanduser().resolve()
+        try:
+            module_path.relative_to(STATUS_ROOT)
+        except ValueError as exc:
+            raise DispatchError("test runtime protocol override must stay under status root") from exc
+    else:
+        module_path = STATUS_ROOT / str(manifest["module_path"])
+    module = _load_runtime_protocol_module(module_path)
+    if (
+        getattr(module, "RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION", None) != 1
+        or getattr(module, "RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID", None)
+        != protocol["protocol_id"]
+    ):
+        raise DispatchError("runtime lock protocol module version or identity mismatch")
+    for api_name in protocol["required_api"]:
+        if not callable(getattr(module, api_name, None)):
+            raise DispatchError(f"runtime lock protocol API is missing: {api_name}")
+    return module
+
+
+@contextmanager
+def shared_dispatch_locks(
+    module: ModuleType,
+    catalog: dict[str, Any],
+    *,
+    shared: bool,
+) -> Iterator[dict[str, Any]]:
+    task_ids = [str(task["id"]) for task in catalog["tasks"]]
+    config = _runtime_protocol_config()
+    try:
+        with module.tasks_runtime_admission_guard(
+            config,
+            task_ids,
+            strict=True,
+            shared=shared,
+            nonblocking=True,
+        ) as admission:
+            if not isinstance(admission, dict):
+                raise DispatchError("runtime admission guard returned no exact decision")
+            if (
+                admission.get("allowed") is not True
+                or admission.get("strict") is not True
+                or admission.get("shared") is not shared
+                or admission.get("protocol_id")
+                != catalog["dispatch_prerequisite"]["protocol"]["protocol_id"]
+                or admission.get("task_ids") != task_ids
+                or not isinstance(admission.get("snapshot_sha256"), str)
+                or len(str(admission.get("snapshot_sha256"))) != 64
+            ):
+                reason = admission.get("reason") or "runtime_admission_not_exact"
+                raise DispatchError(f"runtime admission blocked: {reason}")
+            with module.canonical_task_state_lock_file(
+                STATUS_PATH,
+                shared=shared,
+                nonblocking=True,
+            ):
+                with module.activity_audit_lock_file(
+                    LOG_PATH,
+                    shared=shared,
+                    nonblocking=True,
+                ):
+                    yield admission
+    except DispatchError:
+        raise
+    except (BlockingIOError, TimeoutError) as exc:
+        raise DispatchError("runtime/task/audit lock set is busy") from exc
+    except TypeError as exc:
+        raise DispatchError("runtime lock protocol API signature mismatch") from exc
+    except Exception as exc:
+        raise DispatchError(
+            f"runtime/task/audit lock acquisition failed: {type(exc).__name__}"
+        ) from exc
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -863,185 +1700,216 @@ def enqueue_activity_outbox(
     catalog_digest: str,
 ) -> None:
     pending = state.get("program_activity_outbox")
-    if pending is None:
-        pending = []
-    if not isinstance(pending, list) or any(not isinstance(item, dict) for item in pending):
-        raise DispatchError("program_activity_outbox must be a list of objects")
-    if pending:
+    if pending not in (None, {}, []):
         raise DispatchError("program_activity_outbox must be recovered before enqueue")
     if not entries:
         raise DispatchError("cannot enqueue an empty activity transaction")
+    actor = str(os.environ.get("AI_NAME") or "").strip()
+    # The caller provides only program/catalog bindings; resolve the reviewed
+    # actor policy from the immutable two-fleet contract instead of defaulting.
+    actor_policy = ALLOWED_FLEET_ACTORS
+    if actor not in actor_policy:
+        raise DispatchError("AI_NAME must name an allowed fleet actor before any write")
 
-    cores: list[dict[str, Any]] = []
+    raw_events: list[dict[str, Any]] = []
     for raw_entry in entries:
-        if set(raw_entry) - (ACTIVITY_CORE_FIELDS | {"migration_id"}):
-            raise DispatchError("activity event contains fields outside the bound schema")
+        if not isinstance(raw_entry, dict):
+            raise DispatchError("activity event must be an object")
         event_type = str(raw_entry.get("type") or "")
-        expected_fields = set(ACTIVITY_CORE_FIELDS)
-        if event_type == "dependency_migration":
-            expected_fields.add("migration_id")
+        expected_fields = {
+            "ts",
+            "agent",
+            "type",
+            "task_id",
+            "message",
+        } | ACTIVITY_EVENT_EXTRA_FIELDS.get(event_type, set())
         if set(raw_entry) != expected_fields:
             raise DispatchError(f"{event_type or 'activity'} event schema is incomplete")
         if event_type not in ACTIVITY_EVENT_TYPES:
             raise DispatchError(f"unsupported activity event type: {event_type!r}")
-        if any(
-            not isinstance(raw_entry.get(field), str)
-            or not str(raw_entry.get(field)).strip()
-            for field in expected_fields
-        ):
-            raise DispatchError("activity event string fields must be non-empty")
-        cores.append(deepcopy(raw_entry))
+        if raw_entry.get("agent") != actor:
+            raise DispatchError("activity event actor differs from the admitted AI_NAME")
+        for field in {"ts", "agent", "type", "task_id", "message"}:
+            if not isinstance(raw_entry.get(field), str) or not str(
+                raw_entry.get(field)
+            ).strip():
+                raise DispatchError("activity event core strings must be non-empty")
+        parse_activity_timestamp(raw_entry["ts"])
+        raw_events.append(deepcopy(raw_entry))
 
-    transaction_id = "loop-product-tx-" + canonical_json_sha256(
-        {
-            "activity_schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
-            "program_id": program_id,
-            "catalog_sha256": catalog_digest,
-            "entries": cores,
-        }
-    )
+    created_at = min(str(entry["ts"]) for entry in raw_events)
+    actor_policy_sha256 = canonical_json_sha256(actor_policy)
+    affected_state_projection_sha256 = canonical_json_sha256(raw_events)
+    transaction_seed = {
+        "schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
+        "program_id": program_id,
+        "catalog_sha256": catalog_digest,
+        "actor": actor,
+        "actor_policy_sha256": actor_policy_sha256,
+        "created_at": created_at,
+        "affected_state_projection_sha256": affected_state_projection_sha256,
+        "raw_events": raw_events,
+    }
+    transaction_id = "loop-product-tx-" + canonical_json_sha256(transaction_seed)
     prepared: list[dict[str, Any]] = []
-    for index, core in enumerate(cores):
-        entry = {
-            **core,
-            "activity_schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
-            "activity_transaction_id": transaction_id,
-            "activity_ordinal": index,
-            "activity_event_count": len(cores),
+    for index, raw_event in enumerate(raw_events):
+        event = {
+            **raw_event,
+            "ordinal": index,
+            "event_count": len(raw_events),
             "program_id": program_id,
             "catalog_sha256": catalog_digest,
+            "transaction_id": transaction_id,
         }
-        entry["event_id"] = "loop-product-event-" + canonical_json_sha256(entry)
-        prepared.append(entry)
-    state["program_activity_outbox"] = prepared
-
-
-def _migration_record_by_id(state: dict[str, Any], migration_id: str) -> dict[str, Any] | None:
-    records = state.get("program_catalog_migrations") or []
-    if not isinstance(records, list):
-        return None
-    matches = [
-        record
-        for record in records
-        if isinstance(record, dict) and record.get("id") == migration_id
-    ]
-    return matches[0] if len(matches) == 1 else None
+        event["event_id"] = "loop-product-event-" + canonical_json_sha256(event)
+        prepared.append(event)
+    state["program_activity_outbox"] = {
+        "schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
+        "transaction_id": transaction_id,
+        "program_id": program_id,
+        "catalog_sha256": catalog_digest,
+        "actor": actor,
+        "actor_policy_sha256": actor_policy_sha256,
+        "created_at": created_at,
+        "affected_state_projection_sha256": affected_state_projection_sha256,
+        "events": prepared,
+    }
 
 
 def validate_activity_outbox(
     state: dict[str, Any],
     catalog: dict[str, Any],
     catalog_digest: str,
-) -> list[dict[str, Any]]:
+    *,
+    require_current_catalog: bool,
+) -> dict[str, Any]:
     pending = state.get("program_activity_outbox")
-    if not isinstance(pending, list) or not pending or any(
-        not isinstance(item, dict) for item in pending
-    ):
-        raise DispatchError("program_activity_outbox must be a non-empty list of objects")
-
+    if not isinstance(pending, dict) or set(pending) != ACTIVITY_TRANSACTION_FIELDS:
+        raise DispatchError("program_activity_outbox transaction schema is not exact")
+    if pending.get("schema_version") != ACTIVITY_OUTBOX_SCHEMA_VERSION:
+        raise DispatchError("program_activity_outbox schema version mismatch")
     expected_program = str(catalog["program_id"])
-    catalog_task_ids = {str(task["id"]) for task in catalog["tasks"]}
-    active_by_id = {
-        str(task.get("id")): task
-        for task in state.get("tasks") or []
-        if isinstance(task, dict) and str(task.get("id") or "").strip()
-    }
-    cores: list[dict[str, Any]] = []
-    transaction_ids: set[str] = set()
+    if pending.get("program_id") != expected_program:
+        raise DispatchError("program_activity_outbox program binding mismatch")
+    bound_catalog = pending.get("catalog_sha256")
+    if (
+        not isinstance(bound_catalog, str)
+        or len(bound_catalog) != 64
+        or (require_current_catalog and bound_catalog != catalog_digest)
+    ):
+        raise DispatchError("program_activity_outbox catalog binding mismatch")
+    actor_policy = ALLOWED_FLEET_ACTORS
+    if (
+        pending.get("actor") not in actor_policy
+        or pending.get("actor_policy_sha256") != canonical_json_sha256(actor_policy)
+    ):
+        raise DispatchError("program_activity_outbox actor policy binding mismatch")
+    parse_activity_timestamp(pending.get("created_at"))
+    events = pending.get("events")
+    if not isinstance(events, list) or not events or any(
+        not isinstance(item, dict) for item in events
+    ):
+        raise DispatchError("program_activity_outbox events must be non-empty objects")
+    raw_events: list[dict[str, Any]] = []
     event_ids: set[str] = set()
-    for expected_ordinal, entry in enumerate(pending):
+    for expected_ordinal, entry in enumerate(events):
         event_type = str(entry.get("type") or "")
-        core_fields = set(ACTIVITY_CORE_FIELDS)
-        if event_type == "dependency_migration":
-            core_fields.add("migration_id")
-        if set(entry) != core_fields | ACTIVITY_BINDING_FIELDS:
+        extra_fields = ACTIVITY_EVENT_EXTRA_FIELDS.get(event_type)
+        if extra_fields is None or set(entry) != ACTIVITY_COMMON_EVENT_FIELDS | extra_fields:
             raise DispatchError("program_activity_outbox event schema is not exact")
-        if entry.get("activity_schema_version") != ACTIVITY_OUTBOX_SCHEMA_VERSION:
-            raise DispatchError("program_activity_outbox schema version mismatch")
         if entry.get("program_id") != expected_program:
             raise DispatchError("program_activity_outbox program binding mismatch")
-        if entry.get("catalog_sha256") != catalog_digest:
+        if entry.get("catalog_sha256") != bound_catalog:
             raise DispatchError("program_activity_outbox catalog binding mismatch")
-        if entry.get("activity_ordinal") != expected_ordinal:
+        if entry.get("ordinal") != expected_ordinal:
             raise DispatchError("program_activity_outbox ordinal sequence is invalid")
-        if entry.get("activity_event_count") != len(pending):
+        if entry.get("event_count") != len(events):
             raise DispatchError("program_activity_outbox event count mismatch")
-        transaction_id = entry.get("activity_transaction_id")
+        transaction_id = entry.get("transaction_id")
         event_id = entry.get("event_id")
-        if not isinstance(transaction_id, str) or not transaction_id.strip():
-            raise DispatchError("program_activity_outbox transaction binding is missing")
+        if transaction_id != pending.get("transaction_id"):
+            raise DispatchError("program_activity_outbox transaction binding mismatch")
         if not isinstance(event_id, str) or not event_id.strip() or event_id in event_ids:
             raise DispatchError("program_activity_outbox event_id is missing or duplicated")
-        if event_type not in ACTIVITY_EVENT_TYPES:
-            raise DispatchError("program_activity_outbox event type is unsupported")
-        if any(
-            not isinstance(entry.get(field), str) or not str(entry.get(field)).strip()
-            for field in core_fields
-        ):
+        if any(not isinstance(entry.get(field), str) or not str(entry.get(field)).strip()
+               for field in {"ts", "agent", "type", "task_id", "message"}):
             raise DispatchError("program_activity_outbox core strings must be non-empty")
         parse_activity_timestamp(entry["ts"])
-        if entry["agent"] not in set(catalog.get("allowed_owners") or []):
+        if entry["agent"] != pending.get("actor"):
             raise DispatchError("program_activity_outbox agent binding is invalid")
-        task_id = str(entry["task_id"])
-        if task_id not in catalog_task_ids or task_id not in active_by_id:
-            raise DispatchError("program_activity_outbox task binding is not live")
-
-        live_task = active_by_id[task_id]
         if event_type == "assign":
-            source_ref = live_task.get("source_ref") or {}
-            authority_digest = execution_authority_sha256(catalog)
             expected_message = (
-                f"Assigned {task_id} to {live_task.get('owner')} "
-                f"with reviewer {live_task.get('reviewer')} from {expected_program}"
+                f"Assigned {entry['task_id']} to {entry['assigned_owner']} "
+                f"with reviewer {entry['assigned_reviewer']} from {expected_program}"
             )
             if (
-                source_ref.get("program_id") != expected_program
-                or source_ref.get("catalog_sha256") != catalog_digest
-                or source_ref.get("execution_authority_sha256")
-                != authority_digest
-                or live_task.get("auto_created_by") != AUTO_BY
-                or entry.get("ts") != live_task.get("created_at")
+                entry.get("ts") != entry.get("created_at")
                 or entry.get("message") != expected_message
             ):
                 raise DispatchError("assignment activity is not bound to its live task")
-        else:
-            migration_id = str(entry["migration_id"])
-            record = _migration_record_by_id(state, migration_id)
-            patches = (record or {}).get("patches") or []
-            patch_ids = {
-                str(patch.get("task_id"))
-                for patch in patches
-                if isinstance(patch, dict)
-            }
-            if (
-                record is None
-                or task_id not in patch_ids
-                or entry.get("ts") != record.get("applied_at")
-                or entry.get("message")
-                != f"Applied {migration_id} exact dependency migration to {task_id}"
+            for digest_field in ("task_contract_sha256", "source_ref_sha256"):
+                if len(str(entry.get(digest_field) or "")) != 64:
+                    raise DispatchError("assignment immutable digest binding is invalid")
+            if entry.get("created_at") != entry.get("ts"):
+                raise DispatchError("assignment created-at binding mismatch")
+        elif event_type == "catalog_migration":
+            expected_message = (
+                f"Applied {entry['migration_id']} exact catalog migration to "
+                f"{entry['task_id']}"
+            )
+            if entry.get("message") != expected_message or any(
+                len(str(entry.get(field) or "")) != 64
+                for field in (
+                    "migration_record_sha256",
+                    "before_task_contract_sha256",
+                    "after_task_contract_sha256",
+                )
             ):
-                raise DispatchError("migration activity is not bound to its audit record")
+                raise DispatchError("migration immutable event binding is invalid")
+        else:
+            if entry.get("message") != (
+                "Installed exact catalog-bound completion authority overlay"
+            ) or any(
+                len(str(entry.get(field) or "")) != 64
+                for field in (
+                    "completion_authority_sha256",
+                    "completion_overlay_sha256",
+                )
+            ):
+                raise DispatchError("completion overlay event binding is invalid")
 
-        core = {field: deepcopy(entry[field]) for field in core_fields}
-        cores.append(core)
-        transaction_ids.add(transaction_id)
+        raw_event = {
+            key: deepcopy(value)
+            for key, value in entry.items()
+            if key not in ACTIVITY_COMMON_EVENT_FIELDS
+            or key in {"ts", "agent", "type", "task_id", "message"}
+        }
+        raw_events.append(raw_event)
         event_ids.add(event_id)
         expected_event = {key: deepcopy(value) for key, value in entry.items() if key != "event_id"}
         expected_event_id = "loop-product-event-" + canonical_json_sha256(expected_event)
         if event_id != expected_event_id:
             raise DispatchError("program_activity_outbox event_id binding mismatch")
-
-    if len(transaction_ids) != 1:
-        raise DispatchError("program_activity_outbox mixes transactions")
+    if pending.get("affected_state_projection_sha256") != canonical_json_sha256(
+        raw_events
+    ):
+        raise DispatchError("program_activity_outbox affected-state binding mismatch")
+    transaction_seed = {
+        "schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
+        "program_id": expected_program,
+        "catalog_sha256": bound_catalog,
+        "actor": pending["actor"],
+        "actor_policy_sha256": pending["actor_policy_sha256"],
+        "created_at": pending["created_at"],
+        "affected_state_projection_sha256": pending[
+            "affected_state_projection_sha256"
+        ],
+        "raw_events": raw_events,
+    }
     expected_transaction_id = "loop-product-tx-" + canonical_json_sha256(
-        {
-            "activity_schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
-            "program_id": expected_program,
-            "catalog_sha256": catalog_digest,
-            "entries": cores,
-        }
+        transaction_seed
     )
-    if transaction_ids != {expected_transaction_id}:
+    if pending.get("transaction_id") != expected_transaction_id:
         raise DispatchError("program_activity_outbox transaction digest mismatch")
     return pending
 
@@ -1052,20 +1920,44 @@ def flush_activity_outbox(
     catalog_digest: str,
 ) -> bool:
     pending = state.get("program_activity_outbox")
-    if pending in (None, []):
+    if pending in (None, {}, []):
         return False
-    pending = validate_activity_outbox(state, catalog, catalog_digest)
-    earliest_event = min(parse_activity_timestamp(entry["ts"]) for entry in pending)
-    existing = activity_event_ids(since=earliest_event)
-    append_logs(
-        [entry for entry in pending if str(entry["event_id"]) not in existing]
+    pending = validate_activity_outbox(
+        state,
+        catalog,
+        catalog_digest,
+        require_current_catalog=False,
     )
+    events = pending["events"]
+    earliest_event = min(parse_activity_timestamp(entry["ts"]) for entry in events)
+    existing = activity_event_ids(since=earliest_event)
+    appended_count = 0
+    fail_after = str(
+        os.environ.get("LOOP_PRODUCT_DISPATCH_FAIL_AFTER_ACTIVITY_EVENT") or ""
+    ).strip()
+    fail_after_count = int(fail_after) if fail_after.isdigit() else 0
+    for entry in events:
+        if str(entry["event_id"]) in existing:
+            continue
+        append_logs([entry])
+        appended_count += 1
+        if fail_after_count and appended_count == fail_after_count:
+            raise DispatchError(
+                "injected failure during activity append; exact outbox remains pending"
+            )
     if os.environ.get("LOOP_PRODUCT_DISPATCH_FAIL_AFTER_ACTIVITY_APPEND") == "1":
         raise DispatchError(
             "injected failure after activity append; status outbox remains pending"
         )
-    state["program_activity_outbox"] = []
-    atomic_write_json(STATUS_PATH, state)
+    current = read_json(STATUS_PATH)
+    if current.get("program_activity_outbox") != pending:
+        raise DispatchError(
+            "status outbox changed before clear; audit appended but no stale status overwrite"
+        )
+    current["program_activity_outbox"] = None
+    atomic_write_json(STATUS_PATH, current)
+    state.clear()
+    state.update(current)
     return True
 
 
@@ -1078,6 +1970,8 @@ def expected_completion_role(task_id: str, catalog: dict[str, Any]) -> str:
     completion_role = "ordinary"
     if task_id == authority_id:
         completion_role = "final_authority"
+    elif task_id == str(authority.get("guard_install_task_id") or ""):
+        completion_role = "guard_installer"
     elif task_id in checkpoint_ids:
         completion_role = "checkpoint_only"
     return completion_role
@@ -1120,6 +2014,9 @@ def build_task(
                 "catalog_sha256": catalog_digest,
                 "task_contract_sha256": task_contract_sha256(task),
                 "execution_authority_sha256": execution_authority_sha256(catalog),
+                "completion_authority_sha256": completion_authority_sha256(catalog),
+                "auth_lifecycle_sha256": auth_lifecycle_sha256(catalog),
+                "contract_fixtures_sha256": contract_fixtures_sha256(catalog),
                 "program_id": catalog["program_id"],
             },
         }
@@ -1178,6 +2075,11 @@ def validate_additive_collision(
         and source_ref.get("task_contract_sha256") == expected_contract
         and source_ref.get("execution_authority_sha256")
         == execution_authority_sha256(catalog)
+        and source_ref.get("completion_authority_sha256")
+        == completion_authority_sha256(catalog)
+        and source_ref.get("auth_lifecycle_sha256") == auth_lifecycle_sha256(catalog)
+        and source_ref.get("contract_fixtures_sha256")
+        == contract_fixtures_sha256(catalog)
     )
     if not metadata_matches or not source_matches or actual_contract != expected_contract:
         raise DispatchError(
@@ -1199,9 +2101,20 @@ def expected_migration_patches(migration: dict[str, Any]) -> list[dict[str, Any]
         result.append(
             {
                 "task_id": str(patch["task_id"]),
+                "before_task_contract_sha256": str(
+                    patch["before_task_contract_sha256"]
+                ),
+                "after_task_contract_sha256": str(
+                    patch["after_task_contract_sha256"]
+                ),
                 "before_depends_on_sha256": canonical_json_sha256(before),
                 "after_depends_on_sha256": canonical_json_sha256(after),
                 "appended_dependencies": appended,
+                "allowed_contract_field_changes": list(
+                    patch["allowed_contract_field_changes"]
+                ),
+                "before_runtime_fields": deepcopy(patch["before_runtime_fields"]),
+                "after_runtime_fields": deepcopy(patch["set_runtime_fields"]),
             }
         )
     return result
@@ -1216,7 +2129,11 @@ def expected_migration_record(
     return {
         "id": str(migration["id"]),
         "program_id": str(catalog["program_id"]),
+        "from_catalog_git_commit": str(migration["from_catalog_git_commit"]),
+        "from_catalog_path": str(migration["from_catalog_path"]),
         "from_catalog_sha256": str(migration["from_catalog_sha256"]),
+        "preimage_fixture": str(migration["preimage_fixture"]),
+        "preimage_fixture_sha256": str(migration["preimage_fixture_sha256"]),
         "to_catalog_sha256": catalog_digest,
         "applied_at": applied_at,
         "patches": expected_migration_patches(migration),
@@ -1285,7 +2202,8 @@ def apply_catalog_migrations(
         for task in active_tasks
         if isinstance(task, dict) and str(task.get("id") or "").strip()
     }
-    has_program_tasks = any(task_id.startswith("LOOP-PROD-") for task_id in active_by_id)
+    catalog_by_id = {str(task["id"]): task for task in catalog.get("tasks") or []}
+    has_program_tasks = any(task_id in catalog_by_id for task_id in active_by_id)
     records = state.get("program_catalog_migrations")
     if records is None:
         records = []
@@ -1294,6 +2212,18 @@ def apply_catalog_migrations(
     migrated: list[str] = []
     logs: list[dict[str, Any]] = []
     pending_records: list[dict[str, Any]] = []
+    fixture = validate_preimage_fixture(migrations[0])
+    historical_source_ref = fixture["historical_source_ref"]
+    historical_metadata = fixture["historical_dispatcher_metadata"]
+
+    def runtime_fields_match(task: dict[str, Any], specification: dict[str, Any]) -> bool:
+        for field, expected in specification.items():
+            if expected == {"presence": "absent"}:
+                if field in task:
+                    return False
+            elif task.get(field) != expected:
+                return False
+        return True
 
     for migration in migrations:
         migration_id = str(migration["id"])
@@ -1314,28 +2244,57 @@ def apply_catalog_migrations(
         for patch in patches:
             task_id = str(patch["task_id"])
             existing = active_by_id[task_id]
-            before = [str(item) for item in patch["before_depends_on"]]
-            after = [*before, *map(str, patch["append_dependencies"])]
-            current = existing.get("depends_on")
-            if current == after:
+            contract_digest = task_contract_sha256(existing)
+            if (
+                contract_digest == patch["after_task_contract_sha256"]
+                and runtime_fields_match(existing, patch["set_runtime_fields"])
+            ):
                 modes.append("after")
                 continue
-            if current != before:
+            if (
+                contract_digest != patch["before_task_contract_sha256"]
+                or not runtime_fields_match(existing, patch["before_runtime_fields"])
+            ):
                 raise DispatchError(
-                    f"{migration_id} {task_id} dependency preimage changed; no write performed"
+                    f"{migration_id} {task_id} full immutable preimage changed; no write performed"
                 )
             source_ref = existing.get("source_ref")
             if not isinstance(source_ref, dict):
                 raise DispatchError(f"{migration_id} {task_id} has no source_ref")
-            if source_ref.get("program_id") != catalog["program_id"]:
-                raise DispatchError(f"{migration_id} {task_id} belongs to another program")
-            if source_ref.get("catalog_sha256") != migration["from_catalog_sha256"]:
+            metadata_projection = {
+                field: existing.get(field)
+                for field in historical_metadata["value"]
+            }
+            if (
+                canonical_json_sha256(source_ref) != historical_source_ref["sha256"]
+                or source_ref != historical_source_ref["value"]
+                or canonical_json_sha256(metadata_projection)
+                != historical_metadata["sha256"]
+                or metadata_projection != historical_metadata["value"]
+            ):
                 raise DispatchError(
-                    f"{migration_id} {task_id} catalog preimage digest changed"
+                    f"{migration_id} {task_id} historical provenance preimage changed"
                 )
             if existing.get("status") != "todo" or _has_live_admission(existing):
                 raise DispatchError(
                     f"{migration_id} {task_id} is no longer pristine todo; no write performed"
+                )
+            expected_live_fields = (
+                set(REQUIRED_TASK_FIELDS)
+                | set(historical_metadata["value"])
+                | {"created_at", "last_update", "source_ref"}
+            )
+            if set(existing) != expected_live_fields:
+                raise DispatchError(
+                    f"{migration_id} {task_id} historical live-task schema changed"
+                )
+            if any(
+                not isinstance(existing.get(field), str)
+                or not str(existing.get(field)).strip()
+                for field in EXPECTED_PREIMAGE_MUTABLE_LIVE_FIELDS
+            ):
+                raise DispatchError(
+                    f"{migration_id} {task_id} mutable live preimage fields are invalid"
                 )
             modes.append("before")
 
@@ -1346,9 +2305,6 @@ def apply_catalog_migrations(
         if modes[0] == "after":
             record = record_by_id.get(migration_id)
             if record is None:
-                catalog_by_id = {
-                    str(task["id"]): task for task in catalog.get("tasks") or []
-                }
                 direct_current_catalog = True
                 for patch in patches:
                     task_id = str(patch["task_id"])
@@ -1366,6 +2322,12 @@ def apply_catalog_migrations(
                         and source_ref.get("program_id") == catalog["program_id"]
                         and source_ref.get("catalog_sha256") == catalog_digest
                         and source_ref.get("task_contract_sha256") == expected_contract
+                        and source_ref.get("completion_authority_sha256")
+                        == completion_authority_sha256(catalog)
+                        and source_ref.get("auth_lifecycle_sha256")
+                        == auth_lifecycle_sha256(catalog)
+                        and source_ref.get("contract_fixtures_sha256")
+                        == contract_fixtures_sha256(catalog)
                         and task_contract_sha256(existing) == expected_contract
                     )
                 if not direct_current_catalog:
@@ -1381,35 +2343,175 @@ def apply_catalog_migrations(
 
         for patch in patches:
             task_id = str(patch["task_id"])
-            active_by_id[task_id]["depends_on"] = [
-                *map(str, patch["before_depends_on"]),
-                *map(str, patch["append_dependencies"]),
-            ]
+            expected_task = catalog_by_id[task_id]
+            for field in TASK_CONTRACT_FIELDS:
+                active_by_id[task_id][field] = deepcopy(expected_task.get(field))
+            for field, value in patch["set_runtime_fields"].items():
+                active_by_id[task_id][field] = deepcopy(value)
             migrated.append(task_id)
+        record = expected_migration_record(
+            migration,
+            catalog,
+            catalog_digest,
+            timestamp,
+        )
+        record_digest = canonical_json_sha256(record)
+        pending_records.append(record)
+        for patch in patches:
+            task_id = str(patch["task_id"])
             logs.append(
                 {
                     "ts": timestamp,
-                    "agent": os.environ.get("AI_NAME", "Codex"),
-                    "type": "dependency_migration",
+                    "agent": str(os.environ.get("AI_NAME") or ""),
+                    "type": "catalog_migration",
                     "task_id": task_id,
                     "migration_id": migration_id,
-                    "message": f"Applied {migration_id} exact dependency migration to {task_id}",
+                    "migration_record_sha256": record_digest,
+                    "before_task_contract_sha256": str(
+                        patch["before_task_contract_sha256"]
+                    ),
+                    "after_task_contract_sha256": str(
+                        patch["after_task_contract_sha256"]
+                    ),
+                    "message": (
+                        f"Applied {migration_id} exact catalog migration to {task_id}"
+                    ),
                 }
             )
-        pending_records.append(
-            expected_migration_record(
-                migration,
-                catalog,
-                catalog_digest,
-                timestamp,
-            )
-        )
 
     if not migrated:
         return [], [], False
     state["program_catalog_migrations"] = [*records, *pending_records]
     state["updated_at"] = timestamp
     return migrated, logs, True
+
+
+def expected_completion_overlay(
+    catalog: dict[str, Any],
+    catalog_digest: str,
+) -> dict[str, Any]:
+    roles = deepcopy(catalog["completion_authority"]["live_overlay_roles"])
+    catalog_by_id = {str(task["id"]): task for task in catalog["tasks"]}
+    return {
+        "schema_version": 1,
+        "program_id": str(catalog["program_id"]),
+        "catalog_sha256": catalog_digest,
+        "completion_authority_sha256": completion_authority_sha256(catalog),
+        "roles": roles,
+        "required_human_ops_signoff_task_ids": list(
+            catalog["completion_authority"]["required_human_ops_signoff_task_ids"]
+        ),
+        "task_contract_sha256_by_role": {
+            task_id: task_contract_sha256(catalog_by_id[task_id])
+            for task_id in roles
+        },
+        "contract_fixtures_sha256": contract_fixtures_sha256(catalog),
+        "checkpoint_consumption_required": True,
+        "checkpoint_consumption_record_contract_sha256": canonical_json_sha256(
+            catalog["completion_authority"]["checkpoint_consumption_record_contract"]
+        ),
+    }
+
+
+def ensure_completion_overlay(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+    timestamp: str,
+) -> tuple[list[dict[str, Any]], bool]:
+    key = str(catalog["completion_authority"]["live_overlay_state_key"])
+    overlays = state.get(key)
+    if overlays is None:
+        overlays = {}
+    if not isinstance(overlays, dict):
+        raise DispatchError("program completion authority overlays must be an object")
+    program_id = str(catalog["program_id"])
+    expected = expected_completion_overlay(catalog, catalog_digest)
+    existing = overlays.get(program_id)
+    if existing is not None:
+        if existing != expected:
+            raise DispatchError("foreign or tampered program completion overlay")
+        return [], False
+
+    active_by_id = {
+        str(task.get("id")): task
+        for task in state.get("tasks") or []
+        if isinstance(task, dict) and str(task.get("id") or "").strip()
+    }
+    for task_id, role in expected["roles"].items():
+        task = active_by_id.get(task_id)
+        if task is not None and task.get("completion_role") not in (None, role):
+            raise DispatchError(
+                f"task-local completion role conflicts with overlay: {task_id}"
+            )
+    overlays[program_id] = expected
+    state[key] = overlays
+    state["updated_at"] = timestamp
+    overlay_digest = canonical_json_sha256(expected)
+    return [
+        {
+            "ts": timestamp,
+            "agent": str(os.environ.get("AI_NAME") or ""),
+            "type": "completion_authority_install",
+            "task_id": "LOOP-PROD-SIGNOFF-001",
+            "completion_authority_sha256": completion_authority_sha256(catalog),
+            "completion_overlay_sha256": overlay_digest,
+            "message": "Installed exact catalog-bound completion authority overlay",
+        }
+    ], True
+
+
+def validate_checkpoint_consumptions(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+) -> None:
+    """Validate a protected consumption record separately from the immutable overlay."""
+
+    state_key = str(catalog["completion_authority"]["checkpoint_consumption_state_key"])
+    records = state.get(state_key)
+    if records in (None, {}):
+        if state.get("program_completed") is True:
+            raise DispatchError("program completion is missing its protected checkpoint consumption")
+        return
+    if not isinstance(records, dict) or set(records) != {str(catalog["program_id"])}:
+        raise DispatchError("program checkpoint consumption state is not exact")
+    record = records[str(catalog["program_id"])]
+    contract = catalog["completion_authority"]["checkpoint_consumption_record_contract"]
+    required = set(contract["required_binding_fields"])
+    if not isinstance(record, dict) or set(record) != required:
+        raise DispatchError("program checkpoint consumption record schema is not exact")
+    expected = expected_completion_overlay(catalog, catalog_digest)
+    fixed = {
+        "program_id": str(catalog["program_id"]),
+        "catalog_sha256": catalog_digest,
+        "completion_authority_sha256": completion_authority_sha256(catalog),
+        "completion_overlay_sha256": canonical_json_sha256(expected),
+        "checkpoint_task_id": contract["checkpoint_task_id"],
+        "guard_task_id": contract["guard_task_id"],
+        "consumer_task_id": contract["consumer_task_id"],
+        "checkpoint_task_contract_sha256": expected["task_contract_sha256_by_role"][contract["checkpoint_task_id"]],
+        "consumer_task_contract_sha256": expected["task_contract_sha256_by_role"][contract["consumer_task_id"]],
+    }
+    for field, value in fixed.items():
+        if record.get(field) != value:
+            raise DispatchError(f"program checkpoint consumption binding mismatch: {field}")
+    if record.get("actor_role") not in {"human_ops", "ops"}:
+        raise DispatchError("program checkpoint consumption requires protected Human/Ops actor role")
+    for field in (
+        "checkpoint_evidence_manifest_sha256",
+        "checkpoint_verdict_sha256",
+        "guard_activation_sha256",
+        "final_verdict_sha256",
+    ):
+        value = record.get(field)
+        if not isinstance(value, str) or len(value) != 64 or any(
+            character not in "0123456789abcdef" for character in value
+        ):
+            raise DispatchError(f"program checkpoint consumption digest is invalid: {field}")
+    for field in ("actor_id", "consumed_at", "nonce"):
+        if not isinstance(record.get(field), str) or not record[field].strip():
+            raise DispatchError(f"program checkpoint consumption field is invalid: {field}")
 
 
 def materialize(
@@ -1473,9 +2575,16 @@ def materialize(
         logs.append(
             {
                 "ts": timestamp,
-                "agent": os.environ.get("AI_NAME", "Codex"),
+                "agent": str(os.environ.get("AI_NAME") or ""),
                 "type": "assign",
                 "task_id": task_id,
+                "assigned_owner": str(materialized["owner"]),
+                "assigned_reviewer": str(materialized["reviewer"]),
+                "task_contract_sha256": task_contract_sha256(task),
+                "source_ref_sha256": canonical_json_sha256(
+                    materialized["source_ref"]
+                ),
+                "created_at": timestamp,
                 "message": (
                     f"Assigned {task_id} to {materialized['owner']} "
                     f"with reviewer {materialized['reviewer']} from {catalog['program_id']}"
@@ -1491,7 +2600,7 @@ def materialize(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group()
+    mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
         "--validate-only",
         action="store_true",
@@ -1500,7 +2609,15 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument(
         "--dry-run",
         action="store_true",
-        help="Validate live dependencies and print the dispatch without writing state.",
+        help=(
+            "Acquire the shared read protocol, validate live dependencies, outbox, "
+            "and proposed transaction, and print without writing."
+        ),
+    )
+    mode.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the guarded transaction after bootstrap and authoritative dry-run.",
     )
     return parser.parse_args()
 
@@ -1544,72 +2661,104 @@ def main() -> int:
         return 0
     if not STATUS_PATH.is_file():
         raise DispatchError(f"status file not found: {STATUS_PATH}")
-
-    with STATUS_PATH.open("r+", encoding="utf-8") as status_handle:
-        try:
-            fcntl.flock(status_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise DispatchError(
-                "another loop-product dispatcher holds the status lock"
-            ) from exc
-
+    actor = str(os.environ.get("AI_NAME") or "").strip()
+    if actor not in set(catalog.get("allowed_owners") or []):
+        raise DispatchError(
+            "AI_NAME must name an allowed fleet actor for authoritative dry-run or apply"
+        )
+    protocol_module = load_runtime_lock_protocol(catalog)
+    with shared_dispatch_locks(
+        protocol_module,
+        catalog,
+        shared=bool(args.dry_run),
+    ):
         original_signature = file_signature(STATUS_PATH)
-        status_handle.seek(0)
-        try:
-            state = json.load(status_handle)
-        except json.JSONDecodeError as exc:
-            raise DispatchError(f"invalid JSON in {STATUS_PATH}: {exc}") from exc
-        if not isinstance(state, dict):
-            raise DispatchError("ai-status.json must contain an object")
+        state = read_json(STATUS_PATH)
+        pending = state.get("program_activity_outbox")
+        if pending not in (None, {}, []):
+            validated_pending = validate_activity_outbox(
+                state,
+                catalog,
+                catalog_digest,
+                require_current_catalog=False,
+            )
+            earliest = min(
+                parse_activity_timestamp(event["ts"])
+                for event in validated_pending["events"]
+            )
+            activity_event_ids(since=earliest)
+            if args.apply and flush_activity_outbox(
+                state,
+                catalog,
+                catalog_digest,
+            ):
+                print("Recovered pending activity audit outbox.")
+                original_signature = file_signature(STATUS_PATH)
 
         validate_live_state(state, catalog, tasks)
-        if not args.dry_run and flush_activity_outbox(
-            state,
-            catalog,
-            catalog_digest,
-        ):
-            print("Recovered pending activity audit outbox.")
-            original_signature = file_signature(STATUS_PATH)
+        validate_checkpoint_consumptions(state, catalog, catalog_digest)
+        validate_new_mutation_allowed(state)
+        proposed = deepcopy(state)
 
         timestamp = iso_now()
         migrated, migration_logs, migration_changed = apply_catalog_migrations(
-            state,
+            proposed,
+            catalog,
+            catalog_digest,
+            timestamp,
+        )
+        overlay_logs, overlay_changed = ensure_completion_overlay(
+            proposed,
             catalog,
             catalog_digest,
             timestamp,
         )
         created, preserved, archived, logs, changed = materialize(
-            state,
+            proposed,
             tasks,
             catalog,
             catalog_digest,
             timestamp,
         )
-        logs = [*migration_logs, *logs]
-        changed = migration_changed or changed
+        logs = [*migration_logs, *overlay_logs, *logs]
+        changed = migration_changed or overlay_changed or changed
         report(created, preserved, archived, migrated, dry_run=args.dry_run)
 
-        if args.dry_run or not changed:
-            if not changed:
-                print("No state changes required.")
+        if not changed:
+            print("No state changes required.")
             return 0
-
-        if file_signature(STATUS_PATH) != original_signature:
-            raise DispatchError(
-                "ai-status.json changed concurrently; no write performed, rerun dispatch"
-            )
         enqueue_activity_outbox(
-            state,
+            proposed,
             logs,
             program_id=str(catalog["program_id"]),
             catalog_digest=catalog_digest,
         )
-        atomic_write_json(STATUS_PATH, state)
+        transaction = validate_activity_outbox(
+            proposed,
+            catalog,
+            catalog_digest,
+            require_current_catalog=True,
+        )
+        activity_event_ids(
+            since=min(
+                parse_activity_timestamp(event["ts"])
+                for event in transaction["events"]
+            )
+        )
+        if file_signature(STATUS_PATH) != original_signature:
+            raise DispatchError(
+                "ai-status.json changed concurrently; no write performed, rerun dispatch"
+            )
+        if args.dry_run:
+            print("Proposed outbox and audit sources validated; zero writes performed.")
+            return 0
+
+        atomic_write_json(STATUS_PATH, proposed)
         if os.environ.get("LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT") == "1":
             raise DispatchError(
                 "injected failure after status commit; activity audit remains in outbox"
             )
-        flush_activity_outbox(state, catalog, catalog_digest)
+        flush_activity_outbox(proposed, catalog, catalog_digest)
         print(f"Updated {STATUS_PATH} atomically.")
         print(
             "Run PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon "

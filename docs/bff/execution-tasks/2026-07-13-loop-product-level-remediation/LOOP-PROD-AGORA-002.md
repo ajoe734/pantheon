@@ -4,6 +4,8 @@ Status: ready for fleet dispatch after the program packet is merged
 
 Canonical catalog: `tasks.json`
 
+Canonical contract SHA-256: `232f29eb1b92fffe6843e3fe1eb5322bce87ed499d6dfb315490bd733ff21240`
+
 Source plan:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md`
 

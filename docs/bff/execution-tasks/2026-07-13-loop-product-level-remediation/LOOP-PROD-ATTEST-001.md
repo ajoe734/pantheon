@@ -4,8 +4,8 @@ Status: ready for fleet dispatch after dependencies are done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `e46fe78933e33193b57ed1b3e5067c5a7e75ed559adf12a3d30549cdad569930`
-The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
+Canonical contract SHA-256: `d17e65a3e3930f1f69d68ce7e8e2e6eea2ae2589add3808333e04bf4cb2d9017`
+The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
 Source addendum:
@@ -53,6 +53,11 @@ FE/BFF SHA、run/job、target、lease、artifact digest 與 verification policy�
 ## Acceptance
 
 - protected controller derives assertions from immutable raw artifacts, canonicalizes the manifest, and authenticates it with an asymmetric signature or platform-protected keyed identity unavailable to candidate processes
+- the attestation signer is cryptographically and operationally separate from
+  dev-auth signing keys, dev-login secrets, browser session keys, and bootstrap
+  credentials
+- the manifest binds the exact lease and provisional bootstrap-record digest,
+  but cannot recursively prove or authorize AUTH-BOOT
 - unkeyed checksums are content-integrity digests inside the authenticated envelope and are never accepted as provenance or authorization
 - manifest binds repository, exact candidate/base/deployed SHAs, run/job/attempt, target, lease, policy version, artifact digests, timestamps, and expiry
 - candidate-controlled fields cannot override verdict, expected counts, policy, signer, or protected provenance
@@ -64,6 +69,7 @@ FE/BFF SHA、run/job、target、lease、artifact digest 與 verification policy�
 
 ## Required proof
 
+- signer-separation and non-recursive bootstrap-lineage evidence
 - schema and canonicalization vectors
 - tamper/replay/omission/rotation negative suite
 - protected workflow and lease binding evidence

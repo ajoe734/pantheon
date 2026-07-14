@@ -736,10 +736,11 @@ planning baseline for active execution, not a completion declaration.
 ## 14. Additive Closeout Authority
 
 The execution-time audit linked above found safety and evidence gaps that were
-not represented by the original 36-task DAG. The additive packet raises the
-catalog to 48 tasks. It preserves existing record fields while applying two
-versioned, exact-preimage dependency patches to pristine baseline `todo` tasks
-in the same atomic write that creates the twelve additive tasks. The
+not represented by the original 36-task DAG. The additive packet contains 48
+primary tasks plus one external runtime-lock bootstrap (49 execution tasks
+total). It preserves non-migration record fields while applying three
+versioned, exact-preimage v5 patches to pristine baseline `todo` tasks in the
+same atomic write that creates the twelve primary additive tasks. The
 non-pristine live `LOOP-PROD-AUTH-001` record is not mutated;
 `LOOP-PROD-BROWSER-AUTH-001`
 depends on auth bootstrap, BFF auth, credential-free FE, credential lifecycle,
@@ -747,7 +748,9 @@ delivery provenance, and the environment lease, and is the sole coordinated
 browser activation authority. `LOOP-PROD-DELIVERY-001` enforces that the
 planner plans, dispatches, monitors, and reviews while supervisor-admitted
 fleets implement and a distinct admitted runtime identity formally reviews
-product artifacts.
+product artifacts. Live dry-run/apply remains blocked until the external
+`LOOP-PROD-RUNTIME-BOOT-001` capability and full task contract are merged and
+read back.
 `LOOP-PROD-CLOSE-001` is retained as the original baseline checkpoint;
 `LOOP-PROD-SIGNOFF-001` installs protected Human/Ops transition enforcement;
 `LOOP-PROD-CLOSE-002` is the sole final completion authority for this program.

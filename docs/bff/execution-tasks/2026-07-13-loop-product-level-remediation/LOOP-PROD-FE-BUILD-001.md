@@ -4,7 +4,7 @@ Status: ready for fleet dispatch after dependencies are done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `17fd1ae20159229715f2f5b3d036fe0648e0c9a07489cc61268227f73d513d50`
+Canonical contract SHA-256: `ea480267855198ff315410ef27ef352294b233b11637915b68e7206c1078d688`
 The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
 the prose sections below are explanatory renderings.
 

@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "fixture_set_id": "loop-product-runtime-lock-bootstrap-task-v1",
+  "task_contract_algorithm": "sha256(json-sort-keys-compact projection excluding owner reviewer status next)",
+  "task": {
+    "id": "LOOP-PROD-RUNTIME-BOOT-001",
+    "title": "Shared runtime/task/audit lock protocol bootstrap",
+    "summary_zh": "在 48 個 primary task materialization 前，讓 runtime admission、canonical task state 與 activity audit 的所有 writer 共用穩定 inode lock，並以 process/crash/recovery evidence 證明可安全 dry-run/apply。",
+    "phase": "Pre-dispatch bootstrap / Wave -1",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "todo",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/runtime_state.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/common.py",
+      ".orchestrator/approval_queue.py",
+      ".orchestrator/adapters/file_inbox.py",
+      ".orchestrator/watch_events.py",
+      ".orchestrator/supervisor_watchdog.py",
+      "scripts/ai_status.py",
+      "scripts/dispatch_loop_product_level_remediation_2026-07-13.py",
+      ".orchestrator/runtime-task-audit-lock-capability.json",
+      ".orchestrator/test_runtime_state.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/fleet-runtime-lock-protocol.md",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001"
+    ],
+    "acceptance": [
+      "exports exact protocol version 1 and rejects missing, partial, older, newer, or writer-digest-mismatched capability",
+      "acquires runtime admission, canonical task state, and activity audit locks in that exact order using never-replaced stable inodes",
+      "serializes every runtime queue/event, worker admission, approval, supervisor status, archive, audit append, scan, rotation, prune, replay, and outbox recovery writer",
+      "fails closed on missing, empty, malformed, unreadable, default-substituted, busy, queued, running, admitted, approval-suspended, duplicate, empty, or foreign task/runtime state",
+      "process-level inode-replace, contention, crash, kill, restart, concurrent writer, rotation, and outbox recovery tests preserve newest truth with no lost or duplicated events",
+      "exact merged bootstrap SHA passes a canonical strict live dry-run with zero writes before primary materialization is authorized"
+    ],
+    "next": "Admit a fleet worker to install and prove the shared runtime/task/audit lock protocol.",
+    "wave": -1,
+    "fleet_lane": "runtime-task-audit-lock-bootstrap",
+    "target_repo": "pantheon",
+    "merge_target": "dev",
+    "loop_ids": ["bff_health_monitoring"],
+    "current_maturity": "status-inode-local serialization with unverified runtime writers",
+    "target_maturity": "product-level",
+    "desired_state_sources": [
+      "runtime lock capability manifest",
+      "supervisor/runtime writer registry",
+      "canonical task state and activity audit protocol"
+    ],
+    "actual_state_sources": [
+      ".orchestrator/state.json",
+      ".orchestrator/event-queue.jsonl",
+      ".orchestrator/approval-queue.json",
+      "ai-status.json",
+      "ai-activity-log.jsonl",
+      "process-level lock and crash evidence"
+    ],
+    "proof_required": [
+      "exact admitted task/run/provider/slot/worktree/scope/branch, PR, checks, merge SHA, and distinct-runtime review",
+      "lock-order and stable-inode contention evidence",
+      "malformed/missing/runtime-busy matrix with no-write hashes",
+      "concurrent writer, rotation, crash, restart, and outbox recovery matrix",
+      "canonical live dry-run before/after hashes bound to the merged bootstrap SHA",
+      "redacted checksummed evidence manifest and residual-risk verdict"
+    ],
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No planner-authored product implementation",
+      "No live-capital or live-broker side effect"
+    ],
+    "dispatch_rules": [
+      "start only as an external pre-dispatch prerequisite; do not run the primary dispatcher to bootstrap this task",
+      "implementation may be performed only by a supervisor-admitted fleet worker in a clean task worktree",
+      "owner and reviewer must be distinct admitted fleet runtime identities",
+      "the planner may author and validate this contract but may not edit any declared product artifact",
+      "missing or contradicted runtime evidence leaves the 48-task primary catalog blocked"
+    ],
+    "product_level_required": true,
+    "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/",
+    "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-BOOT-001.md",
+    "requires_human_ops_signoff": true
+  },
+  "task_contract_sha256": "ba34ce0a5ed90ac21c63d8d89e345550cae565a33e4a9d083883daa36e2e48fd"
+}
