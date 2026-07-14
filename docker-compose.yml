@@ -139,18 +139,22 @@ services:
       SOURCE_INGEST_DATA_DIR: /data/source-ingest
       SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
+      SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
+      SOURCE_INGEST_REQUIREMENT_STATE_PATH: /data/source-ingest/requirement_snapshots.jsonl
+      SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
       SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
       SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
       SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS: ${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}
       SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS: ${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}
+      SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS: ${SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS:-300}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
-      # Dev rollback defaults to JSONL; staging/prod select postgres via env.
-      SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-jsonl}
+      # Product-level default is transactional Postgres; JSONL remains an explicit local rollback mode.
+      SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}
       SOURCE_INGEST_EVIDENCE_DSN: ${SOURCE_INGEST_EVIDENCE_DSN:-}
       # Notify search service after completed ingest runs (event-driven refresh/materialization truth).
       SEARCH_INGEST_NOTIFY_URL: ${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}
@@ -172,32 +176,59 @@ services:
       retries: 10
       start_period: 5s
 
-  source-ingest-scheduler:
-    profiles: ["source-ingest-scheduler"]
+  source-ingest-controller-migrate:
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
-    command: ["python", "-m", "services.source_ingestion.scheduler_worker"]
+    command: ["bash", "scripts/db_migrate.sh"]
+    restart: "no"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Keep the legacy service key so non-prod upgrades replace the prior
+  # scheduler container instead of leaving a second ticking orphan behind.
+  source-ingest-scheduler:
+    build:
+      context: .
+      dockerfile: services/source_ingestion/Dockerfile
+    command: ["python", "-m", "services.source_ingestion.controller_worker"]
     restart: unless-stopped
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
-      SOURCE_INGEST_SCHEDULER_INTERVAL_SECONDS: ${SOURCE_INGEST_SCHEDULER_INTERVAL_SECONDS:-60}
+      SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
+      SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
+      SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS: ${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}
+      SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
+      SOURCE_INGEST_CONTROLLER_ALIVE_PATH: /data/source-ingest/controller_alive
+      SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
+      SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL: reconciled_live_proof
       SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
-      SOURCE_INGEST_SCHEDULER_MAX_TICKS: ${SOURCE_INGEST_SCHEDULER_MAX_TICKS:-0}
-      SOURCE_INGEST_SCHEDULER_STATE_PATH: /data/source-ingest/scheduler_state.json
-      SOURCE_INGEST_SCHEDULER_ALIVE_PATH: /data/source-ingest/scheduler_alive
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_LOOP_ID: source-ingestion
+      PANTHEON_CONTROLLER_NAME: source-ingestion-controller
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-local-dev}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-}
+      BUILD_TIME: ${BUILD_TIME:-}
     volumes:
       - source-ingest-data:/data/source-ingest
     depends_on:
       source-ingest:
         condition: service_healthy
+      source-ingest-controller-migrate:
+        condition: service_completed_successfully
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, sys, time; s=os.stat('/data/source-ingest/scheduler_alive'); sys.exit(0 if time.time()-s.st_mtime < 300 else 1)\"",
+          "python -m services.source_ingestion.controller_healthcheck",
         ]
-      interval: 60s
+      interval: 30s
       timeout: 5s
       retries: 3
       start_period: 90s
@@ -223,10 +254,10 @@ services:
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
-      # Dev rollback defaults to JSONL; staging/prod select postgres via env.
+      # Read the source owner's transactional evidence table by default.
       SEARCH_INDEX_STORE_BACKEND: ${SEARCH_INDEX_STORE_BACKEND:-jsonl}
       SEARCH_INDEX_STORE_DSN: ${SEARCH_INDEX_STORE_DSN:-}
-      SEARCH_EVIDENCE_BACKEND: ${SEARCH_EVIDENCE_BACKEND:-jsonl}
+      SEARCH_EVIDENCE_BACKEND: ${SEARCH_EVIDENCE_BACKEND:-postgres}
       SEARCH_EVIDENCE_DSN: ${SEARCH_EVIDENCE_DSN:-}
     volumes:
       - search-data:/data/search
@@ -1342,6 +1373,29 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+
+  evolution-dispatch-worker:
+    build:
+      context: .
+      dockerfile: services/evolution/Dockerfile
+    command: ["python", "-m", "services.evolution.dispatch_worker"]
+    restart: unless-stopped
+    environment:
+      EVOLUTION_API_URL: http://evolution:8093
+      EVOLUTION_DISPATCH_ACTOR_ID: ${EVOLUTION_DISPATCH_ACTOR_ID:-evolution-dispatch-worker}
+      EVOLUTION_DISPATCH_INTERVAL_SECONDS: ${EVOLUTION_DISPATCH_INTERVAL_SECONDS:-30}
+      EVOLUTION_DISPATCH_MAX_TICKS: ${EVOLUTION_DISPATCH_MAX_TICKS:-0}
+      EVOLUTION_DISPATCH_TIMEOUT_SECONDS: ${EVOLUTION_DISPATCH_TIMEOUT_SECONDS:-10}
+      EVOLUTION_DISPATCH_HEALTH_FILE: ${EVOLUTION_DISPATCH_HEALTH_FILE:-/tmp/evolution-dispatch-health.json}
+    depends_on:
+      evolution:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.evolution.dispatch_worker", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
 
   evolution-daily-sweep-scheduler:
     build:
