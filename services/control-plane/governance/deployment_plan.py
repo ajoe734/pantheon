@@ -69,6 +69,7 @@ class DeploymentStage(str, Enum):
 class TransitionType(str, Enum):
     ACTIVATE = "activate"
     PROMOTE = "promote"
+    REPLACE = "replace"
     ROLLBACK = "rollback"
     FREEZE = "freeze"
     RESUME = "resume"
@@ -259,13 +260,26 @@ class DeploymentPlan:
             errors.append(f"Invalid status: {self.status}")
             plan_status = None
 
-        stages_match = current_stage and target_stage and current_stage == target_stage
-        if stages_match and plan_status != PlanStatus.EXECUTED:
-            errors.append("target_stage must differ from current_stage")
+        stages_match = bool(current_stage and target_stage and current_stage == target_stage)
+        is_same_stage_replace = bool(
+            stages_match
+            and transition_type == TransitionType.REPLACE
+            and runtime_action == RuntimeAction.REPLACE_BINDING
+            and self.binding_id
+        )
+        if stages_match and plan_status != PlanStatus.EXECUTED and not is_same_stage_replace:
+            errors.append(
+                "target_stage must differ from current_stage unless this is a replace "
+                "transition that identifies the current binding_id"
+            )
 
-        if current_stage and target_stage and transition_type and not stages_match:
+        if current_stage and target_stage and transition_type and plan_status != PlanStatus.EXECUTED:
             try:
-                expected_transition = StagePlanner().derive_transition_type(current_stage, target_stage)
+                expected_transition = StagePlanner().derive_transition_type(
+                    current_stage,
+                    target_stage,
+                    replacement=bool(self.binding_id),
+                )
             except DeploymentPlanError as exc:
                 errors.append(str(exc))
                 expected_transition = None
@@ -278,6 +292,7 @@ class DeploymentPlan:
             allowed_actions = {
                 TransitionType.ACTIVATE: {RuntimeAction.DEPLOY_NEW_BINDING},
                 TransitionType.PROMOTE: {RuntimeAction.REPLACE_BINDING},
+                TransitionType.REPLACE: {RuntimeAction.REPLACE_BINDING},
                 TransitionType.ROLLBACK: {
                     RuntimeAction.REPLACE_BINDING,
                     RuntimeAction.PAUSE_THEN_REPLACE,
@@ -305,10 +320,13 @@ class DeploymentPlan:
                 errors.append("rollback.target_artifact_id is required")
             if not self.rollback.target_version:
                 errors.append("rollback.target_version is required")
-            if self.rollback.target_artifact_id == self.artifact_id:
-                errors.append("rollback.target_artifact_id cannot equal artifact_id")
-            if self.rollback.target_version == self.artifact_version:
-                errors.append("rollback.target_version cannot equal artifact_version")
+            if (
+                self.rollback.target_artifact_id == self.artifact_id
+                and self.rollback.target_version == self.artifact_version
+            ):
+                errors.append(
+                    "rollback target artifact_id/version cannot equal the forward artifact_id/version"
+                )
             try:
                 rollback_action = _normalize_rollback_action_type(self.rollback.action_type)
             except ValueError:
@@ -431,12 +449,19 @@ class StagePlanner:
     def derive_transition_type(
         current_stage: DeploymentStage | str,
         target_stage: DeploymentStage | str,
+        *,
+        replacement: bool = False,
     ) -> TransitionType:
         current = DeploymentStage(current_stage)
         target = DeploymentStage(target_stage)
 
         if current == target:
-            raise DeploymentPlanError("current_stage and target_stage cannot be identical")
+            if replacement and current in StagePlanner._active_stages():
+                return TransitionType.REPLACE
+            raise DeploymentPlanError(
+                "current_stage and target_stage cannot be identical unless an existing "
+                "binding_id declares a same-stage replacement"
+            )
         if current == DeploymentStage.NONE and target == DeploymentStage.PAPER:
             return TransitionType.ACTIVATE
         if current in {DeploymentStage.PAPER, DeploymentStage.CANARY, DeploymentStage.LIVE} and target == DeploymentStage.FROZEN:
@@ -483,6 +508,8 @@ class StagePlanner:
         if transition == TransitionType.ACTIVATE:
             return RuntimeAction.DEPLOY_NEW_BINDING
         if transition == TransitionType.PROMOTE:
+            return RuntimeAction.REPLACE_BINDING
+        if transition == TransitionType.REPLACE:
             return RuntimeAction.REPLACE_BINDING
         if transition == TransitionType.FREEZE:
             return RuntimeAction.FREEZE_BINDING
@@ -541,7 +568,11 @@ class StagePlanner:
             current_stage or self.resolve_current_stage(normalized_entry)
         )
         resolved_target_stage = DeploymentStage(target_stage)
-        transition_type = self.derive_transition_type(resolved_current_stage, resolved_target_stage)
+        transition_type = self.derive_transition_type(
+            resolved_current_stage,
+            resolved_target_stage,
+            replacement=bool(binding_id),
+        )
         effective_scale = scale or self.default_scale(resolved_target_stage)
         runtime_action = self.default_runtime_action(transition_type, rollback)
 

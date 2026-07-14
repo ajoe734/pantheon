@@ -229,7 +229,7 @@ The storage backend is still open, but the logical operations are not.
 | `register(entry)` | create a new `draft` or `candidate` entry |
 | `get(registry_id)` | read one entry |
 | `list_by_strategy(strategy_id)` | enumerate versions within a strategy family |
-| `advance_artifact_state(registry_id, target_state)` | transition an entry through governed artifact-state checks |
+| `advance_artifact_state(registry_id, target_state, approver?, approval_decision_id?)` | transition an entry through governed artifact-state checks and retain the canonical decision link when approving |
 | `resolve_latest_approved(strategy_id)` | return the newest approved entry for a strategy |
 | `resolve_deployment_view(strategy_id)` | return the derived deployment-stage view from deployment/runtime objects |
 

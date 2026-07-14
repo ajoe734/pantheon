@@ -315,6 +315,35 @@ def test_create_plan_from_snapshots(client):
     assert "plan-paper-001" in store_payload
 
 
+def test_create_same_stage_replace_plan_from_service_api(client):
+    test_client, governance_dir = client
+    payload = _plan_payload(
+        plan_id="plan-paper-replace-001",
+        current_stage="paper",
+        target_stage="paper",
+    )
+    payload["binding_id"] = "rb-paper-current"
+    payload["rollback"] = {
+        "target_artifact_id": "artifact-paper-baseline",
+        "target_version": "1.2.0",
+        "action_type": "replace",
+    }
+
+    response = test_client.post("/api/deployment/plans", json=payload)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["current_stage"] == "paper"
+    assert body["target_stage"] == "paper"
+    assert body["transition_type"] == "replace"
+    assert body["runtime_action"] == "replace_binding"
+    assert body["binding_id"] == "rb-paper-current"
+    persisted = json.loads(
+        (governance_dir / "deployment_plans.json").read_text(encoding="utf-8")
+    )
+    assert persisted["plan-paper-replace-001"]["transition_type"] == "replace"
+
+
 def test_create_plan_rejects_risk_policy_violation(client):
     test_client, _ = client
     payload = _plan_payload(

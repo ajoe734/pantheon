@@ -386,6 +386,279 @@ class TestRunPoll:
         assert result["errors"] != []
         assert result["consumed"] == 0
 
+    def test_binding_requested_success(self, worker):
+        record = _outbox_record("evt-001")
+        record["event"]["event_type"] = "runtime.binding.requested"
+        record["event"]["aggregate_id"] = "saga-001"
+
+        mock_saga = {"plan_id": "plan-001", "saga_id": "saga-001"}
+        mock_plan = {
+            "plan_id": "plan-001",
+            "sponsor_persona_id": "persona-001",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+            "status": "approved",
+        }
+        mock_compat = {
+            "ok": True,
+            "persona_binding_id": "pcb-001",
+            "persona_scope_ok": True,
+            "allowed_deployment_scope": "paper",
+        }
+        mock_result = MagicMock()
+        mock_result.succeeded.return_value = True
+        mock_result.binding_id = "rb-001"
+        mock_result.binding = {"runtime_id": "rt-001"}
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch("services.deployment.outbox_consumer_worker.fetch_saga", return_value=mock_saga) as mock_fetch_saga,
+            patch("services.deployment.outbox_consumer_worker.fetch_plan", return_value=mock_plan) as mock_fetch_plan,
+            patch("services.deployment.outbox_consumer_worker.run_compatibility_check", return_value=mock_compat) as mock_compat_check,
+            patch("services.deployment.outbox_consumer_worker.dispatch_to_runtime_manager", return_value=mock_result) as mock_dispatch,
+            patch("services.deployment.outbox_consumer_worker.record_binding_created") as mock_record_binding,
+            patch.object(worker, "consume_event", return_value=_inbox_receipt("evt-001", status="applied")),
+            patch("services.deployment.outbox_consumer_worker.RuntimeManagerClient") as mock_client_cls,
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.list_by_pool.return_value = []
+
+            result = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
+
+            assert result["events_found"] == 1
+            assert result["consumed"] == 1
+            assert result["errors"] == []
+            mock_fetch_saga.assert_called_once_with(api_url="http://localhost:8095", saga_id="saga-001", timeout_seconds=10.0)
+            mock_fetch_plan.assert_called_once_with(api_url="http://localhost:8095", plan_id="plan-001", timeout_seconds=10.0)
+            mock_compat_check.assert_called_once_with(
+                api_url="http://localhost:8095",
+                capital_pool_id="pool-001",
+                sponsor_persona_id="persona-001",
+                target_stage="paper",
+                timeout_seconds=10.0,
+            )
+            mock_record_binding.assert_called_once_with(
+                api_url="http://localhost:8095",
+                saga_id="saga-001",
+                binding_id="rb-001",
+                runtime_id="rt-001",
+                note="binding created/verified via deployment outbox consumer dispatch",
+                timeout_seconds=10.0,
+            )
+
+    def test_binding_requested_compatibility_failed(self, worker):
+        record = _outbox_record("evt-001")
+        record["event"]["event_type"] = "runtime.binding.requested"
+        record["event"]["aggregate_id"] = "saga-001"
+
+        mock_saga = {"plan_id": "plan-001"}
+        mock_plan = {
+            "plan_id": "plan-001",
+            "sponsor_persona_id": "persona-001",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+        }
+        mock_compat = {
+            "ok": False,
+            "errors": ["missing capital binding"],
+        }
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch("services.deployment.outbox_consumer_worker.fetch_saga", return_value=mock_saga),
+            patch("services.deployment.outbox_consumer_worker.fetch_plan", return_value=mock_plan),
+            patch("services.deployment.outbox_consumer_worker.run_compatibility_check", return_value=mock_compat),
+            patch("services.deployment.outbox_consumer_worker.record_saga_failure") as mock_saga_fail,
+            patch("services.deployment.outbox_consumer_worker._record_failure_best_effort", return_value=({"status": "dead_lettered"}, None)) as mock_outbox_fail,
+        ):
+            result = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
+
+            assert result["events_found"] == 1
+            assert result["dead_lettered"] == 1
+            assert "Compatibility check failed" in result["errors"][0]
+            mock_saga_fail.assert_called_once_with(
+                api_url="http://localhost:8095",
+                saga_id="saga-001",
+                reason="Compatibility check failed: missing capital binding",
+                failed_step="binding_requested",
+                timeout_seconds=10.0,
+            )
+            mock_outbox_fail.assert_called_once_with(
+                api_url="http://localhost:8095",
+                event_id="evt-001",
+                consumer_name="test-consumer",
+                reason="Compatibility check failed: missing capital binding",
+                retryable=False,
+                max_attempts=3,
+                retry_delay_seconds=30,
+                timeout_seconds=10.0,
+            )
+
+    def test_binding_requested_transient_error(self, worker):
+        record = _outbox_record("evt-001")
+        record["event"]["event_type"] = "runtime.binding.requested"
+        record["event"]["aggregate_id"] = "saga-001"
+
+        mock_saga = {"plan_id": "plan-001"}
+        mock_plan = {
+            "plan_id": "plan-001",
+            "sponsor_persona_id": "persona-001",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+        }
+        mock_compat = {
+            "ok": True,
+            "persona_binding_id": "pcb-001",
+            "persona_scope_ok": True,
+            "allowed_deployment_scope": "paper",
+        }
+        mock_result = MagicMock()
+        mock_result.succeeded.return_value = False
+        mock_result.is_retryable.return_value = True
+        mock_result.error_message = "temporary 503"
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch("services.deployment.outbox_consumer_worker.fetch_saga", return_value=mock_saga),
+            patch("services.deployment.outbox_consumer_worker.fetch_plan", return_value=mock_plan),
+            patch("services.deployment.outbox_consumer_worker.run_compatibility_check", return_value=mock_compat),
+            patch("services.deployment.outbox_consumer_worker.dispatch_to_runtime_manager", return_value=mock_result),
+            patch("services.deployment.outbox_consumer_worker._record_failure_best_effort", return_value=({"status": "pending"}, None)) as mock_outbox_fail,
+            patch("services.deployment.outbox_consumer_worker.RuntimeManagerClient") as mock_client_cls,
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.list_by_pool.return_value = []
+
+            result = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
+
+            assert result["events_found"] == 1
+            assert result["retry_scheduled"] == 1
+            mock_outbox_fail.assert_called_once_with(
+                api_url="http://localhost:8095",
+                event_id="evt-001",
+                consumer_name="test-consumer",
+                reason="transient dispatch failure: temporary 503",
+                retryable=True,
+                max_attempts=3,
+                retry_delay_seconds=30,
+                timeout_seconds=10.0,
+            )
+
+    def test_binding_requested_terminal_error(self, worker):
+        record = _outbox_record("evt-001")
+        record["event"]["event_type"] = "runtime.binding.requested"
+        record["event"]["aggregate_id"] = "saga-001"
+
+        mock_saga = {"plan_id": "plan-001"}
+        mock_plan = {
+            "plan_id": "plan-001",
+            "sponsor_persona_id": "persona-001",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+        }
+        mock_compat = {
+            "ok": True,
+            "persona_binding_id": "pcb-001",
+            "persona_scope_ok": True,
+            "allowed_deployment_scope": "paper",
+        }
+        mock_result = MagicMock()
+        mock_result.succeeded.return_value = False
+        mock_result.is_retryable.return_value = False
+        mock_result.error_message = "invalid signature"
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch("services.deployment.outbox_consumer_worker.fetch_saga", return_value=mock_saga),
+            patch("services.deployment.outbox_consumer_worker.fetch_plan", return_value=mock_plan),
+            patch("services.deployment.outbox_consumer_worker.run_compatibility_check", return_value=mock_compat),
+            patch("services.deployment.outbox_consumer_worker.dispatch_to_runtime_manager", return_value=mock_result),
+            patch("services.deployment.outbox_consumer_worker.record_saga_failure") as mock_saga_fail,
+            patch("services.deployment.outbox_consumer_worker._record_failure_best_effort", return_value=({"status": "dead_lettered"}, None)) as mock_outbox_fail,
+            patch("services.deployment.outbox_consumer_worker.RuntimeManagerClient") as mock_client_cls,
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.list_by_pool.return_value = []
+
+            result = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
+
+            assert result["events_found"] == 1
+            assert result["dead_lettered"] == 1
+            mock_saga_fail.assert_called_once_with(
+                api_url="http://localhost:8095",
+                saga_id="saga-001",
+                reason="terminal dispatch failure: invalid signature",
+                failed_step="binding_requested",
+                timeout_seconds=10.0,
+            )
+            mock_outbox_fail.assert_called_once_with(
+                api_url="http://localhost:8095",
+                event_id="evt-001",
+                consumer_name="test-consumer",
+                reason="terminal dispatch failure: invalid signature",
+                retryable=False,
+                max_attempts=3,
+                retry_delay_seconds=30,
+                timeout_seconds=10.0,
+            )
+
+    def test_binding_requested_downstream_success_before_receipt(self, worker):
+        record = _outbox_record("evt-001")
+        record["event"]["event_type"] = "runtime.binding.requested"
+        record["event"]["aggregate_id"] = "saga-001"
+
+        mock_saga = {"plan_id": "plan-001", "saga_id": "saga-001"}
+        mock_plan = {
+            "plan_id": "plan-001",
+            "sponsor_persona_id": "persona-001",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+        }
+        mock_compat = {
+            "ok": True,
+            "persona_binding_id": "pcb-001",
+            "persona_scope_ok": True,
+            "allowed_deployment_scope": "paper",
+        }
+        mock_result = MagicMock()
+        mock_result.succeeded.return_value = True
+        mock_result.binding_id = "rb-existing"
+        mock_result.binding = {"runtime_id": "rt-001"}
+
+        mock_existing_binding = {
+            "binding_id": "rb-existing",
+            "plan_id": "plan-001",
+        }
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch("services.deployment.outbox_consumer_worker.fetch_saga", return_value=mock_saga),
+            patch("services.deployment.outbox_consumer_worker.fetch_plan", return_value=mock_plan),
+            patch("services.deployment.outbox_consumer_worker.run_compatibility_check", return_value=mock_compat),
+            patch("services.deployment.outbox_consumer_worker.dispatch_to_runtime_manager", return_value=mock_result) as mock_dispatch,
+            patch("services.deployment.outbox_consumer_worker.record_binding_created") as mock_record_binding,
+            patch.object(worker, "consume_event", return_value=_inbox_receipt("evt-001", status="applied")),
+            patch("services.deployment.outbox_consumer_worker.RuntimeManagerClient") as mock_client_cls,
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.list_by_pool.return_value = [mock_existing_binding]
+
+            result = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
+
+            assert result["events_found"] == 1
+            assert result["consumed"] == 1
+            mock_dispatch.assert_called_once()
+            dispatched_saga = mock_dispatch.call_args.kwargs["saga"]
+            assert dispatched_saga["binding_id"] == "rb-existing"
+            mock_record_binding.assert_called_once_with(
+                api_url="http://localhost:8095",
+                saga_id="saga-001",
+                binding_id="rb-existing",
+                runtime_id="rt-001",
+                note="binding created/verified via deployment outbox consumer dispatch",
+                timeout_seconds=10.0,
+            )
+
 
 # ---------------------------------------------------------------------------
 # health file
