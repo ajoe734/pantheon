@@ -9198,6 +9198,14 @@ class ApprovalResumeCasTests(unittest.TestCase):
             "tool_name": "Bash",
             "tool_input_signature": supervisor.approval_tool_input_signature({"command": "git status -sb"}),
         }
+        self.completed_approval = {
+            **self.approval,
+            "resume_override_active": False,
+            "resume_override_consumed_at": "2026-06-01T00:00:00Z",
+            "resume_override_consumed_reason": "test_cleanup",
+            "resume_override_cleanup_pending": False,
+            "resume_override_cleanup_completed_at": "2026-06-01T00:00:01Z",
+        }
         self.config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -9267,7 +9275,11 @@ class ApprovalResumeCasTests(unittest.TestCase):
         with (
             mock.patch.object(supervisor, "fresh_execution_dispatch_admission") as admission,
             mock.patch.object(supervisor, "resume_claude_worker") as resume,
-            mock.patch.object(supervisor, "consume_resume_override") as consume_override,
+            mock.patch.object(
+                supervisor,
+                "consume_resume_override",
+                return_value=self.completed_approval,
+            ) as consume_override,
         ):
             outcome = supervisor.resume_approved_claude_worker(
                 self.config,
@@ -9296,7 +9308,11 @@ class ApprovalResumeCasTests(unittest.TestCase):
                 "fresh_execution_dispatch_admission",
                 return_value={"applicable": True, "admitted": False, "mismatch": "task_signature_changed"},
             ),
-            mock.patch.object(supervisor, "consume_resume_override") as consume_override,
+            mock.patch.object(
+                supervisor,
+                "consume_resume_override",
+                return_value=self.completed_approval,
+            ) as consume_override,
             mock.patch.object(supervisor, "resume_claude_worker") as resume,
         ):
             outcome = supervisor.resume_approved_claude_worker(
@@ -9326,7 +9342,11 @@ class ApprovalResumeCasTests(unittest.TestCase):
                 return_value={"applicable": True, "admitted": True},
             ),
             mock.patch.object(supervisor, "resume_claude_worker", return_value=None),
-            mock.patch.object(supervisor, "consume_resume_override") as consume_override,
+            mock.patch.object(
+                supervisor,
+                "consume_resume_override",
+                return_value=self.completed_approval,
+            ) as consume_override,
             mock.patch.object(supervisor, "save_runtime_state"),
         ):
             outcome = supervisor.resume_approved_claude_worker(
@@ -9379,7 +9399,11 @@ class ApprovalResumeCasTests(unittest.TestCase):
             ),
             mock.patch.object(supervisor, "resume_claude_worker", side_effect=spawn),
             mock.patch.object(supervisor, "retire_worker_delivery") as retire,
-            mock.patch.object(supervisor, "consume_resume_override") as consume_override,
+            mock.patch.object(
+                supervisor,
+                "consume_resume_override",
+                return_value=self.completed_approval,
+            ) as consume_override,
             mock.patch.object(supervisor, "save_runtime_state") as save_runtime_state,
         ):
             outcome = supervisor.resume_approved_claude_worker(
@@ -9402,6 +9426,328 @@ class ApprovalResumeCasTests(unittest.TestCase):
             reason="approval_resume_post_spawn_admission_failed",
         )
         self.assertEqual(save_runtime_state.call_count, 2)
+
+    def test_resume_persist_failure_retires_spawned_process_without_orphan(self) -> None:
+        spawned: list[subprocess.Popen[str]] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                **self.config,
+                "paths": {
+                    "state_file": str(root / "runtime-state.json"),
+                    "status_file": str(root / "ai-status.json"),
+                    "approval_queue": str(root / "approval-queue.json"),
+                },
+                "providers": {
+                    "claude": {
+                        "delivery_mode": "claude_cli",
+                        "runtime": {"cli": "/bin/true", "include_hook_events": False},
+                    }
+                },
+            }
+            worker = {**self.worker, "queue_event_id": None}
+
+            def spawn_process(*_args, **_kwargs):
+                process = subprocess.Popen(
+                    ["/usr/bin/python3", "-c", "import time; time.sleep(30)"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    start_new_session=True,
+                )
+                spawned.append(process)
+                return process, root / "unused.log"
+
+            try:
+                with (
+                    mock.patch.object(supervisor, "command_exists", return_value="/bin/true"),
+                    mock.patch.object(supervisor, "spawn_background_process", side_effect=spawn_process),
+                    mock.patch.object(supervisor, "save_runtime_state", side_effect=OSError("disk full")),
+                    mock.patch.object(
+                        supervisor,
+                        "load_approval_state",
+                        return_value={"history": [self.approval]},
+                    ),
+                    mock.patch.object(
+                        supervisor,
+                        "consume_resume_override",
+                        return_value=self.completed_approval,
+                    ) as consume_override,
+                ):
+                    with self.assertRaisesRegex(OSError, "disk full"):
+                        supervisor.resume_claude_worker(config, self.state, worker, {}, approval=self.approval)
+            finally:
+                for process in spawned:
+                    if supervisor.pid_is_alive(process.pid):
+                        os.killpg(process.pid, supervisor.signal.SIGKILL)
+                        process.wait(timeout=2)
+                    else:
+                        process.poll()
+
+        self.assertEqual(len(spawned), 1)
+        self.assertFalse(supervisor.pid_is_alive(spawned[0].pid))
+        self.assertEqual(worker["approval_resume_state"], "spawn_failed")
+        self.assertTrue(worker["approval_resume_spawn_retired"])
+        self.assertEqual(worker["process_identity_run_id"], worker["run_id"])
+        consume_override.assert_called_once_with(
+            config,
+            approval_id="approval-exact",
+            reason="approval_resume_post_spawn_persist_failed",
+        )
+
+    def test_resume_identity_capture_failure_retires_exact_spawn_without_orphan(self) -> None:
+        spawned: list[subprocess.Popen[str]] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                **self.config,
+                "paths": {
+                    "state_file": str(root / "runtime-state.json"),
+                    "status_file": str(root / "ai-status.json"),
+                    "approval_queue": str(root / "approval-queue.json"),
+                },
+                "providers": {
+                    "claude": {
+                        "delivery_mode": "claude_cli",
+                        "runtime": {"cli": "/bin/true", "include_hook_events": False},
+                    }
+                },
+            }
+            worker = {**self.worker, "queue_event_id": None}
+            state = {"queue": {"events": {}}, "workers": {worker["run_id"]: worker}}
+
+            def spawn_process(*_args, **_kwargs):
+                process = subprocess.Popen(
+                    ["/usr/bin/python3", "-c", "import time; time.sleep(30)"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    start_new_session=True,
+                )
+                spawned.append(process)
+                return process, root / "unused.log"
+
+            try:
+                with (
+                    mock.patch.object(supervisor, "command_exists", return_value="/bin/true"),
+                    mock.patch.object(supervisor, "spawn_background_process", side_effect=spawn_process),
+                    mock.patch.object(supervisor, "record_worker_process_identity", return_value=False),
+                    mock.patch.object(
+                        supervisor,
+                        "consume_resume_override",
+                        return_value=self.completed_approval,
+                    ) as consume_override,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "identity capture failed"):
+                        supervisor.resume_claude_worker(
+                            config,
+                            state,
+                            worker,
+                            {},
+                            approval=self.approval,
+                        )
+            finally:
+                for process in spawned:
+                    if supervisor.pid_is_alive(process.pid):
+                        os.killpg(process.pid, supervisor.signal.SIGKILL)
+                        process.wait(timeout=2)
+                    else:
+                        process.poll()
+
+        self.assertEqual(len(spawned), 1)
+        self.assertFalse(supervisor.pid_is_alive(spawned[0].pid))
+        self.assertTrue(worker["approval_resume_spawn_retired"])
+        self.assertEqual(
+            worker["approval_resume_spawn_retired_approval_id"],
+            "approval-exact",
+        )
+        self.assertEqual(
+            worker["approval_resume_override_revoked_approval_id"],
+            "approval-exact",
+        )
+        consume_override.assert_called_once_with(
+            config,
+            approval_id="approval-exact",
+            reason="approval_resume_process_identity_failed",
+        )
+
+    def test_failed_spawn_retirement_keeps_no_success_marker(self) -> None:
+        worker = {
+            **self.worker,
+            "pid": 4242,
+            "approval_resume_spawn_approval_id": "approval-exact",
+            "approval_resume_spawn_run_id": "run-approval",
+            "approval_resume_spawn_retired_approval_id": "approval-exact",
+            "approval_resume_spawn_retired_run_id": "run-approval",
+            "approval_resume_spawn_retired": False,
+        }
+        with (
+            mock.patch.object(supervisor, "retire_worker_delivery", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "spawned_process_group_still_alive"):
+                supervisor.retire_failed_approval_resume_spawn(
+                    self.config,
+                    worker,
+                    self.approval,
+                    reason="test retirement failure",
+                )
+
+        self.assertNotIn("approval_resume_spawn_retired_approval_id", worker)
+        self.assertNotIn("approval_resume_spawn_retired_run_id", worker)
+        self.assertNotIn("approval_resume_spawn_retired", worker)
+
+    def test_terminal_cleanup_failure_keeps_worker_and_retries_next_poll(self) -> None:
+        worker = {
+            "run_id": "run-cleanup-retry",
+            "task_id": "CLEANUP-RETRY-001",
+            "provider": "claude",
+            "agent_id": "claude",
+            "status": "superseded",
+            "queue_event_id": "evt-cleanup-retry",
+            "pid": None,
+            "last_error": "canonical assignment changed",
+            "approval_resume_override_approval_id": "approval-cleanup-retry",
+            "approval_resume_override_run_id": "run-cleanup-retry",
+        }
+        active_approval = {
+            "approval_id": "approval-cleanup-retry",
+            "worker_run_id": "run-cleanup-retry",
+            "resume_override_active": False,
+            "resume_override_consumed_at": "2026-06-01T00:00:00Z",
+            "resume_override_cleanup_pending": True,
+        }
+        completed_approval = {
+            **active_approval,
+            "resume_override_cleanup_pending": False,
+            "resume_override_cleanup_completed_at": "2026-06-01T00:00:01Z",
+        }
+        state = {
+            "queue": {"events": {"evt-cleanup-retry": {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+        }
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_approval_state",
+                return_value={"pending": [], "history": [active_approval]},
+            ),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "consume_resume_override",
+                side_effect=[OSError("permission cleanup failed"), completed_approval],
+            ) as consume_override,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "permission cleanup failed"):
+                supervisor.poll_workers(self.config, state)
+            self.assertIn(worker["run_id"], state["workers"])
+            self.assertEqual(
+                state["queue"]["events"]["evt-cleanup-retry"]["status"],
+                "started",
+            )
+
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(consume_override.call_count, 2)
+        self.assertIn(worker["run_id"], state["workers"])
+        self.assertEqual(
+            state["queue"]["events"]["evt-cleanup-retry"]["status"],
+            "completed",
+        )
+        self.assertEqual(
+            worker["approval_resume_override_terminalized_approval_id"],
+            "approval-cleanup-retry",
+        )
+
+    def test_terminal_override_cleanup_is_exact_idempotent_and_skips_consumed(self) -> None:
+        worker = {
+            "run_id": "run-terminal",
+            "status": "failed",
+            "approval_resume_override_approval_id": "approval-terminal",
+            "approval_resume_override_run_id": "run-terminal",
+        }
+        active_approval = {
+            "approval_id": "approval-terminal",
+            "worker_run_id": "run-terminal",
+            "resume_override_active": True,
+            "resume_override_consumed_at": None,
+        }
+
+        def consume_override(_config, *, approval_id, reason):
+            return {
+                **active_approval,
+                "approval_id": approval_id,
+                "resume_override_active": False,
+                "resume_override_consumed_at": "2026-06-01T00:00:00Z",
+                "resume_override_consumed_reason": reason,
+                "resume_override_cleanup_pending": False,
+                "resume_override_cleanup_completed_at": "2026-06-01T00:00:01Z",
+            }
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"history": [active_approval]}),
+            mock.patch.object(supervisor, "consume_resume_override", side_effect=consume_override) as consume,
+        ):
+            supervisor.finalize_queue_event_record(self.config, {"queue": {"events": {}}}, worker, "failed", "exit")
+            supervisor.finalize_queue_event_record(self.config, {"queue": {"events": {}}}, worker, "failed", "exit")
+
+        consume.assert_called_once()
+        self.assertEqual(worker["approval_resume_override_terminalized_disposition"], "revoked")
+
+        consumed_worker = {
+            "run_id": "run-consumed",
+            "status": "completed",
+            "approval_resume_override_approval_id": "approval-consumed",
+            "approval_resume_override_run_id": "run-consumed",
+        }
+        consumed_approval = {
+            "approval_id": "approval-consumed",
+            "worker_run_id": "run-consumed",
+            "resume_override_active": True,
+            "resume_override_consumed_at": "2026-06-01T00:00:00Z",
+            "resume_override_cleanup_pending": False,
+            "resume_override_cleanup_completed_at": "2026-06-01T00:00:01Z",
+        }
+        wrong_run_worker = {
+            "run_id": "run-current",
+            "status": "superseded",
+            "approval_resume_override_approval_id": "approval-other-run",
+            "approval_resume_override_run_id": "run-current",
+        }
+        wrong_run_approval = {
+            "approval_id": "approval-other-run",
+            "worker_run_id": "run-other",
+            "resume_override_active": True,
+            "resume_override_consumed_at": None,
+        }
+        with mock.patch.object(supervisor, "consume_resume_override") as consume:
+            with mock.patch.object(supervisor, "load_approval_state", return_value={"history": [consumed_approval]}):
+                supervisor.finalize_queue_event_record(
+                    self.config,
+                    {"queue": {"events": {}}},
+                    consumed_worker,
+                    "completed",
+                )
+            with mock.patch.object(supervisor, "load_approval_state", return_value={"history": [wrong_run_approval]}):
+                with self.assertRaisesRegex(RuntimeError, "approval_worker_run_id_mismatch"):
+                    supervisor.finalize_queue_event_record(
+                        self.config,
+                        {"queue": {"events": {}}},
+                        wrong_run_worker,
+                        "completed",
+                    )
+
+        consume.assert_not_called()
+        self.assertEqual(
+            consumed_worker["approval_resume_override_terminalized_disposition"],
+            "already_consumed",
+        )
+        self.assertEqual(wrong_run_worker["approval_resume_override_terminalize_error"], "approval_worker_run_id_mismatch")
 
 
 class WorkerTerminationTests(unittest.TestCase):
@@ -9426,7 +9772,7 @@ class WorkerTerminationTests(unittest.TestCase):
             mock.patch.object(supervisor.os, "killpg") as killpg,
             mock.patch.object(supervisor.os, "kill") as kill_one,
             mock.patch.object(supervisor.os, "waitpid", return_value=(0, 0)) as waitpid,
-            mock.patch.object(supervisor, "_worker_process_group_alive", side_effect=[True, True, False]),
+            mock.patch.object(supervisor, "_worker_process_group_alive", side_effect=[True, True, False, False]),
             mock.patch.object(supervisor.time, "monotonic", side_effect=[0.0, 1.0, 1.0]),
             mock.patch.object(supervisor.time, "sleep"),
         ):
@@ -9448,6 +9794,38 @@ class WorkerTerminationTests(unittest.TestCase):
         kill_one.assert_not_called()
         self.assertGreaterEqual(waitpid.call_count, 1)
 
+    def test_terminate_worker_reports_failure_when_group_survives_sigkill(self) -> None:
+        pid = 4322
+        with (
+            mock.patch.object(supervisor.os, "getpgid", return_value=pid),
+            mock.patch.object(supervisor.os, "getsid", side_effect=lambda value: pid if value == pid else 9999),
+            mock.patch.object(supervisor.os, "getpgrp", return_value=9999),
+            mock.patch.object(supervisor, "_process_start_time_ticks", return_value="123457"),
+            mock.patch.object(supervisor.os, "killpg") as killpg,
+            mock.patch.object(supervisor.os, "waitpid", return_value=(0, 0)),
+            mock.patch.object(
+                supervisor,
+                "_worker_process_group_alive",
+                side_effect=[True, True, True, True],
+            ),
+            mock.patch.object(supervisor.time, "monotonic", return_value=0.0),
+        ):
+            terminated = supervisor.terminate_worker_pid(
+                pid,
+                process_group_id=pid,
+                process_session_id=pid,
+                process_start_time_ticks="123457",
+                process_identity_version=supervisor.PROCESS_IDENTITY_VERSION,
+                grace_seconds=0.0,
+                kill_wait_seconds=0.0,
+            )
+
+        self.assertFalse(terminated)
+        self.assertEqual(
+            killpg.call_args_list,
+            [mock.call(pid, supervisor.signal.SIGTERM), mock.call(pid, supervisor.signal.SIGKILL)],
+        )
+
     def test_terminate_worker_kills_owned_group_after_leader_exits(self) -> None:
         pid = 4331
         with (
@@ -9456,7 +9834,7 @@ class WorkerTerminationTests(unittest.TestCase):
             mock.patch.object(supervisor.os, "getpgrp", return_value=9999),
             mock.patch.object(supervisor.os, "killpg") as killpg,
             mock.patch.object(supervisor.os, "waitpid", side_effect=ChildProcessError),
-            mock.patch.object(supervisor, "_worker_process_group_alive", side_effect=[True, False, False]),
+            mock.patch.object(supervisor, "_worker_process_group_alive", side_effect=[True, False, False, False]),
             mock.patch.object(supervisor.time, "monotonic", return_value=0.0),
         ):
             terminated = supervisor.terminate_worker_pid(
@@ -9543,6 +9921,61 @@ class WorkerTerminationTests(unittest.TestCase):
             tombstone_payload = json.loads(tombstone.read_text(encoding="utf-8"))
             self.assertEqual(tombstone_payload["disposition"], "payload_removed")
             self.assertEqual(tombstone_payload["worker_run_id"], run_id)
+
+    def test_file_inbox_cleanup_error_does_not_finalize_and_can_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            payload_path = root / ".llm-inbox" / "codex.md"
+            payload_path.parent.mkdir(parents=True)
+            run_id = "inbox-run-retry"
+            body = f"<!-- orchestrator-run-id: {run_id} -->\n# Wake\n"
+            payload_path.write_text(body, encoding="utf-8")
+            worker = {
+                "run_id": run_id,
+                "task_id": "TASK-RETRY",
+                "queue_event_id": "evt-retry",
+                "status": "failed",
+                "mode": "file_inbox",
+                "payload_path": str(payload_path),
+                "pid": None,
+                "metadata": {
+                    "payload_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest()
+                },
+            }
+            state = {
+                "workers": {run_id: worker},
+                "queue": {"events": {"evt-retry": {"status": "started"}}},
+            }
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "ready_dispatcher": {"active_worker_statuses": []},
+            }
+
+            with mock.patch.object(Path, "unlink", side_effect=OSError("payload busy")):
+                with self.assertRaisesRegex(RuntimeError, "payload_unlink_failed"):
+                    supervisor.finalize_queue_event_record(
+                        config,
+                        state,
+                        worker,
+                        "failed",
+                        "runner failed",
+                    )
+
+            self.assertTrue(payload_path.exists())
+            self.assertEqual(state["queue"]["events"]["evt-retry"]["status"], "started")
+            self.assertIn(run_id, state["workers"])
+
+            supervisor.finalize_queue_event_record(
+                config,
+                state,
+                worker,
+                "failed",
+                "runner failed",
+            )
+
+            self.assertFalse(payload_path.exists())
+            self.assertNotIn("payload_revocation_error", worker)
+            self.assertEqual(state["queue"]["events"]["evt-retry"]["status"], "failed")
 
 
 class SingleSupervisorGuardTests(unittest.TestCase):

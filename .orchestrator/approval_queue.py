@@ -477,31 +477,67 @@ def consume_resume_override(
             item = history[index]
             if item.get("approval_id") != approval_id:
                 continue
-            if not item.get("resume_override_active"):
+            if item.get("resume_override_cleanup_completed_at"):
                 return item
-            if item.get("resume_override_consumed_at"):
+            if (
+                not item.get("resume_override_active")
+                and not item.get("resume_override_consumed_at")
+                and not item.get("resume_override_cleanup_pending")
+            ):
                 return item
+
+            # First make the approval record authoritative: once cleanup has
+            # started, no permission hook may rediscover this override as
+            # active.  Permission-file cleanup is intentionally a durable,
+            # retryable second phase because it mutates a different atomic
+            # file.  A crash or I/O error between the two writes therefore
+            # leaves cleanup_pending=true instead of an irreversible false
+            # "consumed" success.
+            consumed_at = item.get("resume_override_consumed_at") or utc_now()
+            consumed_reason = item.get("resume_override_consumed_reason") or reason
             updated = {
                 **item,
-                "resume_override_consumed_at": utc_now(),
-                "resume_override_consumed_reason": reason,
+                "resume_override_active": False,
+                "resume_override_consumed_at": consumed_at,
+                "resume_override_consumed_reason": consumed_reason,
+                "resume_override_cleanup_pending": True,
+                "resume_override_cleanup_last_attempt_at": utc_now(),
             }
             rule = updated.get("resume_override_rule")
             inserted = bool(updated.get("resume_override_rule_inserted"))
             suspended_ask_rules = list(updated.get("resume_override_suspended_ask_rules") or [])
             history[index] = updated
             save_approval_state(config, state)
-            if inserted and rule:
-                from permission_broker import remove_temporary_allow_rule
-                from permission_broker import restore_rules
+            try:
+                if inserted and not rule:
+                    raise RuntimeError("inserted resume override is missing its exact rule")
+                if inserted:
+                    from permission_broker import remove_temporary_allow_rule
 
-                remove_temporary_allow_rule(config, rule=rule)
-                restore_rules(config, bucket="ask", rules=suspended_ask_rules)
-            elif suspended_ask_rules:
-                from permission_broker import restore_rules
+                    remove_temporary_allow_rule(config, rule=rule)
+                if suspended_ask_rules:
+                    from permission_broker import restore_rules
 
-                restore_rules(config, bucket="ask", rules=suspended_ask_rules)
-            return updated
+                    restore_rules(config, bucket="ask", rules=suspended_ask_rules)
+            except Exception as exc:
+                failed = {
+                    **updated,
+                    "resume_override_cleanup_pending": True,
+                    "resume_override_cleanup_error": f"{type(exc).__name__}: {exc}",
+                }
+                history[index] = failed
+                save_approval_state(config, state)
+                raise
+
+            completed = {
+                **updated,
+                "resume_override_cleanup_pending": False,
+                "resume_override_cleanup_completed_at": utc_now(),
+            }
+            completed.pop("resume_override_cleanup_error", None)
+            history[index] = completed
+            save_approval_state(config, state)
+            return completed
     return None
 
 

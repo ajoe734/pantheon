@@ -3387,7 +3387,80 @@ def terminate_worker_pid(
                 break
             time.sleep(0.02)
     _reap_worker_child(worker_pid)
-    return True
+    return not _worker_process_group_alive(owned_group_id)
+
+
+def terminate_spawned_process(
+    process: subprocess.Popen[Any],
+    *,
+    grace_seconds: float = 1.0,
+    kill_wait_seconds: float = 0.5,
+) -> bool:
+    """Retire a just-created child through its exact ``Popen`` handle.
+
+    This path is used before a durable /proc identity exists.  The child was
+    launched with ``start_new_session=True`` by ``spawn_background_process``,
+    so its PID is also the exact session/process-group ID.  We never fall back
+    to an unrelated PID-only kill after the child could have been reaped.
+    """
+
+    try:
+        worker_pid = int(process.pid)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if worker_pid <= 1 or worker_pid == os.getpid():
+        return False
+    if worker_pid in {os.getpgrp(), os.getsid(0)}:
+        return False
+    if process.poll() is not None:
+        return True
+
+    try:
+        current_group_id = os.getpgid(worker_pid)
+        current_session_id = os.getsid(worker_pid)
+    except ProcessLookupError:
+        current_group_id = worker_pid
+        current_session_id = worker_pid
+    except OSError:
+        return False
+    if current_group_id != worker_pid or current_session_id != worker_pid:
+        return False
+
+    try:
+        os.killpg(worker_pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+
+    deadline = time.monotonic() + max(0.0, float(grace_seconds))
+    while _worker_process_group_alive(worker_pid):
+        try:
+            process.wait(timeout=0.02)
+        except subprocess.TimeoutExpired:
+            pass
+        if time.monotonic() >= deadline:
+            break
+    if _worker_process_group_alive(worker_pid):
+        try:
+            os.killpg(worker_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            return False
+        kill_deadline = time.monotonic() + max(0.0, float(kill_wait_seconds))
+        while _worker_process_group_alive(worker_pid):
+            try:
+                process.wait(timeout=0.02)
+            except subprocess.TimeoutExpired:
+                pass
+            if time.monotonic() >= kill_deadline:
+                break
+    try:
+        process.wait(timeout=0.05)
+    except (subprocess.TimeoutExpired, ChildProcessError):
+        pass
+    return not _worker_process_group_alive(worker_pid) and process.poll() is not None
 
 
 def _path_within(path: Path, root: Path) -> bool:
@@ -3408,9 +3481,11 @@ def revoke_file_inbox_payload(
 
     if str(worker.get("mode") or "") != "file_inbox":
         return False
+    worker.pop("payload_revocation_error", None)
     payload_value = str(worker.get("payload_path") or "").strip()
     run_id = str(worker.get("run_id") or "").strip()
     if not payload_value or not run_id:
+        worker["payload_revocation_error"] = "payload_identity_missing"
         return False
     payload_path = Path(payload_value).expanduser().resolve()
     allowed_roots: list[Path] = []
@@ -3473,6 +3548,142 @@ def revoke_file_inbox_payload(
     return exact_identity or current_body is None
 
 
+def _mark_worker_resume_override_terminalized(
+    worker: dict[str, Any],
+    *,
+    approval_id: str,
+    run_id: str,
+    reason: str,
+    disposition: str,
+) -> None:
+    worker["approval_resume_override_terminalized_approval_id"] = approval_id
+    worker["approval_resume_override_terminalized_run_id"] = run_id
+    worker["approval_resume_override_terminalized_at"] = utc_now()
+    worker["approval_resume_override_terminalized_reason"] = reason
+    worker["approval_resume_override_terminalized_disposition"] = disposition
+
+
+def revoke_worker_resume_override_on_terminal(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    reason: str,
+) -> bool:
+    """Consume one exact run-owned resume override on terminal retirement.
+
+    The approval broker may already have consumed the override after the
+    approved tool ran.  Observe that live history first so terminal reducers
+    neither remove policy twice nor touch an approval owned by another run.
+    """
+
+    approval_id = str(worker.get("approval_resume_override_approval_id") or "").strip()
+    run_id = str(worker.get("run_id") or "").strip()
+    bound_run_id = str(worker.get("approval_resume_override_run_id") or "").strip()
+    if not approval_id:
+        return True
+    if not run_id or bound_run_id != run_id:
+        worker["approval_resume_override_terminalize_error"] = "worker_override_run_id_mismatch"
+        raise RuntimeError(worker["approval_resume_override_terminalize_error"])
+    if (
+        worker.get("approval_resume_override_terminalized_approval_id") == approval_id
+        and worker.get("approval_resume_override_terminalized_run_id") == run_id
+    ):
+        return True
+    if (
+        worker.get("approval_resume_override_revoked_approval_id") == approval_id
+        and worker.get("approval_resume_override_revoked_run_id") == run_id
+    ):
+        _mark_worker_resume_override_terminalized(
+            worker,
+            approval_id=approval_id,
+            run_id=run_id,
+            reason=reason,
+            disposition="already_revoked",
+        )
+        return True
+
+    try:
+        approval_state = load_approval_state(config)
+    except Exception as exc:
+        worker["approval_resume_override_terminalize_error"] = f"approval_state_load_failed:{type(exc).__name__}: {exc}"
+        raise RuntimeError(worker["approval_resume_override_terminalize_error"]) from exc
+    approval = next(
+        (
+            item
+            for item in reversed(approval_state.get("history", []) or [])
+            if str(item.get("approval_id") or "").strip() == approval_id
+        ),
+        None,
+    )
+    if not isinstance(approval, dict):
+        worker["approval_resume_override_terminalize_error"] = "approval_history_item_missing"
+        raise RuntimeError(worker["approval_resume_override_terminalize_error"])
+    if str(approval.get("worker_run_id") or "").strip() != run_id:
+        worker["approval_resume_override_terminalize_error"] = "approval_worker_run_id_mismatch"
+        raise RuntimeError(worker["approval_resume_override_terminalize_error"])
+    if approval.get("resume_override_cleanup_completed_at"):
+        _mark_worker_resume_override_terminalized(
+            worker,
+            approval_id=approval_id,
+            run_id=run_id,
+            reason=reason,
+            disposition="already_consumed",
+        )
+        worker.pop("approval_resume_override_terminalize_error", None)
+        return True
+    if not approval.get("resume_override_active") and not approval.get(
+        "resume_override_consumed_at"
+    ):
+        _mark_worker_resume_override_terminalized(
+            worker,
+            approval_id=approval_id,
+            run_id=run_id,
+            reason=reason,
+            disposition="inactive",
+        )
+        worker.pop("approval_resume_override_terminalize_error", None)
+        return True
+
+    consume_reason = f"worker_terminal:{run_id}:{reason}"
+    try:
+        consumed = consume_resume_override(
+            config,
+            approval_id=approval_id,
+            reason=consume_reason,
+        )
+    except Exception as exc:
+        worker["approval_resume_override_terminalize_error"] = f"{type(exc).__name__}: {exc}"
+        raise RuntimeError(worker["approval_resume_override_terminalize_error"]) from exc
+    if not isinstance(consumed, dict):
+        worker["approval_resume_override_terminalize_error"] = "approval_override_consume_missing"
+        raise RuntimeError(worker["approval_resume_override_terminalize_error"])
+    if (
+        str(consumed.get("approval_id") or "").strip() != approval_id
+        or str(consumed.get("worker_run_id") or "").strip() != run_id
+    ):
+        worker["approval_resume_override_terminalize_error"] = "consumed_approval_binding_mismatch"
+        raise RuntimeError(worker["approval_resume_override_terminalize_error"])
+    if not consumed.get("resume_override_cleanup_completed_at"):
+        worker["approval_resume_override_terminalize_error"] = "approval_override_cleanup_incomplete"
+        raise RuntimeError(worker["approval_resume_override_terminalize_error"])
+    consumed_reason = str(consumed.get("resume_override_consumed_reason") or "")
+    disposition = "revoked" if consumed_reason == consume_reason else "concurrently_consumed"
+    if disposition == "revoked":
+        worker["approval_resume_override_revoked_approval_id"] = approval_id
+        worker["approval_resume_override_revoked_run_id"] = run_id
+        worker["approval_resume_override_revoked_at"] = consumed.get("resume_override_consumed_at") or utc_now()
+        worker["approval_resume_override_revoked_reason"] = reason
+    _mark_worker_resume_override_terminalized(
+        worker,
+        approval_id=approval_id,
+        run_id=run_id,
+        reason=reason,
+        disposition=disposition,
+    )
+    worker.pop("approval_resume_override_terminalize_error", None)
+    return True
+
+
 def retire_worker_delivery(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -3482,6 +3693,8 @@ def retire_worker_delivery(
     # Revoke manual delivery first so a human cannot start it after runtime
     # state has already declared the run terminal.
     revoke_file_inbox_payload(config, worker, reason=reason)
+    if worker.get("payload_revocation_error"):
+        raise RuntimeError(str(worker["payload_revocation_error"]))
     identity_keys = (
         "process_group_id",
         "process_session_id",
@@ -3493,8 +3706,15 @@ def retire_worker_delivery(
         str(worker.get("process_identity_run_id") or "") != str(worker.get("run_id") or "")
         or not all(identity.values())
     ):
-        return terminate_worker_pid(worker.get("pid"))
-    return terminate_worker_pid(worker.get("pid"), **identity)
+        retired = terminate_worker_pid(worker.get("pid"))
+    else:
+        retired = terminate_worker_pid(worker.get("pid"), **identity)
+    if not retired and pid_is_alive(worker.get("pid")):
+        worker["process_retirement_error"] = "owned_worker_process_group_still_alive"
+        raise RuntimeError(worker["process_retirement_error"])
+    worker.pop("process_retirement_error", None)
+    revoke_worker_resume_override_on_terminal(config, worker, reason=reason)
+    return retired or not pid_is_alive(worker.get("pid"))
 
 
 def normalize_pr_url(config: dict[str, Any], url: str | None) -> str | None:
@@ -8773,6 +8993,8 @@ def consume_approval_resume_once(
     worker["approval_resume_consumed_at"] = utc_now()
     worker["last_approval_id"] = approval_id
     worker["approval_resume_state"] = "consumed_pre_spawn"
+    worker["approval_resume_override_approval_id"] = approval_id
+    worker["approval_resume_override_run_id"] = str(worker.get("run_id") or "")
     try:
         save_runtime_state(config, state)
     except Exception:
@@ -8787,16 +9009,107 @@ def revoke_approval_resume_override(
     approval: dict[str, Any],
     *,
     reason: str,
-) -> None:
+) -> bool:
     approval_id = str(approval.get("approval_id") or "").strip()
-    if not approval_id:
-        return
+    run_id = str(worker.get("run_id") or "").strip()
+    approval_run_id = str(approval.get("worker_run_id") or "").strip()
+    if not approval_id or not run_id:
+        worker["approval_resume_override_revoke_error"] = "approval_or_worker_run_id_missing"
+        raise RuntimeError(worker["approval_resume_override_revoke_error"])
+    if approval_run_id and approval_run_id != run_id:
+        worker["approval_resume_override_revoke_error"] = "approval_worker_run_id_mismatch"
+        raise RuntimeError(worker["approval_resume_override_revoke_error"])
+    if (
+        worker.get("approval_resume_override_revoked_approval_id") == approval_id
+        and worker.get("approval_resume_override_revoked_run_id") == run_id
+    ):
+        return True
+    if approval.get("resume_override_cleanup_completed_at"):
+        _mark_worker_resume_override_terminalized(
+            worker,
+            approval_id=approval_id,
+            run_id=run_id,
+            reason=reason,
+            disposition="already_consumed",
+        )
+        worker.pop("approval_resume_override_revoke_error", None)
+        return True
     try:
-        consume_resume_override(config, approval_id=approval_id, reason=reason)
-        worker["approval_resume_override_revoked_at"] = utc_now()
+        consumed = consume_resume_override(config, approval_id=approval_id, reason=reason)
+        if not isinstance(consumed, dict):
+            raise RuntimeError("approval_override_consume_missing")
+        if (
+            str(consumed.get("approval_id") or "").strip() != approval_id
+            or str(consumed.get("worker_run_id") or "").strip() != run_id
+        ):
+            raise RuntimeError("consumed_approval_binding_mismatch")
+        if not consumed.get("resume_override_cleanup_completed_at"):
+            raise RuntimeError("approval_override_cleanup_incomplete")
+        worker["approval_resume_override_revoked_approval_id"] = approval_id
+        worker["approval_resume_override_revoked_run_id"] = run_id
+        worker["approval_resume_override_revoked_at"] = (
+            consumed.get("resume_override_cleanup_completed_at") or utc_now()
+        )
         worker["approval_resume_override_revoked_reason"] = reason
+        worker.pop("approval_resume_override_revoke_error", None)
+        return True
     except Exception as exc:
         worker["approval_resume_override_revoke_error"] = f"{type(exc).__name__}: {exc}"
+        raise RuntimeError(worker["approval_resume_override_revoke_error"]) from exc
+
+
+def retire_failed_approval_resume_spawn(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    approval: dict[str, Any],
+    *,
+    reason: str,
+) -> bool:
+    """Retire only the process spawned for this approval and worker run."""
+
+    approval_id = str(approval.get("approval_id") or "").strip()
+    run_id = str(worker.get("run_id") or "").strip()
+    if (
+        not approval_id
+        or not run_id
+        or worker.get("approval_resume_spawn_approval_id") != approval_id
+        or worker.get("approval_resume_spawn_run_id") != run_id
+    ):
+        return False
+    if (
+        worker.get("approval_resume_spawn_retired_approval_id") == approval_id
+        and worker.get("approval_resume_spawn_retired_run_id") == run_id
+    ):
+        if worker.get("approval_resume_spawn_retired") and not pid_is_alive(worker.get("pid")):
+            return True
+        worker.pop("approval_resume_spawn_retired_approval_id", None)
+        worker.pop("approval_resume_spawn_retired_run_id", None)
+        worker.pop("approval_resume_spawn_retired_at", None)
+        worker.pop("approval_resume_spawn_retired", None)
+    retired = retire_worker_delivery(config, worker, reason=reason)
+    if not retired and pid_is_alive(worker.get("pid")):
+        worker["approval_resume_spawn_retire_error"] = "spawned_process_group_still_alive"
+        raise RuntimeError(worker["approval_resume_spawn_retire_error"])
+    worker["approval_resume_spawn_retired_approval_id"] = approval_id
+    worker["approval_resume_spawn_retired_run_id"] = run_id
+    worker["approval_resume_spawn_retired_at"] = utc_now()
+    worker["approval_resume_spawn_retired"] = bool(retired)
+    worker.pop("approval_resume_spawn_retire_error", None)
+    return retired or not pid_is_alive(worker.get("pid"))
+
+
+def persist_approval_resume_failure_state(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+) -> bool:
+    try:
+        save_runtime_state(config, state)
+    except Exception as exc:
+        worker["approval_resume_failure_persist_error"] = f"{type(exc).__name__}: {exc}"
+        return False
+    worker.pop("approval_resume_failure_persist_error", None)
+    return True
 
 
 def resume_claude_worker(
@@ -8882,7 +9195,37 @@ def resume_claude_worker(
     now_dt = datetime.now(timezone.utc)
     worker["previous_log_paths"] = previous_logs
     worker["pid"] = process.pid
-    record_worker_process_identity(worker)
+    approval_id = str((approval or {}).get("approval_id") or "").strip()
+    approval_run_id = str((approval or {}).get("worker_run_id") or "").strip()
+    if approval_id and approval_run_id == str(worker.get("run_id") or ""):
+        worker["approval_resume_override_approval_id"] = approval_id
+        worker["approval_resume_override_run_id"] = approval_run_id
+        worker["approval_resume_spawn_approval_id"] = approval_id
+        worker["approval_resume_spawn_run_id"] = approval_run_id
+    if not record_worker_process_identity(worker):
+        failure_reason = "Approved worker resume process identity capture failed after spawn."
+        worker["approval_resume_state"] = "spawn_failed"
+        worker["approval_resume_error"] = "process_identity_capture_failed"
+        worker["last_error"] = failure_reason
+        retired = terminate_spawned_process(process)
+        if retired:
+            worker["approval_resume_spawn_retired_approval_id"] = approval_id
+            worker["approval_resume_spawn_retired_run_id"] = approval_run_id
+            worker["approval_resume_spawn_retired_at"] = utc_now()
+            worker["approval_resume_spawn_retired"] = True
+        if approval:
+            revoke_approval_resume_override(
+                config,
+                worker,
+                approval,
+                reason="approval_resume_process_identity_failed",
+            )
+        if not retired:
+            worker["approval_resume_spawn_retire_error"] = "spawned_process_group_still_alive"
+            raise RuntimeError(
+                "Approved worker resume identity capture failed and its exact spawned process could not be retired."
+            )
+        raise RuntimeError(failure_reason)
     worker["status"] = "running"
     worker["deferred_action"] = None
     worker["last_event_at"] = _isoformat_utc(now_dt)
@@ -8909,7 +9252,29 @@ def resume_claude_worker(
     # Persist the new owned session identity before post-spawn admission.  A
     # crash in that CAS can then safely terminate or recover this exact group
     # instead of orphaning an unidentifiable resumed process.
-    save_runtime_state(config, state)
+    try:
+        save_runtime_state(config, state)
+    except Exception as exc:
+        persist_error = f"{type(exc).__name__}: {exc}"
+        failure_reason = f"Approved worker resume runtime persistence failed after spawn: {persist_error}"
+        worker["approval_resume_state"] = "spawn_failed"
+        worker["approval_resume_error"] = persist_error
+        worker["approval_resume_persist_error"] = persist_error
+        worker["last_error"] = failure_reason
+        if approval:
+            retire_failed_approval_resume_spawn(
+                config,
+                worker,
+                approval,
+                reason=failure_reason,
+            )
+            revoke_approval_resume_override(
+                config,
+                worker,
+                approval,
+                reason="approval_resume_post_spawn_persist_failed",
+            )
+        raise
     return {
         "command": command,
         "log_path": str(log_path),
@@ -8932,6 +9297,20 @@ def resume_approved_claude_worker(
 
     mismatch = approval_resume_binding_mismatch(worker, approval)
     if mismatch:
+        approval_id = str(approval.get("approval_id") or "").strip()
+        consumed_ids = {
+            str(value)
+            for value in (worker.get("approval_resume_consumed_ids") or [])
+            if str(value)
+        }
+        # A supervisor replay after the exact resume already committed must
+        # reject the duplicate without revoking policy underneath the running
+        # process.  Its PostToolUse or terminal reducer owns cleanup.
+        if approval_id and (
+            approval_id in consumed_ids
+            or str(worker.get("last_approval_id") or "").strip() == approval_id
+        ):
+            return {"status": "rejected", "mismatch": mismatch}
         revoke_approval_resume_override(
             config,
             worker,
@@ -8989,6 +9368,17 @@ def resume_approved_claude_worker(
         resumed = None
         worker["approval_resume_error"] = f"{type(exc).__name__}: {exc}"
     if not resumed:
+        spawned_for_approval = bool(
+            worker.get("approval_resume_spawn_approval_id") == str(approval.get("approval_id") or "").strip()
+            and worker.get("approval_resume_spawn_run_id") == str(worker.get("run_id") or "").strip()
+        )
+        if spawned_for_approval:
+            retire_failed_approval_resume_spawn(
+                config,
+                worker,
+                approval,
+                reason="Approved worker resume failed after process spawn.",
+            )
         revoke_approval_resume_override(
             config,
             worker,
@@ -8996,8 +9386,12 @@ def resume_approved_claude_worker(
             reason="approval_resume_spawn_failed",
         )
         worker["approval_resume_state"] = "spawn_failed"
-        worker["last_error"] = "Approved worker resume failed before a process was launched."
-        save_runtime_state(config, state)
+        worker["last_error"] = (
+            "Approved worker resume failed after its owned process was launched and retired."
+            if spawned_for_approval
+            else "Approved worker resume failed before a process was launched."
+        )
+        persist_approval_resume_failure_state(config, state, worker)
         return {"status": "spawn_failed", "mismatch": worker.get("approval_resume_error")}
 
     post_admission = fresh_execution_dispatch_admission(
@@ -9034,7 +9428,29 @@ def resume_approved_claude_worker(
     worker["deferred_tool_use"] = None
     worker["approval_resume_state"] = "running"
     worker["approval_resume_started_at"] = utc_now()
-    save_runtime_state(config, state)
+    try:
+        save_runtime_state(config, state)
+    except Exception as exc:
+        persist_error = f"{type(exc).__name__}: {exc}"
+        failure_reason = f"Approved worker resume final persistence failed after spawn: {persist_error}"
+        worker["approval_resume_error"] = persist_error
+        worker["approval_resume_persist_error"] = persist_error
+        worker["approval_resume_state"] = "spawn_failed"
+        worker["last_error"] = failure_reason
+        retire_failed_approval_resume_spawn(
+            config,
+            worker,
+            approval,
+            reason=failure_reason,
+        )
+        revoke_approval_resume_override(
+            config,
+            worker,
+            approval,
+            reason="approval_resume_final_persist_failed",
+        )
+        persist_approval_resume_failure_state(config, state, worker)
+        return {"status": "spawn_failed", "mismatch": persist_error}
     return {"status": "resumed", "result": resumed, "mismatch": None}
 
 
@@ -9228,9 +9644,75 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
         previous_last_event_at = worker.get("last_event_at")
+        worker_status = str(worker.get("status") or "").strip().lower()
+        terminal_queue_status = {
+            "completed": "completed",
+            "failed": "failed",
+            "reassigned": "completed",
+            "superseded": "completed",
+        }.get(worker_status)
+        if terminal_queue_status:
+            approval_id = str(
+                worker.get("approval_resume_override_approval_id") or ""
+            ).strip()
+            worker_run_id = str(worker.get("run_id") or "").strip()
+            override_terminalized = not approval_id or (
+                worker.get("approval_resume_override_terminalized_approval_id")
+                == approval_id
+                and worker.get("approval_resume_override_terminalized_run_id")
+                == worker_run_id
+            )
+            queue_event_id = str(worker.get("queue_event_id") or "").strip()
+            queue_record = (
+                state.get("queue", {}).get("events", {}).get(queue_event_id, {})
+                if queue_event_id
+                else {}
+            )
+            sibling_worker_active = bool(
+                queue_event_id
+                and any(
+                    item.get("run_id") != worker.get("run_id")
+                    and str(item.get("queue_event_id") or "") == queue_event_id
+                    and str(item.get("status") or "") in active_worker_statuses
+                    for item in workers.values()
+                )
+            )
+            queue_terminalized = (
+                not queue_event_id
+                or sibling_worker_active
+                or str(queue_record.get("status") or "").strip().lower()
+                in {"completed", "failed"}
+            )
+            if not override_terminalized or not queue_terminalized:
+                recovery_reason = str(worker.get("last_error") or "").strip() or (
+                    "Recovered incomplete terminal worker finalization."
+                )
+                if pid_is_alive(worker.get("pid")):
+                    retire_worker_delivery(
+                        config,
+                        worker,
+                        reason=recovery_reason,
+                    )
+                finalize_queue_event_record(
+                    config,
+                    state,
+                    worker,
+                    terminal_queue_status,
+                    recovery_reason if terminal_queue_status == "failed" else None,
+                )
+                changed = True
+            # Terminal workers are retained as the durable retry record for
+            # incomplete cross-file cleanup.  Once reconciled they have no
+            # active lifecycle work left for the remainder of this poll.
+            continue
         if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
             if worker.get("status") in {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"} and not pid_is_alive(worker.get("pid")):
                 task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
+                revoke_worker_resume_override_on_terminal(
+                    config,
+                    worker,
+                    reason="Worker process and queue event disappeared.",
+                )
                 workers.pop(run_id, None)
                 write_activity_log(
                     config,
@@ -9498,7 +9980,6 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             and worker.get("status") in {"fallback", "manual_pending", "retry_backoff", "stalled", "waiting_approval", "suspended_approval"}
             and not worker_matches_current_assignment(config, worker, task_map)
         ):
-            workers.pop(run_id, None)
             finalize_queue_event_record(
                 config,
                 state,
@@ -9506,6 +9987,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 "completed",
                 "Dropped stale worker after task ownership/review assignment moved to another agent.",
             )
+            # Finalization includes durable approval-override cleanup.  Remove
+            # the only retry record only after that transaction succeeds.
+            workers.pop(run_id, None)
             write_activity_log(
                 config,
                 {
@@ -9901,6 +10385,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     changed = True
             continue
 
+        # A resumed process can exit into retry, fallback, reassignment, or a
+        # terminal reducer.  Revoke its exact unconsumed override before any of
+        # those branches so a logical retry cannot leave the old tool policy
+        # active after the owning process is gone.
+        revoke_worker_resume_override_on_terminal(
+            config,
+            worker,
+            reason="Worker process exited before its resume override was consumed.",
+        )
         failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
@@ -12344,6 +12837,13 @@ def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) 
 def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any], status: str, error: str | None = None) -> None:
     if status in {"completed", "failed"}:
         revoke_file_inbox_payload(
+            config,
+            worker,
+            reason=error or f"Queue event finalized as {status}.",
+        )
+        if worker.get("payload_revocation_error"):
+            raise RuntimeError(str(worker["payload_revocation_error"]))
+        revoke_worker_resume_override_on_terminal(
             config,
             worker,
             reason=error or f"Queue event finalized as {status}.",

@@ -4,12 +4,14 @@ from __future__ import annotations
 import fcntl
 import json
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
 import supervisor_watchdog
+from runtime_state import enqueue_event, runtime_state_lock
 
 
 class SupervisorWatchdogTests(unittest.TestCase):
@@ -23,6 +25,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
             "paths": {
                 "state_file": str(self.state_file),
                 "activity_log": str(self.activity_log),
+                "event_queue": str(self.root / "event-queue.jsonl"),
             },
             "watchdog": {
                 "state_file": str(self.root / "watchdog-state.json"),
@@ -110,6 +113,60 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(runtime_state["watchdog"]["safe_mode_reason"], "pid_not_alive")
         watchdog_state = json.loads((self.root / "watchdog-state.json").read_text(encoding="utf-8"))
         self.assertEqual(watchdog_state["restart_attempts"][0]["new_pid"], 999)
+
+    def test_safe_mode_rmw_preserves_concurrent_supervisor_and_queue_updates(self) -> None:
+        stale_state = {
+            "supervisor": {"last_heartbeat_at": "2026-05-18T13:00:00Z"},
+            "workers": {},
+            "queue": {"events": {}},
+        }
+        self.write_state(stale_state)
+        attempted = threading.Event()
+        finished = threading.Event()
+        errors: list[BaseException] = []
+        now = datetime(2026, 5, 18, 13, 30, tzinfo=timezone.utc)
+
+        def enter_safe_mode() -> None:
+            attempted.set()
+            try:
+                supervisor_watchdog.enter_watchdog_safe_mode(
+                    self.config,
+                    stale_state,
+                    now,
+                    self.config["watchdog"],
+                    "stale_heartbeat",
+                )
+            except BaseException as exc:  # pragma: no cover - asserted below.
+                errors.append(exc)
+            finally:
+                finished.set()
+
+        with runtime_state_lock(self.config):
+            thread = threading.Thread(target=enter_safe_mode)
+            thread.start()
+            self.assertTrue(attempted.wait(timeout=1.0))
+            self.assertFalse(finished.wait(timeout=0.05))
+            fresh_state = {
+                "supervisor": {
+                    "last_heartbeat_at": "2026-05-18T13:29:59Z",
+                    "loop_sequence": 73,
+                },
+                "workers": {"run-new": {"run_id": "run-new", "status": "running"}},
+                "queue": {"events": {"evt-new": {"status": "started", "attempt_count": 1}}},
+            }
+            supervisor_watchdog.write_json(self.state_file, fresh_state)
+            enqueue_event(self.config, {"event_id": "evt-new", "task_id": "TASK-NEW"})
+
+        thread.join(timeout=2.0)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        final_state = json.loads(self.state_file.read_text(encoding="utf-8"))
+        self.assertEqual(final_state["supervisor"], fresh_state["supervisor"])
+        self.assertEqual(final_state["workers"], fresh_state["workers"])
+        self.assertEqual(final_state["queue"], fresh_state["queue"])
+        self.assertEqual(final_state["watchdog"]["safe_mode_reason"], "stale_heartbeat")
+        queued = [json.loads(line) for line in (self.root / "event-queue.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(queued, [{"event_id": "evt-new", "task_id": "TASK-NEW"}])
 
     def test_restart_budget_suppresses_after_window_exhausted(self) -> None:
         now = datetime.now(timezone.utc)

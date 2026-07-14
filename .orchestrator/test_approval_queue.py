@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import approval_queue
 
@@ -309,6 +310,109 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         self.assertEqual(saved["pending"], [])
         self.assertEqual(saved["history"][0]["approval_id"], approval["approval_id"])
         self.assertNotIn("tool_input", saved["history"][0])
+
+    def test_resume_override_permission_cleanup_is_durable_and_retriable(self) -> None:
+        self._write_json(
+            self.root / "approval-queue.json",
+            {
+                "pending": [],
+                "history": [
+                    {
+                        "approval_id": "apr-cleanup-retry",
+                        "status": "resolved",
+                        "decision": "allow",
+                        "worker_run_id": "run-cleanup-retry",
+                        "resume_override_active": True,
+                        "resume_override_consumed_at": None,
+                        "resume_override_consumed_reason": None,
+                        "resume_override_rule": "Bash(git status)",
+                        "resume_override_rule_inserted": True,
+                        "resume_override_suspended_ask_rules": ["Bash(git *)"],
+                    }
+                ],
+            },
+        )
+
+        with (
+            mock.patch(
+                "permission_broker.remove_temporary_allow_rule",
+                side_effect=[OSError("settings unavailable"), True],
+            ) as remove_rule,
+            mock.patch("permission_broker.restore_rules", return_value=["Bash(git *)"]) as restore_rules,
+        ):
+            with self.assertRaisesRegex(OSError, "settings unavailable"):
+                approval_queue.consume_resume_override(
+                    self.config,
+                    approval_id="apr-cleanup-retry",
+                    reason="worker_terminal",
+                )
+
+            after_failure = json.loads(
+                (self.root / "approval-queue.json").read_text(encoding="utf-8")
+            )["history"][0]
+            self.assertFalse(after_failure["resume_override_active"])
+            self.assertTrue(after_failure["resume_override_cleanup_pending"])
+            self.assertTrue(after_failure["resume_override_consumed_at"])
+            self.assertNotIn("resume_override_cleanup_completed_at", after_failure)
+
+            completed = approval_queue.consume_resume_override(
+                self.config,
+                approval_id="apr-cleanup-retry",
+                reason="worker_terminal_retry",
+            )
+
+        self.assertIsNotNone(completed)
+        assert completed is not None
+        self.assertFalse(completed["resume_override_cleanup_pending"])
+        self.assertTrue(completed["resume_override_cleanup_completed_at"])
+        self.assertEqual(completed["resume_override_consumed_reason"], "worker_terminal")
+        self.assertEqual(remove_rule.call_count, 2)
+        restore_rules.assert_called_once_with(
+            self.config,
+            bucket="ask",
+            rules=["Bash(git *)"],
+        )
+
+    def test_cleanup_pending_record_without_consumed_timestamp_is_repaired(self) -> None:
+        self._write_json(
+            self.root / "approval-queue.json",
+            {
+                "pending": [],
+                "history": [
+                    {
+                        "approval_id": "apr-malformed-pending",
+                        "status": "resolved",
+                        "decision": "allow",
+                        "worker_run_id": "run-malformed-pending",
+                        "resume_override_active": False,
+                        "resume_override_consumed_at": None,
+                        "resume_override_cleanup_pending": True,
+                        "resume_override_rule": "Bash(git status)",
+                        "resume_override_rule_inserted": True,
+                    }
+                ],
+            },
+        )
+
+        with mock.patch(
+            "permission_broker.remove_temporary_allow_rule",
+            return_value=True,
+        ) as remove_rule:
+            completed = approval_queue.consume_resume_override(
+                self.config,
+                approval_id="apr-malformed-pending",
+                reason="repair_malformed_cleanup",
+            )
+
+        self.assertIsNotNone(completed)
+        assert completed is not None
+        self.assertTrue(completed["resume_override_consumed_at"])
+        self.assertFalse(completed["resume_override_cleanup_pending"])
+        self.assertTrue(completed["resume_override_cleanup_completed_at"])
+        remove_rule.assert_called_once_with(
+            self.config,
+            rule="Bash(git status)",
+        )
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from common import append_jsonl, config_path, load_config, load_json, repo_root_for_config, utc_now, write_activity_log, write_json
+from runtime_state import runtime_state_lock
 
 
 ACTIVE_WORKER_STATUSES = {
@@ -434,14 +435,34 @@ def evaluate_supervisor_health(runtime_state: dict[str, Any], pid: int | None, a
     return {"healthy": True, "reason": "healthy", "heartbeat_age_seconds": heartbeat_age}
 
 
-def enter_watchdog_safe_mode(config: dict[str, Any], runtime_state: dict[str, Any], now: datetime, settings: dict[str, Any], reason: str) -> None:
+def enter_watchdog_safe_mode(
+    config: dict[str, Any],
+    runtime_state: dict[str, Any],
+    now: datetime,
+    settings: dict[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    """Apply only the watchdog safe-mode fields to the freshest state.
+
+    ``runtime_state`` is the health-check snapshot and may be stale by the time
+    a restart is admitted.  Keep it in the signature for callers, but never
+    write it back: the complete fresh read/mutate/write transaction must share
+    the same lock as supervisor and queue producers.
+    """
+
+    del runtime_state
     safe_for = max(30, int(settings.get("safe_mode_seconds")))
-    watchdog = runtime_state.setdefault("watchdog", {})
-    watchdog["safe_mode_until"] = isoformat_utc(now + timedelta(seconds=safe_for))
-    watchdog["safe_mode_reason"] = reason
-    watchdog["safe_mode_started_at"] = isoformat_utc(now)
-    watchdog["last_decision"] = "restart_supervisor"
-    write_json(config_path(config, "state_file"), runtime_state)
+    with runtime_state_lock(config):
+        fresh_state, state_error = load_runtime_state_file(config)
+        if state_error:
+            raise RuntimeError(f"watchdog safe-mode state reload failed: {state_error}")
+        watchdog = fresh_state.setdefault("watchdog", {})
+        watchdog["safe_mode_until"] = isoformat_utc(now + timedelta(seconds=safe_for))
+        watchdog["safe_mode_reason"] = reason
+        watchdog["safe_mode_started_at"] = isoformat_utc(now)
+        watchdog["last_decision"] = "restart_supervisor"
+        write_json(config_path(config, "state_file"), fresh_state)
+    return fresh_state
 
 
 def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: datetime) -> tuple[int, Path]:
