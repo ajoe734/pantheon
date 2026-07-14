@@ -543,6 +543,41 @@ def record_committee_sponsor_decision(
     if matched_request is None:
         raise HTTPException(status_code=404, detail="Committee not found")
 
+    # Check if a sponsor decision was already processed and successfully dispatched
+    existing_metadata = matched_request.metadata if isinstance(matched_request.metadata, dict) else {}
+    existing_handoff_data = existing_metadata.get("service_handoff")
+    if isinstance(existing_handoff_data, dict):
+        dispatch_info = existing_handoff_data.get("proposal_dispatch")
+        if isinstance(dispatch_info, dict) and dispatch_info.get("status") == "sent":
+            # Idempotency check: if the decision is the same, return the existing result.
+            if matched_consult.get("sponsor_decision") == sponsor_decision:
+                existing_handoff_id = existing_handoff_data.get("handoff_id")
+                handoff_status = existing_handoff_data.get("status")
+                if existing_handoff_id:
+                    handoff_obj = store.get_handoff(existing_handoff_id)
+                    if handoff_obj:
+                        handoff_status = handoff_obj.status.value if hasattr(handoff_obj.status, "value") else handoff_obj.status
+                return {
+                    "committee_id": committee_id,
+                    "committee_ref": matched_consult.get("committee_ref") or committee_id,
+                    "linked_request_id": matched_request.request_id,
+                    "linked_session_id": matched_request.linked_session_id or matched_consult.get("requester_session_id"),
+                    "sponsor_decision": matched_consult.get("sponsor_decision"),
+                    "sponsor_decided_at": matched_consult.get("sponsor_decided_at"),
+                    "sponsor_decided_by": matched_consult.get("sponsor_decided_by"),
+                    "consensus_state": matched_consult.get("consensus_state"),
+                    "rationale_ref": (matched_consult.get("synthesis_summary") or {}).get("rationale_ref"),
+                    "outcome": (matched_consult.get("synthesis_summary") or {}).get("outcome"),
+                    "service_handoff": {
+                        "handoff_id": existing_handoff_id,
+                        "target_gate": existing_handoff_data.get("target_gate"),
+                        "evidence_refs": existing_handoff_data.get("evidence_refs"),
+                        "audit_refs": existing_handoff_data.get("audit_refs"),
+                        "status": handoff_status,
+                        "proposal_dispatch": dispatch_info,
+                    },
+                }
+
     memos = [
         memo
         for memo in store.list_memos_for_request(matched_request.request_id)

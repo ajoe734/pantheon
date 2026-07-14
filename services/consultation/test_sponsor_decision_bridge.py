@@ -215,3 +215,93 @@ def test_api_record_sponsor_decision_dispatches_proposal() -> None:
 
         finally:
             main_module.store = old_store
+
+
+def test_api_record_sponsor_decision_idempotent_no_duplicate_dispatches() -> None:
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+    import services.consultation.main as main_module
+    from services.consultation.main import app
+    from services.consultation.models import ConsultRequest, ConsultRequestType, ActorRef
+    from services.consultation.store import build_consultation_store
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        old_store = main_module.store
+        main_module.store = build_consultation_store(td)
+
+        try:
+            req = ConsultRequest(
+                request_id="cr-test-002",
+                request_type=ConsultRequestType.STRATEGY_REVIEW,
+                requested_by=ActorRef(actor_type="persona", actor_id="persona-momentum"),
+                target_type="strategy_spec",
+                target_id="strat-test",
+                trace_id="trace-test-002",
+                metadata={
+                    "consultation": {
+                        "committee_ref": "comm-test-002",
+                        "type": "evolution",
+                        "action_type": "retrain",
+                    }
+                }
+            )
+            main_module.store.put_request(req)
+
+            from services.consultation.models import ConsultMemo, MemoStatus, MemoType, AuthorType, Recommendation
+            memo = ConsultMemo(
+                memo_id="mem-test-002",
+                request_id="cr-test-002",
+                memo_type=MemoType.COMMITTEE_SUMMARY,
+                author_type=AuthorType.SYSTEM,
+                author_ref="test-system",
+                target_type="strategy_spec",
+                target_id="strat-test",
+                summary="Test summary",
+                recommendation=Recommendation.APPROVE,
+                status=MemoStatus.PUBLISHED,
+                trace_id="trace-test-002"
+            )
+            main_module.store.put_memo(memo)
+
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = b'{"status": "ok"}'
+                mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+                client = TestClient(app)
+                
+                # First call
+                response1 = client.post(
+                    "/api/consult/committees/comm-test-002/sponsor-decision",
+                    json={
+                        "sponsor_decision": "approved",
+                        "rationale_ref": "workspace://ref",
+                        "actor_id": "operator-test",
+                    }
+                )
+                assert response1.status_code == 200
+                data1 = response1.json()
+                assert data1["sponsor_decision"] == "approved"
+                assert data1["service_handoff"]["proposal_dispatch"]["status"] == "sent"
+                assert mock_urlopen.call_count == 1
+
+                # Second call (duplicate)
+                response2 = client.post(
+                    "/api/consult/committees/comm-test-002/sponsor-decision",
+                    json={
+                        "sponsor_decision": "approved",
+                        "rationale_ref": "workspace://ref",
+                        "actor_id": "operator-test",
+                    }
+                )
+                assert response2.status_code == 200
+                data2 = response2.json()
+                assert data2["sponsor_decision"] == "approved"
+                assert data2["service_handoff"]["proposal_dispatch"]["status"] == "sent"
+                
+                # Verify mock_urlopen was still only called once!
+                assert mock_urlopen.call_count == 1
+
+        finally:
+            main_module.store = old_store
