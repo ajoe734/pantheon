@@ -1,6 +1,6 @@
 # EVOLOOP-005 — Governed baselines and threshold activation
 
-Status: proposed live-config activation; awaiting Reviewer-on-Duty approval
+Status: blocked; v1 drawdown baseline proposed, PnL activation withheld
 
 Owner: Codex2
 
@@ -12,19 +12,22 @@ Merge target: `dev`
 
 ## Outcome
 
-This task proposes two live-config values for the first evolvable strategy
-artifact, `artifact-tw-session-momentum-v1@1.0.0`:
+This task proposes a drawdown baseline for the first evolvable strategy
+artifact, `artifact-tw-session-momentum-v1@1.0.0`, and records a shadow PnL
+calibration that is not eligible for activation:
 
 | Control | Proposed value | Unit / comparison |
 | --- | ---: | --- |
 | `expected_drawdown` | `0.0303` | fractional 20-calendar-day drawdown baseline |
-| `rolling_pnl_floor` | `-5000.0` | TWD cumulative paper-ledger PnL; strict `pnl < floor` |
+| shadow `rolling_pnl_floor` candidate | `-5000.0` | not activated; lacks observed canonical telemetry |
 
 The values are research-calibrated from real FinMind TaiwanStockPrice closes,
 normalized by Pantheon's source-ingest adapter, interpreted by the checked-in
 v1 strategy, and valued with the EVOLOOP-002 production portfolio/drawdown
 code. They are not copied from the old `0.12` example, the `-500.0`
-placeholder, or test fixtures.
+placeholder, or test fixtures. This shadow calculation supports the research
+drawdown expectation; it does not satisfy EVOLOOP-002's explicit handoff to
+derive the absolute PnL floor from observed real telemetry.
 
 The config directory is read-only bind-mounted into
 `evolution-threshold-sweep-producer` by `docker-compose.yml`. After merge an
@@ -36,7 +39,7 @@ rebuild and no cadence change are required.
 Owned by EVOLOOP-005:
 
 - the v1 `expected_drawdown` baseline and its provenance;
-- activation of the calibrated absolute PnL floor;
+- preservation of the PnL activation gate until canonical telemetry exists;
 - focused config/load/evaluation evidence.
 
 Not changed here:
@@ -110,8 +113,9 @@ This is Research/Ops shadow calibration using real provider observations and
 the production computation path. It is deliberately not described as hosted
 post-fix telemetry. Hosted readback at 2026-07-14T08:14Z showed the v1 binding
 active and heartbeating but without `pnl`, `pnl_at`, `drawdown`, or
-`drawdown_at`; that positive hosted telemetry proof remains a downstream
-activation check.
+`drawdown_at`. EVOLOOP-002's closeout directs EVOLOOP-005 to use observed real
+telemetry for PnL calibration, so this absence blocks activation rather than
+remaining only a downstream check.
 
 ## Governance decision
 
@@ -129,8 +133,8 @@ expected_drawdown
 The rounding is outward to one basis point so the stored expectation is not
 lower than the observed research maximum.
 
-The absolute PnL control uses the same `1.25` deterioration buffer and rounds
-away from zero to the next 10 TWD:
+For comparison only, applying the same `1.25` deterioration buffer to the
+shadow series and rounding away from zero to the next 10 TWD yields:
 
 ```text
 rolling_pnl_floor
@@ -139,35 +143,39 @@ rolling_pnl_floor
   = -5000.0 TWD
 ```
 
-This is a five-percent loss floor on the production 100,000 TWD paper ledger.
-The worker's comparator is strict `lt`, so exactly `-5000.0` does not breach.
+The result is a five-percent shadow loss boundary on a 100,000 TWD paper
+ledger. It is not an approved threshold value and remains out of live config.
 
-Codex2 is the proposer. Per the low-risk path in
-`EVOLUTION_REVIEW_AND_THRESHOLDS.md` section 6.1, Codex acts as Reviewer on
-Duty and approver. The branch values are not publishable live policy until
-Codex approves the calculation and task evidence. Merge into `dev` is the
-durable approval boundary; rejecting review must return the task to
-implementation with the config unmerged.
+Codex2 is the proposer for `expected_drawdown=0.0303`. Per the low-risk path
+in `EVOLUTION_REVIEW_AND_THRESHOLDS.md` section 6.1, Codex acts as Reviewer on
+Duty and approver. The baseline is not publishable live policy until Codex
+approves the calculation and task evidence. PnL activation requires new
+canonical telemetry evidence before the task can enter review.
 
 ## Rolling PnL floor
 
-`threshold_sweep_thresholds.json` replaces the explicit uncalibrated
-`-500.0` placeholder with `-5000.0`, changes `enabled` to `true`, and cites
-this decision plus canonical section 7.1 in `policy_source`.
+`threshold_sweep_thresholds.json` intentionally retains the explicit
+uncalibrated `-500.0` placeholder with `enabled=false`. Two independent
+conditions prevent the shadow `-5000.0` candidate from replacing it:
 
-The current worker treats the PnL threshold as a global paper default. That is
-numerically capital-scale consistent today because every
-`PaperRuntimeService` ledger starts at 100,000 units, but it is not a
-strategy-family override. A future configurable ledger scale or per-pool
-currency policy must add scoped overrides before changing that invariant.
+1. the active v1 binding has no canonical post-fix `pnl_snapshot` series; and
+2. the current worker applies an enabled absolute PnL threshold to every
+   eligible paper summary, while the shadow evidence covers only the TW v1
+   artifact and TWD ledger.
+
+Activation therefore needs observed, provenance-bearing PnL events plus
+either an enforced v1/pool/currency scope or a genuinely global calibration
+and approval. Storing an ignored scope field in JSON is not sufficient; the
+worker must enforce it and tests must prove foreign summaries cannot fire.
 
 ## Config evaluation
 
-The focused regression proves that default config now loads both governed
-thresholds, loads the v1 baseline with its `policy_source`, and evaluates a
-fresh v1-shaped summary without a baseline-missing diagnostic. Existing
-fail-closed behavior for missing/invalid baselines and stale/missing metrics
-remains covered by the threshold-sweep suite.
+The focused regression proves that default config loads the governed drawdown
+threshold, keeps the uncalibrated PnL floor disabled, loads the v1 baseline
+with its `policy_source`, and evaluates a fresh v1-shaped summary without a
+baseline-missing diagnostic. Existing fail-closed behavior for
+missing/invalid baselines and stale/missing metrics remains covered by the
+threshold-sweep suite.
 
 Focused verification on the task branch:
 
@@ -182,12 +190,18 @@ the v1 baseline resolves without masking another validation failure.
 
 ## Activation and residual risks
 
-- No image rebuild is needed. After merge/deployment, restart only
-  `evolution-threshold-sweep-producer` so it rereads the bind-mounted config.
-- The first hosted producer tick must confirm a fresh v1 `pnl_at` and
-  `drawdown_at`; without them, the worker must continue to fail closed rather
-  than manufacture a breach. Owner: EVOLOOP-009 / Human/Ops; expiry: packet
-  closeout.
+- Blocker: obtain a deduplicated, ordered v1 `pnl_snapshot` series with
+  `pnl_at`, binding identity, 100,000 TWD capital scale, and authoritative
+  source-ingest mark provenance. EVOLOOP-007 is still `todo`, so the promoted
+  strategy has not produced the fills needed for that series. Owner:
+  EVOLOOP-002 hosted acceptance + EVOLOOP-007; expiry: before EVOLOOP-005
+  review.
+- Blocker: before enabling an absolute PnL floor, enforce an artifact/pool
+  scope in the worker or approve a global cross-paper calibration. Owner:
+  EVOLOOP-005; expiry: before activation.
+- No image rebuild is required for the eventual config edit. After an
+  approved merge/deployment, restart only `evolution-threshold-sweep-producer`
+  so it rereads the bind-mounted config.
 - EVOLOOP-002's telemetry `202` durability residual remains unchanged. Owner:
   telemetry delivery-contract follow-up; expiry: before production promotion.
 - If paper initial cash becomes configurable or differs from 100,000 units,
