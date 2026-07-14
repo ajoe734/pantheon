@@ -32,12 +32,25 @@ class FakeStore:
         return self.sessions.get(workshop_id)
 
 
-def test_helper_seeds_and_verifies_only_expected_public_fields() -> None:
+def test_helper_seeds_and_verifies_workshop_proposal_and_outbox() -> None:
     helper = _load_helper()
     store = FakeStore()
+    proposals = helper.ProposalStore(backend="memory")
 
-    helper.seed(store, workshop_id="ws-run-1", tenant_id="tenant", user_id="viewer")
-    helper.verify(store, workshop_id="ws-run-1", tenant_id="tenant", user_id="viewer")
+    helper.seed(
+        store,
+        proposals,
+        workshop_id="ws-run-1",
+        tenant_id="tenant",
+        user_id="viewer",
+    )
+    helper.verify(
+        store,
+        proposals,
+        workshop_id="ws-run-1",
+        tenant_id="tenant",
+        user_id="viewer",
+    )
 
     assert store.sessions["ws-run-1"] == {
         "workshop_id": "ws-run-1",
@@ -46,22 +59,42 @@ def test_helper_seeds_and_verifies_only_expected_public_fields() -> None:
         "status": "open",
         "lock_version": 1,
     }
+    history = proposals.history("proposal-ws-run-1", "tenant", "viewer")
+    assert [row["revision"] for row in history] == [1, 2, 3]
+    assert [event["action"] for event in history[-1]["audit"]] == [
+        "create",
+        "modify",
+        "validate",
+    ]
 
 
 def test_helper_fails_closed_without_postgres_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     helper = _load_helper()
-    monkeypatch.setenv(helper.BACKEND_ENV, "off")
+    monkeypatch.setenv(helper.WORKSHOP_BACKEND_ENV, "off")
+    monkeypatch.setenv(helper.GOVERNANCE_BACKEND_ENV, "postgres")
 
     with pytest.raises(RuntimeError, match="requires AGORA_WORKSHOP_STORE_BACKEND=postgres"):
-        helper.require_postgres_backend()
+        helper.require_postgres_backends()
+
+    monkeypatch.setenv(helper.WORKSHOP_BACKEND_ENV, "postgres")
+    monkeypatch.setenv(helper.GOVERNANCE_BACKEND_ENV, "off")
+    with pytest.raises(RuntimeError, match="requires AGORA_GOVERNANCE_STORE_BACKEND=postgres"):
+        helper.require_postgres_backends()
 
 
 def test_helper_rejects_missing_or_wrong_persisted_record() -> None:
     helper = _load_helper()
     store = FakeStore()
+    proposals = helper.ProposalStore(backend="memory")
 
     with pytest.raises(RuntimeError, match="was not found"):
-        helper.verify(store, workshop_id="missing", tenant_id="tenant", user_id="viewer")
+        helper.verify(
+            store,
+            proposals,
+            workshop_id="missing",
+            tenant_id="tenant",
+            user_id="viewer",
+        )
 
     store.sessions["wrong"] = {
         "workshop_id": "wrong",
@@ -70,12 +103,18 @@ def test_helper_rejects_missing_or_wrong_persisted_record() -> None:
         "status": "open",
     }
     with pytest.raises(RuntimeError, match="mismatched fields tenant_id"):
-        helper.verify(store, workshop_id="wrong", tenant_id="tenant", user_id="viewer")
+        helper.verify(
+            store,
+            proposals,
+            workshop_id="wrong",
+            tenant_id="tenant",
+            user_id="viewer",
+        )
 
 
 def test_workflow_uses_internal_fresh_process_persistence_proof() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-    step = workflow.split("- name: Dev Agora workshop restart persistence smoke", 1)[1]
+    step = workflow.split("- name: Dev Agora governance restart persistence smoke", 1)[1]
     step = step.split("- name: Summarize auto-deploy", 1)[0]
 
     assert "agora-deploy-smoke:operator" not in workflow
@@ -89,11 +128,13 @@ def test_workflow_uses_internal_fresh_process_persistence_proof() -> None:
     assert step.index(seed) < step.index(restart) < step.index(verify)
     assert step.count("docker compose -p pantheon -f docker-compose.yml exec -T operator-bff") == 2
     assert 'test "${ready}" = true' in step
+    assert "proposal-${workshop_id}" in step
+    assert "exactly-once replay" in step
 
 
 def test_workflow_log_and_inspect_probes_consume_complete_input_under_pipefail() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-    step = workflow.split("- name: Dev Agora workshop restart persistence smoke", 1)[1]
+    step = workflow.split("- name: Dev Agora governance restart persistence smoke", 1)[1]
     step = step.split("- name: Summarize auto-deploy", 1)[0]
 
     assert "grep -q" not in step
