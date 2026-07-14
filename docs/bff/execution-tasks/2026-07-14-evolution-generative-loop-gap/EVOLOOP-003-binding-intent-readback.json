@@ -1,0 +1,39 @@
+{
+  "schema_version": "evoloop_003_binding_intent_readback.v1",
+  "captured_at": "2026-07-14T05:06:07Z",
+  "read_only": true,
+  "runtime_manager": {
+    "source": "GET /api/runtime-bindings/rb-abb82fd3538b4014bb7e7d3186a58c58",
+    "binding_id": "rb-abb82fd3538b4014bb7e7d3186a58c58",
+    "runtime_id": "runtime-tw-equity-paper",
+    "plan_id": "plan-tw-equity-paper",
+    "persona_capital_binding_id": "binding-tw-equity-paper",
+    "capital_pool_id": "pool-tw-equity-paper",
+    "artifact_id": "artifact-tw-equity-session-v1",
+    "artifact_version": "1.0.0",
+    "status": "active",
+    "deployment_mode": "paper",
+    "execution_mode": "paper",
+    "effective_at": "2026-07-11T10:50:25Z",
+    "strategy_id": "tw_session_momentum"
+  },
+  "bff_persona_read_model": {
+    "source": "GET /bff/personas?page_size=100",
+    "snapshot_at": "2026-07-14T05:06:07Z",
+    "persona_id": "persona-tw-equity",
+    "name": "Taiwan Equity Persona",
+    "runtime_id": "runtime-tw-equity-paper",
+    "legacy_runtime_binding_id": "binding-tw-equity-paper",
+    "deployment_plan_id": "plan-tw-equity-paper",
+    "deployment_stage": "paper",
+    "capital_mode": "paper",
+    "strategy_family": "tw_session_momentum"
+  },
+  "interpretation": {
+    "authoritative_runtime_binding_id_source": "runtime_manager.binding_id",
+    "bff_legacy_runtime_binding_id_role": "persona_capital_binding_id compatibility projection",
+    "write_performed": false,
+    "deployment_claimed": false,
+    "required_revalidation_task": "EVOLOOP-006"
+  }
+}

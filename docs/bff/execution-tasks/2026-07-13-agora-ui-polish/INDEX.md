@@ -58,7 +58,7 @@ only in `ajoe734/execute-plans@dev`. Fixture screenshots do not count.
 | AG-UIPOL-004 | Reconcile readiness/completeness display; performance tab honesty | execute-plans |
 | AG-UIPOL-005 | Re-verify all shipped surfaces against the recovered design source | pantheon docs/evidence |
 | AG-UIPOL-006 (draft) | Shell command, Servant, and layout-control parity | execute-plans + additive pantheon contract work if required |
-| AG-UIPOL-007 (draft) | Multi-lens monitoring and candidate parity | execute-plans + additive pantheon contract work if required |
+| AG-UIPOL-007 (delivered) | Multi-lens monitoring and candidate parity | execute-plans; Pantheon closeout evidence |
 | AG-UIPOL-008 (draft) | Winner Branch workspace information parity | execute-plans + additive pantheon projection work if required |
 | AG-UIPOL-009 (draft) | V10 expert Strategy Workshop parity | execute-plans + pantheon |
 | AG-UIPOL-010 (draft) | Performance cockpit parity | execute-plans + additive pantheon projection work if required |
