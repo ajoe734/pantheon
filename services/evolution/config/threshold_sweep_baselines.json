@@ -1,0 +1,9 @@
+{
+  "_schema_note": "Live config, operator/research-populated. Maps artifact_id -> named research-expected baseline values used by threshold_sweep_worker to turn a raw runtime-summary metric into a unit-consistent multiple (see threshold_sweep_thresholds.json 'ratio_baseline_key'). Ships empty: no artifact has an approved baseline yet, so any threshold that requires a ratio_baseline_key fails closed (diagnostic only, no fabricated breach) until an entry is added here for that artifact_id.",
+  "_example": {
+    "artifact-example-001": {
+      "expected_drawdown": 0.12
+    }
+  },
+  "baselines": {}
+}

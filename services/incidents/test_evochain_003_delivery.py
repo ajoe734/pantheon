@@ -22,7 +22,7 @@ def clean_store(monkeypatch):
             return None
 
     monkeypatch.setattr("services.incidents.main.reference_validator", _AcceptAllValidator())
-    
+
     store._incidents.clear()
     store._postmortems.clear()
     # Clean outbox store
@@ -63,20 +63,20 @@ def _seed_incident(incident_id="inc-123"):
 
 def test_incident_resolution_delivery_success():
     _seed_incident()
-    
+
     mock_response = MagicMock()
     mock_response.status_code = 201
     mock_response.text = "Created"
-    
+
     # 1. Status transition resolves the incident and writes to outbox
     r = client.post("/api/incidents/inc-123/status", json={"status": "resolved"})
     assert r.status_code == 200
-    
+
     # Verify it is in outbox
     records = outbox_store.list_pending_and_failed()
     assert len(records) == 1
     assert records[0].event.payload["incident_id"] == "inc-123"
-    
+
     # 2. Process outbox and verify httpx POST is made
     with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
         asyncio.run(process_incidents_outbox())
@@ -90,17 +90,17 @@ def test_incident_resolution_delivery_success():
 
 def test_incident_close_delivery_success():
     _seed_incident()
-    
+
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.text = "OK"
-    
+
     r = client.post("/api/incidents/inc-123/status", json={"status": "closed"})
     assert r.status_code == 200
-    
+
     records = outbox_store.list_pending_and_failed()
     assert len(records) == 1
-    
+
     with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
         asyncio.run(process_incidents_outbox())
         mock_post.assert_called_once()
@@ -108,10 +108,10 @@ def test_incident_close_delivery_success():
 
 def test_incident_delivery_failure_retry_and_error():
     _seed_incident()
-    
+
     r = client.post("/api/incidents/inc-123/status", json={"status": "resolved"})
     assert r.status_code == 200
-    
+
     # Simulate connection failure
     with patch("httpx.AsyncClient.post", side_effect=httpx.ConnectError("Connection refused")) as mock_post:
         # First attempt

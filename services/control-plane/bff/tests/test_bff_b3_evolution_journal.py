@@ -167,6 +167,26 @@ def test_evolution_journal_server_side_filtering_and_origin() -> None:
                 if "vslice" in str(item).lower() or "btc-drift" in str(item).lower():
                     assert item["origin"] == "seed"
 
+            # 5. Empty filtered hit for nonexistent persona
+            resp = client.get(
+                "/bff/management/evolution-journal?persona=nonexistent-persona-id-xyz",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert len(body["data"]["items"]) == 0
+            assert body["page_info"]["total"] == 0
+
+            # 6. Empty filtered hit for nonexistent decision
+            resp = client.get(
+                "/bff/management/evolution-journal?decision=nonexistent-dec-id-xyz",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert len(body["data"]["items"]) == 0
+            assert body["page_info"]["total"] == 0
+
         finally:
             bff_main.read_store = original_store
 

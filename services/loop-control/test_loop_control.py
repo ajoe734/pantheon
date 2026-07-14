@@ -23,7 +23,7 @@ DB_DSN = os.environ.get("DATABASE_URL") or "postgresql://pantheon_app:pantheon_a
 @pytest.mark.asyncio
 async def test_store_crud_and_validation():
     store = LoopControllerStore(DB_DSN)
-    
+
     # Clean up test record if exists
     conn = await store.store.connect() if hasattr(store, "store") and hasattr(store.store, "connect") else None
     # Let's do cleanup directly using asyncpg connection
@@ -64,9 +64,9 @@ async def test_store_crud_and_validation():
         "evidence_refs": ["ref-1", "ref-2"],
         "payload": {"key": "value"}
     }
-    
+
     await store.upsert_record(valid_record)
-    
+
     # 3. Get record
     fetched = await store.get_record("test-loop-1", "default", "test")
     assert fetched is not None
@@ -117,24 +117,24 @@ async def test_writer_sdk():
     assert record["actual_state_query"] == "actual-q"
     assert record["backlog"] == 10
     assert record["lag"] == 2
-    
+
     # Record success
     await writer.record_success(
         loop_id="test-writer-loop",
         summary="Run was success",
         evidence_refs=["ref-w2"]
     )
-    
+
     record = await store.get_record("test-writer-loop", "default", "test")
     assert record["last_success_at"] is not None
-    
+
     # Record failure
     await writer.record_failure(
         loop_id="test-writer-loop",
         reason="Something crashed",
         dlq_count=5
     )
-    
+
     record = await store.get_record("test-writer-loop", "default", "test")
     assert record["last_failure_at"] is not None
     assert record["last_failure_reason"] == "Something crashed"
@@ -170,7 +170,7 @@ async def test_lease_safety_and_stale_heartbeats():
 
     # Try to write with a heartbeat 1 hour in the past
     past_heartbeat = datetime.now(timezone.utc) - timedelta(hours=1)
-    
+
     # Use store directly or writer with past heartbeat
     writer_stale = LoopControllerWriter(DB_DSN, tenant_id="default", environment="test", controller_id="ctrl-lease-1")
     await writer_stale._write_status("test-lease-loop", "reconciled_live_proof", last_heartbeat_at=past_heartbeat)
@@ -208,7 +208,7 @@ def test_projector():
     }
 
     projected = project_controller_record_to_bff(row)
-    
+
     assert projected["loop_id"] == "test-loop-proj"
     assert projected["controller_health"]["status"] == "ok"
     assert projected["controller_health"]["controller_name"] == "ProjController"

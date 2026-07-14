@@ -1,10 +1,10 @@
 # Pathreon Agora — Claude Design UI Requirement V6
 ## Multi-Strategy Dashboard / Trading Servant Workspace / Personalization Edition
 
-> 文件用途：直接交付 Claude Design 產出 Agora 高保真設計稿。  
-> 日期：2026-06-18  
-> 範圍：只設計 Agora；不設計、提及或暴露 Pathreon Management。  
-> 本版取代：V2、V3、V4、V5 Agora Claude Design requirements。  
+> 文件用途：直接交付 Claude Design 產出 Agora 高保真設計稿。
+> 日期：2026-06-18
+> 範圍：只設計 Agora；不設計、提及或暴露 Pathreon Management。
+> 本版取代：V2、V3、V4、V5 Agora Claude Design requirements。
 > 不可妥協：**不同 Strategy Lens 必須是結構顯著不同的完整 Dashboard，不接受同一版型只替換資料、標題或 widget。**
 
 ---

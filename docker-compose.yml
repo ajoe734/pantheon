@@ -769,6 +769,9 @@ services:
       AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
       AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_WORKSHOP_STORE_SCHEMA: ${AGORA_WORKSHOP_STORE_SCHEMA:-agora}
+      AGORA_GOVERNANCE_STORE_BACKEND: ${AGORA_GOVERNANCE_STORE_BACKEND:-postgres}
+      AGORA_GOVERNANCE_STORE_DSN: ${AGORA_GOVERNANCE_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_GOVERNANCE_STORE_SCHEMA: ${AGORA_GOVERNANCE_STORE_SCHEMA:-agora}
       AGORA_DASHBOARD_STORE_BACKEND: ${AGORA_DASHBOARD_STORE_BACKEND:-postgres}
       AGORA_DASHBOARD_STORE_DSN: ${AGORA_DASHBOARD_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_DASHBOARD_STORE_SCHEMA: ${AGORA_DASHBOARD_STORE_SCHEMA:-agora}
@@ -853,15 +856,14 @@ services:
       # dev-only client credentials for a short-lived JWT through
       # POST /bff/auth/dev-login.
       #
-      # Dev tier defaults: permissive legacy bearer acceptance without auth
-      # stub bypass. This rejects anonymous protected-route reads while still
-      # accepting the legacy dev browser token
-      # (VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer).
+      # Dev tier defaults to strict JWT auth without a stub bypass.
       # Staging/prod compose files must explicitly export
       # PANTHEON_BFF_AUTH_STUB=false and PANTHEON_BFF_AUTH_MODE=strict.
       PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}
-      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-permissive}
-      PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}
+      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}
+      # Kernel capabilities must be supplied explicitly for an authorized
+      # operator/admin identity; public viewer sessions remain read-only.
+      PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-}
       PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
       PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
@@ -903,7 +905,6 @@ services:
       PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
-      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - bff-data:/data/bff
@@ -1340,6 +1341,31 @@ services:
       EVOLUTION_SWEEP_MAX_INCIDENTS: ${EVOLUTION_SWEEP_MAX_INCIDENTS:-}
     depends_on:
       evolution:
+        condition: service_healthy
+
+  evolution-threshold-sweep-producer:
+    build:
+      context: .
+      dockerfile: services/evolution/Dockerfile
+    command: ["python", "-m", "services.evolution.threshold_sweep_worker"]
+    restart: unless-stopped
+    environment:
+      EVOCHAIN_TELEMETRY_API_URL: http://telemetry:8083
+      EVOCHAIN_INCIDENTS_API_URL: http://incidents:8090
+      EVOCHAIN_THRESHOLD_SWEEP_CONFIG_PATH: /workspace/services/evolution/config/threshold_sweep_thresholds.json
+      EVOCHAIN_THRESHOLD_SWEEP_BASELINES_PATH: /workspace/services/evolution/config/threshold_sweep_baselines.json
+      EVOCHAIN_THRESHOLD_SWEEP_STATE_PATH: /data/evolution/threshold_sweep_state.json
+      EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}
+      EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS: ${EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS:-0}
+    volumes:
+      # Bind-mounted so operators can retune threshold values without an
+      # image rebuild: edit the host file, then restart this one service.
+      - ./services/evolution/config:/workspace/services/evolution/config:ro
+      - evolution-data:/data/evolution
+    depends_on:
+      telemetry:
+        condition: service_healthy
+      incidents:
         condition: service_healthy
 
   lineage-read:

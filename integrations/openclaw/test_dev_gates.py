@@ -115,12 +115,12 @@ def test_provider_readiness_gate_fails_on_live_smoke_failure() -> None:
     }
 
     provider = AssistantCodexProvider(mounts=mock_mounts, environ=environ)
-    
+
     # Mock resolve_binary to return a fake binary path
     provider._resolve_binary = lambda: "/usr/local/bin/codex"
     # Mock version probe to succeed
     provider._probe_version = lambda binary: {"ready": True, "version": "1.0.0"}
-    
+
     # Mock directory check for workspace to pass
     with mock.patch("pathlib.Path.is_dir", return_value=True):
         # Mock _run to return returncode=1 (auth probe fails)
@@ -133,7 +133,7 @@ def test_provider_readiness_gate_fails_on_live_smoke_failure() -> None:
         with mock.patch.object(provider, "_run", return_value=fake_process):
             # Probe auth explicitly with auth_probe=True
             res = provider.readiness(auth_probe=True)
-            
+
             # The gate MUST fail because the live smoke (auth probe) failed
             assert res["ready"] is False
             assert res["status"] == "degraded"
@@ -149,7 +149,7 @@ def test_bff_persona_memory_gate_fails_when_not_returning_canonical_memory(monke
             client = _fresh_client(td)
             pid = _seed_persona(client, "Memory Persona")
             resp = client.get(f"/bff/personas/{pid}/memory", headers=OPERATOR_HEADERS)
-            
+
             assert resp.status_code == 200
             body = resp.json()
             assert body["meta"]["status"] == "degraded"
@@ -164,7 +164,7 @@ def test_bff_persona_memory_gate_fails_when_not_returning_canonical_memory(monke
             monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory-service")
             client = _fresh_client(td)
             pid = _seed_persona(client, "Canonical Memory Persona")
-            
+
             def mock_urlopen_error(*args, **kwargs):
                 from urllib.error import HTTPError
                 from io import BytesIO
@@ -172,7 +172,7 @@ def test_bff_persona_memory_gate_fails_when_not_returning_canonical_memory(monke
 
             monkeypatch.setattr(bff_main.urllib_request, "urlopen", mock_urlopen_error)
             resp = client.get(f"/bff/personas/{pid}/memory", headers=OPERATOR_HEADERS)
-            
+
             assert resp.status_code == 200
             body = resp.json()
             assert body["meta"]["status"] == "degraded"
@@ -202,22 +202,22 @@ def test_materialization_fails_when_lacking_canonical_source_ids(tmp_path) -> No
             }
         ]
     }
-    
+
     result = materialize_openclaw_memory_context(
         persona_id="persona-alpha",
         workspace=str(workspace),
         retrieval_payload=retrieval_payload,
         generated_at="2026-07-05T01:00:00Z",
     )
-    
+
     assert result.hit_count == 1
     context_data = json.loads((workspace / "memory" / "context.json").read_text(encoding="utf-8"))
-    
+
     # Assert each hit contains the source ID and canonical ref
     for hit in context_data["hits"]:
         assert hit["source_id"] == "pm-alpha-001"
         assert hit["canonical_ref"] == "persona_memory:pm-alpha-001"
-        
+
     # If the source ID or canonical ref is stripped, verify the check raises an exception
     bad_payload = {
         "hits": [
@@ -232,10 +232,10 @@ def test_materialization_fails_when_lacking_canonical_source_ids(tmp_path) -> No
             }
         ]
     }
-    
+
     hits, rejected = normalize_retrieval_hits(bad_payload, persona_id="persona-alpha")
     assert hits[0]["source_id"] == ""
-    
+
     with pytest.raises(ValueError, match="Gate failed: Workspace memory lacks canonical source IDs"):
         for hit in hits:
             if not hit["source_id"]:
@@ -276,18 +276,18 @@ def test_private_memory_isolation_and_leakage_prevention() -> None:
             }
         ]
     }
-    
+
     hits, rejected = normalize_retrieval_hits(payload, persona_id="persona-alpha")
-    
+
     # Assert that the other persona's private memory is filtered out (isolated)
     assert len(hits) == 1
     assert hits[0]["source_id"] == "pm-alpha-001"
-    
+
     # Assert that the leaked memory was caught and put into rejected_hits
     assert len(rejected) == 1
     assert rejected[0]["source_id"] == "pm-other-001"
     assert rejected[0]["reason"] == "persona_scope_mismatch"
-    
+
     # Explicit gate failure check: if any hit in the output belongs to a different persona, raise ValueError
     with pytest.raises(ValueError, match="Gate failed: Leakage detected"):
         # Artificially inject leaked hit to trigger check
@@ -305,7 +305,7 @@ def test_sync_persona_agents_reconciliation_and_model_drift() -> None:
         "mandate": "Trade momentum",
         "preferred_model": "openai/gpt-5.5",
     }
-    
+
     # Mock openclaw agents list to show an existing agent with a different model
     def mock_runner_drift(args: list[str]):
         if args[:3] == ["openclaw", "agents", "list"]:
@@ -316,14 +316,14 @@ def test_sync_persona_agents_reconciliation_and_model_drift() -> None:
                 stderr=""
             )
         return subprocess.CompletedProcess(args=args, returncode=0, stdout="{}", stderr="")
-        
+
     report = sync_persona_agents(
         [persona],
         runner=mock_runner_drift,
         soul_writer=lambda ws, s: None,
         route_policy_resolver=lambda p: {"model_routing": {"mode": "hard_pin", "model": "openai/gpt-5.5"}},
     )
-    
+
     assert len(report.failed) == 1
     assert report.failed[0]["persona_id"] == "persona-alpha"
     assert report.failed[0]["error"] == "model_drift_update_unavailable"
@@ -339,7 +339,7 @@ def test_sync_persona_agents_reconciliation_and_model_drift() -> None:
                 stderr=""
             )
         return subprocess.CompletedProcess(args=args, returncode=0, stdout="{}", stderr="")
-        
+
     souls_written = {}
     def mock_soul_writer(ws: str, soul: str):
         souls_written[ws] = soul
@@ -350,7 +350,7 @@ def test_sync_persona_agents_reconciliation_and_model_drift() -> None:
         soul_writer=mock_soul_writer,
         route_policy_resolver=lambda p: {"model_routing": {"mode": "hard_pin", "model": "openai/gpt-5.5"}},
     )
-    
+
     assert len(report_create.created) == 1
     assert report_create.created[0] == "persona-alpha"
     assert len(report_create.failed) == 0
@@ -375,7 +375,7 @@ def test_live_response_identity() -> None:
         token="tok",
         post=fake_post
     )
-    
+
     assert turn.status == "completed"
     assert turn.model == "openclaw/persona-alpha"
     assert captured["body"]["model"] == "openclaw/persona-alpha"

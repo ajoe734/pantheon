@@ -1,8 +1,8 @@
 # Pantheon Agora 前端 UI 完整規格書
 ## 給 Claude Design / 前端設計與實作團隊
 
-版本：2026-05-20 v1  
-範圍：Agora 前端 UI / UX / IA / 資料模型 / BFF contract / 個人化 dashboard / Shadow mode / AI 工作流增幅器  
+版本：2026-05-20 v1
+範圍：Agora 前端 UI / UX / IA / 資料模型 / BFF contract / 個人化 dashboard / Shadow mode / AI 工作流增幅器
 不包含：Pathreon Management 後台、capital binding、runtime binding、broker live、治理審批後台 UI
 
 ---
@@ -1117,7 +1117,7 @@ training correction
 
 ### 14.1 Contextual correction
 
-使用者不應進入設定頁調 prompt。  
+使用者不應進入設定頁調 prompt。
 他應該在任何 context 修正 AI：
 
 ```text
@@ -1248,9 +1248,9 @@ GET  /bff/agora/persona-progress
 
 ### Privacy rules
 
-All endpoints must be scoped to current user.  
-Do not return Management data.  
-Do not return other user data.  
+All endpoints must be scoped to current user.
+Do not return Management data.
+Do not return other user data.
 Do not return raw prompts to Management-facing pipelines.
 
 ---
@@ -1398,7 +1398,7 @@ Do not share one trader's personalization with another trader directly.
 
 ## 21. Final Product Statement
 
-Agora is not a feature list.  
+Agora is not a feature list.
 Agora is a personalized AI trading desk.
 
 Its three operating tabs are:
